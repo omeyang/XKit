@@ -1,0 +1,241 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - gosec
+    - unused
+    - funlen
+    - dupl
+    - gocyclo
+    - ineffassign
+    - misspell
+    - unconvert
+    - unparam
+    - nakedret
+    - prealloc
+    - gocritic
+    - staticcheck
+
+  settings:
+    govet:
+      enable:
+        - unusedwrite
+    funlen:
+      lines: 70
+      statements: 50
+    gocyclo:
+      min-complexity: 10
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    dupl:
+      threshold: 100
+    misspell:
+      locale: US
+
+  exclusions:
+    generated: lax
+    rules:
+      # 测试文件允许的模式
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "SA1012"  # Tests intentionally pass nil context
+      - path: _test\.go
+        linters:
+          - dupl        # Test files often have similar structure for different scenarios
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "cleanup"  # Test cleanup errors are acceptable
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "os\\.(Setenv|Unsetenv)"  # Test env setup/teardown errors are acceptable
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G104"    # os.Setenv in tests is acceptable
+      - path: fuzz_test\.go
+        linters:
+          - staticcheck
+        text: "SA9003"  # Empty branches in fuzz tests are placeholders
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "QF1001"  # De Morgan's law style suggestion
+      # 测试文件中的初始化和 context 设置错误可忽略
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "xenv\\.(Init|InitWith)"  # Test init errors are acceptable
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "xplatform\\.Init"  # Test init errors are acceptable
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "xctx\\.(With|Ensure)"  # Test context setup (WithTraceID, EnsureTrace, etc.)
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "RequireType|RequirePlatformID|GetConfig|Parse"  # Example/benchmark patterns
+      # xcache 测试文件排除
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "mr\\.(Set|HSet)"  # miniredis setup in tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "cache\\.(Get|Set|HGet|HSet|Close)"  # cache operations in tests/benchmarks
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "cache\\.Client\\(\\)"  # Client() method calls in tests/benchmarks
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "unlock"  # lock unlock in tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "memoryWrapper"  # type assertion in tests
+      - path: _test\.go
+        linters:
+          - unparam
+        text: "ctx"  # unused ctx parameter in test callbacks
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "loader\\.(Load|LoadHash)"  # loader calls in tests/benchmarks
+      - path: _test\.go
+        linters:
+          - unparam
+        text: "Miniredis"  # unused miniredis return in test helpers
+      - path: _test\.go
+        linters:
+          - unparam
+        text: "error\\) is always nil"  # test loadFn always returns nil error
+      - path: example_test\.go
+        linters:
+          - gocritic
+        text: "exitAfterDefer"  # example functions use log.Fatal for simplicity
+      - path: _test\.go
+        linters:
+          - funlen    # Test functions with table-driven tests can be long
+      - path: _test\.go
+        linters:
+          - gocyclo   # Table-driven tests have higher complexity
+      # OTel provider shutdown in tests (defer cleanup)
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "tp\\.Shutdown|mp\\.Shutdown"  # TracerProvider/MeterProvider shutdown in defer
+      # Benchmark tests - error handling is intentionally skipped for performance measurement
+      - path: benchmark_test\.go
+        linters:
+          - errcheck
+      # K8s locker creation in tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "NewK8sLocker"  # K8s locker creation error in tests
+      # Redis client close in tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "client\\d?\\.(Close|Ping)"  # Redis client close/ping in test cleanup
+      # xdlock factory/locker/handle cleanup in tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "factory\\.Close"  # xdlock factory close in test cleanup
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "locker\\.(Lock|Unlock|Extend)"  # xdlock locker operations in tests (deprecated)
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "handle\\d?\\.(Unlock|Extend)"  # xdlock handle operations in tests (new API)
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "currentHandle\\.(Unlock|Extend)"  # xdlock handle operations in fuzz tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "config\\.Validate"  # config validation in benchmarks
+      # Trace ID/Span ID parsing in tests (known valid values)
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: "TraceIDFromHex|SpanIDFromHex"  # Using known valid hex values
+      # Test struct field assignments that are intentionally unused
+      - path: _test\.go
+        linters:
+          - govet
+        text: "unusedwrite"  # Test structs often have fields set but only partial assertion
+      # 生产代码排除
+      - linters:
+          - gosec
+        text: "G304"    # Potential file inclusion via variable - acceptable for logging library
+      # xrotate: chmod errors are non-critical for log rotation (write succeeded, permission is best-effort)
+      - path: xrotate/lumberjack\.go
+        linters:
+          - errcheck
+        text: "ensureFileMode"
+      # xrotate test files: Rotator operations (Close/Write/Rotate) in tests/fuzz
+      - path: xrotate/.*_test\.go
+        linters:
+          - errcheck
+        text: "r\\d?\\.(Close|Write|Rotate)"  # r.Close(), r1.Close(), r2.Write() etc.
+      - path: xrotate/.*_test\.go
+        linters:
+          - errcheck
+        text: "os\\.(Chdir|Getwd)"  # Directory change in tests
+      - path: xrotate/.*_test\.go
+        linters:
+          - errcheck
+        source: "findBackups"  # Helper function error in tests
+      # xrotate fuzz tests: full errcheck exclusion (fuzz tests focus on panic detection, not error handling)
+      - path: fuzz_test\.go
+        linters:
+          - errcheck
+      # gosec G302: File permissions 0777 in tests (intentional for testing permission scenarios)
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G302"
+      # xbreaker test files: breaker/combo operations (intentionally ignored in tests to drive state)
+      - path: xbreaker/.*_test\.go
+        linters:
+          - errcheck
+        source: "\\.(Do|DoWithRetry|Execute)"  # b.Do, breaker.Do, combo.DoWithRetry, m.Execute, etc.
+      - path: xbreaker/.*_test\.go
+        linters:
+          - errcheck
+        source: "Execute(WithRetry|RetryThenBreak)?"  # ExecuteWithRetry, ExecuteRetryThenBreak helper functions
+      # k8s fake client: NewSimpleClientset is deprecated but sufficient for test scenarios
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "SA1019.*NewSimpleClientset"
+      # context.WithValue with string key in tests (test-only usage)
+      - path: _test\.go
+        linters:
+          - staticcheck
+        text: "SA1029"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,190 @@
+package xenv_test
+
+import (
+	"testing"
+
+	"github.com/omeyang/xkit/pkg/context/xenv"
+)
+
+// =============================================================================
+// DeployType 方法 Benchmark
+// =============================================================================
+
+func BenchmarkDeployType_String(b *testing.B) {
+	dt := xenv.DeployLocal
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dt.String()
+	}
+}
+
+func BenchmarkDeployType_IsLocal(b *testing.B) {
+	dt := xenv.DeployLocal
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dt.IsLocal()
+	}
+}
+
+func BenchmarkDeployType_IsSaaS(b *testing.B) {
+	dt := xenv.DeploySaaS
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dt.IsSaaS()
+	}
+}
+
+func BenchmarkDeployType_IsValid(b *testing.B) {
+	dt := xenv.DeployLocal
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dt.IsValid()
+	}
+}
+
+// =============================================================================
+// Parse 函数 Benchmark
+// =============================================================================
+
+func BenchmarkParse_LOCAL(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("LOCAL")
+	}
+}
+
+func BenchmarkParse_local(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("local")
+	}
+}
+
+func BenchmarkParse_SAAS(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("SAAS")
+	}
+}
+
+func BenchmarkParse_Invalid(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("invalid")
+	}
+}
+
+// =============================================================================
+// 全局访问函数 Benchmark
+// =============================================================================
+
+func BenchmarkType(b *testing.B) {
+	// 先初始化
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.Type()
+	}
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkIsLocal(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.IsLocal()
+	}
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkIsSaaS(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeploySaaS)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.IsSaaS()
+	}
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkIsInitialized(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.IsInitialized()
+	}
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkRequireType(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.RequireType()
+	}
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+// =============================================================================
+// 并发访问 Benchmark
+// =============================================================================
+
+func BenchmarkType_Parallel(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = xenv.Type()
+		}
+	})
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkIsLocal_Parallel(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = xenv.IsLocal()
+		}
+	})
+
+	b.StopTimer()
+	xenv.Reset()
+}
+
+func BenchmarkIsInitialized_Parallel(b *testing.B) {
+	xenv.Reset()
+	_ = xenv.InitWith(xenv.DeployLocal)
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = xenv.IsInitialized()
+		}
+	})
+
+	b.StopTimer()
+	xenv.Reset()
+}

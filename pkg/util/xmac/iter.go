@@ -1,0 +1,255 @@
+package xmac
+
+import "iter"
+
+// Range 返回从 from 到 to（包含）的 MAC 地址迭代器。
+// 如果 from > to，返回空迭代器。
+// 如果迭代过程中发生溢出（到达 ff:ff:ff:ff:ff:ff），自动终止。
+//
+// 零值地址可以参与迭代（视为 00:00:00:00:00:00）。
+// 对于大范围迭代，建议配合 [Collect] 的 maxCount 参数或使用 [RangeN] 限制数量。
+//
+// 示例：
+//
+//	from := xmac.MustParse("00:00:00:00:00:01")
+//	to := xmac.MustParse("00:00:00:00:00:05")
+//	for addr := range xmac.Range(from, to) {
+//	    fmt.Println(addr)
+//	}
+func Range(from, to Addr) iter.Seq[Addr] {
+	return func(yield func(Addr) bool) {
+		// 无效范围检查
+		if from.Compare(to) > 0 {
+			return
+		}
+
+		current := from
+		for {
+			if !yield(current) {
+				return
+			}
+			// 到达终点
+			if current == to {
+				return
+			}
+			// 获取下一个地址
+			next, err := current.Next()
+			if err != nil {
+				// 溢出，终止迭代
+				return
+			}
+			current = next
+		}
+	}
+}
+
+// RangeN 返回从 start 开始的 n 个连续 MAC 地址的迭代器。
+// 如果 n <= 0，返回空迭代器。
+// 如果在到达 n 个地址之前发生溢出，迭代器提前终止。
+//
+// 示例：
+//
+//	start := xmac.MustParse("00:00:00:00:00:fe")
+//	for addr := range xmac.RangeN(start, 5) {
+//	    fmt.Println(addr)
+//	}
+func RangeN(start Addr, n int) iter.Seq[Addr] {
+	return func(yield func(Addr) bool) {
+		if n <= 0 {
+			return
+		}
+
+		current := start
+		remaining := n
+		for remaining > 0 {
+			if !yield(current) {
+				return
+			}
+			remaining--
+			// 如果还有更多要迭代，获取下一个
+			if remaining > 0 {
+				next, err := current.Next()
+				if err != nil {
+					// 溢出，终止迭代
+					return
+				}
+				current = next
+			}
+		}
+	}
+}
+
+// RangeWithIndex 返回带索引的 MAC 地址范围迭代器。
+// 索引从 0 开始。
+//
+// 示例：
+//
+//	from := xmac.MustParse("00:00:00:00:00:01")
+//	to := xmac.MustParse("00:00:00:00:00:05")
+//	for i, addr := range xmac.RangeWithIndex(from, to) {
+//	    fmt.Printf("%d: %s\n", i, addr)
+//	}
+func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
+	return func(yield func(int, Addr) bool) {
+		// 无效范围检查
+		if from.Compare(to) > 0 {
+			return
+		}
+
+		current := from
+		index := 0
+		for {
+			if !yield(index, current) {
+				return
+			}
+			// 到达终点
+			if current == to {
+				return
+			}
+			// 获取下一个地址
+			next, err := current.Next()
+			if err != nil {
+				// 溢出，终止迭代
+				return
+			}
+			current = next
+			index++
+		}
+	}
+}
+
+// Collect 将迭代器中的所有地址收集到切片中。
+// 注意：对于大范围，这可能消耗大量内存。
+// 建议对于小范围使用，或设置合理的 maxCount。
+//
+// 示例：
+//
+//	from := xmac.MustParse("00:00:00:00:00:01")
+//	to := xmac.MustParse("00:00:00:00:00:05")
+//	addrs := xmac.Collect(xmac.Range(from, to), 100)
+func Collect(seq iter.Seq[Addr], maxCount int) []Addr {
+	var result []Addr
+	count := 0
+	for addr := range seq {
+		if maxCount > 0 && count >= maxCount {
+			break
+		}
+		result = append(result, addr)
+		count++
+	}
+	return result
+}
+
+// Count 返回迭代器中的地址数量。
+// 注意：这会消耗整个迭代器。
+// 对于大范围，考虑使用 RangeCount 函数直接计算。
+func Count(seq iter.Seq[Addr]) int {
+	count := 0
+	for range seq {
+		count++
+	}
+	return count
+}
+
+// RangeCount 计算从 from 到 to（包含）的地址数量。
+// 如果 from > to，返回 0。
+// 返回 uint64 以支持大范围（最大 2^48 个地址）。
+//
+// 零值地址可以参与计算（视为 00:00:00:00:00:00）。
+// 例如 RangeCount(Addr{}, Addr{}) 返回 1。
+func RangeCount(from, to Addr) uint64 {
+	if from.Compare(to) > 0 {
+		return 0
+	}
+	// MAC 地址最多 48 位，可以用 uint64 表示差值
+	fromVal := addrToUint64(from)
+	toVal := addrToUint64(to)
+	return toVal - fromVal + 1
+}
+
+// addrToUint64 将 MAC 地址转换为 uint64（用于计算）。
+func addrToUint64(a Addr) uint64 {
+	b := a.bytes
+	return uint64(b[0])<<40 | uint64(b[1])<<32 | uint64(b[2])<<24 |
+		uint64(b[3])<<16 | uint64(b[4])<<8 | uint64(b[5])
+}
+
+// RangeReverse 返回从 from 到 to（包含）的 MAC 地址反向迭代器。
+// 迭代顺序为从 to 到 from（递减）。
+// 如果 from > to，返回空迭代器。
+// 如果迭代过程中发生下溢（到达 00:00:00:00:00:00），自动终止。
+//
+// 零值地址可以参与迭代（视为 00:00:00:00:00:00）。
+//
+// 示例：
+//
+//	from := xmac.MustParse("00:00:00:00:00:01")
+//	to := xmac.MustParse("00:00:00:00:00:05")
+//	for addr := range xmac.RangeReverse(from, to) {
+//	    fmt.Println(addr)  // 输出: 05, 04, 03, 02, 01
+//	}
+func RangeReverse(from, to Addr) iter.Seq[Addr] {
+	return func(yield func(Addr) bool) {
+		// 无效范围检查
+		if from.Compare(to) > 0 {
+			return
+		}
+
+		current := to
+		for {
+			if !yield(current) {
+				return
+			}
+			// 到达起点
+			if current == from {
+				return
+			}
+			// 获取前一个地址
+			prev, err := current.Prev()
+			if err != nil {
+				// 下溢，终止迭代
+				return
+			}
+			current = prev
+		}
+	}
+}
+
+// RangeReverseWithIndex 返回带索引的 MAC 地址反向范围迭代器。
+// 索引从 0 开始，表示从 to 开始的偏移量。
+//
+// 示例：
+//
+//	from := xmac.MustParse("00:00:00:00:00:01")
+//	to := xmac.MustParse("00:00:00:00:00:05")
+//	for i, addr := range xmac.RangeReverseWithIndex(from, to) {
+//	    fmt.Printf("%d: %s\n", i, addr)  // 0: 05, 1: 04, ...
+//	}
+func RangeReverseWithIndex(from, to Addr) iter.Seq2[int, Addr] {
+	return func(yield func(int, Addr) bool) {
+		// 无效范围检查
+		if from.Compare(to) > 0 {
+			return
+		}
+
+		current := to
+		index := 0
+		for {
+			if !yield(index, current) {
+				return
+			}
+			// 到达起点
+			if current == from {
+				return
+			}
+			// 获取前一个地址
+			prev, err := current.Prev()
+			if err != nil {
+				// 下溢，终止迭代
+				return
+			}
+			current = prev
+			index++
+		}
+	}
+}

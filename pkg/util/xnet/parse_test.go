@@ -1,0 +1,287 @@
+package xnet
+
+import (
+	"net/netip"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseRange(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+		wantErr   bool
+	}{
+		{
+			name:      "single IP",
+			input:     "192.168.1.1",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+		{
+			name:      "CIDR /24",
+			input:     "192.168.1.0/24",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "CIDR /32",
+			input:     "10.0.0.1/32",
+			wantStart: "10.0.0.1",
+			wantEnd:   "10.0.0.1",
+		},
+		{
+			name:      "CIDR /16",
+			input:     "172.16.0.0/16",
+			wantStart: "172.16.0.0",
+			wantEnd:   "172.16.255.255",
+		},
+		{
+			name:      "mask notation",
+			input:     "192.168.1.0/255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "explicit range",
+			input:     "10.0.0.1-10.0.0.100",
+			wantStart: "10.0.0.1",
+			wantEnd:   "10.0.0.100",
+		},
+		{
+			name:      "IPv6 CIDR",
+			input:     "2001:db8::/32",
+			wantStart: "2001:db8::",
+			wantEnd:   "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+		},
+		{
+			name:    "invalid",
+			input:   "invalid",
+			wantErr: true,
+		},
+		{
+			name:    "invalid range start",
+			input:   "invalid-10.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "invalid CIDR",
+			input:   "192.168.1.0/99",
+			wantErr: true,
+		},
+		{
+			name:    "non-contiguous mask",
+			input:   "192.168.1.0/255.0.255.0",
+			wantErr: true,
+		},
+		{
+			name:      "full mask (/32 equivalent)",
+			input:     "192.168.1.1/255.255.255.255",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidRange)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
+func TestParseRangeContains(t *testing.T) {
+	r, err := ParseRange("192.168.1.0/24")
+	require.NoError(t, err)
+
+	assert.True(t, r.Contains(netip.MustParseAddr("192.168.1.0")))
+	assert.True(t, r.Contains(netip.MustParseAddr("192.168.1.1")))
+	assert.True(t, r.Contains(netip.MustParseAddr("192.168.1.255")))
+	assert.True(t, r.Contains(netip.MustParseAddr("192.168.1.128")))
+	assert.False(t, r.Contains(netip.MustParseAddr("192.168.2.0")))
+	assert.False(t, r.Contains(netip.MustParseAddr("192.168.0.255")))
+	assert.False(t, r.Contains(netip.MustParseAddr("10.0.0.1")))
+}
+
+func TestParseRanges(t *testing.T) {
+	set, err := ParseRanges([]string{
+		"10.0.0.1-10.0.0.100",
+		"192.168.1.0/24",
+		"172.16.0.1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(set.Ranges()))
+
+	// Contains 检查
+	assert.True(t, set.Contains(netip.MustParseAddr("10.0.0.50")))
+	assert.True(t, set.Contains(netip.MustParseAddr("192.168.1.128")))
+	assert.True(t, set.Contains(netip.MustParseAddr("172.16.0.1")))
+	assert.False(t, set.Contains(netip.MustParseAddr("8.8.8.8")))
+
+	// Invalid
+	_, err = ParseRanges([]string{"invalid"})
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangesMergesOverlapping(t *testing.T) {
+	// ParseRanges 返回的 IPSet 自动合并重叠/相邻范围
+	set, err := ParseRanges([]string{
+		"10.0.0.50-10.0.0.150",
+		"10.0.0.1-10.0.0.100",
+		"10.0.0.200-10.0.0.255",
+		"10.0.0.151-10.0.0.199", // 与邻居相邻
+	})
+	require.NoError(t, err)
+
+	ranges := set.Ranges()
+	assert.Equal(t, 1, len(ranges), "all ranges should merge into one")
+	assert.Equal(t, "10.0.0.1", ranges[0].From().String())
+	assert.Equal(t, "10.0.0.255", ranges[0].To().String())
+}
+
+func TestParseRangesDisjoint(t *testing.T) {
+	set, err := ParseRanges([]string{
+		"192.168.1.0-192.168.1.100",
+		"10.0.0.1-10.0.0.50",
+		"172.16.0.1-172.16.0.10",
+	})
+	require.NoError(t, err)
+
+	ranges := set.Ranges()
+	assert.Equal(t, 3, len(ranges))
+
+	// IPSet 内部自动排序
+	assert.Equal(t, "10.0.0.1", ranges[0].From().String())
+	assert.Equal(t, "172.16.0.1", ranges[1].From().String())
+	assert.Equal(t, "192.168.1.0", ranges[2].From().String())
+}
+
+func TestParseRangesEmpty(t *testing.T) {
+	// nil
+	set, err := ParseRanges(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(set.Ranges()))
+
+	// 空切片
+	set, err = ParseRanges([]string{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(set.Ranges()))
+}
+
+func TestParseRangeWhitespace(t *testing.T) {
+	// 带前后空白的输入应自动 trim
+	r, err := ParseRange("  192.168.1.0/24  ")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.0", r.From().String())
+	assert.Equal(t, "192.168.1.255", r.To().String())
+
+	r, err = ParseRange(" 10.0.0.1-10.0.0.100 ")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.1", r.From().String())
+	assert.Equal(t, "10.0.0.100", r.To().String())
+
+	r, err = ParseRange("\t192.168.1.1\n")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.1", r.From().String())
+}
+
+func TestParseRangeIPv6Range(t *testing.T) {
+	r, err := ParseRange("::1-::ff")
+	require.NoError(t, err)
+	assert.Equal(t, "::1", r.From().String())
+	assert.Equal(t, "::ff", r.To().String())
+}
+
+func TestParseRangesContainsBoundary(t *testing.T) {
+	set, err := ParseRanges([]string{
+		"10.0.0.1-10.0.0.100",
+		"192.168.1.0/24",
+		"172.16.0.1-172.16.0.10",
+	})
+	require.NoError(t, err)
+
+	assert.True(t, set.Contains(netip.MustParseAddr("10.0.0.1")))   // 边界
+	assert.True(t, set.Contains(netip.MustParseAddr("10.0.0.100"))) // 边界
+	assert.False(t, set.Contains(netip.MustParseAddr("10.0.0.101")))
+	assert.False(t, set.Contains(netip.MustParseAddr("192.168.2.0")))
+	assert.False(t, set.Contains(netip.MustParseAddr("8.8.8.8")))
+}
+
+func TestParseRangeInvalidRangeEnd(t *testing.T) {
+	_, err := ParseRange("10.0.0.1-invalid")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "invalid range end")
+}
+
+func TestParseRangeInvertedRange(t *testing.T) {
+	// start > end
+	_, err := ParseRange("10.0.0.100-10.0.0.1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeWithMaskErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		errIs error
+	}{
+		{
+			name:  "invalid address in mask notation",
+			input: "invalid/255.255.255.0",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "invalid mask",
+			input: "192.168.1.0/invalid",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "IPv6 with mask notation",
+			input: "2001:db8::1/ffff:ffff::",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "IPv6 address with IPv4 mask",
+			input: "2001:db8::1/255.255.255.0",
+			errIs: ErrInvalidRange,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseRange(tt.input)
+			assert.ErrorIs(t, err, tt.errIs)
+		})
+	}
+}
+
+func TestParseRangeIPv4MappedIPv6(t *testing.T) {
+	// IPv4-mapped IPv6 地址应该能正确解析
+	r, err := ParseRange("::ffff:192.168.1.0/255.255.255.0")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.0", r.From().String())
+	assert.Equal(t, "192.168.1.255", r.To().String())
+}
+
+func TestParseRangeMixedAddressFamilies(t *testing.T) {
+	// IPv4 范围开始，IPv6 范围结束
+	_, err := ParseRange("192.168.1.1-2001:db8::1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeIPv4MappedMask(t *testing.T) {
+	// IPv4-mapped IPv6 掩码也应该能工作
+	r, err := ParseRange("192.168.1.0/::ffff:255.255.255.0")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.0", r.From().String())
+	assert.Equal(t, "192.168.1.255", r.To().String())
+}

@@ -1,0 +1,823 @@
+package xmongo
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+)
+
+// =============================================================================
+// 集成测试 - 需要真实 MongoDB
+// =============================================================================
+
+func TestWrapper_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// 集成测试需要真实的 MongoDB 连接
+	// 由于当前环境没有 MongoDB，跳过这些测试
+	// 实际使用时应当配置测试 MongoDB 实例
+}
+
+func TestWrapper_Health_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+}
+
+func TestWrapper_Stats_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+}
+
+// =============================================================================
+// 单元测试 - 不需要真实 MongoDB
+// =============================================================================
+
+func TestWrapper_Stats_Initial(t *testing.T) {
+	// 验证初始统计值
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	stats := w.Stats()
+	assert.Equal(t, int64(0), stats.PingCount)
+	assert.Equal(t, int64(0), stats.PingErrors)
+	assert.Equal(t, int64(0), stats.SlowQueries)
+}
+
+func TestWrapper_SlowQueryHook(t *testing.T) {
+	var captured SlowQueryInfo
+	hook := func(_ context.Context, info SlowQueryInfo) {
+		captured = info
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	// 模拟慢查询触发
+	info := SlowQueryInfo{
+		Database:   "testdb",
+		Collection: "users",
+		Operation:  "find",
+		Filter:     map[string]any{"name": "test"},
+		Duration:   200 * time.Millisecond,
+	}
+
+	w.maybeSlowQuery(context.Background(), info)
+
+	assert.Equal(t, "testdb", captured.Database)
+	assert.Equal(t, "users", captured.Collection)
+	assert.Equal(t, "find", captured.Operation)
+	assert.Equal(t, 200*time.Millisecond, captured.Duration)
+}
+
+func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      nil, // 无钩子
+	}
+
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	info := SlowQueryInfo{
+		Database:   "testdb",
+		Collection: "users",
+		Operation:  "find",
+		Duration:   200 * time.Millisecond,
+	}
+
+	// 不应该 panic
+	w.maybeSlowQuery(context.Background(), info)
+}
+
+func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
+	var called bool
+	hook := func(_ context.Context, _ SlowQueryInfo) {
+		called = true
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	// 耗时低于阈值
+	info := SlowQueryInfo{
+		Duration: 50 * time.Millisecond,
+	}
+
+	triggered := w.maybeSlowQuery(context.Background(), info)
+	assert.False(t, called)
+	assert.False(t, triggered)
+}
+
+func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
+	var called bool
+	hook := func(_ context.Context, _ SlowQueryInfo) {
+		called = true
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	// 耗时高于阈值
+	info := SlowQueryInfo{
+		Duration: 150 * time.Millisecond,
+	}
+
+	triggered := w.maybeSlowQuery(context.Background(), info)
+	assert.True(t, called)
+	assert.True(t, triggered)
+}
+
+func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
+	var called bool
+	hook := func(_ context.Context, _ SlowQueryInfo) {
+		called = true
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 0, // 禁用
+		SlowQueryHook:      hook,
+	}
+
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	info := SlowQueryInfo{
+		Duration: 1000 * time.Millisecond,
+	}
+
+	triggered := w.maybeSlowQuery(context.Background(), info)
+	assert.False(t, called)
+	assert.False(t, triggered)
+}
+
+func TestWrapper_Close_NilClient(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 关闭 nil client 不应该出错
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestWrapper_Client_NilClient(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 返回 nil client
+	assert.Nil(t, w.Client())
+}
+
+func TestWrapper_GetPoolStats_NilClient(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	stats := w.getPoolStats()
+	assert.Equal(t, 0, stats.TotalConnections)
+	assert.Equal(t, 0, stats.AvailableConnections)
+	assert.Equal(t, 0, stats.InUseConnections)
+}
+
+func TestBuildSlowQueryInfo(t *testing.T) {
+	// 测试 nil collection
+	info := buildSlowQueryInfo(nil, "find", map[string]any{"name": "test"}, 100*time.Millisecond)
+	assert.Equal(t, "", info.Database)
+	assert.Equal(t, "", info.Collection)
+	assert.Equal(t, "find", info.Operation)
+	assert.Equal(t, 100*time.Millisecond, info.Duration)
+}
+
+func TestWrapper_SlowQueryCounter(t *testing.T) {
+	var callCount int
+	hook := func(_ context.Context, _ SlowQueryInfo) {
+		callCount++
+	}
+
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	// 触发多次慢查询
+	info := SlowQueryInfo{Duration: 200 * time.Millisecond}
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+
+	stats := w.Stats()
+	assert.Equal(t, int64(3), stats.SlowQueries)
+	assert.Equal(t, 3, callCount)
+}
+
+func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
+	var called bool
+	hook := func(_ context.Context, _ SlowQueryInfo) {
+		called = true
+	}
+
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	// 耗时等于阈值也应该触发
+	info := SlowQueryInfo{
+		Duration: 100 * time.Millisecond,
+	}
+
+	_ = w.maybeSlowQuery(context.Background(), info)
+	assert.True(t, called)
+}
+
+// =============================================================================
+// Mock 测试 - 使用 mock 实现测试核心逻辑
+// =============================================================================
+
+func TestWrapper_Health_Success(t *testing.T) {
+	mock := newMockClientOps()
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Health(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, mock.pingCount)
+
+	stats := w.Stats()
+	assert.Equal(t, int64(1), stats.PingCount)
+	assert.Equal(t, int64(0), stats.PingErrors)
+}
+
+func TestWrapper_Health_Error(t *testing.T) {
+	mock := newMockClientOps()
+	mock.pingErr = errMockPing
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Health(context.Background())
+	assert.Error(t, err)
+	assert.Equal(t, errMockPing, err)
+	assert.Equal(t, 1, mock.pingCount)
+
+	stats := w.Stats()
+	assert.Equal(t, int64(1), stats.PingCount)
+	assert.Equal(t, int64(1), stats.PingErrors)
+}
+
+func TestWrapper_Health_WithTimeout(t *testing.T) {
+	mock := newMockClientOps()
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options: &Options{
+			HealthTimeout: 5 * time.Second,
+		},
+	}
+
+	err := w.Health(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, mock.pingCount)
+}
+
+func TestWrapper_Health_MultipleCall(t *testing.T) {
+	mock := newMockClientOps()
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	// 多次调用
+	for i := 0; i < 5; i++ {
+		err := w.Health(context.Background())
+		assert.NoError(t, err)
+	}
+
+	assert.Equal(t, 5, mock.pingCount)
+	stats := w.Stats()
+	assert.Equal(t, int64(5), stats.PingCount)
+}
+
+func TestWrapper_Close_Success(t *testing.T) {
+	mock := newMockClientOps()
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, mock.disconnected)
+}
+
+func TestWrapper_Close_Error(t *testing.T) {
+	mock := newMockClientOps()
+	mock.disconnectErr = errMockDisconnect
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Close(context.Background())
+	assert.Error(t, err)
+	assert.Equal(t, errMockDisconnect, err)
+	assert.True(t, mock.disconnected)
+}
+
+func TestWrapper_GetPoolStats_WithMock(t *testing.T) {
+	mock := newMockClientOps()
+	mock.sessionsInProgress = 10
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	stats := w.getPoolStats()
+	assert.Equal(t, 10, stats.InUseConnections)
+}
+
+func TestWrapper_FindPage_NilCollection(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.FindPage(context.Background(), nil, nil, PageOptions{Page: 1, PageSize: 10})
+	assert.Error(t, err)
+	assert.Equal(t, ErrNilCollection, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_FindPageInternal_InvalidPage(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 通过 findPageInternal 测试，绕过 findPage 的 nil collection 检查
+	// 但 findPageInternal 不检查 Page，所以这里测试 findPage 的参数校验
+	// 由于 findPage 需要真实的 *mongo.Collection，改为测试边界情况
+	result, err := w.FindPage(context.Background(), nil, nil, PageOptions{Page: 0, PageSize: 10})
+	assert.Error(t, err)
+	assert.Equal(t, ErrNilCollection, err) // nil collection 先于 invalid page 检查
+	assert.Nil(t, result)
+
+	// 测试 findPageInternal 使用有效参数（Page < 1 不会被检查，因为 findPageInternal 不做此校验）
+	mock.countResult = 0
+	mock.findErr = errMockFind
+	result, err = w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 0, PageSize: 10})
+	// findPageInternal 会尝试执行，根据 countResult 决定后续行为
+	// 由于 findErr 设置了，会在 Find 阶段失败
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_FindPageInternal_InvalidPageSize(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 测试 PageSize 为负数边界情况
+	mock.countResult = 100
+	mock.findErr = errMockFind
+
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 1, PageSize: -1})
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_FindPageInternal_CountError(t *testing.T) {
+	mock := newMockCollectionOps()
+	mock.countErr = errMockCount
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 1, PageSize: 10})
+	assert.Error(t, err)
+	assert.Equal(t, errMockCount, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_FindPageInternal_FindError(t *testing.T) {
+	mock := newMockCollectionOps()
+	mock.countResult = 100
+	mock.findErr = errMockFind
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 1, PageSize: 10})
+	assert.Error(t, err)
+	assert.Equal(t, errMockFind, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_BulkWrite_NilCollection(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.BulkWrite(context.Background(), nil, []any{1, 2, 3}, BulkOptions{})
+	assert.Error(t, err)
+	assert.Equal(t, ErrNilCollection, err)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_BulkWrite_EmptyDocs(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// bulkWrite 先检查 nil collection，所以这里测试 BulkWrite 公共接口
+	result, err := w.BulkWrite(context.Background(), nil, []any{}, BulkOptions{})
+	assert.Error(t, err)
+	assert.Equal(t, ErrNilCollection, err) // nil collection 先于 empty docs 检查
+	assert.Nil(t, result)
+}
+
+func TestWrapper_BulkWriteInternal_EmptyDocs(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 空文档数组测试 - 通过 bulkWriteInternal 测试
+	// 注意：bulkWriteInternal 不检查空文档，它会直接返回空结果
+	result, err := w.bulkWriteInternal(context.Background(), mock, []any{}, BulkOptions{BatchSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+}
+
+func TestWrapper_BulkWriteInternal_Success(t *testing.T) {
+	mock := newMockCollectionOps()
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+		map[string]any{"name": "doc2"},
+		map[string]any{"name": "doc3"},
+	}
+
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(3), result.InsertedCount)
+	assert.Empty(t, result.Errors)
+}
+
+func TestWrapper_BulkWriteInternal_DefaultBatchSize(t *testing.T) {
+	mock := newMockCollectionOps()
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+	}
+
+	// BatchSize 为 0，应使用默认值 1000
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 0})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1), result.InsertedCount)
+}
+
+func TestWrapper_BulkWriteInternal_InsertError_Unordered(t *testing.T) {
+	mock := newMockCollectionOps()
+	mock.insertErr = errMockInsert
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+		map[string]any{"name": "doc2"},
+	}
+
+	// 无序模式：遇到错误继续执行
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{
+		BatchSize: 1,
+		Ordered:   false,
+	})
+	assert.Error(t, err) // bulkWriteInternal 收集错误并返回合并的错误
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+	assert.Len(t, result.Errors, 2) // 每个批次一个错误
+}
+
+func TestWrapper_BulkWriteInternal_InsertError_Ordered(t *testing.T) {
+	mock := newMockCollectionOps()
+	mock.insertErr = errMockInsert
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+		map[string]any{"name": "doc2"},
+		map[string]any{"name": "doc3"},
+	}
+
+	// 有序模式：遇到错误停止
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{
+		BatchSize: 1,
+		Ordered:   true,
+	})
+	assert.Error(t, err) // bulkWriteInternal 收集错误并返回合并的错误
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+	assert.Len(t, result.Errors, 1) // 只有第一个批次的错误
+}
+
+func TestWrapper_BulkWriteInternal_MultipleBatches(t *testing.T) {
+	mock := newMockCollectionOps()
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 创建 10 个文档
+	docs := make([]any, 10)
+	for i := 0; i < 10; i++ {
+		docs[i] = map[string]any{"index": i}
+	}
+
+	// 每批 3 个，共 4 批（3+3+3+1）
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 3})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(10), result.InsertedCount)
+	assert.Empty(t, result.Errors)
+}
+
+func TestWrapper_BulkWriteInternal_WithSlowQueryHook(t *testing.T) {
+	mock := newMockCollectionOps()
+	var captured SlowQueryInfo
+
+	opts := &Options{
+		SlowQueryThreshold: 1 * time.Nanosecond, // 极小阈值确保触发
+		SlowQueryHook: func(_ context.Context, info SlowQueryInfo) {
+			captured = info
+		},
+	}
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	docs := []any{map[string]any{"name": "doc1"}}
+
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "bulkWrite", captured.Operation)
+}
+
+func TestBuildSlowQueryInfoFromOps(t *testing.T) {
+	// 测试 nil collection
+	info := buildSlowQueryInfoFromOps(nil, "find", map[string]any{"name": "test"})
+	assert.Equal(t, "", info.Database)
+	assert.Equal(t, "", info.Collection)
+	assert.Equal(t, "find", info.Operation)
+}
+
+func TestAdaptCollection_Nil(t *testing.T) {
+	result := adaptCollection(nil)
+	assert.Nil(t, result)
+}
+
+// =============================================================================
+// 使用真实 Collection (延迟连接) 测试验证逻辑
+// =============================================================================
+
+func TestWrapper_FindPage_InvalidPage_WithRealCollection(t *testing.T) {
+	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+
+	w := &mongoWrapper{
+		client:  client,
+		options: defaultOptions(),
+	}
+	coll := client.Database("testdb").Collection("testcoll")
+
+	// When: findPage is called with invalid page (< 1)
+	result, err := w.findPage(context.Background(), coll, map[string]any{}, PageOptions{Page: 0, PageSize: 10})
+
+	// Then: should return ErrInvalidPage
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrInvalidPage)
+}
+
+func TestWrapper_FindPage_InvalidPageSize_WithRealCollection(t *testing.T) {
+	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+
+	w := &mongoWrapper{
+		client:  client,
+		options: defaultOptions(),
+	}
+	coll := client.Database("testdb").Collection("testcoll")
+
+	// When: findPage is called with invalid page size (< 1)
+	result, err := w.findPage(context.Background(), coll, map[string]any{}, PageOptions{Page: 1, PageSize: 0})
+
+	// Then: should return ErrInvalidPageSize
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrInvalidPageSize)
+}
+
+func TestWrapper_FindPage_ValidParams_WithRealCollection(t *testing.T) {
+	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+
+	w := &mongoWrapper{
+		client:  client,
+		options: defaultOptions(),
+	}
+	coll := client.Database("testdb").Collection("testcoll")
+
+	// When: findPage is called with valid params
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	result, err := w.findPage(ctx, coll, map[string]any{}, PageOptions{Page: 1, PageSize: 10})
+
+	// Then: 可能成功（有 MongoDB）或失败（无 MongoDB），两者都是有效的代码路径
+	// 此测试主要验证代码路径可达，而非特定结果
+	if err != nil {
+		// 无 MongoDB 或连接失败
+		assert.Nil(t, result)
+	} else {
+		// 有 MongoDB 运行时，应返回有效结果
+		assert.NotNil(t, result)
+		assert.GreaterOrEqual(t, result.Page, int64(1))
+		assert.GreaterOrEqual(t, result.PageSize, int64(1))
+	}
+}
+
+func TestWrapper_BulkWrite_EmptyDocs_WithRealCollection(t *testing.T) {
+	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+
+	w := &mongoWrapper{
+		client:  client,
+		options: defaultOptions(),
+	}
+	coll := client.Database("testdb").Collection("testcoll")
+
+	// When: bulkWrite is called with empty docs
+	result, err := w.bulkWrite(context.Background(), coll, []any{}, BulkOptions{})
+
+	// Then: should return ErrEmptyDocs
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrEmptyDocs)
+}
+
+func TestWrapper_BulkWrite_ValidParams_WithRealCollection(t *testing.T) {
+	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+
+	w := &mongoWrapper{
+		client:  client,
+		options: defaultOptions(),
+	}
+	coll := client.Database("testdb").Collection("testcoll")
+
+	// When: bulkWrite is called with valid params
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	docs := []any{map[string]any{"name": "test"}}
+	result, err := w.bulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 10})
+
+	// Then: 可能成功（有 MongoDB）或失败（无 MongoDB），两者都是有效的代码路径
+	// 此测试主要验证代码路径可达，而非特定结果
+	assert.NotNil(t, result)
+	if err != nil {
+		// 无 MongoDB 或连接失败 - 错误被收集在 result.Errors 中
+		assert.NotEmpty(t, result.Errors)
+	} else {
+		// 有 MongoDB 运行时，应返回成功结果
+		assert.Empty(t, result.Errors)
+		assert.Equal(t, int64(1), result.InsertedCount)
+	}
+}

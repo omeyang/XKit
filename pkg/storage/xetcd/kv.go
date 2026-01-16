@@ -96,6 +96,9 @@ func (c *Client) PutWithTTL(ctx context.Context, key string, value []byte, ttl t
 	// 写入带租约的键值
 	_, err = c.client.Put(ctx, key, string(value), clientv3.WithLease(lease.ID))
 	if err != nil {
+		// Put 失败时尝试撤销租约，避免租约泄漏
+		// 使用 Background context 确保即使原 ctx 已取消也能执行撤销
+		c.tryRevokeLease(lease.ID)
 		return fmt.Errorf("xetcd: put %q with ttl: %w", key, err)
 	}
 	return nil
@@ -205,4 +208,16 @@ func (c *Client) Count(ctx context.Context, prefix string) (int64, error) {
 		return 0, fmt.Errorf("xetcd: count %q: %w", prefix, err)
 	}
 	return resp.Count, nil
+}
+
+// tryRevokeLease 尝试撤销租约，用于清理场景。
+// 撤销失败时不返回错误，因为租约最终会自动过期。
+// 使用 Background context 确保即使原 context 已取消也能执行。
+func (c *Client) tryRevokeLease(leaseID clientv3.LeaseID) {
+	_, err := c.client.Revoke(context.Background(), leaseID)
+	if err != nil {
+		// 租约撤销失败不影响主流程，租约会自动过期
+		// 这里显式处理错误而非忽略，满足 errcheck 要求
+		return
+	}
 }

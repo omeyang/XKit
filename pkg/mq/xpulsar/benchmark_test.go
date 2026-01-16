@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
-	"github.com/apache/pulsar-client-go/pulsar"
 )
 
 // =============================================================================
@@ -52,9 +52,9 @@ func BenchmarkDLQBuilder_Build(b *testing.B) {
 
 func BenchmarkDLQBuilder_WithProducerOptions(b *testing.B) {
 	opts := pulsar.ProducerOptions{
-		Topic:           "test-topic",
-		Name:            "test-producer",
-		SendTimeout:     10 * time.Second,
+		Topic:              "test-topic",
+		Name:               "test-producer",
+		SendTimeout:        10 * time.Second,
 		MaxPendingMessages: 100,
 	}
 

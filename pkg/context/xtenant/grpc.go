@@ -121,16 +121,50 @@ func GRPCUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 type GRPCInterceptorOption func(*grpcInterceptorConfig)
 
 type grpcInterceptorConfig struct {
-	requireTenant bool
+	requireTenant   bool
+	requireTenantID bool
+	ensureTrace     bool
 }
 
 // WithGRPCRequireTenant 设置是否要求租户信息必须存在
 //
-// 如果设置为 true，当租户信息缺失时返回 InvalidArgument 错误。
+// 如果设置为 true，当 TenantID 或 TenantName 缺失时返回 InvalidArgument 错误。
 // 默认为 false（不强制要求）。
+//
+// 与 WithGRPCRequireTenantID 互斥，后设置的选项生效。
 func WithGRPCRequireTenant() GRPCInterceptorOption {
 	return func(cfg *grpcInterceptorConfig) {
 		cfg.requireTenant = true
+		cfg.requireTenantID = false
+	}
+}
+
+// WithGRPCRequireTenantID 设置只要求 TenantID 必须存在
+//
+// 如果设置为 true，当 TenantID 缺失时返回 InvalidArgument 错误，TenantName 不做要求。
+// 适用于 TenantName 非必填的场景。
+// 默认为 false（不强制要求）。
+//
+// 与 WithGRPCRequireTenant 互斥，后设置的选项生效。
+func WithGRPCRequireTenantID() GRPCInterceptorOption {
+	return func(cfg *grpcInterceptorConfig) {
+		cfg.requireTenantID = true
+		cfg.requireTenant = false
+	}
+}
+
+// WithGRPCEnsureTrace 启用自动生成追踪信息
+//
+// 当上游未传递 trace metadata 时，自动生成新的 TraceID、SpanID、RequestID。
+// 使当前服务成为分布式链路追踪的起点。
+// 默认为 false（仅传播上游已有的追踪信息）。
+//
+// 典型场景：
+//   - 网关服务：启用此选项，确保每个请求都有追踪信息
+//   - 下游服务：不启用，只传播上游的追踪信息
+func WithGRPCEnsureTrace() GRPCInterceptorOption {
+	return func(cfg *grpcInterceptorConfig) {
+		cfg.ensureTrace = true
 	}
 }
 
@@ -147,7 +181,7 @@ func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.U
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (any, error) {
-		ctx, err := injectTenantToContext(ctx, cfg.requireTenant)
+		ctx, err := injectTenantToContext(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +208,7 @@ func GRPCStreamServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
-		ctx, err := injectTenantToContext(ss.Context(), cfg.requireTenant)
+		ctx, err := injectTenantToContext(ss.Context(), cfg)
 		if err != nil {
 			return err
 		}
@@ -336,18 +370,45 @@ func getMetadataValue(md metadata.MD, key string) string {
 }
 
 // injectTenantToContext 从 incoming context 提取租户信息和追踪信息并注入
-func injectTenantToContext(ctx context.Context, requireTenant bool) (context.Context, error) {
-	// 提取租户信息
+func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (context.Context, error) {
+	// 提取并验证租户信息
 	info := ExtractFromIncomingContext(ctx)
-
-	// 如果要求租户信息必须存在，进行验证
-	if requireTenant {
-		if err := info.Validate(); err != nil {
-			return nil, status.Error(codes.InvalidArgument, err.Error())
-		}
+	if err := validateGRPCTenantInfo(info, cfg); err != nil {
+		return nil, err
 	}
 
 	// 注入租户信息到 context
+	ctx, err := injectGRPCTenantInfoToContext(ctx, info)
+	if err != nil {
+		return nil, err
+	}
+
+	// 处理追踪信息
+	trace := ExtractTraceFromIncomingContext(ctx)
+	ctx, err = injectGRPCTraceToContext(ctx, trace, cfg.ensureTrace)
+	if err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
+// validateGRPCTenantInfo 验证租户信息
+func validateGRPCTenantInfo(info TenantInfo, cfg *grpcInterceptorConfig) error {
+	if cfg.requireTenant {
+		if err := info.Validate(); err != nil {
+			return status.Error(codes.InvalidArgument, err.Error())
+		}
+	} else if cfg.requireTenantID {
+		if info.TenantID == "" {
+			return status.Error(codes.InvalidArgument, ErrEmptyTenantID.Error())
+		}
+	}
+	return nil
+}
+
+// injectGRPCTenantInfoToContext 将租户信息注入 context
+func injectGRPCTenantInfoToContext(ctx context.Context, info TenantInfo) (context.Context, error) {
 	var err error
 	if info.TenantID != "" {
 		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
@@ -361,13 +422,20 @@ func injectTenantToContext(ctx context.Context, requireTenant bool) (context.Con
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
+	return ctx, nil
+}
 
-	// 提取并注入追踪信息（确保链路追踪连续性）
-	trace := ExtractTraceFromIncomingContext(ctx)
-	ctx, err = xctx.WithTrace(ctx, trace)
+// injectGRPCTraceToContext 处理追踪信息并注入 context
+func injectGRPCTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
+	ctx, err := xctx.WithTrace(ctx, trace)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-
+	if ensureTrace {
+		ctx, err = xctx.EnsureTrace(ctx)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
 	return ctx, nil
 }

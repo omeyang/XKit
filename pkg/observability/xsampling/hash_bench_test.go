@@ -12,9 +12,9 @@ import (
 // 测试用的典型 key
 var testKeys = []string{
 	"0af7651916cd43dd8448eb211c80319c", // trace_id (32 hex)
-	"tenant-12345",                      // tenant_id
-	"user-abc-123-xyz",                  // user_id
-	"short",                             // 短字符串
+	"tenant-12345",                     // tenant_id
+	"user-abc-123-xyz",                 // user_id
+	"short",                            // 短字符串
 	"a-very-long-key-that-might-be-used-in-some-edge-cases-for-sampling", // 长字符串
 }
 

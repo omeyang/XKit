@@ -135,11 +135,11 @@ func Example_redisWithOptions() {
 
 	// 使用多种选项创建锁
 	locker := factory.NewMutex("configured-lock",
-		xdlock.WithKeyPrefix("myapp:locks:"),  // 自定义 key 前缀
-		xdlock.WithExpiry(30*time.Second),     // 锁过期时间
-		xdlock.WithTries(5),                   // 重试次数
+		xdlock.WithKeyPrefix("myapp:locks:"),        // 自定义 key 前缀
+		xdlock.WithExpiry(30*time.Second),           // 锁过期时间
+		xdlock.WithTries(5),                         // 重试次数
 		xdlock.WithRetryDelay(200*time.Millisecond), // 重试延迟
-		xdlock.WithDriftFactor(0.01),          // 时钟漂移因子
+		xdlock.WithDriftFactor(0.01),                // 时钟漂移因子
 	)
 
 	if err := locker.Lock(ctx); err != nil {

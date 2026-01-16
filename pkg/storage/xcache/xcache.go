@@ -4,11 +4,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+// lockValueCounter 用于在 crypto/rand 失败时生成唯一的锁值后备。
+var lockValueCounter atomic.Uint64
 
 // unlockScript 是释放分布式锁的 Lua 脚本。
 // 返回 1 表示成功释放，0 表示锁已不属于当前持有者（过期或被抢走）。
@@ -83,6 +89,19 @@ func NewMemoryFromClient(client *ristretto.Cache[string, []byte]) (Memory, error
 // NewLoader 创建 Cache-Aside 加载器。
 // cache 必须是已初始化的 Redis 缓存实例。
 // 提供 singleflight、分布式锁、Cache-Aside 等功能。
+//
+// 生命周期说明：
+//   - Loader 不持有需要释放的资源，无需调用 Close
+//   - 内部使用的 singleflight.Group 是无状态的，会随 Loader 一起被 GC 回收
+//   - 底层 Redis 缓存的生命周期由调用方管理，Loader 不会关闭传入的 cache
+//
+// 使用示例：
+//
+//	cache, _ := xcache.NewRedis(redisClient)
+//	loader := xcache.NewLoader(cache, xcache.WithDistributedLock(true))
+//	// 使用 loader...
+//	// 无需关闭 loader，只需在适当时机关闭 cache
+//	cache.Close()
 func NewLoader(cache Redis, opts ...LoaderOption) Loader {
 	options := defaultLoaderOptions()
 	for _, opt := range opts {
@@ -147,12 +166,22 @@ func (w *redisWrapper) tryLock(ctx context.Context, key, value string, ttl time.
 }
 
 // lockWithRetry 带重试的获取锁。
+// 使用可复用的 Timer 避免 time.After 的泄漏问题。
+//
+// 重试行为说明：
+// 此函数在 Lock() 中首次 tryLock 失败后被调用，因此：
+//   - 首次尝试：在 Lock() 中立即执行（无等待）
+//   - 后续重试：每次等待 LockRetryInterval 后执行
+//   - 总尝试次数：1（首次）+ LockRetryCount（重试）
 func (w *redisWrapper) lockWithRetry(ctx context.Context, key, value string, ttl time.Duration) (bool, error) {
+	timer := time.NewTimer(w.options.LockRetryInterval)
+	defer timer.Stop()
+
 	for i := 0; i < w.options.LockRetryCount; i++ {
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-time.After(w.options.LockRetryInterval):
+		case <-timer.C:
 		}
 
 		acquired, err := w.tryLock(ctx, key, value, ttl)
@@ -162,6 +191,9 @@ func (w *redisWrapper) lockWithRetry(ctx context.Context, key, value string, ttl
 		if acquired {
 			return true, nil
 		}
+
+		// 重置 timer 用于下次迭代
+		timer.Reset(w.options.LockRetryInterval)
 	}
 	return false, nil
 }
@@ -241,12 +273,36 @@ func (w *memoryWrapper) Close() {
 // 辅助函数
 // =============================================================================
 
+// hostIdentifier 缓存的主机标识符，用于锁值后备方案。
+// 只计算一次以避免重复系统调用开销。
+var hostIdentifier = getHostIdentifier()
+
+// getHostIdentifier 获取主机标识符。
+// 优先使用主机名，失败时使用固定前缀 + 随机后缀。
+func getHostIdentifier() string {
+	hostname, err := os.Hostname()
+	if err == nil && hostname != "" {
+		return hostname
+	}
+	// 主机名获取失败，使用固定前缀 + 启动时的纳秒时间戳
+	return fmt.Sprintf("unknown-%d", time.Now().UnixNano())
+}
+
 // generateLockValue 生成唯一的锁值。
+// 使用 crypto/rand 生成 16 字节随机数，确保锁值的唯一性。
+// 在极少数 crypto/rand 失败的情况下，使用主机标识符 + 进程 ID + 时间戳 + 递增计数器作为后备。
+//
+// 后备方案的唯一性保证：
+//   - hostIdentifier: 区分不同主机
+//   - os.Getpid(): 区分同一主机上的不同进程
+//   - time.Now().UnixNano(): 区分同一进程内的不同时间点
+//   - lockValueCounter: 区分同一纳秒内的多次调用（理论上不可能，但作为额外保险）
 func generateLockValue() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand.Read 极少失败，使用时间戳作为后备
-		return hex.EncodeToString([]byte(time.Now().String()))
+		// crypto/rand.Read 极少失败，使用多重因素确保唯一性
+		counter := lockValueCounter.Add(1)
+		return fmt.Sprintf("%s-%d-%d-%d", hostIdentifier, os.Getpid(), time.Now().UnixNano(), counter)
 	}
 	return hex.EncodeToString(b)
 }

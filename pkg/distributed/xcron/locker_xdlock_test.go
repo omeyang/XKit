@@ -51,9 +51,9 @@ func (m *mockXdlockLocker) Extend(ctx context.Context) error {
 
 // mockXdlockFactory 实现 xdlock.Factory 接口用于测试
 type mockXdlockFactory struct {
-	locker    *mockXdlockLocker
+	locker      *mockXdlockLocker
 	closeCalled bool
-	healthErr error
+	healthErr   error
 }
 
 func (f *mockXdlockFactory) NewMutex(key string, opts ...xdlock.MutexOption) xdlock.Locker {

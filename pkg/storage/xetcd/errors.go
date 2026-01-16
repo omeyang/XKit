@@ -10,6 +10,10 @@ var (
 	// ErrNoEndpoints 未配置 etcd 端点。
 	ErrNoEndpoints = errors.New("xetcd: no endpoints configured")
 
+	// ErrInvalidEndpoint endpoint 格式无效。
+	// 有效格式应为 "host:port"，例如 "localhost:2379" 或 "192.168.1.1:2379"。
+	ErrInvalidEndpoint = errors.New("xetcd: invalid endpoint format, expected host:port")
+
 	// ErrKeyNotFound 键不存在。
 	ErrKeyNotFound = errors.New("xetcd: key not found")
 

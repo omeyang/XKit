@@ -375,7 +375,7 @@ func TestRedisLocker_TryLockFailed_WithMiniredis(t *testing.T) {
 	locker1 := factory.NewMutex("test-trylock-fail", xdlock.WithTries(1))
 	err = locker1.Lock(ctx)
 	require.NoError(t, err)
-	defer func() { _ = locker1.Unlock(ctx) }()
+	defer func() { _ = locker1.Unlock(ctx) }() //nolint:errcheck // cleanup in test
 
 	// 第二个 locker TryLock 应该失败（锁被其他持有者占用）
 	locker2 := factory.NewMutex("test-trylock-fail", xdlock.WithTries(1))
@@ -399,7 +399,7 @@ func TestRedisLocker_LockFailed_WithMiniredis(t *testing.T) {
 	locker1 := factory.NewMutex("test-lock-fail", xdlock.WithTries(1))
 	err = locker1.Lock(ctx)
 	require.NoError(t, err)
-	defer func() { _ = locker1.Unlock(ctx) }()
+	defer func() { _ = locker1.Unlock(ctx) }() //nolint:errcheck // cleanup in test
 
 	// 第二个 locker Lock 应该失败（锁被其他持有者占用，tries=1 不重试）
 	locker2 := factory.NewMutex("test-lock-fail", xdlock.WithTries(1))
@@ -542,9 +542,9 @@ func TestNewRedisFactory_MultipleClients_WithMiniredis(t *testing.T) {
 	client1 := redis.NewClient(&redis.Options{Addr: mr1.Addr()})
 	client2 := redis.NewClient(&redis.Options{Addr: mr2.Addr()})
 	client3 := redis.NewClient(&redis.Options{Addr: mr3.Addr()})
-	defer client1.Close()
-	defer client2.Close()
-	defer client3.Close()
+	defer client1.Close() //nolint:errcheck // cleanup in test
+	defer client2.Close() //nolint:errcheck // cleanup in test
+	defer client3.Close() //nolint:errcheck // cleanup in test
 
 	factory, err := xdlock.NewRedisFactory(client1, client2, client3)
 	require.NoError(t, err)
@@ -774,7 +774,7 @@ func TestRedisLocker_LockContextCanceled_WithMiniredis(t *testing.T) {
 	locker1 := factory.NewMutex("test-ctx-cancel", xdlock.WithTries(1))
 	err = locker1.Lock(ctx1)
 	require.NoError(t, err)
-	defer func() { _ = locker1.Unlock(ctx1) }()
+	defer func() { _ = locker1.Unlock(ctx1) }() //nolint:errcheck // cleanup in test
 
 	// 第二个 locker 尝试获取锁，context 立即取消
 	ctx2, cancel2 := context.WithCancel(context.Background())
@@ -784,7 +784,6 @@ func TestRedisLocker_LockContextCanceled_WithMiniredis(t *testing.T) {
 	err = locker2.Lock(ctx2)
 	assert.True(t, errors.Is(err, context.Canceled) || errors.Is(err, xdlock.ErrLockHeld))
 }
-
 
 // =============================================================================
 // Value 和 Until 测试

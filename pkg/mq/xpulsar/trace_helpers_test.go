@@ -136,23 +136,23 @@ type mockMessage struct {
 	properties map[string]string
 }
 
-func (m *mockMessage) Topic() string                            { return "test-topic" }
-func (m *mockMessage) Properties() map[string]string            { return m.properties }
-func (m *mockMessage) Payload() []byte                          { return nil }
-func (m *mockMessage) ID() pulsar.MessageID                     { return nil }
-func (m *mockMessage) PublishTime() time.Time                   { return time.Time{} }
-func (m *mockMessage) EventTime() time.Time                     { return time.Time{} }
-func (m *mockMessage) Key() string                              { return "" }
-func (m *mockMessage) OrderingKey() string                      { return "" }
-func (m *mockMessage) RedeliveryCount() uint32                  { return 0 }
-func (m *mockMessage) IsReplicated() bool                       { return false }
-func (m *mockMessage) GetReplicatedFrom() string                { return "" }
-func (m *mockMessage) GetSchemaValue(v interface{}) error       { return nil }
-func (m *mockMessage) ProducerName() string                     { return "" }
-func (m *mockMessage) SchemaVersion() []byte                    { return nil }
+func (m *mockMessage) Topic() string                                   { return "test-topic" }
+func (m *mockMessage) Properties() map[string]string                   { return m.properties }
+func (m *mockMessage) Payload() []byte                                 { return nil }
+func (m *mockMessage) ID() pulsar.MessageID                            { return nil }
+func (m *mockMessage) PublishTime() time.Time                          { return time.Time{} }
+func (m *mockMessage) EventTime() time.Time                            { return time.Time{} }
+func (m *mockMessage) Key() string                                     { return "" }
+func (m *mockMessage) OrderingKey() string                             { return "" }
+func (m *mockMessage) RedeliveryCount() uint32                         { return 0 }
+func (m *mockMessage) IsReplicated() bool                              { return false }
+func (m *mockMessage) GetReplicatedFrom() string                       { return "" }
+func (m *mockMessage) GetSchemaValue(v interface{}) error              { return nil }
+func (m *mockMessage) ProducerName() string                            { return "" }
+func (m *mockMessage) SchemaVersion() []byte                           { return nil }
 func (m *mockMessage) GetEncryptionContext() *pulsar.EncryptionContext { return nil }
-func (m *mockMessage) Index() *uint64                           { return nil }
-func (m *mockMessage) BrokerPublishTime() *time.Time            { return nil }
+func (m *mockMessage) Index() *uint64                                  { return nil }
+func (m *mockMessage) BrokerPublishTime() *time.Time                   { return nil }
 
 // =============================================================================
 // extractPulsarTrace Additional Tests

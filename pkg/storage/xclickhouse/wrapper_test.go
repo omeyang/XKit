@@ -57,13 +57,16 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 模拟慢查询触发
@@ -73,7 +76,7 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		Duration: 200 * time.Millisecond,
 	}
 
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 
 	assert.Equal(t, "SELECT * FROM users", captured.Query)
 	assert.Len(t, captured.Args, 2)
@@ -81,13 +84,16 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 }
 
 func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      nil, // 无钩子
+	}
+
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      nil, // 无钩子
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	info := SlowQueryInfo{
@@ -96,7 +102,7 @@ func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
 	}
 
 	// 不应该 panic
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 }
 
 func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
@@ -105,13 +111,16 @@ func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时低于阈值
@@ -130,13 +139,15 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时高于阈值
@@ -155,13 +166,15 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 0, // 禁用
+		SlowQueryHook:      hook,
+	}
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 0, // 禁用
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	info := SlowQueryInfo{
@@ -258,19 +271,22 @@ func TestWrapper_SlowQueryCounter(t *testing.T) {
 		callCount++
 	}
 
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 触发多次慢查询
 	info := SlowQueryInfo{Duration: 200 * time.Millisecond}
-	w.triggerSlowQueryHook(context.Background(), info)
-	w.triggerSlowQueryHook(context.Background(), info)
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 
 	stats := w.Stats()
 	assert.Equal(t, int64(3), stats.SlowQueries)
@@ -283,12 +299,15 @@ func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &clickhouseWrapper{
-		conn: nil,
-		options: &Options{
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时等于阈值也应该触发
@@ -374,29 +393,140 @@ func TestBatchInsert_EmptyRows(t *testing.T) {
 
 func TestValidatePageOptions(t *testing.T) {
 	tests := []struct {
-		name    string
-		query   string
-		opts    PageOptions
-		wantErr error
+		name           string
+		query          string
+		opts           PageOptions
+		wantErr        error
+		wantNormalized string
 	}{
-		{"空查询", "", PageOptions{Page: 1, PageSize: 10}, ErrEmptyQuery},
-		{"无效页码", "SELECT *", PageOptions{Page: 0, PageSize: 10}, ErrInvalidPage},
-		{"负数页码", "SELECT *", PageOptions{Page: -1, PageSize: 10}, ErrInvalidPage},
-		{"无效页大小", "SELECT *", PageOptions{Page: 1, PageSize: 0}, ErrInvalidPageSize},
-		{"负数页大小", "SELECT *", PageOptions{Page: 1, PageSize: -1}, ErrInvalidPageSize},
-		{"有效参数", "SELECT *", PageOptions{Page: 1, PageSize: 10}, nil},
+		{"空查询", "", PageOptions{Page: 1, PageSize: 10}, ErrEmptyQuery, ""},
+		{"无效页码", "SELECT *", PageOptions{Page: 0, PageSize: 10}, ErrInvalidPage, ""},
+		{"负数页码", "SELECT *", PageOptions{Page: -1, PageSize: 10}, ErrInvalidPage, ""},
+		{"无效页大小", "SELECT *", PageOptions{Page: 1, PageSize: 0}, ErrInvalidPageSize, ""},
+		{"负数页大小", "SELECT *", PageOptions{Page: 1, PageSize: -1}, ErrInvalidPageSize, ""},
+		{"有效参数", "SELECT *", PageOptions{Page: 1, PageSize: 10}, nil, "SELECT *"},
+		{"末尾分号", "SELECT * FROM users;", PageOptions{Page: 1, PageSize: 10}, nil, "SELECT * FROM users"},
+		{"末尾多个分号和空白", "SELECT * ; ; ", PageOptions{Page: 1, PageSize: 10}, nil, "SELECT *"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePageOptions(tt.query, tt.opts)
+			normalized, _, err := validatePageOptions(tt.query, tt.opts)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Empty(t, normalized)
 			} else {
 				assert.NoError(t, err)
+				assert.Equal(t, tt.wantNormalized, normalized)
 			}
 		})
 	}
+}
+
+// =============================================================================
+// SQL 规范化和校验测试
+// =============================================================================
+
+func TestNormalizeQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{"无变化", "SELECT * FROM users", "SELECT * FROM users"},
+		{"去除末尾分号", "SELECT * FROM users;", "SELECT * FROM users"},
+		{"去除末尾空格", "SELECT * FROM users   ", "SELECT * FROM users"},
+		{"去除末尾换行", "SELECT * FROM users\n", "SELECT * FROM users"},
+		{"去除多个末尾字符", "SELECT * ; ; \n \t ", "SELECT *"},
+		{"空字符串", "", ""},
+		{"只有分号", ";;;", ""},
+		{"只有空白", "   \t\n", ""},
+		{"保留中间分号", "SELECT ';' FROM users", "SELECT ';' FROM users"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeQuery(tt.query)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestValidateQuerySyntax(t *testing.T) {
+	tests := []struct {
+		name           string
+		query          string
+		wantErr        error
+		wantNormalized string
+	}{
+		{"正常查询", "SELECT * FROM users", nil, "SELECT * FROM users"},
+		{"带分号的正常查询", "SELECT * FROM users;", nil, "SELECT * FROM users"},
+		{"空查询", "", ErrEmptyQuery, ""},
+		{"只有空白", "   ", ErrEmptyQuery, ""},
+		{"包含 FORMAT", "SELECT * FROM users FORMAT JSON", ErrQueryContainsFormat, ""},
+		{"包含小写 format", "SELECT * FROM users format TabSeparated", ErrQueryContainsFormat, ""},
+		{"包含 SETTINGS", "SELECT * FROM users SETTINGS max_threads=4", ErrQueryContainsSettings, ""},
+		{"包含小写 settings", "SELECT * FROM users settings enable_optimize=1", ErrQueryContainsSettings, ""},
+		// 已知限制：正则使用 \b 单词边界，无法区分 SQL 关键字和字符串常量中的同名词
+		// 实际使用中很少在字符串常量中使用 FORMAT/SETTINGS 作为关键字
+		{"FORMAT 在字符串中", "SELECT * FROM users WHERE name LIKE '%FORMAT%'", ErrQueryContainsFormat, ""},
+		{"FORMATTER 不匹配", "SELECT * FROM users WHERE type = 'FORMATTER'", nil, "SELECT * FROM users WHERE type = 'FORMATTER'"},
+		{"SETTINGS_KEY 不匹配", "SELECT SETTINGS_KEY FROM config", nil, "SELECT SETTINGS_KEY FROM config"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalized, err := validateQuerySyntax(tt.query)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Empty(t, normalized)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantNormalized, normalized)
+			}
+		})
+	}
+}
+
+func TestQueryPage_ContainsFormat(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(),
+		"SELECT * FROM users FORMAT JSON",
+		PageOptions{Page: 1, PageSize: 10})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrQueryContainsFormat)
+}
+
+func TestQueryPage_ContainsSettings(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(),
+		"SELECT * FROM users SETTINGS max_threads=4",
+		PageOptions{Page: 1, PageSize: 10})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrQueryContainsSettings)
+}
+
+func TestQueryPage_NormalizesTrailingSemicolon(t *testing.T) {
+	// 此测试验证末尾分号被正确去除
+	// 通过直接调用 validatePageOptions 验证
+
+	// 带分号的查询应该通过校验
+	normalized, _, err := validatePageOptions("SELECT * FROM users;", PageOptions{Page: 1, PageSize: 10})
+
+	// 校验应该通过
+	assert.NoError(t, err)
+	// 规范化后应该去除末尾分号
+	assert.Equal(t, "SELECT * FROM users", normalized)
 }
 
 func TestCalculateTotalPages(t *testing.T) {

@@ -294,6 +294,11 @@ func TestKV_PutWithTTL_PutError(t *testing.T) {
 		Put(ctx, key, string(value), gomock.Any()).
 		Return(nil, expectedErr)
 
+	// Put 失败后会调用 Revoke 撤销租约（使用 Background context）
+	mockClient.EXPECT().
+		Revoke(gomock.Any(), leaseID).
+		Return(&clientv3.LeaseRevokeResponse{}, nil)
+
 	err := c.PutWithTTL(ctx, key, value, ttl)
 	if err == nil {
 		t.Fatal("PutWithTTL() error = nil, want error")

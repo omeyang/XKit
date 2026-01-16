@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
+	"github.com/omeyang/xkit/pkg/storage/internal/storageopt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -22,6 +23,9 @@ import (
 type clickhouseWrapper struct {
 	conn    driver.Conn
 	options *Options
+
+	// 慢查询检测器
+	slowQueryDetector *storageopt.SlowQueryDetector[SlowQueryInfo]
 
 	// 统计计数器
 	pingCount   atomic.Int64
@@ -83,6 +87,11 @@ func (w *clickhouseWrapper) Stats() Stats {
 
 // Close 关闭 ClickHouse 连接。
 func (w *clickhouseWrapper) Close() error {
+	// 关闭慢查询检测器
+	if w.slowQueryDetector != nil {
+		w.slowQueryDetector.Close()
+	}
+
 	if w.conn == nil {
 		return nil
 	}
@@ -95,9 +104,12 @@ func (w *clickhouseWrapper) Close() error {
 
 // QueryPage 分页查询。
 func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (result *PageResult, err error) {
-	if err := validatePageOptions(query, opts); err != nil {
+	normalizedQuery, offset, err := validatePageOptions(query, opts)
+	if err != nil {
 		return nil, err
 	}
+	// 使用规范化后的查询
+	query = normalizedQuery
 
 	start := time.Now()
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
@@ -134,8 +146,8 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 		return nil, err
 	}
 
-	// 执行分页查询
-	columns, data, err := w.executePageQuery(ctx, query, opts, args...)
+	// 执行分页查询（传递已计算的 offset，避免重复计算）
+	columns, data, err := w.executePageQuery(ctx, query, opts.PageSize, offset, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -150,18 +162,79 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 	}, nil
 }
 
-// validatePageOptions 验证分页参数。
-func validatePageOptions(query string, opts PageOptions) error {
-	if query == "" {
-		return ErrEmptyQuery
+// queryClausePattern 用于检测查询中的 FORMAT 和 SETTINGS 子句。
+// 使用单词边界匹配，忽略大小写。
+//
+// 已知局限性：此正则匹配可能产生误判，例如：
+//   - WHERE name = 'FORMAT' → 会误判为包含 FORMAT 子句
+//   - 字符串字面量或注释中的关键字可能被误判
+//
+// 对于复杂查询场景，建议直接使用 Conn() 执行查询。
+var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
+
+// normalizeQuery 规范化查询语句。
+// 去除末尾的分号和空白字符。
+func normalizeQuery(query string) string {
+	// 去除末尾空白
+	for len(query) > 0 {
+		last := query[len(query)-1]
+		if last == ' ' || last == '\t' || last == '\n' || last == '\r' || last == ';' {
+			query = query[:len(query)-1]
+		} else {
+			break
+		}
 	}
-	if opts.Page < 1 {
-		return ErrInvalidPage
+	return query
+}
+
+// validateQuerySyntax 校验查询语法，检测不支持的子句。
+// 返回规范化后的查询和可能的错误。
+func validateQuerySyntax(query string) (string, error) {
+	// 先规范化
+	normalized := normalizeQuery(query)
+	if normalized == "" {
+		return "", ErrEmptyQuery
 	}
-	if opts.PageSize < 1 {
-		return ErrInvalidPageSize
+
+	// 检测 FORMAT 和 SETTINGS 子句
+	matches := queryClausePattern.FindAllString(normalized, -1)
+	for _, match := range matches {
+		switch {
+		case len(match) >= 6 && (match[0] == 'F' || match[0] == 'f'):
+			return "", ErrQueryContainsFormat
+		case len(match) >= 8 && (match[0] == 'S' || match[0] == 's'):
+			return "", ErrQueryContainsSettings
+		}
 	}
-	return nil
+
+	return normalized, nil
+}
+
+// validatePageOptions 验证分页参数并规范化查询。
+// 返回规范化后的查询、计算后的 offset 和可能的错误。
+func validatePageOptions(query string, opts PageOptions) (normalizedQuery string, offset int64, err error) {
+	normalized, err := validateQuerySyntax(query)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// 使用通用分页验证，包含溢出检查
+	offset, validateErr := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	if validateErr != nil {
+		// 转换为包级别错误
+		switch validateErr {
+		case storageopt.ErrInvalidPage:
+			return "", 0, ErrInvalidPage
+		case storageopt.ErrInvalidPageSize:
+			return "", 0, ErrInvalidPageSize
+		case storageopt.ErrPageOverflow:
+			return "", 0, ErrPageOverflow
+		default:
+			return "", 0, validateErr
+		}
+	}
+
+	return normalized, offset, nil
 }
 
 // executeCountQuery 执行计数查询。
@@ -177,10 +250,10 @@ func (w *clickhouseWrapper) executeCountQuery(ctx context.Context, query string,
 }
 
 // executePageQuery 执行分页数据查询。
-func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, opts PageOptions, args ...any) ([]string, [][]any, error) {
+// pageSize 和 offset 由调用方传入，避免重复计算。
+func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, pageSize, offset int64, args ...any) ([]string, [][]any, error) {
 	w.queryCount.Add(1)
-	offset := (opts.Page - 1) * opts.PageSize
-	pageQuery := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, opts.PageSize, offset)
+	pageQuery := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, pageSize, offset)
 
 	rows, err := w.conn.Query(ctx, pageQuery, args...)
 	if err != nil {
@@ -213,8 +286,13 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 		scanDest := make([]any, len(columnTypes))
 		for i := range scanDest {
 			scanType := columnTypes[i].ScanType()
-			// reflect.New 创建指向该类型零值的指针，Interface() 返回 any 类型
-			scanDest[i] = reflect.New(scanType).Interface()
+			// 防护：某些特殊类型可能返回 nil ScanType，使用 *any 作为后备
+			if scanType == nil {
+				scanDest[i] = new(any)
+			} else {
+				// reflect.New 创建指向该类型零值的指针，Interface() 返回 any 类型
+				scanDest[i] = reflect.New(scanType).Interface()
+			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
@@ -357,63 +435,66 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 		return 0, []error{fmt.Errorf("prepare batch failed: %w", err)}
 	}
 
-	// 标记是否已成功发送，用于 defer 中决定是否需要 Abort
-	var sent bool
-	defer func() {
-		if !sent {
-			// 未发送时调用 Abort 释放资源
-			if abortErr := batchObj.Abort(); abortErr != nil {
-				errs = append(errs, fmt.Errorf("abort batch failed: %w", abortErr))
-			}
+	// 追加所有行到批次
+	appendedCount, errs = w.appendRowsToBatch(ctx, batchObj, batch)
+
+	// 如果没有成功追加任何行，中止批次
+	if appendedCount == 0 {
+		w.abortBatch(batchObj, &errs)
+		return 0, errs
+	}
+
+	// 发送批次
+	if err := batchObj.Send(); err != nil {
+		errs = append(errs, fmt.Errorf("send batch failed: %w", err))
+		return 0, errs
+	}
+
+	return appendedCount, errs
+}
+
+// appendRowsToBatch 将行追加到批次中。
+// 每 100 行检查一次 context，平衡性能和响应性。
+func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driver.Batch, batch []any) (appendedCount int64, errs []error) {
+	const checkInterval = 100
+	for i, row := range batch {
+		// 定期检查 context 是否已取消
+		if i > 0 && i%checkInterval == 0 && ctx.Err() != nil {
+			errs = append(errs, fmt.Errorf("context canceled during append at row %d: %w", i, ctx.Err()))
+			return appendedCount, errs
 		}
-	}()
-	for _, row := range batch {
 		if err := batchObj.AppendStruct(row); err != nil {
 			errs = append(errs, fmt.Errorf("append struct failed: %w", err))
 			continue
 		}
 		appendedCount++
 	}
-
-	// 如果没有成功追加任何行，跳过 Send（defer 会自动 Abort）
-	if appendedCount == 0 {
-		return 0, errs
-	}
-
-	if err := batchObj.Send(); err != nil {
-		errs = append(errs, fmt.Errorf("send batch failed: %w", err))
-		return 0, errs
-	}
-
-	sent = true
 	return appendedCount, errs
+}
+
+// abortBatch 中止批次并记录错误。
+func (w *clickhouseWrapper) abortBatch(batchObj driver.Batch, errs *[]error) {
+	if abortErr := batchObj.Abort(); abortErr != nil {
+		*errs = append(*errs, fmt.Errorf("abort batch failed: %w", abortErr))
+	}
 }
 
 // =============================================================================
 // 慢查询检测
 // =============================================================================
 
-// triggerSlowQueryHook 触发慢查询钩子。
-func (w *clickhouseWrapper) triggerSlowQueryHook(ctx context.Context, info SlowQueryInfo) {
-	if w.options.SlowQueryHook != nil {
-		w.slowQueries.Add(1)
-		w.options.SlowQueryHook(ctx, info)
-	}
-}
-
 // maybeSlowQuery 检测并可能触发慢查询钩子。
+// 使用 slowQueryDetector 统一处理同步和异步钩子。
 func (w *clickhouseWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) bool {
-	// 如果阈值为 0，禁用慢查询检测
-	if w.options.SlowQueryThreshold == 0 {
+	if w.slowQueryDetector == nil {
 		return false
 	}
 
-	// 如果耗时超过阈值，触发钩子
-	if info.Duration >= w.options.SlowQueryThreshold {
-		w.triggerSlowQueryHook(ctx, info)
-		return true
+	isSlow := w.slowQueryDetector.MaybeSlowQuery(ctx, info, info.Duration)
+	if isSlow {
+		w.slowQueries.Add(1)
 	}
-	return false
+	return isSlow
 }
 
 // =============================================================================
@@ -427,6 +508,11 @@ func measureOperation(start time.Time) time.Duration {
 
 // buildCountQuery 根据原始查询构建 COUNT 查询。
 // 使用子查询包装方式，避免复杂 SQL 解析问题（子查询、CTE、UNION 等）。
+//
+// 性能说明：
+// 子查询方式对于简单查询可能比直接改写 SELECT 列表性能略差，
+// 但能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）。
+// 对于性能敏感的简单查询，建议直接使用 Conn() 执行手写的 COUNT 语句。
 func buildCountQuery(query string) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS _count_subquery", query)
 }

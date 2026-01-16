@@ -171,14 +171,14 @@ func TestLinearBackoff(t *testing.T) {
 	t.Run("OverflowProtection", func(t *testing.T) {
 		// 创建一个容易溢出的配置：大增量 + 极大的 attempt
 		b := NewLinearBackoff(
-			time.Second,                  // 初始延迟 1s
-			time.Hour,                    // 每次增加 1 小时
-			24*time.Hour,                 // 最大 24 小时
+			time.Second,  // 初始延迟 1s
+			time.Hour,    // 每次增加 1 小时
+			24*time.Hour, // 最大 24 小时
 		)
 
 		// 使用一个非常大的 attempt 值来触发溢出
 		// time.Hour * 大数 会导致整数溢出为负数
-		veryLargeAttempt := 1<<60 // 一个非常大的数
+		veryLargeAttempt := 1 << 60 // 一个非常大的数
 
 		delay := b.NextDelay(veryLargeAttempt)
 
@@ -206,11 +206,11 @@ func TestLinearBackoff_ExtremeOverflow(t *testing.T) {
 	)
 
 	testCases := []int{
-		1 << 30,        // 约 10 亿，等于 maxSafeAttempt
-		1<<30 + 1,      // 刚超过 maxSafeAttempt
-		1 << 40,        // 约 1 万亿
-		1 << 60,        // 极端大数
-		math.MaxInt,    // int 最大值
+		1 << 30,     // 约 10 亿，等于 maxSafeAttempt
+		1<<30 + 1,   // 刚超过 maxSafeAttempt
+		1 << 40,     // 约 1 万亿
+		1 << 60,     // 极端大数
+		math.MaxInt, // int 最大值
 		math.MaxInt - 1,
 	}
 
@@ -223,4 +223,69 @@ func TestLinearBackoff_ExtremeOverflow(t *testing.T) {
 			assert.GreaterOrEqual(t, delay, time.Duration(0), "delay should never be negative")
 		})
 	}
+}
+
+// TestLinearBackoff_OverflowWrapAround 验证大 increment + 小 attempt 场景下的溢出保护
+// 此测试防止 increment * (attempt-1) 溢出后回绕成小正数绕过检测的问题
+// 问题场景：increment=51944h, attempt=100, maxDelay=100000h 时，
+// 乘法溢出后得到 18404h（小于 maxDelay），旧代码会错误返回 18404h
+func TestLinearBackoff_OverflowWrapAround(t *testing.T) {
+	t.Run("大 increment 导致溢出回绕", func(t *testing.T) {
+		// 这个配置会导致 increment * 99 溢出
+		// increment = 1.87e17 ns ≈ 51944 小时
+		// increment * 99 的真实值远超 int64 最大值
+		// 溢出后会回绕成一个较小的正数（约 18404 小时）
+		b := NewLinearBackoff(
+			time.Second,            // 初始延迟 1s
+			time.Duration(1.87e17), // 约 51944 小时
+			100000*time.Hour,       // 最大 100000 小时
+		)
+
+		delay := b.NextDelay(100)
+
+		// 正确行为：应返回 maxDelay（因为真实增量远超 maxDelay）
+		// 错误行为：返回约 18404 小时（溢出回绕后的值）
+		assert.Equal(t, 100000*time.Hour, delay,
+			"应返回 maxDelay，而非溢出回绕后的错误值")
+	})
+
+	t.Run("边界值：刚好不溢出", func(t *testing.T) {
+		// 构造一个刚好不会溢出的场景
+		// maxDelay = 100 小时，increment = 10 小时，attempt = 10
+		// incrementPart = 10h * 9 = 90h，不溢出
+		b := NewLinearBackoff(
+			time.Hour,     // 初始延迟 1h
+			10*time.Hour,  // 每次增加 10 小时
+			100*time.Hour, // 最大 100 小时
+		)
+
+		delay := b.NextDelay(10)
+		// 1h + 10h * 9 = 91h < 100h
+		assert.Equal(t, 91*time.Hour, delay)
+	})
+
+	t.Run("边界值：刚好超过 maxDelay", func(t *testing.T) {
+		b := NewLinearBackoff(
+			time.Hour,     // 初始延迟 1h
+			10*time.Hour,  // 每次增加 10 小时
+			100*time.Hour, // 最大 100 小时
+		)
+
+		delay := b.NextDelay(11)
+		// 1h + 10h * 10 = 101h > 100h，应返回 maxDelay
+		assert.Equal(t, 100*time.Hour, delay)
+	})
+
+	t.Run("零 increment 不应触发溢出检测", func(t *testing.T) {
+		b := NewLinearBackoff(
+			time.Second,
+			0, // 零增量
+			time.Hour,
+		)
+
+		// 任何 attempt 都应返回 initialDelay
+		assert.Equal(t, time.Second, b.NextDelay(1))
+		assert.Equal(t, time.Second, b.NextDelay(100))
+		assert.Equal(t, time.Second, b.NextDelay(math.MaxInt))
+	})
 }

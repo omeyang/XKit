@@ -2,6 +2,7 @@ package xbreaker
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
@@ -43,6 +44,13 @@ type BreakerRetryer struct {
 //
 //	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
 func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) *BreakerRetryer {
+	if breaker == nil {
+		panic("xbreaker: breaker cannot be nil")
+	}
+	if retryer == nil {
+		panic("xbreaker: retryer cannot be nil")
+	}
+
 	return &BreakerRetryer{
 		breaker: breaker,
 		retryer: retryer,
@@ -140,6 +148,13 @@ type RetryThenBreak struct {
 //   - 如果传入的 Breaker 已经处于 Open 状态，RetryThenBreak 仍会允许请求
 //   - 若需要独立的熔断器实例，建议使用 NewRetryThenBreakWithConfig
 func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) *RetryThenBreak {
+	if retryer == nil {
+		panic("xbreaker: retryer cannot be nil")
+	}
+	if breaker == nil {
+		panic("xbreaker: breaker cannot be nil")
+	}
+
 	// 创建与 Breaker 配置相同的 TwoStep 熔断器
 	// 注意：只复用配置，不复用状态
 	tscb := NewTwoStepCircuitBreaker[any](breaker.buildSettings())
@@ -165,6 +180,10 @@ func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) *RetryThenBrea
 //	    xbreaker.WithTimeout(30 * time.Second),
 //	)
 func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...BreakerOption) *RetryThenBreak {
+	if retryer == nil {
+		panic("xbreaker: retryer cannot be nil")
+	}
+
 	// 使用配置创建一个临时 Breaker（仅用于获取配置）
 	breaker := NewBreaker(name, opts...)
 
@@ -206,10 +225,11 @@ func (rtb *RetryThenBreak) Do(ctx context.Context, fn func(ctx context.Context) 
 	defer func() {
 		if r := recover(); r != nil {
 			// panic 时记为失败，然后重新抛出
-			done(false)
+			done(fmt.Errorf("panic: %v", r))
 			panic(r)
 		}
-		done(rtb.breaker.IsSuccessful(err))
+		// gobreaker v2: done(nil) 表示成功，done(err) 表示失败
+		done(rtb.toResultError(err))
 	}()
 
 	// 使用重试器执行（重试期间不记录到熔断器）
@@ -244,6 +264,26 @@ func (rtb *RetryThenBreak) Counts() Counts {
 	return rtb.tscb.Counts()
 }
 
+// toResultError 将 SuccessPolicy 的判断结果转换为 gobreaker v2 期望的 error 值
+//
+// gobreaker v2 的 done 回调签名为 func(err error)：
+//   - done(nil) 表示成功
+//   - done(err) 表示失败
+//
+// 此方法根据 SuccessPolicy 判断结果返回适当的 error 值
+func (rtb *RetryThenBreak) toResultError(err error) error {
+	if rtb.breaker.IsSuccessful(err) {
+		return nil
+	}
+	// 操作被 SuccessPolicy 判定为失败
+	if err != nil {
+		return err
+	}
+	// 极端情况：err 为 nil 但 SuccessPolicy 返回 false
+	// 这通常不应发生，但为安全起见返回一个占位错误
+	return fmt.Errorf("operation marked as failed by success policy")
+}
+
 // ExecuteRetryThenBreak 执行先重试后熔断的操作（泛型版本）
 //
 // 注意：即使发生 panic，也会通过 defer 确保熔断器计数被正确更新（记为失败）。
@@ -270,10 +310,11 @@ func ExecuteRetryThenBreak[T any](ctx context.Context, rtb *RetryThenBreak, fn f
 	defer func() {
 		if r := recover(); r != nil {
 			// panic 时记为失败，然后重新抛出
-			done(false)
+			done(fmt.Errorf("panic: %v", r))
 			panic(r)
 		}
-		done(rtb.breaker.IsSuccessful(err))
+		// gobreaker v2: done(nil) 表示成功，done(err) 表示失败
+		done(rtb.toResultError(err))
 	}()
 
 	// 使用重试器执行（重试期间不记录到熔断器）

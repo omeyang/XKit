@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omeyang/xkit/pkg/resilience/xretry"
 	"github.com/apache/pulsar-client-go/pulsar"
+	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
 
 // =============================================================================
@@ -21,7 +21,7 @@ func FuzzDLQBuilder_WithMaxDeliveries(f *testing.F) {
 	f.Add(uint32(10))
 	f.Add(uint32(100))
 	f.Add(uint32(1000))
-	f.Add(uint32(^uint32(0))) // max uint32
+	f.Add(^uint32(0)) // max uint32
 
 	f.Fuzz(func(t *testing.T, n uint32) {
 		builder := NewDLQBuilder()
@@ -320,7 +320,7 @@ func FuzzNackBackoff_Next(f *testing.F) {
 	f.Add(uint32(5))
 	f.Add(uint32(10))
 	f.Add(uint32(100))
-	f.Add(uint32(^uint32(0))) // max uint32
+	f.Add(^uint32(0)) // max uint32
 
 	policy := xretry.NewExponentialBackoff(
 		xretry.WithInitialDelay(100*time.Millisecond),

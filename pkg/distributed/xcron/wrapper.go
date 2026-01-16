@@ -22,9 +22,9 @@ type jobWrapper struct {
 type renewHandle struct {
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
-	renewFailed chan struct{}          // 续期失败信号
-	taskCancel  context.CancelFunc     // 用于在续期失败时取消任务
-	lockHandle  LockHandle             // 本次获取的锁句柄（用于 Unlock 和 Renew）
+	renewFailed chan struct{}      // 续期失败信号
+	taskCancel  context.CancelFunc // 用于在续期失败时取消任务
+	lockHandle  LockHandle         // 本次获取的锁句柄（用于 Unlock 和 Renew）
 }
 
 // newJobWrapper 创建任务包装器

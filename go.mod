@@ -1,6 +1,6 @@
 module github.com/omeyang/xkit
 
-go 1.25.5
+go 1.25.0
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.42.0
@@ -11,12 +11,14 @@ require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.13.0
 	github.com/dgraph-io/ristretto/v2 v2.3.0
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/go-redsync/redsync/v4 v4.15.0
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/json v1.0.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/rawbytes v1.0.0
 	github.com/knadh/koanf/v2 v2.3.0
+	github.com/prometheus/client_golang v1.20.5
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sony/gobreaker/v2 v2.4.0
@@ -96,6 +98,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -120,7 +123,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
-	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect

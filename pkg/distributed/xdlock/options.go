@@ -66,16 +66,16 @@ type mutexOptions struct {
 	KeyPrefix string // Key 前缀，默认 "lock:"
 
 	// Redis 专用选项
-	Expiry           time.Duration // 过期时间，默认 8s
-	Tries            int           // 重试次数，默认 32
-	RetryDelay       time.Duration // 重试延迟，默认 200ms
-	RetryDelayFunc   func(tries int) time.Duration
-	DriftFactor      float64 // 时钟漂移因子，默认 0.01
-	TimeoutFactor    float64 // 超时因子，默认 0.05
-	GenValueFunc     func() (string, error)
-	FailFast         bool // 快速失败，默认 false
-	ShufflePools     bool // 随机打乱 Pool 顺序，默认 false
-	SetNXOnExtend    bool // Extend 时使用 SETNX，默认 false
+	Expiry         time.Duration // 过期时间，默认 8s
+	Tries          int           // 重试次数，默认 32
+	RetryDelay     time.Duration // 重试延迟，默认 200ms
+	RetryDelayFunc func(tries int) time.Duration
+	DriftFactor    float64 // 时钟漂移因子，默认 0.01
+	TimeoutFactor  float64 // 超时因子，默认 0.05
+	GenValueFunc   func() (string, error)
+	FailFast       bool // 快速失败，默认 false
+	ShufflePools   bool // 随机打乱 Pool 顺序，默认 false
+	SetNXOnExtend  bool // Extend 时使用 SETNX，默认 false
 }
 
 // defaultMutexOptions 返回默认的锁实例配置。

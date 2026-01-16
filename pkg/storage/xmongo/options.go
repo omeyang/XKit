@@ -29,19 +29,29 @@ type SlowQueryInfo struct {
 	Duration time.Duration
 }
 
-// SlowQueryHook 慢查询回调钩子。
+// SlowQueryHook 慢查询同步回调钩子。
 // 当操作耗时超过阈值时调用。
 //
-// 注意：此钩子在请求路径上同步执行，
-// 任何耗时操作（如网络 IO、重日志）都会增加请求延迟。
-// 如需异步处理，请在钩子内部使用 goroutine：
+// ⚠️  警告：此钩子在请求路径上同步执行！
 //
-//	WithSlowQueryHook(func(ctx context.Context, info SlowQueryInfo) {
-//	    go func() {
-//	        // 异步处理：发送告警、写入日志等
-//	    }()
-//	})
+// 钩子函数的执行时间会直接增加请求延迟。以下操作应避免在同步钩子中执行：
+//   - 网络 IO（如发送告警、写入远程日志）
+//   - 磁盘 IO（如写入文件日志）
+//   - 任何可能阻塞的操作
+//
+// 推荐做法：
+//   - 简单场景：仅记录到内存计数器或 channel
+//   - 复杂场景：使用 AsyncSlowQueryHook 代替
+//
+// 如果必须使用同步钩子，请确保执行时间在微秒级别。
 type SlowQueryHook func(ctx context.Context, info SlowQueryInfo)
+
+// AsyncSlowQueryHook 慢查询异步回调钩子。
+// 通过内部 worker pool 异步执行，不阻塞请求路径。
+//
+// 注意：此钩子不接收 context 参数，因为异步执行时原始 context 可能已取消。
+// 当 AsyncSlowQueryHook 和 SlowQueryHook 同时设置时，两者都会被调用。
+type AsyncSlowQueryHook func(info SlowQueryInfo)
 
 // =============================================================================
 // 配置选项
@@ -57,9 +67,25 @@ type Options struct {
 	// 为 0 时禁用慢查询检测。
 	SlowQueryThreshold time.Duration
 
-	// SlowQueryHook 慢查询回调钩子。
+	// SlowQueryHook 慢查询同步回调钩子。
 	// 当操作耗时超过 SlowQueryThreshold 时调用。
+	// 在请求路径上同步执行。
 	SlowQueryHook SlowQueryHook
+
+	// AsyncSlowQueryHook 慢查询异步回调钩子。
+	// 通过内部 worker pool 异步执行，不阻塞请求路径。
+	// 当与 SlowQueryHook 同时设置时，两者都会被调用。
+	AsyncSlowQueryHook AsyncSlowQueryHook
+
+	// AsyncSlowQueryWorkers 异步慢查询 worker pool 大小。
+	// 仅当设置 AsyncSlowQueryHook 时生效。
+	// 默认为 10。
+	AsyncSlowQueryWorkers int
+
+	// AsyncSlowQueryQueueSize 异步慢查询任务队列大小。
+	// 仅当设置 AsyncSlowQueryHook 时生效。
+	// 默认为 1000。当队列满时，新任务将被丢弃并记录日志。
+	AsyncSlowQueryQueueSize int
 
 	// Observer 是统一观测接口（metrics/tracing）。
 	Observer xmetrics.Observer
@@ -68,13 +94,25 @@ type Options struct {
 // Option 定义配置 MongoDB 包装器的函数类型。
 type Option func(*Options)
 
+// 默认值常量。
+const (
+	// DefaultAsyncSlowQueryWorkers 默认异步慢查询 worker 数量。
+	DefaultAsyncSlowQueryWorkers = 10
+
+	// DefaultAsyncSlowQueryQueueSize 默认异步慢查询队列大小。
+	DefaultAsyncSlowQueryQueueSize = 1000
+)
+
 // defaultOptions 返回默认配置。
 func defaultOptions() *Options {
 	return &Options{
-		HealthTimeout:      5 * time.Second,
-		SlowQueryThreshold: 0,
-		SlowQueryHook:      nil,
-		Observer:           xmetrics.NoopObserver{},
+		HealthTimeout:           5 * time.Second,
+		SlowQueryThreshold:      0,
+		SlowQueryHook:           nil,
+		AsyncSlowQueryHook:      nil,
+		AsyncSlowQueryWorkers:   DefaultAsyncSlowQueryWorkers,
+		AsyncSlowQueryQueueSize: DefaultAsyncSlowQueryQueueSize,
+		Observer:                xmetrics.NoopObserver{},
 	}
 }
 
@@ -94,10 +132,38 @@ func WithSlowQueryThreshold(threshold time.Duration) Option {
 	}
 }
 
-// WithSlowQueryHook 设置慢查询回调钩子。
+// WithSlowQueryHook 设置慢查询同步回调钩子。
 func WithSlowQueryHook(hook SlowQueryHook) Option {
 	return func(o *Options) {
 		o.SlowQueryHook = hook
+	}
+}
+
+// WithAsyncSlowQueryHook 设置慢查询异步回调钩子。
+// 通过内部 worker pool 异步执行，不阻塞请求路径。
+func WithAsyncSlowQueryHook(hook AsyncSlowQueryHook) Option {
+	return func(o *Options) {
+		o.AsyncSlowQueryHook = hook
+	}
+}
+
+// WithAsyncSlowQueryWorkers 设置异步慢查询 worker pool 大小。
+// 默认为 10。
+func WithAsyncSlowQueryWorkers(n int) Option {
+	return func(o *Options) {
+		if n > 0 {
+			o.AsyncSlowQueryWorkers = n
+		}
+	}
+}
+
+// WithAsyncSlowQueryQueueSize 设置异步慢查询任务队列大小。
+// 默认为 1000。
+func WithAsyncSlowQueryQueueSize(n int) Option {
+	return func(o *Options) {
+		if n > 0 {
+			o.AsyncSlowQueryQueueSize = n
+		}
 	}
 }
 

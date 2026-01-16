@@ -61,6 +61,40 @@
 //
 // xtenant 在内部使用 xctx 进行 context 操作，在传播时从 xplatform 获取平台信息。
 //
+// # 中间件选项
+//
+// 租户验证选项（互斥，后设置的选项生效）：
+//
+//   - WithRequireTenant() / WithGRPCRequireTenant():
+//     要求 TenantID 和 TenantName 都存在，缺失时返回 400/InvalidArgument
+//
+//   - WithRequireTenantID() / WithGRPCRequireTenantID():
+//     只要求 TenantID 存在，TenantName 不做强制要求
+//
+// 追踪处理选项：
+//
+//   - WithEnsureTrace() / WithGRPCEnsureTrace():
+//     自动生成缺失的追踪字段（TraceID/SpanID/RequestID），
+//     使当前服务成为分布式链路追踪的起点
+//
+//   - 默认行为：仅传播上游已有的追踪字段，不自动生成
+//
+// 使用示例：
+//
+//	// 网关服务：自动生成追踪信息
+//	xtenant.HTTPMiddlewareWithOptions(
+//	    xtenant.WithEnsureTrace(),
+//	)
+//
+//	// 下游服务：只传播追踪信息（默认行为）
+//	xtenant.HTTPMiddleware()
+//
+//	// 要求租户信息
+//	xtenant.HTTPMiddlewareWithOptions(
+//	    xtenant.WithRequireTenantID(),
+//	    xtenant.WithEnsureTrace(),
+//	)
+//
 // # 线程安全
 //
 // 所有导出函数都是线程安全的：

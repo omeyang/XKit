@@ -359,3 +359,404 @@ func TestWithGRPCRequireTenant(t *testing.T) {
 		t.Error("expected error with WithGRPCRequireTenant when no tenant info")
 	}
 }
+
+// =============================================================================
+// WithGRPCRequireTenantID 选项测试
+// =============================================================================
+
+func TestWithGRPCRequireTenantID_Unary(t *testing.T) {
+	t.Run("缺少TenantID返回InvalidArgument", func(t *testing.T) {
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+		)
+
+		ctx := context.Background()
+		handler := func(ctx context.Context, req any) (any, error) {
+			return "ok", nil
+		}
+
+		_, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err == nil {
+			t.Fatal("expected error when tenant ID is missing")
+		}
+
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatalf("expected gRPC status error, got %v", err)
+		}
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("status code = %v, want %v", st.Code(), codes.InvalidArgument)
+		}
+	})
+
+	t.Run("只有TenantID时正常通过", func(t *testing.T) {
+		var capturedTenantID string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+		)
+
+		// 只设置 TenantID，不设置 TenantName
+		md := metadata.Pairs(
+			xtenant.MetaTenantID, "tenant-123",
+		)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTenantID = xtenant.TenantID(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+		if capturedTenantID != "tenant-123" {
+			t.Errorf("TenantID = %q, want %q", capturedTenantID, "tenant-123")
+		}
+	})
+
+	t.Run("WithGRPCRequireTenant和WithGRPCRequireTenantID互斥", func(t *testing.T) {
+		// 后设置的选项应该覆盖前面的
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenant(),
+			xtenant.WithGRPCRequireTenantID(), // 后设置，应该覆盖前面的
+		)
+
+		// 只设置 TenantID，不设置 TenantName
+		md := metadata.Pairs(
+			xtenant.MetaTenantID, "tenant-123",
+		)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("expected success with RequireTenantID, got error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+	})
+}
+
+func TestWithGRPCRequireTenantID_Stream(t *testing.T) {
+	t.Run("缺少TenantID返回InvalidArgument", func(t *testing.T) {
+		interceptor := xtenant.GRPCStreamServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+		)
+
+		ctx := context.Background()
+		stream := &mockServerStream{ctx: ctx}
+		handler := func(srv any, stream grpc.ServerStream) error {
+			return nil
+		}
+
+		err := interceptor(nil, stream, &grpc.StreamServerInfo{}, handler)
+
+		if err == nil {
+			t.Fatal("expected error when tenant ID is missing")
+		}
+
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatalf("expected gRPC status error, got %v", err)
+		}
+		if st.Code() != codes.InvalidArgument {
+			t.Errorf("status code = %v, want %v", st.Code(), codes.InvalidArgument)
+		}
+	})
+
+	t.Run("只有TenantID时正常通过", func(t *testing.T) {
+		var capturedTenantID string
+
+		interceptor := xtenant.GRPCStreamServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+		)
+
+		md := metadata.Pairs(xtenant.MetaTenantID, "tenant-456")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		stream := &mockServerStream{ctx: ctx}
+		handler := func(srv any, stream grpc.ServerStream) error {
+			capturedTenantID = xtenant.TenantID(stream.Context())
+			return nil
+		}
+
+		err := interceptor(nil, stream, &grpc.StreamServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if capturedTenantID != "tenant-456" {
+			t.Errorf("TenantID = %q, want %q", capturedTenantID, "tenant-456")
+		}
+	})
+}
+
+// =============================================================================
+// WithGRPCEnsureTrace 选项测试
+// =============================================================================
+
+func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
+	t.Run("启用EnsureTrace自动生成追踪信息", func(t *testing.T) {
+		var capturedTraceID, capturedSpanID, capturedRequestID string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCEnsureTrace(),
+		)
+
+		// 不设置任何 trace metadata
+		ctx := context.Background()
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTraceID = xctx.TraceID(ctx)
+			capturedSpanID = xctx.SpanID(ctx)
+			capturedRequestID = xctx.RequestID(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+
+		// 应该自动生成追踪信息
+		if capturedTraceID == "" {
+			t.Error("TraceID should be auto-generated, got empty")
+		}
+		if capturedSpanID == "" {
+			t.Error("SpanID should be auto-generated, got empty")
+		}
+		if capturedRequestID == "" {
+			t.Error("RequestID should be auto-generated, got empty")
+		}
+	})
+
+	t.Run("启用EnsureTrace但上游已有trace则保留", func(t *testing.T) {
+		const existingTraceID = "0af7651916cd43dd8448eb211c80319c"
+		var capturedTraceID string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCEnsureTrace(),
+		)
+
+		md := metadata.Pairs(xtenant.MetaTraceID, existingTraceID)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTraceID = xctx.TraceID(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+
+		// 应该保留上游传来的 TraceID
+		if capturedTraceID != existingTraceID {
+			t.Errorf("TraceID = %q, want %q (should preserve upstream value)", capturedTraceID, existingTraceID)
+		}
+	})
+
+	t.Run("默认不启用EnsureTrace则不自动生成", func(t *testing.T) {
+		var capturedTraceID, capturedSpanID, capturedRequestID string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptor()
+
+		// 不设置任何 trace metadata
+		ctx := context.Background()
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTraceID = xctx.TraceID(ctx)
+			capturedSpanID = xctx.SpanID(ctx)
+			capturedRequestID = xctx.RequestID(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+
+		// 默认行为：不自动生成
+		if capturedTraceID != "" {
+			t.Errorf("TraceID should be empty without EnsureTrace, got %q", capturedTraceID)
+		}
+		if capturedSpanID != "" {
+			t.Errorf("SpanID should be empty without EnsureTrace, got %q", capturedSpanID)
+		}
+		if capturedRequestID != "" {
+			t.Errorf("RequestID should be empty without EnsureTrace, got %q", capturedRequestID)
+		}
+	})
+
+	t.Run("上游传递trace则正常传播", func(t *testing.T) {
+		const (
+			existingTraceID    = "trace-upstream"
+			existingSpanID     = "span-upstream"
+			existingRequestID  = "req-upstream"
+			existingTraceFlags = "01"
+		)
+		var capturedTraceID, capturedSpanID, capturedRequestID, capturedTraceFlags string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptor()
+
+		md := metadata.Pairs(
+			xtenant.MetaTraceID, existingTraceID,
+			xtenant.MetaSpanID, existingSpanID,
+			xtenant.MetaRequestID, existingRequestID,
+			xtenant.MetaTraceFlags, existingTraceFlags,
+		)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTraceID = xctx.TraceID(ctx)
+			capturedSpanID = xctx.SpanID(ctx)
+			capturedRequestID = xctx.RequestID(ctx)
+			capturedTraceFlags = xctx.TraceFlags(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+
+		// 应该正确传播上游的追踪信息
+		if capturedTraceID != existingTraceID {
+			t.Errorf("TraceID = %q, want %q", capturedTraceID, existingTraceID)
+		}
+		if capturedSpanID != existingSpanID {
+			t.Errorf("SpanID = %q, want %q", capturedSpanID, existingSpanID)
+		}
+		if capturedRequestID != existingRequestID {
+			t.Errorf("RequestID = %q, want %q", capturedRequestID, existingRequestID)
+		}
+		if capturedTraceFlags != existingTraceFlags {
+			t.Errorf("TraceFlags = %q, want %q", capturedTraceFlags, existingTraceFlags)
+		}
+	})
+}
+
+func TestWithGRPCEnsureTrace_Stream(t *testing.T) {
+	t.Run("启用EnsureTrace自动生成追踪信息", func(t *testing.T) {
+		var capturedTraceID, capturedSpanID string
+
+		interceptor := xtenant.GRPCStreamServerInterceptorWithOptions(
+			xtenant.WithGRPCEnsureTrace(),
+		)
+
+		ctx := context.Background()
+		stream := &mockServerStream{ctx: ctx}
+		handler := func(srv any, stream grpc.ServerStream) error {
+			capturedTraceID = xctx.TraceID(stream.Context())
+			capturedSpanID = xctx.SpanID(stream.Context())
+			return nil
+		}
+
+		err := interceptor(nil, stream, &grpc.StreamServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+
+		if capturedTraceID == "" {
+			t.Error("TraceID should be auto-generated, got empty")
+		}
+		if capturedSpanID == "" {
+			t.Error("SpanID should be auto-generated, got empty")
+		}
+	})
+}
+
+// =============================================================================
+// 组合选项测试
+// =============================================================================
+
+func TestGRPCInterceptorWithOptions_Combined(t *testing.T) {
+	t.Run("同时启用RequireTenantID和EnsureTrace", func(t *testing.T) {
+		var capturedTenantID, capturedTraceID string
+
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+			xtenant.WithGRPCEnsureTrace(),
+		)
+
+		md := metadata.Pairs(xtenant.MetaTenantID, "tenant-123")
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			capturedTenantID = xtenant.TenantID(ctx)
+			capturedTraceID = xctx.TraceID(ctx)
+			return "ok", nil
+		}
+
+		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err != nil {
+			t.Fatalf("interceptor error = %v", err)
+		}
+		if resp != "ok" {
+			t.Errorf("response = %v, want 'ok'", resp)
+		}
+		if capturedTenantID != "tenant-123" {
+			t.Errorf("TenantID = %q, want %q", capturedTenantID, "tenant-123")
+		}
+		if capturedTraceID == "" {
+			t.Error("TraceID should be auto-generated, got empty")
+		}
+	})
+
+	t.Run("RequireTenantID失败时不应执行EnsureTrace", func(t *testing.T) {
+		handlerCalled := false
+
+		interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+			xtenant.WithGRPCRequireTenantID(),
+			xtenant.WithGRPCEnsureTrace(),
+		)
+
+		// 不设置 TenantID
+		ctx := context.Background()
+
+		handler := func(ctx context.Context, req any) (any, error) {
+			handlerCalled = true
+			return "ok", nil
+		}
+
+		_, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
+
+		if err == nil {
+			t.Fatal("expected error when tenant ID is missing")
+		}
+		if handlerCalled {
+			t.Error("handler should not be called when tenant validation fails")
+		}
+	})
+}

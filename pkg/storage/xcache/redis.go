@@ -71,6 +71,18 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 }
 
 // WithLockRetry 设置锁重试策略。
+//
+// 重试行为说明：
+//   - Lock() 首先会立即尝试获取锁（无等待）
+//   - 若失败且配置了重试，则每隔 interval 重试一次，最多重试 count 次
+//   - 因此总尝试次数为 1 + count，总等待时间最多为 interval * count
+//
+// 示例：WithLockRetry(100*time.Millisecond, 3) 表示：
+//   - 首次立即尝试
+//   - 失败后等待 100ms 重试（第 1 次重试）
+//   - 再失败等待 100ms 重试（第 2 次重试）
+//   - 再失败等待 100ms 重试（第 3 次重试）
+//   - 若仍失败，返回 ErrLockFailed
 func WithLockRetry(interval time.Duration, count int) RedisOption {
 	return func(o *RedisOptions) {
 		o.LockRetryInterval = interval

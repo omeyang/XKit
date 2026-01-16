@@ -16,6 +16,9 @@ var (
 	// ErrInvalidPageSize 表示页大小无效。
 	ErrInvalidPageSize = errors.New("xclickhouse: invalid page size, must be >= 1")
 
+	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。
+	ErrPageOverflow = errors.New("xclickhouse: page calculation overflow, reduce page number or page size")
+
 	// ErrEmptyQuery 表示查询语句为空。
 	ErrEmptyQuery = errors.New("xclickhouse: empty query")
 
@@ -30,4 +33,18 @@ var (
 
 	// ErrInvalidBatchSize 表示批次大小无效。
 	ErrInvalidBatchSize = errors.New("xclickhouse: invalid batch size, must be >= 1")
+
+	// ErrQueryContainsFormat 表示查询包含 FORMAT 子句。
+	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
+	//
+	// 注意：检测使用正则匹配，可能对字符串字面量中的 FORMAT 产生误判。
+	// 如遇误判，请使用 Conn() 直接执行查询。
+	ErrQueryContainsFormat = errors.New("xclickhouse: query contains FORMAT clause, not supported in QueryPage")
+
+	// ErrQueryContainsSettings 表示查询包含 SETTINGS 子句。
+	// QueryPage 使用子查询包装，SETTINGS 应通过连接参数配置。
+	//
+	// 注意：检测使用正则匹配，可能对字符串字面量中的 SETTINGS 产生误判。
+	// 如遇误判，请使用 Conn() 直接执行查询。
+	ErrQueryContainsSettings = errors.New("xclickhouse: query contains SETTINGS clause, use connection options instead")
 )

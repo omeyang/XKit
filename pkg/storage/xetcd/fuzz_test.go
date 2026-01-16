@@ -2,6 +2,7 @@ package xetcd
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -110,9 +111,23 @@ func FuzzConfigValidate(f *testing.F) {
 			t.Errorf("Validate() with empty endpoints = %v, want %v", err, ErrNoEndpoints)
 		}
 
-		// 非空 endpoints 应该通过验证
-		if len(cfg.Endpoints) > 0 && err != nil {
-			t.Errorf("Validate() with endpoints = %v, want nil", err)
+		// 非空 endpoints 验证规则：
+		// - 必须包含 ":" 表示 host:port 格式
+		// - 空字符串的 endpoint 应该返回错误
+		if len(cfg.Endpoints) > 0 {
+			ep := cfg.Endpoints[0]
+			hasPort := strings.Contains(ep, ":")
+			if ep == "" || !hasPort {
+				// 无效格式应该返回错误
+				if err == nil {
+					t.Errorf("Validate() with invalid endpoint %q = nil, want error", ep)
+				}
+			} else {
+				// 有效格式应该通过验证
+				if err != nil {
+					t.Errorf("Validate() with valid endpoint %q = %v, want nil", ep, err)
+				}
+			}
 		}
 	})
 }
@@ -187,7 +202,7 @@ func FuzzDispatchEvents(f *testing.F) {
 		}
 
 		// 不应该 panic
-		result := c.dispatchEvents(ctx, events, eventCh)
+		_, result := c.dispatchEvents(ctx, events, eventCh)
 
 		// 应该成功
 		if !result {

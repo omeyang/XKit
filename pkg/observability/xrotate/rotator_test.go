@@ -647,11 +647,11 @@ func TestWithFileModeAfterAutoRotate(t *testing.T) {
 
 	// 设置 1MB 的轮转大小和 0644 权限
 	r, err := NewLumberjack(filename,
-		WithMaxSize(1),        // 1MB 触发轮转
-		WithMaxBackups(3),     // 保留 3 个备份
-		WithCompress(false),   // 禁用压缩便于测试
+		WithMaxSize(1),      // 1MB 触发轮转
+		WithMaxBackups(3),   // 保留 3 个备份
+		WithCompress(false), // 禁用压缩便于测试
 		WithLocalTime(true),
-		WithFileMode(0644),    // 期望权限
+		WithFileMode(0644), // 期望权限
 	)
 	require.NoError(t, err)
 	defer r.Close()

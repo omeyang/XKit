@@ -2,6 +2,7 @@ package xkafka
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -293,46 +294,16 @@ func buildDLQMessageFromPolicy(original *kafka.Message, dlqTopic string, reason 
 // 而不是使用当前消息的 TopicPartition（那指向的是重试队列）。
 // 这与 buildDLQMessageFromPolicy 保持一致。
 func buildDLQMetadataFromMessage(msg *kafka.Message, reason error, retryCount int) DLQMetadata {
-	// 优先从 headers 获取原始信息（与 buildDLQMessageFromPolicy 保持一致）
-	existingOriginalTopic := getHeader(msg, HeaderOriginalTopic)
-	existingOriginalPartition := getHeader(msg, HeaderOriginalPartition)
-	existingOriginalOffset := getHeader(msg, HeaderOriginalOffset)
-
 	// 确定原始主题
-	originalTopic := existingOriginalTopic
+	originalTopic := getHeader(msg, HeaderOriginalTopic)
 	if originalTopic == "" && msg.TopicPartition.Topic != nil {
 		originalTopic = *msg.TopicPartition.Topic
 	}
 
-	// 确定原始分区
-	originalPartition := msg.TopicPartition.Partition
-	if existingOriginalPartition != "" {
-		if parsed, err := strconv.Atoi(existingOriginalPartition); err == nil {
-			originalPartition = int32(parsed)
-		}
-	}
-
-	// 确定原始偏移量
-	originalOffset := int64(msg.TopicPartition.Offset)
-	if existingOriginalOffset != "" {
-		if parsed, err := strconv.ParseInt(existingOriginalOffset, 10, 64); err == nil {
-			originalOffset = parsed
-		}
-	}
-
-	// 确定首次失败时间
-	var firstFailTime time.Time
-	if ft := getHeader(msg, HeaderFirstFailTime); ft != "" {
-		parsed, err := time.Parse(time.RFC3339, ft)
-		if err != nil {
-			// 解析失败时回退到当前时间
-			firstFailTime = time.Now()
-		} else {
-			firstFailTime = parsed
-		}
-	} else {
-		firstFailTime = time.Now()
-	}
+	// 确定原始分区、偏移量和首次失败时间
+	originalPartition := parseOriginalPartition(msg)
+	originalOffset := parseOriginalOffset(msg)
+	firstFailTime := parseFirstFailTime(msg)
 
 	return DLQMetadata{
 		OriginalTopic:     originalTopic,
@@ -344,6 +315,49 @@ func buildDLQMetadataFromMessage(msg *kafka.Message, reason error, retryCount in
 		FirstFailureTime:  firstFailTime,
 		LastFailureTime:   time.Now(),
 	}
+}
+
+// parseOriginalPartition 从消息头解析原始分区号。
+func parseOriginalPartition(msg *kafka.Message) int32 {
+	headerVal := getHeader(msg, HeaderOriginalPartition)
+	if headerVal == "" {
+		return msg.TopicPartition.Partition
+	}
+	parsed, err := strconv.ParseInt(headerVal, 10, 32)
+	if err != nil {
+		return msg.TopicPartition.Partition
+	}
+	// ParseInt with bitSize 32 保证值在 int32 范围内，显式检查以满足静态分析
+	if parsed >= math.MinInt32 && parsed <= math.MaxInt32 {
+		return int32(parsed)
+	}
+	return msg.TopicPartition.Partition
+}
+
+// parseOriginalOffset 从消息头解析原始偏移量。
+func parseOriginalOffset(msg *kafka.Message) int64 {
+	headerVal := getHeader(msg, HeaderOriginalOffset)
+	if headerVal == "" {
+		return int64(msg.TopicPartition.Offset)
+	}
+	parsed, err := strconv.ParseInt(headerVal, 10, 64)
+	if err != nil {
+		return int64(msg.TopicPartition.Offset)
+	}
+	return parsed
+}
+
+// parseFirstFailTime 从消息头解析首次失败时间。
+func parseFirstFailTime(msg *kafka.Message) time.Time {
+	headerVal := getHeader(msg, HeaderFirstFailTime)
+	if headerVal == "" {
+		return time.Now()
+	}
+	parsed, err := time.Parse(time.RFC3339, headerVal)
+	if err != nil {
+		return time.Now()
+	}
+	return parsed
 }
 
 // errorString 安全地获取错误字符串，nil 返回空字符串

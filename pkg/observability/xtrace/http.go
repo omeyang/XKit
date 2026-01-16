@@ -258,10 +258,10 @@ func injectTraceToContext(ctx context.Context, info TraceInfo, autoGenerate bool
 
 // idInjector 定义 ID 注入的行为
 type idInjector struct {
-	name     string                                            // ID 名称，用于日志
-	validate func(string) bool                                 // 验证函数
+	name     string                                                 // ID 名称，用于日志
+	validate func(string) bool                                      // 验证函数
 	inject   func(context.Context, string) (context.Context, error) // 注入函数
-	ensure   func(context.Context) (context.Context, error)    // 确保存在函数
+	ensure   func(context.Context) (context.Context, error)         // 确保存在函数
 }
 
 // injectID 通用的 ID 注入逻辑
@@ -339,12 +339,22 @@ func injectRequestID(ctx context.Context, requestID string, autoGenerate bool) c
 
 // injectTraceFlags 注入 TraceFlags
 // TraceFlags 不需要自动生成，仅在从上游收到时注入
+//
+// 格式校验：trace_flags 必须是 2 位十六进制字符（如 "00"、"01"、"ff"）。
+// 无效格式会记录警告日志并跳过注入，避免污染 context。
 func injectTraceFlags(ctx context.Context, traceFlags string) context.Context {
 	if traceFlags == "" {
 		return ctx
 	}
+	// 格式校验：必须是 2 位十六进制
+	if !isValidTraceFlags(traceFlags) {
+		xlog.Warn(ctx, "xtrace: invalid trace_flags format, discarding",
+			slog.String("trace_flags", traceFlags),
+			slog.String("expected", "2-character hex string (e.g., \"00\", \"01\")"))
+		return ctx
+	}
 	var err error
-	ctx, err = xctx.WithTraceFlags(ctx, traceFlags)
+	ctx, err = xctx.WithTraceFlags(ctx, strings.ToLower(traceFlags))
 	if err != nil {
 		xlog.Warn(ctx, "xtrace: failed to inject trace_flags",
 			slog.String("trace_flags", traceFlags), slog.Any("error", err))
@@ -441,6 +451,9 @@ func isValidSpanID(id string) bool {
 // formatTraceparent 生成 W3C traceparent 格式
 // 注意：仅在 traceID 和 spanID 都有效时才生成
 // traceFlags 为空时默认使用 "00"（未采样）
+//
+// W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
+// 本函数会自动将输入转换为小写，确保输出符合规范。
 func formatTraceparent(traceID, spanID, traceFlags string) string {
 	// trace-id 必须是 32 位十六进制且非全零
 	if len(traceID) != 32 || !isValidHex(traceID) {
@@ -460,5 +473,6 @@ func formatTraceparent(traceID, spanID, traceFlags string) string {
 		traceFlags = "00"
 	}
 
-	return "00-" + traceID + "-" + spanID + "-" + traceFlags
+	// W3C 规范要求小写，统一转换确保兼容性
+	return "00-" + strings.ToLower(traceID) + "-" + strings.ToLower(spanID) + "-" + strings.ToLower(traceFlags)
 }

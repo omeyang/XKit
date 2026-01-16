@@ -25,6 +25,9 @@ var (
 	// ErrInvalidPageSize 表示每页大小无效（必须 >= 1）。
 	ErrInvalidPageSize = errors.New("xmongo: invalid page size, must be >= 1")
 
+	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。
+	ErrPageOverflow = errors.New("xmongo: page calculation overflow, reduce page number or page size")
+
 	// ErrNilCollection 表示传入的 collection 为 nil。
 	ErrNilCollection = errors.New("xmongo: nil collection")
 )

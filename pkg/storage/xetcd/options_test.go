@@ -34,12 +34,12 @@ func TestWithContext_Nil(t *testing.T) {
 
 func TestWithHealthCheck(t *testing.T) {
 	tests := []struct {
-		name            string
-		enabled         bool
-		timeout         time.Duration
-		wantEnabled     bool
-		wantTimeout     time.Duration
-		wantUseDefault  bool
+		name           string
+		enabled        bool
+		timeout        time.Duration
+		wantEnabled    bool
+		wantTimeout    time.Duration
+		wantUseDefault bool
 	}{
 		{
 			name:        "enabled with timeout",

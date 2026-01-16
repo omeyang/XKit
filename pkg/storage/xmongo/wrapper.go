@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
+	"github.com/omeyang/xkit/pkg/storage/internal/storageopt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -24,6 +25,9 @@ type mongoWrapper struct {
 	client    *mongo.Client    // 用于 Client() 方法返回
 	clientOps clientOperations // 用于内部操作（可注入 mock）
 	options   *Options
+
+	// 慢查询检测器
+	slowQueryDetector *storageopt.SlowQueryDetector[SlowQueryInfo]
 
 	// 统计计数器
 	pingCount   atomic.Int64
@@ -80,26 +84,42 @@ func (w *mongoWrapper) Stats() Stats {
 }
 
 // getPoolStats 获取连接池状态。
-// 注意：MongoDB driver v2 的连接池信息获取方式可能与此不同，
-// 这里使用 NumberSessionsInProgress 作为近似值。
+//
+// 限制说明：
+// MongoDB Go driver v2 不直接暴露连接池详细信息（TotalConnections、AvailableConnections）。
+// 这是 driver 的设计决策，因为 MongoDB 使用连接池复用和会话管理，
+// 传统的"连接数"概念不能准确反映资源使用情况。
+//
+// 当前返回值：
+//   - InUseConnections: 使用 NumberSessionsInProgress() 返回活跃会话数作为近似值
+//   - TotalConnections: 始终为 0（driver 未暴露此信息）
+//   - AvailableConnections: 始终为 0（driver 未暴露此信息）
+//
+// 获取详细连接池信息的替代方案：
+//  1. 使用 MongoDB serverStatus 命令：db.runCommand({serverStatus: 1}).connections
+//  2. 监控 MongoDB 服务端指标（推荐用于生产环境）
+//  3. 使用 driver 的事件监控功能（PoolEvent）统计连接创建/关闭
 func (w *mongoWrapper) getPoolStats() PoolStats {
 	if w.clientOps == nil {
 		return PoolStats{}
 	}
 
 	// MongoDB driver v2 暂不直接暴露连接池详细信息
-	// NumberSessionsInProgress 返回活跃会话数
+	// NumberSessionsInProgress 返回活跃会话数，作为 InUseConnections 的近似值
 	inUse := w.clientOps.NumberSessionsInProgress()
 
 	return PoolStats{
 		InUseConnections: inUse,
-		// TotalConnections 和 AvailableConnections 需要通过服务器状态命令获取
-		// 为简化实现，暂时只返回活跃会话数
 	}
 }
 
 // Close 关闭 MongoDB 连接。
 func (w *mongoWrapper) Close(ctx context.Context) error {
+	// 关闭慢查询检测器
+	if w.slowQueryDetector != nil {
+		w.slowQueryDetector.Close()
+	}
+
 	if w.clientOps == nil {
 		return nil
 	}
@@ -122,27 +142,18 @@ func (w *mongoWrapper) BulkWrite(ctx context.Context, coll *mongo.Collection, do
 // 慢查询检测
 // =============================================================================
 
-// triggerSlowQueryHook 触发慢查询钩子。
-func (w *mongoWrapper) triggerSlowQueryHook(ctx context.Context, info SlowQueryInfo) {
-	if w.options.SlowQueryHook != nil {
-		w.slowQueries.Add(1)
-		w.options.SlowQueryHook(ctx, info)
-	}
-}
-
 // maybeSlowQuery 检测并可能触发慢查询钩子。
+// 使用 SlowQueryDetector 统一处理同步/异步钩子。
 func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) bool {
-	// 如果阈值为 0，禁用慢查询检测
-	if w.options.SlowQueryThreshold == 0 {
+	if w.slowQueryDetector == nil {
 		return false
 	}
 
-	// 如果耗时超过阈值，触发钩子
-	if info.Duration >= w.options.SlowQueryThreshold {
-		w.triggerSlowQueryHook(ctx, info)
-		return true
+	triggered := w.slowQueryDetector.MaybeSlowQuery(ctx, info, info.Duration)
+	if triggered {
+		w.slowQueries.Add(1)
 	}
-	return false
+	return triggered
 }
 
 // =============================================================================
@@ -180,20 +191,35 @@ func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, fil
 	if coll == nil {
 		return nil, ErrNilCollection
 	}
-	if opts.Page < 1 {
-		return nil, ErrInvalidPage
-	}
-	if opts.PageSize < 1 {
-		return nil, ErrInvalidPageSize
-	}
 
 	// 适配集合为接口
+	// 参数验证（包括 overflow 检查）在 findPageInternal 中统一处理
 	collOps := adaptCollection(coll)
 	return w.findPageInternal(ctx, collOps, filter, opts)
 }
 
+// convertPaginationError 将 storageopt 的分页错误转换为 xmongo 的错误类型。
+func convertPaginationError(err error) error {
+	switch {
+	case errors.Is(err, storageopt.ErrInvalidPage):
+		return ErrInvalidPage
+	case errors.Is(err, storageopt.ErrInvalidPageSize):
+		return ErrInvalidPageSize
+	case errors.Is(err, storageopt.ErrPageOverflow):
+		return ErrPageOverflow
+	default:
+		return err
+	}
+}
+
 // findPageInternal 分页查询内部实现，使用接口便于测试。
 func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOperations, filter any, opts PageOptions) (result *PageResult, err error) {
+	// 使用 storageopt 验证分页参数并计算 skip，防止溢出
+	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	if err != nil {
+		return nil, convertPaginationError(err)
+	}
+
 	info := buildSlowQueryInfoFromOps(coll, "findPage", filter)
 
 	start := time.Now()
@@ -220,9 +246,6 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		}
 		span.End(xmetrics.Result{Err: err, Attrs: attrs})
 	}()
-
-	// 计算 skip
-	skip := (opts.Page - 1) * opts.PageSize
 
 	// 查询总数
 	total, err := coll.CountDocuments(ctx, filter)
@@ -255,18 +278,12 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		return nil, err
 	}
 
-	// 计算总页数
-	totalPages := total / opts.PageSize
-	if total%opts.PageSize > 0 {
-		totalPages++
-	}
-
 	return &PageResult{
 		Data:       data,
 		Total:      total,
 		Page:       opts.Page,
 		PageSize:   opts.PageSize,
-		TotalPages: totalPages,
+		TotalPages: storageopt.CalculateTotalPages(total, opts.PageSize),
 	}, nil
 }
 

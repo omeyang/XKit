@@ -202,10 +202,14 @@ func (s *otelSpan) End(result Result) {
 			return
 		}
 
+		// 使用不可取消的 context 记录指标，确保即使请求 context 已取消/超时，
+		// 指标仍能正确记录。这对于失败/超时场景的可观测性至关重要。
+		// 注意：context.WithoutCancel 会保留 context 中的 values（如 baggage）。
+		metricsCtx := context.WithoutCancel(s.ctx)
 		elapsed := time.Since(s.start).Seconds()
 		attrs := metricAttrs(s.component, s.operation, status)
-		s.observer.total.Add(s.ctx, 1, metric.WithAttributes(attrs...))
-		s.observer.duration.Record(s.ctx, elapsed, metric.WithAttributes(attrs...))
+		s.observer.total.Add(metricsCtx, 1, metric.WithAttributes(attrs...))
+		s.observer.duration.Record(metricsCtx, elapsed, metric.WithAttributes(attrs...))
 	})
 }
 

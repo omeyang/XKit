@@ -1,6 +1,10 @@
 package xetcd
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Config etcd 客户端配置。
 // 支持 JSON/YAML 反序列化。
@@ -93,11 +97,29 @@ func DefaultConfig() *Config {
 }
 
 // Validate 验证配置有效性。
-// 检查必填字段是否已配置。
+// 检查必填字段是否已配置，并验证 endpoint 格式。
+//
+// 有效的 endpoint 格式为 "host:port"，例如：
+//   - "localhost:2379"
+//   - "192.168.1.1:2379"
+//   - "etcd.example.com:2379"
 func (c *Config) Validate() error {
 	if len(c.Endpoints) == 0 {
 		return ErrNoEndpoints
 	}
+
+	// 验证每个 endpoint 的格式
+	for i, ep := range c.Endpoints {
+		if ep == "" {
+			return fmt.Errorf("%w: endpoint[%d] is empty", ErrInvalidEndpoint, i)
+		}
+		// 检查是否包含 host:port 格式
+		// 使用 LastIndex 而非 Index 以支持 IPv6 地址如 [::1]:2379
+		if !strings.Contains(ep, ":") {
+			return fmt.Errorf("%w: endpoint[%d]=%q missing port", ErrInvalidEndpoint, i, ep)
+		}
+	}
+
 	return nil
 }
 

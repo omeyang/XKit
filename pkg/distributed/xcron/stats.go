@@ -364,17 +364,17 @@ func (js *JobStats) recordExecution(duration time.Duration, err error) {
 
 // StatsSnapshot 统计快照，用于序列化。
 type StatsSnapshot struct {
-	TotalExecutions int64           `json:"total_executions"`
-	SuccessCount    int64           `json:"success_count"`
-	FailureCount    int64           `json:"failure_count"`
-	SkipCount       int64           `json:"skip_count"`
-	SuccessRate     float64         `json:"success_rate"`
-	LastExecTime    time.Time       `json:"last_exec_time,omitempty"`
-	LastDuration    time.Duration   `json:"last_duration"`
-	LastError       string          `json:"last_error,omitempty"`
-	AvgDuration     time.Duration   `json:"avg_duration"`
-	MinDuration     time.Duration   `json:"min_duration"`
-	MaxDuration     time.Duration   `json:"max_duration"`
+	TotalExecutions int64                        `json:"total_executions"`
+	SuccessCount    int64                        `json:"success_count"`
+	FailureCount    int64                        `json:"failure_count"`
+	SkipCount       int64                        `json:"skip_count"`
+	SuccessRate     float64                      `json:"success_rate"`
+	LastExecTime    time.Time                    `json:"last_exec_time,omitempty"`
+	LastDuration    time.Duration                `json:"last_duration"`
+	LastError       string                       `json:"last_error,omitempty"`
+	AvgDuration     time.Duration                `json:"avg_duration"`
+	MinDuration     time.Duration                `json:"min_duration"`
+	MaxDuration     time.Duration                `json:"max_duration"`
 	Jobs            map[string]*JobStatsSnapshot `json:"jobs,omitempty"`
 }
 

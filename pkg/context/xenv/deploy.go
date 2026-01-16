@@ -79,9 +79,9 @@ const (
 // =============================================================================
 
 var (
-	globalType   DeployType
-	globalMu     sync.RWMutex
-	initialized  atomic.Bool
+	globalType  DeployType
+	globalMu    sync.RWMutex
+	initialized atomic.Bool
 )
 
 // =============================================================================

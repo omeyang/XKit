@@ -59,13 +59,16 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 模拟慢查询触发
@@ -77,7 +80,7 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		Duration:   200 * time.Millisecond,
 	}
 
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 
 	assert.Equal(t, "testdb", captured.Database)
 	assert.Equal(t, "users", captured.Collection)
@@ -86,13 +89,16 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 }
 
 func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      nil, // 无钩子
+	}
+
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      nil, // 无钩子
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	info := SlowQueryInfo{
@@ -103,7 +109,7 @@ func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
 	}
 
 	// 不应该 panic
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 }
 
 func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
@@ -112,13 +118,16 @@ func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时低于阈值
@@ -137,13 +146,16 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时高于阈值
@@ -162,13 +174,16 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 0, // 禁用
+		SlowQueryHook:      hook,
+	}
+
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			HealthTimeout:      5 * time.Second,
-			SlowQueryThreshold: 0, // 禁用
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	info := SlowQueryInfo{
@@ -237,19 +252,21 @@ func TestWrapper_SlowQueryCounter(t *testing.T) {
 		callCount++
 	}
 
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 触发多次慢查询
 	info := SlowQueryInfo{Duration: 200 * time.Millisecond}
-	w.triggerSlowQueryHook(context.Background(), info)
-	w.triggerSlowQueryHook(context.Background(), info)
-	w.triggerSlowQueryHook(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
+	w.maybeSlowQuery(context.Background(), info)
 
 	stats := w.Stats()
 	assert.Equal(t, int64(3), stats.SlowQueries)
@@ -262,12 +279,14 @@ func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
 		called = true
 	}
 
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
 	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			SlowQueryThreshold: 100 * time.Millisecond,
-			SlowQueryHook:      hook,
-		},
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	// 耗时等于阈值也应该触发
@@ -642,14 +661,16 @@ func TestWrapper_BulkWriteInternal_WithSlowQueryHook(t *testing.T) {
 	mock := newMockCollectionOps()
 	var captured SlowQueryInfo
 
-	w := &mongoWrapper{
-		client: nil,
-		options: &Options{
-			SlowQueryThreshold: 1 * time.Nanosecond, // 极小阈值确保触发
-			SlowQueryHook: func(_ context.Context, info SlowQueryInfo) {
-				captured = info
-			},
+	opts := &Options{
+		SlowQueryThreshold: 1 * time.Nanosecond, // 极小阈值确保触发
+		SlowQueryHook: func(_ context.Context, info SlowQueryInfo) {
+			captured = info
 		},
+	}
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	docs := []any{map[string]any{"name": "doc1"}}

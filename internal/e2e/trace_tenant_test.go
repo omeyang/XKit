@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
-	"github.com/omeyang/xkit/pkg/observability/xlog"
 	"github.com/omeyang/xkit/pkg/context/xtenant"
+	"github.com/omeyang/xkit/pkg/observability/xlog"
 	"github.com/omeyang/xkit/pkg/observability/xtrace"
 )
 

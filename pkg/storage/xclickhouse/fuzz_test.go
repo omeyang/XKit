@@ -504,3 +504,104 @@ type testError struct {
 func (e *testError) Error() string {
 	return e.msg
 }
+
+// =============================================================================
+// SQL 规范化和校验 Fuzz 测试
+// =============================================================================
+
+// FuzzNormalizeQuery 模糊测试 normalizeQuery 函数。
+func FuzzNormalizeQuery(f *testing.F) {
+	// 种子语料
+	f.Add("SELECT * FROM users")
+	f.Add("SELECT * FROM users;")
+	f.Add("SELECT * FROM users; ; ; ")
+	f.Add("SELECT * FROM users\n\t ")
+	f.Add("")
+	f.Add(";;;")
+	f.Add("   \t\n")
+	f.Add("SELECT ';' FROM users")
+	f.Add("SELECT '\x00' FROM users;")
+	f.Add("SELECT * FROM 测试表;")
+
+	f.Fuzz(func(t *testing.T, query string) {
+		// normalizeQuery 不应 panic
+		normalized := normalizeQuery(query)
+
+		// 规范化后的查询不应以分号、空格、制表符、换行符结尾
+		if len(normalized) > 0 {
+			last := normalized[len(normalized)-1]
+			if last == ';' || last == ' ' || last == '\t' || last == '\n' || last == '\r' {
+				t.Errorf("normalizeQuery(%q) = %q, should not end with %q", query, normalized, string(last))
+			}
+		}
+	})
+}
+
+// FuzzValidateQuerySyntax 模糊测试 validateQuerySyntax 函数。
+func FuzzValidateQuerySyntax(f *testing.F) {
+	// 种子语料
+	f.Add("SELECT * FROM users")
+	f.Add("SELECT * FROM users FORMAT JSON")
+	f.Add("SELECT * FROM users SETTINGS max_threads=4")
+	f.Add("SELECT * FROM users format json")
+	f.Add("SELECT * FROM users settings max_threads=4")
+	f.Add("")
+	f.Add("   ")
+	f.Add("SELECT FORMATTER FROM users")
+	f.Add("SELECT SETTINGS_KEY FROM config")
+	f.Add("SELECT '\x00' FROM users")
+	f.Add("SELECT * FROM 测试表")
+
+	f.Fuzz(func(t *testing.T, query string) {
+		// validateQuerySyntax 不应 panic
+		normalized, err := validateQuerySyntax(query)
+
+		// 如果没有错误，规范化后的查询不应为空
+		if err == nil && normalized == "" {
+			t.Errorf("validateQuerySyntax(%q) returned empty normalized query without error", query)
+		}
+
+		// 如果有错误，应该是已知的错误类型
+		if err != nil {
+			switch err {
+			case ErrEmptyQuery:
+				// 预期：空查询
+			case ErrQueryContainsFormat:
+				// 预期：包含 FORMAT
+			case ErrQueryContainsSettings:
+				// 预期：包含 SETTINGS
+			default:
+				t.Errorf("validateQuerySyntax(%q) returned unexpected error: %v", query, err)
+			}
+		}
+	})
+}
+
+// FuzzValidatePageOptions 模糊测试 validatePageOptions 函数。
+func FuzzValidatePageOptions(f *testing.F) {
+	// 种子语料
+	f.Add("SELECT * FROM users", int64(1), int64(10))
+	f.Add("SELECT * FROM users;", int64(1), int64(10))
+	f.Add("SELECT * FROM users FORMAT JSON", int64(1), int64(10))
+	f.Add("", int64(1), int64(10))
+	f.Add("SELECT *", int64(0), int64(10))
+	f.Add("SELECT *", int64(1), int64(0))
+	f.Add("SELECT *", int64(-1), int64(-1))
+
+	f.Fuzz(func(t *testing.T, query string, page, pageSize int64) {
+		opts := PageOptions{Page: page, PageSize: pageSize}
+
+		// validatePageOptions 不应 panic
+		normalized, _, err := validatePageOptions(query, opts)
+
+		// 如果没有错误，规范化后的查询不应为空
+		if err == nil && normalized == "" {
+			t.Errorf("validatePageOptions(%q, %+v) returned empty normalized query without error", query, opts)
+		}
+
+		// 如果有错误，规范化后的查询应为空
+		if err != nil && normalized != "" {
+			t.Errorf("validatePageOptions(%q, %+v) returned non-empty normalized query with error: %v", query, opts, err)
+		}
+	})
+}

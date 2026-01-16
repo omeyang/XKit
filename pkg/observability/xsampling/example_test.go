@@ -83,7 +83,7 @@ func ExampleNewCompositeSampler() {
 	// 创建组合采样器：需要同时满足两个条件
 	sampler := xsampling.NewCompositeSampler(
 		xsampling.ModeAND,
-		xsampling.Always(),      // 条件1：全采样
+		xsampling.Always(),           // 条件1：全采样
 		xsampling.NewCountSampler(2), // 条件2：每 2 个采样 1 个
 	)
 	ctx := context.Background()

@@ -197,4 +197,3 @@ func FuzzExtractFromMetadata(f *testing.F) {
 		_ = info.IsEmpty()
 	})
 }
-

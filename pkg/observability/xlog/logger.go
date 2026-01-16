@@ -35,10 +35,10 @@ const (
 type xlogger struct {
 	handler        slog.Handler
 	levelVar       *slog.LevelVar
-	onError        func(error)   // 内部错误回调
-	errorCount     atomic.Uint64 // 内部错误计数器（用于监控/测试）
-	addSource      bool          // 是否记录源码位置（热路径优化）
-	inErrorHandler atomic.Bool   // 防止 onError 递归调用
+	onError        func(error)    // 内部错误回调
+	errorCount     *atomic.Uint64 // 内部错误计数器（用于监控/测试），派生 logger 共享
+	addSource      bool           // 是否记录源码位置（热路径优化）
+	inErrorHandler *atomic.Bool   // 防止 onError 递归调用，派生 logger 共享
 }
 
 // logWithSkip 通用日志方法，支持额外的栈帧跳过
@@ -79,9 +79,13 @@ func (l *xlogger) log(ctx context.Context, level slog.Level, msg string, attrs [
 
 // handleError 处理内部错误（Handler.Handle 失败）
 // 内置递归保护：如果 onError 回调内部触发日志错误，不会导致无限递归
+// 递归保护通过 inErrorHandler 指针在派生 logger 间共享，确保 With/WithGroup 创建的
+// 派生 logger 也受到保护。
 func (l *xlogger) handleError(err error) {
-	l.errorCount.Add(1)
-	if l.onError != nil {
+	if l.errorCount != nil {
+		l.errorCount.Add(1)
+	}
+	if l.onError != nil && l.inErrorHandler != nil {
 		// 递归保护：如果已在 onError 回调中，跳过
 		if l.inErrorHandler.CompareAndSwap(false, true) {
 			defer l.inErrorHandler.Store(false)
@@ -163,10 +167,12 @@ func (l *xlogger) With(attrs ...slog.Attr) Logger {
 		return l
 	}
 	return &xlogger{
-		handler:   l.handler.WithAttrs(attrs),
-		levelVar:  l.levelVar,
-		onError:   l.onError,   // 保留错误回调
-		addSource: l.addSource, // 保留源码位置设置
+		handler:        l.handler.WithAttrs(attrs),
+		levelVar:       l.levelVar,
+		onError:        l.onError,        // 保留错误回调
+		errorCount:     l.errorCount,     // 共享错误计数器
+		addSource:      l.addSource,      // 保留源码位置设置
+		inErrorHandler: l.inErrorHandler, // 共享递归保护标记
 	}
 }
 
@@ -176,10 +182,12 @@ func (l *xlogger) WithGroup(name string) Logger {
 		return l
 	}
 	return &xlogger{
-		handler:   l.handler.WithGroup(name),
-		levelVar:  l.levelVar,
-		onError:   l.onError,   // 保留错误回调
-		addSource: l.addSource, // 保留源码位置设置
+		handler:        l.handler.WithGroup(name),
+		levelVar:       l.levelVar,
+		onError:        l.onError,        // 保留错误回调
+		errorCount:     l.errorCount,     // 共享错误计数器
+		addSource:      l.addSource,      // 保留源码位置设置
+		inErrorHandler: l.inErrorHandler, // 共享递归保护标记
 	}
 }
 

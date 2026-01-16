@@ -95,9 +95,9 @@ func ExampleNewFailureRatio() {
 func ExampleNewCompositePolicy() {
 	// 组合多个策略：任一条件满足即熔断
 	policy := xbreaker.NewCompositePolicy(
-		xbreaker.NewConsecutiveFailures(5),  // 连续失败5次
-		xbreaker.NewFailureRatio(0.5, 20),   // 或失败率超过50%
-		xbreaker.NewFailureCount(100),       // 或总失败数超过100
+		xbreaker.NewConsecutiveFailures(5), // 连续失败5次
+		xbreaker.NewFailureRatio(0.5, 20),  // 或失败率超过50%
+		xbreaker.NewFailureCount(100),      // 或总失败数超过100
 	)
 
 	breaker := xbreaker.NewBreaker("critical-service",

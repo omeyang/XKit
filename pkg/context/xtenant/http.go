@@ -107,16 +107,50 @@ func HTTPMiddleware() func(http.Handler) http.Handler {
 type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
-	requireTenant bool
+	requireTenant   bool
+	requireTenantID bool
+	ensureTrace     bool
 }
 
 // WithRequireTenant 设置是否要求租户信息必须存在
 //
-// 如果设置为 true，当租户信息缺失时返回 400 错误。
+// 如果设置为 true，当 TenantID 或 TenantName 缺失时返回 400 错误。
 // 默认为 false（不强制要求）。
+//
+// 与 WithRequireTenantID 互斥，后设置的选项生效。
 func WithRequireTenant() MiddlewareOption {
 	return func(cfg *middlewareConfig) {
 		cfg.requireTenant = true
+		cfg.requireTenantID = false
+	}
+}
+
+// WithRequireTenantID 设置只要求 TenantID 必须存在
+//
+// 如果设置为 true，当 TenantID 缺失时返回 400 错误，TenantName 不做要求。
+// 适用于 TenantName 非必填的场景。
+// 默认为 false（不强制要求）。
+//
+// 与 WithRequireTenant 互斥，后设置的选项生效。
+func WithRequireTenantID() MiddlewareOption {
+	return func(cfg *middlewareConfig) {
+		cfg.requireTenantID = true
+		cfg.requireTenant = false
+	}
+}
+
+// WithEnsureTrace 启用自动生成追踪信息
+//
+// 当上游未传递 trace header 时，自动生成新的 TraceID、SpanID、RequestID。
+// 使当前服务成为分布式链路追踪的起点。
+// 默认为 false（仅传播上游已有的追踪信息）。
+//
+// 典型场景：
+//   - 网关服务：启用此选项，确保每个请求都有追踪信息
+//   - 下游服务：不启用，只传播上游的追踪信息
+func WithEnsureTrace() MiddlewareOption {
+	return func(cfg *middlewareConfig) {
+		cfg.ensureTrace = true
 	}
 }
 
@@ -129,47 +163,82 @@ func HTTPMiddlewareWithOptions(opts ...MiddlewareOption) func(http.Handler) http
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			// 提取租户信息
-			info := ExtractFromHTTPHeader(r.Header)
-
-			// 如果要求租户信息必须存在，进行验证
-			if cfg.requireTenant {
-				if err := info.Validate(); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			}
-
-			// 注入租户信息到 context
-			var err error
-			if info.TenantID != "" {
-				ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
-			if info.TenantName != "" {
-				ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
-
-			// 提取并注入追踪信息（确保链路追踪连续性）
-			trace := ExtractTraceFromHTTPHeader(r.Header)
-			ctx, err = xctx.WithTrace(ctx, trace)
+			ctx, code, err := injectTenantToHTTPContext(r, cfg)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), code)
 				return
 			}
-
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// injectTenantToHTTPContext 从 HTTP 请求提取租户信息和追踪信息并注入 context
+// 返回注入后的 context、HTTP 状态码（仅错误时使用）、错误
+func injectTenantToHTTPContext(r *http.Request, cfg *middlewareConfig) (context.Context, int, error) {
+	ctx := r.Context()
+
+	// 提取并验证租户信息
+	info := ExtractFromHTTPHeader(r.Header)
+	if err := validateHTTPTenantInfo(info, cfg); err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+
+	// 注入租户信息到 context
+	ctx, err := injectTenantInfoToContext(ctx, info)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+
+	// 处理追踪信息
+	trace := ExtractTraceFromHTTPHeader(r.Header)
+	ctx, err = injectHTTPTraceToContext(ctx, trace, cfg.ensureTrace)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+
+	return ctx, 0, nil
+}
+
+// validateHTTPTenantInfo 验证租户信息
+func validateHTTPTenantInfo(info TenantInfo, cfg *middlewareConfig) error {
+	if cfg.requireTenant {
+		return info.Validate()
+	}
+	if cfg.requireTenantID && info.TenantID == "" {
+		return ErrEmptyTenantID
+	}
+	return nil
+}
+
+// injectTenantInfoToContext 将租户信息注入 context
+func injectTenantInfoToContext(ctx context.Context, info TenantInfo) (context.Context, error) {
+	var err error
+	if info.TenantID != "" {
+		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if info.TenantName != "" {
+		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ctx, nil
+}
+
+// injectHTTPTraceToContext 处理追踪信息并注入 context
+func injectHTTPTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
+	ctx, err := xctx.WithTrace(ctx, trace)
+	if err != nil {
+		return nil, err
+	}
+	if ensureTrace {
+		return xctx.EnsureTrace(ctx)
+	}
+	return ctx, nil
 }
 
 // =============================================================================

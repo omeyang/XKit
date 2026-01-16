@@ -49,6 +49,8 @@ func TestXlogger_HandleError(t *testing.T) {
 			callbackCount.Add(1)
 			lastError = err
 		},
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 	}
 
 	// 调用 log 方法，应该触发错误回调
@@ -72,8 +74,10 @@ func TestXlogger_HandleError(t *testing.T) {
 func TestXlogger_ErrorCount(t *testing.T) {
 	levelVar := new(slog.LevelVar)
 	l := &xlogger{
-		handler:  &errorHandler{err: errors.New("repeated error")},
-		levelVar: levelVar,
+		handler:        &errorHandler{err: errors.New("repeated error")},
+		levelVar:       levelVar,
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 		// onError 为 nil，只计数不回调
 	}
 
@@ -100,6 +104,8 @@ func TestXlogger_Stack_HandleError(t *testing.T) {
 		onError: func(_ error) {
 			callbackCount.Add(1)
 		},
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 	}
 
 	// 调用 Stack 方法
@@ -118,9 +124,11 @@ func TestXlogger_Stack_HandleError(t *testing.T) {
 func TestXlogger_NoCallback(t *testing.T) {
 	levelVar := new(slog.LevelVar)
 	l := &xlogger{
-		handler:  &errorHandler{err: errors.New("no callback")},
-		levelVar: levelVar,
-		onError:  nil, // 没有设置回调
+		handler:        &errorHandler{err: errors.New("no callback")},
+		levelVar:       levelVar,
+		onError:        nil, // 没有设置回调
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 	}
 
 	// 应该不 panic
@@ -143,6 +151,8 @@ func TestXlogger_With_PreservesOnError(t *testing.T) {
 		onError: func(_ error) {
 			callbackCount.Add(1)
 		},
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 	}
 
 	// 创建派生 logger
@@ -157,6 +167,11 @@ func TestXlogger_With_PreservesOnError(t *testing.T) {
 	// With() 应该保留 onError 回调
 	if childLogger.onError == nil {
 		t.Error("With() should preserve onError callback")
+	}
+
+	// With() 应该共享 inErrorHandler 指针
+	if childLogger.inErrorHandler != l.inErrorHandler {
+		t.Error("With() should share inErrorHandler pointer")
 	}
 
 	// 使用派生 logger 触发错误
@@ -178,6 +193,8 @@ func TestXlogger_WithGroup_PreservesOnError(t *testing.T) {
 		onError: func(_ error) {
 			callbackCount.Add(1)
 		},
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
 	}
 
 	// 创建分组 logger
@@ -192,6 +209,11 @@ func TestXlogger_WithGroup_PreservesOnError(t *testing.T) {
 	// WithGroup() 应该保留 onError 回调
 	if childLogger.onError == nil {
 		t.Error("WithGroup() should preserve onError callback")
+	}
+
+	// WithGroup() 应该共享 inErrorHandler 指针
+	if childLogger.inErrorHandler != l.inErrorHandler {
+		t.Error("WithGroup() should share inErrorHandler pointer")
 	}
 
 	// 使用派生 logger 触发错误

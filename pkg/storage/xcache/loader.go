@@ -40,6 +40,17 @@ type Loader interface {
 // 当使用 singleflight 时，建议设置此超时以避免 goroutine 泄漏。
 const RecommendedLoadTimeout = 30 * time.Second
 
+// RecommendedDistributedLockTTL 推荐的分布式锁 TTL。
+// 设置为 LoadTimeout 的 1.5 倍，确保锁在加载完成前不会过期。
+// 如果锁 TTL 等于或小于 LoadTimeout，当加载接近超时时锁可能刚好过期，
+// 导致其他节点并发回源，降低防击穿效果。
+const RecommendedDistributedLockTTL = 45 * time.Second
+
+// CacheSetErrorHook 缓存写入失败回调钩子。
+// 当缓存写入失败时调用，用于监控告警或自定义处理。
+// 注意：此钩子在请求路径上同步执行，应避免耗时操作。
+type CacheSetErrorHook func(ctx context.Context, key string, err error)
+
 // LoaderOptions 定义 Loader 的配置选项。
 type LoaderOptions struct {
 	// EnableSingleflight 是否启用 singleflight。
@@ -53,13 +64,21 @@ type LoaderOptions struct {
 	EnableDistributedLock bool
 
 	// DistributedLockTTL 分布式锁的超时时间。
-	// 默认为 RecommendedLoadTimeout (30s)。
+	// 默认为 RecommendedDistributedLockTTL (45s)，即 LoadTimeout 的 1.5 倍。
+	//
+	// 重要：DistributedLockTTL 必须大于 LoadTimeout，以确保锁在加载完成前不会过期。
+	// 如果锁在加载完成前过期，其他节点可能并发回源，降低防击穿效果。
+	// 当自定义 LoadTimeout 时，建议同时调整此值为 LoadTimeout * 1.5 或更大。
 	DistributedLockTTL time.Duration
 
 	// DistributedLockKeyPrefix 分布式锁 key 的前缀。
 	// 此前缀用于区分 Loader 使用的锁与其他业务锁。
 	// 注意：Redis.Lock() 会额外添加 "lock:" 前缀，最终 key 格式为 "lock:{DistributedLockKeyPrefix}{key}"。
 	// 默认为 "loader:"，最终锁 key 为 "lock:loader:{key}"。
+	//
+	// 对于 LoadHash 操作，锁 key 使用长度前缀格式避免碰撞：
+	// "lock:{DistributedLockKeyPrefix}{len(key)}:{key}:{field}"
+	// 例如：key="user", field="profile" → "lock:loader:4:user:profile"
 	DistributedLockKeyPrefix string
 
 	// ExternalLock 外部锁函数。
@@ -96,6 +115,11 @@ type LoaderOptions struct {
 	// 默认为 true（滑动过期）。
 	HashTTLRefresh bool
 
+	// OnCacheSetError 缓存写入失败回调钩子。
+	// 当缓存写入失败时调用，用于监控告警或自定义处理。
+	// 默认为 nil，仅记录日志。
+	OnCacheSetError CacheSetErrorHook
+
 	// Logger 用于记录警告和错误日志。
 	// 默认使用 slog.Default()。
 	Logger *slog.Logger
@@ -109,9 +133,9 @@ func defaultLoaderOptions() *LoaderOptions {
 	return &LoaderOptions{
 		EnableSingleflight:       true,
 		EnableDistributedLock:    false,
-		DistributedLockTTL:       RecommendedLoadTimeout,
-		DistributedLockKeyPrefix: "loader:", // Redis.Lock() 会添加 "lock:" 前缀，最终为 "lock:loader:{key}"
-		LoadTimeout:              RecommendedLoadTimeout, // 默认启用超时保护，防止 goroutine 泄漏
+		DistributedLockTTL:       RecommendedDistributedLockTTL, // 45s，为 LoadTimeout 的 1.5 倍
+		DistributedLockKeyPrefix: "loader:",                     // Redis.Lock() 会添加 "lock:" 前缀，最终为 "lock:loader:{key}"
+		LoadTimeout:              RecommendedLoadTimeout,        // 默认启用超时保护，防止 goroutine 泄漏
 		MaxRetryAttempts:         10,
 		HashTTLRefresh:           true,
 		Logger:                   slog.Default(),
@@ -148,9 +172,20 @@ func WithDistributedLockKeyPrefix(prefix string) LoaderOption {
 
 // WithExternalLock 设置外部锁函数，用于替代内置简单锁。
 // 适用于 Redlock 多节点、etcd 分布式锁等复杂场景。
+//
+// 重要：设置此选项后会自动启用分布式锁（无需额外调用 WithDistributedLock(true)）。
+// 当 ExternalLock 非 nil 时，将优先使用外部锁，忽略内置的 Redis.Lock() 实现。
+//
+// 锁函数签名与 Redis.Lock() 相同，便于适配各种锁实现：
+//
+//	func(ctx context.Context, key string, ttl time.Duration) (Unlocker, error)
 func WithExternalLock(fn LockFunc) LoaderOption {
 	return func(o *LoaderOptions) {
 		o.ExternalLock = fn
+		// 设置外部锁时自动启用分布式锁
+		if fn != nil {
+			o.EnableDistributedLock = true
+		}
 	}
 }
 
@@ -175,6 +210,15 @@ func WithMaxRetryAttempts(n int) LoaderOption {
 func WithHashTTLRefresh(refresh bool) LoaderOption {
 	return func(o *LoaderOptions) {
 		o.HashTTLRefresh = refresh
+	}
+}
+
+// WithOnCacheSetError 设置缓存写入失败回调钩子。
+// 当缓存写入失败时调用，用于监控告警或自定义处理。
+// 注意：此钩子在请求路径上同步执行，应避免耗时操作。
+func WithOnCacheSetError(hook CacheSetErrorHook) LoaderOption {
+	return func(o *LoaderOptions) {
+		o.OnCacheSetError = hook
 	}
 }
 

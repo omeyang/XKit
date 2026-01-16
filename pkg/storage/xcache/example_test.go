@@ -52,7 +52,7 @@ func ExampleNewRedis() {
 func ExampleNewMemory() {
 	// 创建内存缓存
 	cache, err := xcache.NewMemory(
-		xcache.WithMemoryMaxCost(10*1024*1024), // 10MB
+		xcache.WithMemoryMaxCost(10 * 1024 * 1024), // 10MB
 	)
 	if err != nil {
 		log.Fatal(err)

@@ -188,6 +188,83 @@ func ExampleClient_Watch() {
 	}
 }
 
+// ExampleClient_Watch_withReconnect 演示带自动重连的 Watch 模式。
+// Watch 方法不自动重连，这是设计决策。调用方可根据需要实现重连逻辑。
+// 错误事件的 Revision 字段包含最后成功处理的版本号，可用于恢复。
+func ExampleClient_Watch_withReconnect() {
+	config := &xetcd.Config{
+		Endpoints: []string{"localhost:2379"},
+	}
+
+	client, err := xetcd.NewClient(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	key := "/app/config/"
+
+	// 带重连的 Watch 循环
+	watchWithRetry := func() {
+		var lastRevision int64 // 跟踪最后处理的版本号
+
+		for {
+			// 使用 WithRevision 从上次断开的位置继续
+			var opts []xetcd.WatchOption
+			opts = append(opts, xetcd.WithPrefix())
+			if lastRevision > 0 {
+				// 从 lastRevision+1 开始，避免重复处理
+				opts = append(opts, xetcd.WithRevision(lastRevision+1))
+			}
+
+			events, err := client.Watch(ctx, key, opts...)
+			if err != nil {
+				log.Printf("watch failed: %v", err)
+				return
+			}
+
+			for event := range events {
+				if event.Error != nil {
+					// Watch 失败，event.Revision 包含最后成功的版本号
+					lastRevision = event.Revision
+					log.Printf("watch error: %v (last rev: %d), reconnecting in 1s...",
+						event.Error, lastRevision)
+					time.Sleep(time.Second) // 简单退避
+					break                   // 跳出内层循环，重新建立 Watch
+				}
+
+				// 处理正常事件
+				lastRevision = event.Revision
+				switch event.Type {
+				case xetcd.EventPut:
+					fmt.Printf("PUT: %s = %s (rev: %d)\n", event.Key, event.Value, event.Revision)
+				case xetcd.EventDelete:
+					fmt.Printf("DELETE: %s (rev: %d)\n", event.Key, event.Revision)
+				}
+			}
+
+			// 检查是否应该退出
+			select {
+			case <-ctx.Done():
+				log.Println("context canceled, stopping watch")
+				return
+			default:
+				// 继续重连
+			}
+		}
+	}
+
+	// 在 goroutine 中运行 Watch
+	go watchWithRetry()
+
+	// 模拟运行一段时间后取消
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+}
+
 // ExampleIsKeyNotFound 演示错误处理。
 func ExampleIsKeyNotFound() {
 	err := xetcd.ErrKeyNotFound

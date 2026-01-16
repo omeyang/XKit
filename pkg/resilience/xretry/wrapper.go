@@ -127,6 +127,19 @@ var (
 //	    }
 //	    return doSomething()
 //	})
+//
+// 注意：如果调用方传入 RetryIf 选项，会覆盖内置的错误判断逻辑。
+// 此时 PermanentError/TemporaryError/Unrecoverable 将不会自动生效，
+// 调用方需要在自定义的 RetryIf 中处理这些情况。例如：
+//
+//	err := xretry.Do(ctx, fn, xretry.RetryIf(func(err error) bool {
+//	    // 需要手动检查 xretry 的错误类型
+//	    if !xretry.IsRecoverable(err) || !xretry.IsRetryable(err) {
+//	        return false
+//	    }
+//	    // 自定义判断逻辑
+//	    return !errors.Is(err, ErrFatal)
+//	}))
 func Do(ctx context.Context, fn func() error, opts ...Option) error {
 	// 将 context 添加到选项中
 	allOpts := make([]Option, 0, len(opts)+2)
@@ -153,6 +166,10 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 //	result, err := xretry.DoWithData(ctx, func() (string, error) {
 //	    return fetchData()
 //	}, xretry.Attempts(3))
+//
+// 注意：如果调用方传入 RetryIf 选项，会覆盖内置的错误判断逻辑。
+// 此时 PermanentError/TemporaryError/Unrecoverable 将不会自动生效，
+// 调用方需要在自定义的 RetryIf 中处理这些情况。详见 Do 函数的文档说明。
 func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option) (T, error) {
 	// 将 context 添加到选项中
 	allOpts := make([]Option, 0, len(opts)+2)

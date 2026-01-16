@@ -515,12 +515,12 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 	xplatform.Reset()
 
 	tests := []struct {
-		name       string
-		setupCtx   func(t *testing.T) context.Context
-		wantTrace  string
-		wantSpan   string
-		wantReq    string
-		wantFlags  string
+		name      string
+		setupCtx  func(t *testing.T) context.Context
+		wantTrace string
+		wantSpan  string
+		wantReq   string
+		wantFlags string
 	}{
 		{
 			name: "只有TraceID",
@@ -738,6 +738,298 @@ func TestExtractTraceFromHTTPRequest(t *testing.T) {
 		got := xtenant.ExtractTraceFromHTTPRequest(req)
 		if got.TraceID != "t1" || got.SpanID != "s1" {
 			t.Errorf("ExtractTraceFromHTTPRequest() = %+v, want TraceID=t1, SpanID=s1", got)
+		}
+	})
+}
+
+// =============================================================================
+// WithRequireTenantID 选项测试
+// =============================================================================
+
+func TestHTTPMiddlewareWithOptions_RequireTenantID(t *testing.T) {
+	t.Run("缺少TenantID返回400", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithRequireTenantID(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		// 不设置任何租户信息
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("只有TenantID时正常通过", func(t *testing.T) {
+		var capturedTenantID string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTenantID = xtenant.TenantID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithRequireTenantID(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
+		// 不设置 TenantName - 应该允许通过
+
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+		if capturedTenantID != "tenant-123" {
+			t.Errorf("TenantID = %q, want %q", capturedTenantID, "tenant-123")
+		}
+	})
+
+	t.Run("WithRequireTenant和WithRequireTenantID互斥", func(t *testing.T) {
+		// 后设置的选项应该覆盖前面的
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		// 先设置 RequireTenant，再设置 RequireTenantID
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithRequireTenant(),
+			xtenant.WithRequireTenantID(), // 后设置，应该覆盖前面的
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
+		// 不设置 TenantName - RequireTenantID 模式下应该允许通过
+
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d (后设置的 RequireTenantID 应该生效)", rr.Code, http.StatusOK)
+		}
+	})
+}
+
+// =============================================================================
+// WithEnsureTrace 选项测试
+// =============================================================================
+
+func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
+	t.Run("启用EnsureTrace自动生成追踪信息", func(t *testing.T) {
+		var capturedTraceID, capturedSpanID, capturedRequestID string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xctx.TraceID(r.Context())
+			capturedSpanID = xctx.SpanID(r.Context())
+			capturedRequestID = xctx.RequestID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithEnsureTrace(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		// 不设置任何 trace header
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		// 应该自动生成追踪信息
+		if capturedTraceID == "" {
+			t.Error("TraceID should be auto-generated, got empty")
+		}
+		if capturedSpanID == "" {
+			t.Error("SpanID should be auto-generated, got empty")
+		}
+		if capturedRequestID == "" {
+			t.Error("RequestID should be auto-generated, got empty")
+		}
+	})
+
+	t.Run("启用EnsureTrace但上游已有trace则保留", func(t *testing.T) {
+		const existingTraceID = "0af7651916cd43dd8448eb211c80319c"
+		var capturedTraceID string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xctx.TraceID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithEnsureTrace(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set(xtenant.HeaderTraceID, existingTraceID)
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		// 应该保留上游传来的 TraceID
+		if capturedTraceID != existingTraceID {
+			t.Errorf("TraceID = %q, want %q (should preserve upstream value)", capturedTraceID, existingTraceID)
+		}
+	})
+
+	t.Run("默认不启用EnsureTrace则不自动生成", func(t *testing.T) {
+		var capturedTraceID, capturedSpanID, capturedRequestID string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xctx.TraceID(r.Context())
+			capturedSpanID = xctx.SpanID(r.Context())
+			capturedRequestID = xctx.RequestID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		// 默认中间件，不启用 EnsureTrace
+		wrapped := xtenant.HTTPMiddleware()(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		// 不设置任何 trace header
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		// 默认行为：不自动生成
+		if capturedTraceID != "" {
+			t.Errorf("TraceID should be empty without EnsureTrace, got %q", capturedTraceID)
+		}
+		if capturedSpanID != "" {
+			t.Errorf("SpanID should be empty without EnsureTrace, got %q", capturedSpanID)
+		}
+		if capturedRequestID != "" {
+			t.Errorf("RequestID should be empty without EnsureTrace, got %q", capturedRequestID)
+		}
+	})
+
+	t.Run("上游传递trace则正常传播", func(t *testing.T) {
+		const (
+			existingTraceID    = "trace-upstream"
+			existingSpanID     = "span-upstream"
+			existingRequestID  = "req-upstream"
+			existingTraceFlags = "01"
+		)
+		var capturedTraceID, capturedSpanID, capturedRequestID, capturedTraceFlags string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xctx.TraceID(r.Context())
+			capturedSpanID = xctx.SpanID(r.Context())
+			capturedRequestID = xctx.RequestID(r.Context())
+			capturedTraceFlags = xctx.TraceFlags(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		// 默认中间件，不启用 EnsureTrace
+		wrapped := xtenant.HTTPMiddleware()(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set(xtenant.HeaderTraceID, existingTraceID)
+		req.Header.Set(xtenant.HeaderSpanID, existingSpanID)
+		req.Header.Set(xtenant.HeaderRequestID, existingRequestID)
+		req.Header.Set(xtenant.HeaderTraceFlags, existingTraceFlags)
+
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		// 应该正确传播上游的追踪信息
+		if capturedTraceID != existingTraceID {
+			t.Errorf("TraceID = %q, want %q", capturedTraceID, existingTraceID)
+		}
+		if capturedSpanID != existingSpanID {
+			t.Errorf("SpanID = %q, want %q", capturedSpanID, existingSpanID)
+		}
+		if capturedRequestID != existingRequestID {
+			t.Errorf("RequestID = %q, want %q", capturedRequestID, existingRequestID)
+		}
+		if capturedTraceFlags != existingTraceFlags {
+			t.Errorf("TraceFlags = %q, want %q", capturedTraceFlags, existingTraceFlags)
+		}
+	})
+}
+
+// =============================================================================
+// 组合选项测试
+// =============================================================================
+
+func TestHTTPMiddlewareWithOptions_Combined(t *testing.T) {
+	t.Run("同时启用RequireTenantID和EnsureTrace", func(t *testing.T) {
+		var capturedTenantID, capturedTraceID string
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTenantID = xtenant.TenantID(r.Context())
+			capturedTraceID = xctx.TraceID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithRequireTenantID(),
+			xtenant.WithEnsureTrace(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
+		// 不设置 trace header，应该自动生成
+
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+		if capturedTenantID != "tenant-123" {
+			t.Errorf("TenantID = %q, want %q", capturedTenantID, "tenant-123")
+		}
+		if capturedTraceID == "" {
+			t.Error("TraceID should be auto-generated, got empty")
+		}
+	})
+
+	t.Run("RequireTenantID失败时不应执行EnsureTrace", func(t *testing.T) {
+		handlerCalled := false
+
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		wrapped := xtenant.HTTPMiddlewareWithOptions(
+			xtenant.WithRequireTenantID(),
+			xtenant.WithEnsureTrace(),
+		)(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		// 不设置 TenantID，应该被拒绝
+
+		rr := httptest.NewRecorder()
+		wrapped.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+		}
+		if handlerCalled {
+			t.Error("handler should not be called when tenant validation fails")
 		}
 	})
 }

@@ -59,4 +59,38 @@
 //
 // 设计理由：tracestate 内容与厂商相关，中间服务盲目传递可能导致问题。
 // 如需完整 tracestate 支持，建议使用 OpenTelemetry SDK。
+//
+// # 自动生成行为（AutoGenerate）
+//
+// 默认情况下，HTTPMiddleware 和 GRPCUnaryServerInterceptor 会自动生成缺失的追踪 ID。
+// 这种行为是逐字段独立处理的：
+//
+//   - 如果 TraceID 缺失但 SpanID 存在：仅生成 TraceID
+//   - 如果 SpanID 缺失但 TraceID 存在：仅生成 SpanID
+//   - 如果两者都缺失：分别生成新的 TraceID 和 SpanID
+//
+// 潜在影响：当上游只传递部分字段时（如仅传 TraceID），当前服务会生成新的 SpanID，
+// 这可能导致链路图上出现"伪父子关系"——新生成的 SpanID 与上游的 SpanID 无关联。
+//
+// 如需严格控制自动生成行为，可使用选项禁用：
+//
+//	xtrace.HTTPMiddlewareWithOptions(xtrace.WithAutoGenerate(false))
+//	xtrace.GRPCUnaryServerInterceptorWithOptions(xtrace.WithGRPCAutoGenerate(false))
+//
+// 禁用后，缺失的字段将保持为空，不会自动生成。
+//
+// # W3C traceparent 大小写处理
+//
+// W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
+// 本包在生成 traceparent（InjectToRequest/InjectToOutgoingContext）时会自动转换为小写，
+// 确保输出符合 W3C 规范，避免被严格实现拒绝。
+//
+// 解析时（ExtractFromHTTPHeader/ExtractFromMetadata）同时接受大写和小写输入，
+// 保持向后兼容性。
+//
+// # trace-flags 格式校验
+//
+// trace-flags 必须是 2 位十六进制字符（如 "00"、"01"、"ff"）。
+// 无效格式的 trace-flags 会被丢弃并记录警告日志，不会注入到 context 中。
+// 这避免了无效值污染 context 并在传播时被静默替换为 "00" 导致的采样语义丢失。
 package xtrace

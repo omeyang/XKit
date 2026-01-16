@@ -483,7 +483,7 @@ func TestKeyBasedSampler(t *testing.T) {
 		total := 10000
 
 		for i := 0; i < total; i++ {
-			key := string(rune('a' + i%26)) + string(rune('0'+i/26%10)) + string(rune(i))
+			key := string(rune('a'+i%26)) + string(rune('0'+i/26%10)) + string(rune(i))
 			ctx := context.WithValue(context.Background(), testKeyName, key)
 			if sampler.ShouldSample(ctx) {
 				sampled++

@@ -2,9 +2,10 @@ package xcache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,7 +21,22 @@ const (
 	// defaultOperationTimeout 是移除调用方取消信号后的默认操作超时。
 	// 用于防止 Redis 挂起时 goroutine 永久阻塞。
 	defaultOperationTimeout = 30 * time.Second
+
+	// 浮点数转换常量
+	floatBits  = 53
+	floatScale = 1.0 / (1 << floatBits)
 )
+
+// randomFloat64 返回 [0.0, 1.0) 范围内的随机浮点数。
+// 使用 crypto/rand 确保高质量随机数。
+func randomFloat64() float64 {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand 失败表示系统随机数源不可用，返回 0 作为安全默认值
+		return 0
+	}
+	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
+}
 
 // detachedCtx 是一个脱离原始 context 取消链的 context。
 // 它保留原始 context 的 Value，但不继承其 Done/Err/Deadline。
@@ -67,6 +83,21 @@ func contextWithIndependentTimeout(ctx context.Context, timeout time.Duration) (
 	}
 
 	return context.WithTimeout(detached, timeout)
+}
+
+// applyLoadTimeout 根据 LoadTimeout 配置创建带超时的 context。
+// timeout 行为与 contextWithIndependentTimeout 一致：
+//   - timeout == 0: 禁用超时，直接返回原 ctx
+//   - timeout < 0: 使用 defaultOperationTimeout (30s)
+//   - timeout > 0: 使用指定超时时间
+func applyLoadTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return ctx, func() {} // 禁用超时
+	}
+	if timeout < 0 {
+		timeout = defaultOperationTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // hashFieldKey 生成 Hash field 的唯一标识 key。
@@ -226,7 +257,7 @@ func (l *loader) loadWithLock(ctx context.Context, key string, loadFn LoadFunc, 
 	defer func() {
 		defer unlockCancel()
 		if unlockErr := unlock(unlockCtx); unlockErr != nil {
-			l.logWarn("xcache: unlock failed", "key", lockKey, "error", unlockErr)
+			l.logUnlockError(lockKey, unlockErr)
 		}
 	}()
 
@@ -278,12 +309,8 @@ func (l *loader) handleLockError(lockErr error, lockKey string, fallback func() 
 // loadAndCache 加载数据并写入缓存。
 func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
 	// 应用超时
-	loadCtx := ctx
-	if l.options.LoadTimeout > 0 {
-		var cancel context.CancelFunc
-		loadCtx, cancel = context.WithTimeout(ctx, l.options.LoadTimeout)
-		defer cancel()
-	}
+	loadCtx, cancel := applyLoadTimeout(ctx, l.options.LoadTimeout)
+	defer cancel()
 
 	// 回源加载
 	value, err := loadFn(loadCtx)
@@ -294,6 +321,7 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 	// 写入缓存（best-effort，失败不影响业务返回）
 	if setErr := l.cache.Client().Set(ctx, key, value, ttl).Err(); setErr != nil {
 		l.logWarn("xcache: cache set failed", "key", key, "error", setErr)
+		l.onCacheSetError(ctx, key, setErr)
 	}
 
 	return value, nil
@@ -359,7 +387,7 @@ func (l *loader) loadHashWithLock(ctx context.Context, key, field string, loadFn
 	defer func() {
 		defer unlockCancel()
 		if unlockErr := unlock(unlockCtx); unlockErr != nil {
-			l.logWarn("xcache: hash unlock failed", "key", lockKey, "error", unlockErr)
+			l.logUnlockError(lockKey, unlockErr)
 		}
 	}()
 
@@ -391,12 +419,8 @@ func (l *loader) checkCacheHGet(ctx context.Context, key, field string, loadFn L
 // loadHashAndCache 加载数据并写入 Hash。
 func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
 	// 应用超时
-	loadCtx := ctx
-	if l.options.LoadTimeout > 0 {
-		var cancel context.CancelFunc
-		loadCtx, cancel = context.WithTimeout(ctx, l.options.LoadTimeout)
-		defer cancel()
-	}
+	loadCtx, cancel := applyLoadTimeout(ctx, l.options.LoadTimeout)
+	defer cancel()
 
 	// 回源加载
 	value, err := loadFn(loadCtx)
@@ -405,8 +429,10 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 	}
 
 	// 写入缓存（best-effort，失败不影响业务返回）
+	hashKey := hashFieldKey(key, field)
 	if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
 		l.logWarn("xcache: hash set failed", "key", key, "field", field, "error", setErr)
+		l.onCacheSetError(ctx, hashKey, setErr)
 	} else if ttl > 0 {
 		if l.options.HashTTLRefresh {
 			if expireErr := l.cache.Client().Expire(ctx, key, ttl).Err(); expireErr != nil {
@@ -554,16 +580,22 @@ func backoffWithJitter(attempt int) time.Duration {
 		backoff = maxBackoff
 	}
 
-	// 添加抖动: backoff * (1 - jitter/2 + rand * jitter)
-	// 使用 math/rand/v2 是合适的，因为这不是安全敏感场景
-	jitter := time.Duration(float64(backoff) * jitterFraction * (rand.Float64() - 0.5)) //nolint:gosec // 退避抖动不需要密码学安全的随机数
+	// 添加抖动: backoff * jitterFraction * (rand - 0.5)
+	// 使用 crypto/rand 确保高质量随机数
+	jitter := time.Duration(float64(backoff) * jitterFraction * (randomFloat64() - 0.5))
 	wait := backoff + jitter
 
 	return wait
 }
 
 // acquireLock 获取分布式锁。
-// 如果配置了 ExternalLock，使用外部锁；否则使用内置简单锁。
+//
+// 锁实现优先级（互斥，只会使用其中一种）：
+//  1. ExternalLock 非 nil → 使用外部锁（如 xdlock 的 Redlock 或 etcd 锁）
+//  2. ExternalLock 为 nil → 使用内置简单锁（Redis SET NX）
+//
+// 注意：设置 WithExternalLock 会自动启用分布式锁（EnableDistributedLock = true），
+// 此时内置锁不会被使用。两种锁实现不会同时生效。
 func (l *loader) acquireLock(ctx context.Context, key string) (Unlocker, error) {
 	if l.options.ExternalLock != nil {
 		return l.options.ExternalLock(ctx, key, l.options.DistributedLockTTL)
@@ -571,9 +603,36 @@ func (l *loader) acquireLock(ctx context.Context, key string) (Unlocker, error) 
 	return l.cache.Lock(ctx, key, l.options.DistributedLockTTL)
 }
 
+// logInfo 记录信息日志（如果配置了 Logger）。
+func (l *loader) logInfo(msg string, args ...any) {
+	if l.options.Logger != nil {
+		l.options.Logger.Info(msg, args...)
+	}
+}
+
 // logWarn 记录警告日志（如果配置了 Logger）。
 func (l *loader) logWarn(msg string, args ...any) {
 	if l.options.Logger != nil {
 		l.options.Logger.Warn(msg, args...)
+	}
+}
+
+// logUnlockError 记录解锁错误。
+// ErrLockExpired 是预期情况（锁自然过期），使用 Info 级别；
+// 其他错误使用 Warn 级别。
+func (l *loader) logUnlockError(key string, err error) {
+	if errors.Is(err, ErrLockExpired) {
+		// 锁过期是预期情况，可能是加载时间超过锁 TTL
+		l.logInfo("xcache: lock expired before unlock (consider increasing DistributedLockTTL)",
+			"key", key)
+	} else {
+		l.logWarn("xcache: unlock failed", "key", key, "error", err)
+	}
+}
+
+// onCacheSetError 触发缓存写入失败回调（如果配置了）。
+func (l *loader) onCacheSetError(ctx context.Context, key string, err error) {
+	if l.options.OnCacheSetError != nil {
+		l.options.OnCacheSetError(ctx, key, err)
 	}
 }

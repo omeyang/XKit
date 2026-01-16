@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,18 +206,18 @@ func TestScheduler_Stats(t *testing.T) {
 
 func TestScheduler_StatsIntegration(t *testing.T) {
 	scheduler := New(WithSeconds()) // 启用秒级精度以加快测试
-	var successCount, failureCount int64
+	var successCount, failureCount atomic.Int64
 
 	// 添加一个会成功的任务
 	_, err := scheduler.AddFunc("*/1 * * * * *", func(ctx context.Context) error {
-		successCount++
+		successCount.Add(1)
 		return nil
 	}, WithName("success-job"))
 	require.NoError(t, err)
 
 	// 添加一个会失败的任务
 	_, err = scheduler.AddFunc("*/1 * * * * *", func(ctx context.Context) error {
-		failureCount++
+		failureCount.Add(1)
 		return errors.New("intentional error")
 	}, WithName("failure-job"))
 	require.NoError(t, err)

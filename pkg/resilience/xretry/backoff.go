@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"math"
-	mathrand "math/rand/v2"
 	"time"
 )
 
@@ -152,21 +151,27 @@ func (b *LinearBackoff) NextDelay(attempt int) time.Duration {
 		attempt = 1
 	}
 
-	// 预检查：如果 attempt 过大，直接返回 maxDelay
-	// 避免 attempt-1 或后续乘法溢出成小正数绕过检测
-	// 10 亿次重试已远超任何实际场景
-	const maxSafeAttempt = 1 << 30
-	if attempt > maxSafeAttempt {
-		return b.maxDelay
+	// 安全溢出检测：通过预计算最大允许的乘数来避免溢出
+	// 这比之前的方法更可靠，因为它在溢出发生前就进行检测
+	//
+	// 原理：如果 increment * (attempt-1) > maxDelay - initialDelay，
+	// 则结果必定超过 maxDelay，应直接返回 maxDelay。
+	// 通过计算 maxMultiplier = (maxDelay - initialDelay) / increment，
+	// 可以在不发生溢出的情况下判断是否会超限。
+	if b.increment > 0 && attempt > 1 {
+		available := b.maxDelay - b.initialDelay
+		if available < 0 {
+			// maxDelay < initialDelay 时（构造时已修正，但防御性检查）
+			return b.maxDelay
+		}
+		maxMultiplier := available / b.increment
+		if time.Duration(attempt-1) > maxMultiplier {
+			return b.maxDelay
+		}
 	}
 
-	// 计算增量，防止整数溢出
+	// 此时可以安全计算，不会溢出
 	incrementPart := b.increment * time.Duration(attempt-1)
-	// 如果增量为负（溢出）或结果会溢出，直接返回 maxDelay
-	if incrementPart < 0 || b.initialDelay > b.maxDelay-incrementPart {
-		return b.maxDelay
-	}
-
 	delay := b.initialDelay + incrementPart
 	if delay > b.maxDelay {
 		delay = b.maxDelay
@@ -188,11 +193,11 @@ func (b *NoBackoff) NextDelay(_ int) time.Duration {
 
 // 确保实现了 BackoffPolicy 接口
 var (
-	_ BackoffPolicy      = (*FixedBackoff)(nil)
-	_ BackoffPolicy      = (*ExponentialBackoff)(nil)
-	_ BackoffPolicy      = (*LinearBackoff)(nil)
-	_ BackoffPolicy      = (*NoBackoff)(nil)
-	_ ResettableBackoff  = (*ExponentialBackoff)(nil)
+	_ BackoffPolicy     = (*FixedBackoff)(nil)
+	_ BackoffPolicy     = (*ExponentialBackoff)(nil)
+	_ BackoffPolicy     = (*LinearBackoff)(nil)
+	_ BackoffPolicy     = (*NoBackoff)(nil)
+	_ ResettableBackoff = (*ExponentialBackoff)(nil)
 )
 
 const (
@@ -202,9 +207,9 @@ const (
 
 func randomFloat64() float64 {
 	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err == nil {
-		return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand 失败时返回 0，这意味着无抖动（安全默认值）
+		return 0
 	}
-	// crypto/rand 失败时回退到 math/rand（极少发生）
-	return mathrand.Float64() //nolint:gosec // G404: fallback 场景，性能优先
+	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
 }

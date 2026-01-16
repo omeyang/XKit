@@ -95,10 +95,13 @@ type mockSpan struct {
 	recordedErrors []error
 }
 
-func (s *mockSpan) End(opts ...any)                       { s.ended = true }
-func (s *mockSpan) RecordError(err error, opts ...any)    { s.errorRecorded = true; s.recordedErrors = append(s.recordedErrors, err) }
-func (s *mockSpan) SetStatus(status any)                  {}
-func (s *mockSpan) SetAttributes(attrs ...any)            {}
+func (s *mockSpan) End(opts ...any) { s.ended = true }
+func (s *mockSpan) RecordError(err error, opts ...any) {
+	s.errorRecorded = true
+	s.recordedErrors = append(s.recordedErrors, err)
+}
+func (s *mockSpan) SetStatus(status any)       {}
+func (s *mockSpan) SetAttributes(attrs ...any) {}
 
 var _ Span = (*mockSpan)(nil)
 

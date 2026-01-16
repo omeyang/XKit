@@ -290,8 +290,9 @@ func TestQueryPage_SlowQueryHook(t *testing.T) {
 	}
 
 	w := &clickhouseWrapper{
-		conn:    conn,
-		options: opts,
+		conn:              conn,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	_, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
@@ -451,8 +452,9 @@ func TestBatchInsert_SlowQueryHook(t *testing.T) {
 	}
 
 	w := &clickhouseWrapper{
-		conn:    conn,
-		options: opts,
+		conn:              conn,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
 	}
 
 	rows := []any{struct{ ID int }{ID: 1}}
@@ -489,10 +491,10 @@ func TestNew_WithAllOptions(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, ch)
 
-	// 验证选项已应用 - 通过触发慢查询钩子
+	// 验证选项已应用 - 通过触发慢查询钩子（需要 Duration >= Threshold）
 	wrapper, ok := ch.(*clickhouseWrapper)
 	assert.True(t, ok)
-	wrapper.triggerSlowQueryHook(context.Background(), SlowQueryInfo{})
+	wrapper.maybeSlowQuery(context.Background(), SlowQueryInfo{Duration: 200 * time.Millisecond})
 	assert.True(t, hookCalled)
 }
 

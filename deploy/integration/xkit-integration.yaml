@@ -102,7 +102,7 @@ metadata:
 spec:
   containers:
     - name: kafka
-      image: docker.io/bitnami/kafka:3.7
+      image: docker.io/apache/kafka:3.7.0
       ports:
         - containerPort: 9092
           hostPort: 9092

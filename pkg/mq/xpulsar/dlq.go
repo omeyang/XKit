@@ -3,8 +3,8 @@ package xpulsar
 import (
 	"time"
 
-	"github.com/omeyang/xkit/pkg/resilience/xretry"
 	"github.com/apache/pulsar-client-go/pulsar"
+	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
 
 // DLQBuilder Pulsar DLQ 配置构建器，提供流畅的 API 来构建 pulsar.DLQPolicy。

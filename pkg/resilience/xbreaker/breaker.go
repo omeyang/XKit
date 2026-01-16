@@ -114,7 +114,8 @@ func WithInterval(d time.Duration) BreakerOption {
 // 滑动窗口比固定窗口更平滑，避免窗口边界时刻的统计偏差。
 //
 // 注意：
-//   - 必须同时配置 WithInterval，否则此选项无效
+//   - 如果未配置 WithInterval，此选项的行为依赖 gobreaker 内部实现
+//   - 建议始终同时配置 WithInterval 以确保预期行为
 //   - BucketPeriod 应能整除 Interval，否则会有行为偏差
 //
 // 默认值：0（使用固定窗口模式）

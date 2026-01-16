@@ -458,16 +458,20 @@ func TestWithDistributedLockKeyPrefix_SetsOption(t *testing.T) {
 // NewMemory 错误路径测试
 // =============================================================================
 
-func TestNewMemory_WithInvalidConfig_ReturnsError(t *testing.T) {
-	// Given - 无效的配置（NumCounters 为 0 会导致 ristretto 返回错误）
+func TestNewMemory_WithInvalidConfig_UsesDefaults(t *testing.T) {
+	// Given - 无效的配置（NumCounters 和 MaxCost 为 0）
+	// 这些无效值会被忽略，使用默认值代替
 	cache, err := NewMemory(
 		WithMemoryNumCounters(0),
 		WithMemoryMaxCost(0),
 	)
 
-	// Then - 应该返回错误
-	assert.Error(t, err)
-	assert.Nil(t, cache)
+	// Then - 应该成功创建（使用默认值）
+	assert.NoError(t, err)
+	assert.NotNil(t, cache)
+	if cache != nil {
+		cache.Close()
+	}
 }
 
 // =============================================================================

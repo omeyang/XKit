@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/observability/xrotate"
@@ -272,11 +273,14 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	}
 
 	// 创建 logger
+	// 初始化共享指针，确保派生 logger (With/WithGroup) 能正确共享状态
 	logger := &xlogger{
-		handler:   handler,
-		levelVar:  b.levelVar,
-		onError:   b.onError,
-		addSource: b.addSource, // 传递源码位置设置，用于热路径优化
+		handler:        handler,
+		levelVar:       b.levelVar,
+		onError:        b.onError,
+		errorCount:     new(atomic.Uint64), // 共享错误计数器
+		addSource:      b.addSource,        // 传递源码位置设置，用于热路径优化
+		inErrorHandler: new(atomic.Bool),   // 共享递归保护标记
 	}
 
 	// 创建 cleanup 函数

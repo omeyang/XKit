@@ -206,7 +206,7 @@ func TestDispatchEvents_Success(t *testing.T) {
 		createPutEvent("key2", "value2", 2),
 	}
 
-	result := c.dispatchEvents(ctx, events, eventCh)
+	_, result := c.dispatchEvents(ctx, events, eventCh)
 
 	if !result {
 		t.Error("dispatchEvents() should return true on success")
@@ -239,7 +239,7 @@ func TestDispatchEvents_ContextCanceled(t *testing.T) {
 		createPutEvent("key1", "value1", 1),
 	}
 
-	result := c.dispatchEvents(ctx, events, eventCh)
+	_, result := c.dispatchEvents(ctx, events, eventCh)
 
 	if result {
 		t.Error("dispatchEvents() should return false when context is canceled")
@@ -251,7 +251,7 @@ func TestDispatchEvents_EmptyEvents(t *testing.T) {
 	ctx := context.Background()
 	eventCh := make(chan Event, 10)
 
-	result := c.dispatchEvents(ctx, nil, eventCh)
+	_, result := c.dispatchEvents(ctx, nil, eventCh)
 
 	if !result {
 		t.Error("dispatchEvents() should return true for empty events")
@@ -272,7 +272,7 @@ func TestDispatchEvents_MixedEventTypes(t *testing.T) {
 		createDeleteEvent("delete-key", 2),
 	}
 
-	result := c.dispatchEvents(ctx, events, eventCh)
+	_, result := c.dispatchEvents(ctx, events, eventCh)
 
 	if !result {
 		t.Error("dispatchEvents() should return true on success")
@@ -288,4 +288,3 @@ func TestDispatchEvents_MixedEventTypes(t *testing.T) {
 		t.Errorf("dispatchEvents() second event type = %v, want EventDelete", deleteEvent.Type)
 	}
 }
-

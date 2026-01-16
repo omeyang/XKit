@@ -52,4 +52,16 @@
 //	ErrMissingHasParent      - has_parent 缺失
 //	ErrMissingDeploymentType - deployment_type 缺失
 //	ErrInvalidDeploymentType - deployment_type 非法
+//
+// # 校验策略
+//
+// xctx 是纯粹的存取层，不对字段值进行格式校验（如 trace_id 长度/hex 格式）。
+// 这是有意的设计选择：
+//
+//   - 校验策略因业务场景而异（严格校验 vs 宽松传播）
+//   - 减少热路径上不必要的运行时开销
+//   - 保持 API 简洁性，关注点分离
+//
+// EnsureXxx 系列函数的语义是"确保非空"，对已存在的值不做验证/不纠正。
+// 如需格式校验，请在业务层或网关层自行实现。
 package xctx

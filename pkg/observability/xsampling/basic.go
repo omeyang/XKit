@@ -159,10 +159,10 @@ func (s *ProbabilitySampler) Probability() float64 {
 
 // 确保实现了接口
 var (
-	_ Sampler            = (*alwaysSampler)(nil)
-	_ Sampler            = (*neverSampler)(nil)
-	_ Sampler            = (*RateSampler)(nil)
-	_ Sampler            = (*CountSampler)(nil)
-	_ Sampler            = (*ProbabilitySampler)(nil)
-	_ ResettableSampler  = (*CountSampler)(nil)
+	_ Sampler           = (*alwaysSampler)(nil)
+	_ Sampler           = (*neverSampler)(nil)
+	_ Sampler           = (*RateSampler)(nil)
+	_ Sampler           = (*CountSampler)(nil)
+	_ Sampler           = (*ProbabilitySampler)(nil)
+	_ ResettableSampler = (*CountSampler)(nil)
 )

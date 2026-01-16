@@ -18,6 +18,7 @@ type etcdKV interface {
 // 接口方法与 clientv3.Lease 保持一致。
 type etcdLease interface {
 	Grant(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
+	Revoke(ctx context.Context, id clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error)
 }
 
 // etcdWatcher 定义 etcd Watch 操作接口，用于依赖注入和测试。

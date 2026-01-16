@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omeyang/xkit/pkg/resilience/xretry"
 	"github.com/apache/pulsar-client-go/pulsar"
+	"github.com/omeyang/xkit/pkg/resilience/xretry"
 	"github.com/stretchr/testify/assert"
 )
 

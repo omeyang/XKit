@@ -140,6 +140,21 @@ func (mr *MocketcdLeaseMockRecorder) Grant(ctx, ttl any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Grant", reflect.TypeOf((*MocketcdLease)(nil).Grant), ctx, ttl)
 }
 
+// Revoke mocks base method.
+func (m *MocketcdLease) Revoke(ctx context.Context, id v3.LeaseID) (*v3.LeaseRevokeResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Revoke", ctx, id)
+	ret0, _ := ret[0].(*v3.LeaseRevokeResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Revoke indicates an expected call of Revoke.
+func (mr *MocketcdLeaseMockRecorder) Revoke(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Revoke", reflect.TypeOf((*MocketcdLease)(nil).Revoke), ctx, id)
+}
+
 // MocketcdWatcher is a mock of etcdWatcher interface.
 type MocketcdWatcher struct {
 	ctrl     *gomock.Controller
@@ -274,6 +289,21 @@ func (m *MocketcdClient) Grant(ctx context.Context, ttl int64) (*v3.LeaseGrantRe
 func (mr *MocketcdClientMockRecorder) Grant(ctx, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Grant", reflect.TypeOf((*MocketcdClient)(nil).Grant), ctx, ttl)
+}
+
+// Revoke mocks base method.
+func (m *MocketcdClient) Revoke(ctx context.Context, id v3.LeaseID) (*v3.LeaseRevokeResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Revoke", ctx, id)
+	ret0, _ := ret[0].(*v3.LeaseRevokeResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Revoke indicates an expected call of Revoke.
+func (mr *MocketcdClientMockRecorder) Revoke(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Revoke", reflect.TypeOf((*MocketcdClient)(nil).Revoke), ctx, id)
 }
 
 // Put mocks base method.

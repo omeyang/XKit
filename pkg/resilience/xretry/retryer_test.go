@@ -324,10 +324,10 @@ func TestRetryer_NegativeMaxAttempts(t *testing.T) {
 
 	// 验证确实执行了多次而非 uint 溢出后的巨大次数
 	// 如果是 uint(-1) = 18446744073709551615 次，测试会超时或卡死
-	// 注意：由于使用 NoBackoff（无延迟），100ms 内可执行上万次迭代
+	// 注意：由于使用 NoBackoff（无延迟），100ms 内在快速机器上可执行数十万次迭代
 	// 这里验证的关键是：执行次数远小于 uint 溢出值（~1.8e19）
 	assert.Greater(t, count, 1, "should retry multiple times")
-	assert.Less(t, count, 100000, "should not overflow to huge uint value")
+	assert.Less(t, count, 1000000, "should not overflow to huge uint value")
 }
 
 // negativeMaxAttemptsPolicy 是返回负数 MaxAttempts 的测试策略

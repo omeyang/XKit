@@ -132,11 +132,10 @@ func Example_multipleJobs() {
 func Example_removeJob() {
 	scheduler := xcron.New()
 
-	var executed bool
+	var executed atomic.Bool
 	// 添加任务并保存 ID
 	id, err := scheduler.AddFunc("@every 500ms", func(ctx context.Context) error {
-		if !executed {
-			executed = true
+		if !executed.Swap(true) {
 			fmt.Println("will be removed")
 		}
 		return nil
@@ -165,14 +164,14 @@ func Example_cronExpression() {
 
 	// 各种 cron 表达式示例
 	expressions := map[string]string{
-		"@every 1s":   "每秒",
-		"@every 1m":   "每分钟",
-		"@hourly":     "每小时",
-		"@daily":      "每天午夜",
-		"0 * * * *":   "每小时第 0 分钟",
-		"30 9 * * 1":  "每周一上午 9:30",
-		"0 0 1 * *":   "每月 1 号午夜",
-		"0 0 1 1 *":   "每年 1 月 1 日午夜",
+		"@every 1s":  "每秒",
+		"@every 1m":  "每分钟",
+		"@hourly":    "每小时",
+		"@daily":     "每天午夜",
+		"0 * * * *":  "每小时第 0 分钟",
+		"30 9 * * 1": "每周一上午 9:30",
+		"0 0 1 * *":  "每月 1 号午夜",
+		"0 0 1 1 *":  "每年 1 月 1 日午夜",
 	}
 
 	for expr, desc := range expressions {

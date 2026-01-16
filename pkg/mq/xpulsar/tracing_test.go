@@ -194,8 +194,8 @@ type mockClient struct {
 	subscribeErr      error
 }
 
-func (m *mockClient) Client() pulsar.Client                                       { return nil }
-func (m *mockClient) Health(ctx context.Context) error                            { return nil }
+func (m *mockClient) Client() pulsar.Client            { return nil }
+func (m *mockClient) Health(ctx context.Context) error { return nil }
 func (m *mockClient) CreateProducer(options pulsar.ProducerOptions) (pulsar.Producer, error) {
 	if m.createProducerErr != nil {
 		return nil, m.createProducerErr
@@ -208,8 +208,8 @@ func (m *mockClient) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consumer,
 	}
 	return nil, nil
 }
-func (m *mockClient) Stats() Stats  { return Stats{} }
-func (m *mockClient) Close() error  { return nil }
+func (m *mockClient) Stats() Stats { return Stats{} }
+func (m *mockClient) Close() error { return nil }
 
 // =============================================================================
 // NewTracingProducer Error Path Tests
@@ -264,13 +264,13 @@ func TestNewTracingConsumer_Success(t *testing.T) {
 // =============================================================================
 
 type mockProducer struct {
-	sendErr   error
-	sendID    pulsar.MessageID
-	asyncErr  error
+	sendErr  error
+	sendID   pulsar.MessageID
+	asyncErr error
 }
 
-func (m *mockProducer) Topic() string                                     { return "test-topic" }
-func (m *mockProducer) Name() string                                      { return "mock-producer" }
+func (m *mockProducer) Topic() string { return "test-topic" }
+func (m *mockProducer) Name() string  { return "mock-producer" }
 func (m *mockProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage) (pulsar.MessageID, error) {
 	if m.sendErr != nil {
 		return nil, m.sendErr
@@ -280,10 +280,10 @@ func (m *mockProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage) (p
 func (m *mockProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMessage, callback func(pulsar.MessageID, *pulsar.ProducerMessage, error)) {
 	callback(m.sendID, msg, m.asyncErr)
 }
-func (m *mockProducer) LastSequenceID() int64         { return 0 }
-func (m *mockProducer) Flush() error                  { return nil }
+func (m *mockProducer) LastSequenceID() int64                  { return 0 }
+func (m *mockProducer) Flush() error                           { return nil }
 func (m *mockProducer) FlushWithCtx(ctx context.Context) error { return nil }
-func (m *mockProducer) Close()                        {}
+func (m *mockProducer) Close()                                 {}
 
 // =============================================================================
 // mockConsumer - 实现 pulsar.Consumer 接口用于测试
@@ -296,9 +296,9 @@ type mockConsumer struct {
 	nackCalled bool
 }
 
-func (m *mockConsumer) Subscription() string         { return "test-sub" }
-func (m *mockConsumer) Unsubscribe() error           { return nil }
-func (m *mockConsumer) UnsubscribeForce() error      { return nil }
+func (m *mockConsumer) Subscription() string                                { return "test-sub" }
+func (m *mockConsumer) Unsubscribe() error                                  { return nil }
+func (m *mockConsumer) UnsubscribeForce() error                             { return nil }
 func (m *mockConsumer) GetLastMessageIDs() ([]pulsar.TopicMessageID, error) { return nil, nil }
 func (m *mockConsumer) Receive(ctx context.Context) (pulsar.Message, error) {
 	if m.receiveErr != nil {
@@ -306,21 +306,22 @@ func (m *mockConsumer) Receive(ctx context.Context) (pulsar.Message, error) {
 	}
 	return m.receiveMsg, nil
 }
-func (m *mockConsumer) Chan() <-chan pulsar.ConsumerMessage { return nil }
-func (m *mockConsumer) Ack(msg pulsar.Message) error        { return m.ackErr }
-func (m *mockConsumer) AckID(id pulsar.MessageID) error     { return nil }
-func (m *mockConsumer) AckIDList(ids []pulsar.MessageID) error { return nil }
+func (m *mockConsumer) Chan() <-chan pulsar.ConsumerMessage                         { return nil }
+func (m *mockConsumer) Ack(msg pulsar.Message) error                                { return m.ackErr }
+func (m *mockConsumer) AckID(id pulsar.MessageID) error                             { return nil }
+func (m *mockConsumer) AckIDList(ids []pulsar.MessageID) error                      { return nil }
 func (m *mockConsumer) AckWithTxn(msg pulsar.Message, txn pulsar.Transaction) error { return nil }
-func (m *mockConsumer) AckCumulative(msg pulsar.Message) error { return nil }
-func (m *mockConsumer) AckIDCumulative(id pulsar.MessageID) error { return nil }
-func (m *mockConsumer) ReconsumeLater(msg pulsar.Message, delay time.Duration) {}
-func (m *mockConsumer) ReconsumeLaterWithCustomProperties(msg pulsar.Message, props map[string]string, delay time.Duration) {}
-func (m *mockConsumer) Nack(msg pulsar.Message)             { m.nackCalled = true }
-func (m *mockConsumer) NackID(id pulsar.MessageID)          {}
-func (m *mockConsumer) Close()                              {}
-func (m *mockConsumer) Seek(msgID pulsar.MessageID) error   { return nil }
-func (m *mockConsumer) SeekByTime(time time.Time) error     { return nil }
-func (m *mockConsumer) Name() string                        { return "mock-consumer" }
+func (m *mockConsumer) AckCumulative(msg pulsar.Message) error                      { return nil }
+func (m *mockConsumer) AckIDCumulative(id pulsar.MessageID) error                   { return nil }
+func (m *mockConsumer) ReconsumeLater(msg pulsar.Message, delay time.Duration)      {}
+func (m *mockConsumer) ReconsumeLaterWithCustomProperties(msg pulsar.Message, props map[string]string, delay time.Duration) {
+}
+func (m *mockConsumer) Nack(msg pulsar.Message)           { m.nackCalled = true }
+func (m *mockConsumer) NackID(id pulsar.MessageID)        {}
+func (m *mockConsumer) Close()                            {}
+func (m *mockConsumer) Seek(msgID pulsar.MessageID) error { return nil }
+func (m *mockConsumer) SeekByTime(time time.Time) error   { return nil }
+func (m *mockConsumer) Name() string                      { return "mock-consumer" }
 
 // =============================================================================
 // TracingProducer.Send Tests with Mock
@@ -543,20 +544,20 @@ type mockTracingMessage struct {
 	properties map[string]string
 }
 
-func (m *mockTracingMessage) Topic() string                            { return "test-topic" }
-func (m *mockTracingMessage) Properties() map[string]string            { return m.properties }
-func (m *mockTracingMessage) Payload() []byte                          { return nil }
-func (m *mockTracingMessage) ID() pulsar.MessageID                     { return nil }
-func (m *mockTracingMessage) PublishTime() time.Time                   { return time.Time{} }
-func (m *mockTracingMessage) EventTime() time.Time                     { return time.Time{} }
-func (m *mockTracingMessage) Key() string                              { return "" }
-func (m *mockTracingMessage) OrderingKey() string                      { return "" }
-func (m *mockTracingMessage) RedeliveryCount() uint32                  { return 0 }
-func (m *mockTracingMessage) IsReplicated() bool                       { return false }
-func (m *mockTracingMessage) GetReplicatedFrom() string                { return "" }
-func (m *mockTracingMessage) GetSchemaValue(v interface{}) error       { return nil }
-func (m *mockTracingMessage) ProducerName() string                     { return "" }
-func (m *mockTracingMessage) SchemaVersion() []byte                    { return nil }
+func (m *mockTracingMessage) Topic() string                                   { return "test-topic" }
+func (m *mockTracingMessage) Properties() map[string]string                   { return m.properties }
+func (m *mockTracingMessage) Payload() []byte                                 { return nil }
+func (m *mockTracingMessage) ID() pulsar.MessageID                            { return nil }
+func (m *mockTracingMessage) PublishTime() time.Time                          { return time.Time{} }
+func (m *mockTracingMessage) EventTime() time.Time                            { return time.Time{} }
+func (m *mockTracingMessage) Key() string                                     { return "" }
+func (m *mockTracingMessage) OrderingKey() string                             { return "" }
+func (m *mockTracingMessage) RedeliveryCount() uint32                         { return 0 }
+func (m *mockTracingMessage) IsReplicated() bool                              { return false }
+func (m *mockTracingMessage) GetReplicatedFrom() string                       { return "" }
+func (m *mockTracingMessage) GetSchemaValue(v interface{}) error              { return nil }
+func (m *mockTracingMessage) ProducerName() string                            { return "" }
+func (m *mockTracingMessage) SchemaVersion() []byte                           { return nil }
 func (m *mockTracingMessage) GetEncryptionContext() *pulsar.EncryptionContext { return nil }
-func (m *mockTracingMessage) Index() *uint64                           { return nil }
-func (m *mockTracingMessage) BrokerPublishTime() *time.Time            { return nil }
+func (m *mockTracingMessage) Index() *uint64                                  { return nil }
+func (m *mockTracingMessage) BrokerPublishTime() *time.Time                   { return nil }

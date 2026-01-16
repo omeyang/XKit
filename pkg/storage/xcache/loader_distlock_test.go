@@ -114,6 +114,109 @@ func TestWithLoadTimeout_SetsOption(t *testing.T) {
 }
 
 // =============================================================================
+// applyLoadTimeout 测试
+// =============================================================================
+
+func TestApplyLoadTimeout_PositiveTimeout(t *testing.T) {
+	// Given: 正数超时
+	ctx := context.Background()
+	timeout := 100 * time.Millisecond
+
+	// When
+	newCtx, cancel := applyLoadTimeout(ctx, timeout)
+	defer cancel()
+
+	// Then: 应使用指定超时
+	deadline, ok := newCtx.Deadline()
+	assert.True(t, ok, "应设置 deadline")
+	assert.WithinDuration(t, time.Now().Add(timeout), deadline, 10*time.Millisecond)
+}
+
+func TestApplyLoadTimeout_ZeroTimeout(t *testing.T) {
+	// Given: 零超时（禁用）
+	ctx := context.Background()
+	var timeout time.Duration = 0
+
+	// When
+	newCtx, cancel := applyLoadTimeout(ctx, timeout)
+	defer cancel()
+
+	// Then: 应返回原 ctx，无 deadline
+	_, ok := newCtx.Deadline()
+	assert.False(t, ok, "不应设置 deadline")
+	// context.Background() 返回的是同一个实例，可以用 == 比较
+	assert.True(t, ctx == newCtx, "应返回原 ctx")
+}
+
+func TestApplyLoadTimeout_NegativeTimeout(t *testing.T) {
+	// Given: 负数超时（使用默认 30s）
+	ctx := context.Background()
+	timeout := -1 * time.Second
+
+	// When
+	newCtx, cancel := applyLoadTimeout(ctx, timeout)
+	defer cancel()
+
+	// Then: 应使用默认超时 (30s)
+	deadline, ok := newCtx.Deadline()
+	assert.True(t, ok, "应设置 deadline")
+	expectedDeadline := time.Now().Add(defaultOperationTimeout)
+	assert.WithinDuration(t, expectedDeadline, deadline, 100*time.Millisecond)
+}
+
+func TestLoader_Load_WithNegativeTimeout_UsesDefault(t *testing.T) {
+	// Given: 集成测试 - 负数超时应使用默认 30s
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	// 使用负数超时
+	loader := NewLoader(cache,
+		WithLoadTimeout(-1*time.Second),
+		WithSingleflight(false),
+	)
+
+	var loadCtxDeadline time.Time
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		loadCtxDeadline, _ = ctx.Deadline()
+		return []byte("value"), nil
+	}
+
+	// When
+	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+
+	// Then
+	require.NoError(t, err)
+	expectedDeadline := time.Now().Add(defaultOperationTimeout)
+	assert.WithinDuration(t, expectedDeadline, loadCtxDeadline, 100*time.Millisecond,
+		"负数超时应使用默认 30s")
+}
+
+func TestLoader_Load_WithZeroTimeout_NoDeadline(t *testing.T) {
+	// Given: 集成测试 - 零超时应禁用
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	// 使用零超时
+	loader := NewLoader(cache,
+		WithLoadTimeout(0),
+		WithSingleflight(false),
+	)
+
+	var hasDeadline bool
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		_, hasDeadline = ctx.Deadline()
+		return []byte("value"), nil
+	}
+
+	// When
+	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+
+	// Then
+	require.NoError(t, err)
+	assert.False(t, hasDeadline, "零超时应禁用 deadline")
+}
+
+// =============================================================================
 // 分布式锁高级场景测试
 // =============================================================================
 

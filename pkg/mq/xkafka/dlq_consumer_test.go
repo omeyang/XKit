@@ -71,11 +71,11 @@ func TestFilterProducerConfig_Basic(t *testing.T) {
 func TestFilterProducerConfig_FiltersConsumerOnlyKeys(t *testing.T) {
 	consumerConfig := &kafka.ConfigMap{
 		"bootstrap.servers":     "localhost:9092",
-		"group.id":              "test-group",  // consumer-only
-		"auto.offset.reset":     "earliest",    // consumer-only
-		"enable.auto.commit":    true,          // consumer-only
-		"session.timeout.ms":    10000,         // consumer-only
-		"heartbeat.interval.ms": 3000,          // consumer-only
+		"group.id":              "test-group", // consumer-only
+		"auto.offset.reset":     "earliest",   // consumer-only
+		"enable.auto.commit":    true,         // consumer-only
+		"session.timeout.ms":    10000,        // consumer-only
+		"heartbeat.interval.ms": 3000,         // consumer-only
 	}
 
 	producerConfig, err := filterProducerConfig(consumerConfig)
@@ -89,13 +89,13 @@ func TestFilterProducerConfig_FiltersConsumerOnlyKeys(t *testing.T) {
 	assert.Equal(t, "localhost:9092", val)
 
 	// 验证 consumer-only 配置被过滤（Get 返回 nil 表示不存在）
-	val, _ = producerConfig.Get("group.id", nil)
+	val, _ = producerConfig.Get("group.id", nil) //nolint:errcheck // testing Get returns nil
 	assert.Nil(t, val, "group.id should be filtered")
 
-	val, _ = producerConfig.Get("auto.offset.reset", nil)
+	val, _ = producerConfig.Get("auto.offset.reset", nil) //nolint:errcheck // testing Get returns nil
 	assert.Nil(t, val, "auto.offset.reset should be filtered")
 
-	val, _ = producerConfig.Get("enable.auto.commit", nil)
+	val, _ = producerConfig.Get("enable.auto.commit", nil) //nolint:errcheck // testing Get returns nil
 	assert.Nil(t, val, "enable.auto.commit should be filtered")
 }
 
@@ -134,7 +134,7 @@ func TestFilterProducerConfig_AllConsumerOnlyKeys(t *testing.T) {
 			require.NoError(t, err)
 
 			// 验证该 key 被过滤（Get 返回 nil 表示不存在）
-			val, _ := producerConfig.Get(key, nil)
+			val, _ := producerConfig.Get(key, nil) //nolint:errcheck // testing Get returns nil
 			assert.Nil(t, val, "consumer-only key %s should be filtered", key)
 
 			// 验证公共配置被保留

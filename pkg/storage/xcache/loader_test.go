@@ -368,4 +368,3 @@ func TestHashFieldKey_Format(t *testing.T) {
 	key = hashFieldKey("user:profile", "name")
 	assert.Equal(t, "12:user:profile:name", key)
 }
-

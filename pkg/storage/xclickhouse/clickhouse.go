@@ -3,7 +3,7 @@ package xclickhouse
 import (
 	"context"
 
-	"github.com/omeyang/xkit/pkg/storage/internal/storageopt"
+	"github.com/omeyang/xkit/internal/storageopt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )

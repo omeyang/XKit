@@ -349,7 +349,7 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 		CallerRule("caller", 500, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 	key := Key{
 		Tenant: "tenant123",
 		Caller: "order-service",
@@ -361,32 +361,32 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_, _ = matcher.FindRule(key, "tenant")
+			_, _ = matcher.FindRule(key)
 		}
 	})
 
-	b.Run("GetEffectiveLimit", func(b *testing.B) {
-		rule, _ := matcher.FindRule(key, "tenant")
+	b.Run("getEffectiveLimit", func(b *testing.B) {
+		rule, _ := matcher.FindRule(key)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_, _ = matcher.GetEffectiveLimit(rule, key)
+			_, _ = matcher.getEffectiveLimit(rule, key)
 		}
 	})
 
-	b.Run("GetAllRules", func(b *testing.B) {
+	b.Run("getAllRules", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_ = matcher.GetAllRules()
+			_ = matcher.getAllRules()
 		}
 	})
 
-	b.Run("HasRule", func(b *testing.B) {
+	b.Run("hasRule", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_ = matcher.HasRule("tenant")
+			_ = matcher.hasRule("tenant")
 		}
 	})
 }

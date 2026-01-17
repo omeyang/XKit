@@ -163,7 +163,7 @@ func Example_keyBuilder() {
 	template := "tenant:${tenant_id}:caller:${caller_id}:api:${method}:${path}"
 	fmt.Println("渲染结果:", key.Render(template))
 	// Output:
-	// 键字符串: tenant=tenant-001,caller=order-service,method=POST,path=/v1/orders
+	// 键字符串: tenant=tenant-001,caller=order-service,method=POST,path=/v1/orders,region=us-east-1
 	// 渲染结果: tenant:tenant-001:caller:order-service:api:POST:/v1/orders
 }
 
@@ -267,4 +267,94 @@ func Example_grpcInterceptor() {
 	// Output:
 	// unary interceptor: grpc.UnaryServerInterceptor
 	// stream interceptor: grpc.StreamServerInterceptor
+}
+
+func Example_quotaQuery() {
+	// 创建 Redis 客户端
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	// 创建限流器
+	limiter, _ := xlimit.New(client,
+		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 10, time.Minute)),
+		xlimit.WithFallback(""),
+	)
+	defer limiter.Close()
+
+	ctx := context.Background()
+	key := xlimit.Key{Tenant: "query-tenant"}
+
+	// 先消耗一些配额
+	limiter.Allow(ctx, key)
+	limiter.Allow(ctx, key)
+
+	// 查询当前配额（不消耗配额）
+	querier, ok := limiter.(xlimit.Querier)
+	if !ok {
+		fmt.Println("查询失败: limiter does not support Query")
+		return
+	}
+	info, err := querier.Query(ctx, key)
+	if err != nil {
+		fmt.Println("查询失败:", err)
+		return
+	}
+
+	fmt.Println("规则:", info.Rule)
+	fmt.Println("配额上限:", info.Limit)
+	fmt.Println("剩余配额:", info.Remaining)
+
+	// Output:
+	// 规则: tenant-limit
+	// 配额上限: 10
+	// 剩余配额: 8
+}
+
+func Example_dynamicPodCount() {
+	// 创建本地限流器，配置动态 Pod 数量
+	limiter, _ := xlimit.NewLocal(
+		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 100, time.Second)),
+		// 从环境变量获取 Pod 数量，默认 4
+		xlimit.WithPodCountProvider(xlimit.NewEnvPodCount("POD_COUNT", 4)),
+	)
+	defer limiter.Close()
+
+	ctx := context.Background()
+	key := xlimit.Key{Tenant: "pod-count-tenant"}
+
+	result, _ := limiter.Allow(ctx, key)
+	// 本地配额 = 100 / 4 = 25
+	fmt.Println("本地配额:", result.Limit)
+
+	// Output:
+	// 本地配额: 25
+}
+
+func Example_customFallback() {
+	// 创建 Redis 客户端
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	// 创建限流器，配置自定义降级
+	limiter, _ := xlimit.New(client,
+		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 100, time.Minute)),
+		xlimit.WithFallback(xlimit.FallbackLocal),
+		xlimit.WithCustomFallback(func(_ context.Context, key xlimit.Key, _ int, _ error) (*xlimit.Result, error) {
+			// 自定义降级逻辑：VIP 租户放行，其他拒绝
+			if key.Tenant == "vip" {
+				return &xlimit.Result{Allowed: true, Rule: "custom-fallback"}, nil
+			}
+			return &xlimit.Result{Allowed: false, Rule: "custom-fallback"}, nil
+		}),
+	)
+	defer limiter.Close()
+
+	fmt.Println("自定义降级限流器创建成功")
+
+	// Output:
+	// 自定义降级限流器创建成功
 }

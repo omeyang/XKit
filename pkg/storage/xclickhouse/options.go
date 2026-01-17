@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 )
 
@@ -88,19 +89,19 @@ type Options struct {
 // Option 是用于配置 Options 的函数类型。
 type Option func(*Options)
 
-// 默认值常量。
+// 默认值常量（复用 storageopt 定义）。
 const (
 	// DefaultAsyncSlowQueryWorkers 默认异步慢查询 worker 数量。
-	DefaultAsyncSlowQueryWorkers = 10
+	DefaultAsyncSlowQueryWorkers = storageopt.DefaultAsyncWorkerPoolSize
 
 	// DefaultAsyncSlowQueryQueueSize 默认异步慢查询队列大小。
-	DefaultAsyncSlowQueryQueueSize = 1000
+	DefaultAsyncSlowQueryQueueSize = storageopt.DefaultAsyncQueueSize
 )
 
 // defaultOptions 返回默认选项。
 func defaultOptions() *Options {
 	return &Options{
-		HealthTimeout:           5 * time.Second,
+		HealthTimeout:           storageopt.DefaultHealthTimeout,
 		SlowQueryThreshold:      0, // 默认禁用慢查询检测
 		SlowQueryHook:           nil,
 		AsyncSlowQueryHook:      nil,

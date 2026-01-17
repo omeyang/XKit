@@ -11,11 +11,11 @@ func TestRuleMatcher_FindRule(t *testing.T) {
 		GlobalRule("global-limit", 10000, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	t.Run("finds matching rule", func(t *testing.T) {
 		key := Key{Tenant: "abc123"}
-		rule, found := matcher.FindRule(key, "tenant-limit")
+		rule, found := matcher.findRule(key, "tenant-limit")
 		if !found {
 			t.Fatal("expected to find rule")
 		}
@@ -26,7 +26,7 @@ func TestRuleMatcher_FindRule(t *testing.T) {
 
 	t.Run("returns not found for missing rule", func(t *testing.T) {
 		key := Key{Tenant: "abc123"}
-		_, found := matcher.FindRule(key, "non-existent")
+		_, found := matcher.findRule(key, "non-existent")
 		if found {
 			t.Error("expected rule not found")
 		}
@@ -47,7 +47,7 @@ func TestRuleMatcher_GetLimit(t *testing.T) {
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	tests := []struct {
 		name      string
@@ -73,11 +73,11 @@ func TestRuleMatcher_GetLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rule, found := matcher.FindRule(tt.key, "tenant-limit")
+			rule, found := matcher.findRule(tt.key, "tenant-limit")
 			if !found {
 				t.Fatal("rule not found")
 			}
-			limit, _ := matcher.GetEffectiveLimit(rule, tt.key)
+			limit, _ := matcher.getEffectiveLimit(rule, tt.key)
 			if limit != tt.wantLimit {
 				t.Errorf("GetLimit() = %d, want %d", limit, tt.wantLimit)
 			}
@@ -93,15 +93,15 @@ func TestRuleMatcher_OverridePriority(t *testing.T) {
 			Limit:       100,
 			Window:      time.Second,
 			Overrides: []Override{
-				{Match: "tenant:vip-corp:api:POST:/v1/orders", Limit: 500},    // 精确匹配
-				{Match: "tenant:vip-corp:api:POST:*", Limit: 300},              // 部分通配
-				{Match: "tenant:vip-corp:api:*:*", Limit: 200},                 // 更多通配
-				{Match: "tenant:*:api:POST:/v1/orders", Limit: 150},            // 租户通配
+				{Match: "tenant:vip-corp:api:POST:/v1/orders", Limit: 500}, // 精确匹配
+				{Match: "tenant:vip-corp:api:POST:*", Limit: 300},          // 部分通配
+				{Match: "tenant:vip-corp:api:*:*", Limit: 200},             // 更多通配
+				{Match: "tenant:*:api:POST:/v1/orders", Limit: 150},        // 租户通配
 			},
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	tests := []struct {
 		name      string
@@ -157,11 +157,11 @@ func TestRuleMatcher_OverridePriority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rule, found := matcher.FindRule(tt.key, "api-limit")
+			rule, found := matcher.findRule(tt.key, "api-limit")
 			if !found {
 				t.Fatal("rule not found")
 			}
-			limit, _ := matcher.GetEffectiveLimit(rule, tt.key)
+			limit, _ := matcher.getEffectiveLimit(rule, tt.key)
 			if limit != tt.wantLimit {
 				t.Errorf("GetLimit() = %d, want %d", limit, tt.wantLimit)
 			}
@@ -182,11 +182,11 @@ func TestRuleMatcher_DisabledRule(t *testing.T) {
 		TenantRule("enabled-rule", 500, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	t.Run("disabled rule is not found", func(t *testing.T) {
 		key := Key{Tenant: "abc123"}
-		_, found := matcher.FindRule(key, "disabled-rule")
+		_, found := matcher.findRule(key, "disabled-rule")
 		if found {
 			t.Error("disabled rule should not be found")
 		}
@@ -194,7 +194,7 @@ func TestRuleMatcher_DisabledRule(t *testing.T) {
 
 	t.Run("enabled rule is found", func(t *testing.T) {
 		key := Key{Tenant: "abc123"}
-		_, found := matcher.FindRule(key, "enabled-rule")
+		_, found := matcher.findRule(key, "enabled-rule")
 		if !found {
 			t.Error("enabled rule should be found")
 		}
@@ -206,15 +206,15 @@ func TestRuleMatcher_RenderKey(t *testing.T) {
 		TenantRule("tenant-limit", 1000, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	key := Key{Tenant: "abc123"}
-	rule, found := matcher.FindRule(key, "tenant-limit")
+	rule, found := matcher.findRule(key, "tenant-limit")
 	if !found {
 		t.Fatal("rule not found")
 	}
 
-	renderedKey := matcher.RenderKey(rule, key, "ratelimit:")
+	renderedKey := matcher.renderKey(rule, key, "ratelimit:")
 	expected := "ratelimit:tenant:abc123"
 	if renderedKey != expected {
 		t.Errorf("RenderKey() = %q, want %q", renderedKey, expected)
@@ -222,10 +222,10 @@ func TestRuleMatcher_RenderKey(t *testing.T) {
 }
 
 func TestRuleMatcher_EmptyRules(t *testing.T) {
-	matcher := NewRuleMatcher(nil)
+	matcher := newRuleMatcher(nil)
 
 	key := Key{Tenant: "abc123"}
-	_, found := matcher.FindRule(key, "any")
+	_, found := matcher.findRule(key, "any")
 	if found {
 		t.Error("expected no rules found")
 	}
@@ -237,28 +237,28 @@ func TestRuleMatcher_HasRule(t *testing.T) {
 		GlobalRule("global-limit", 10000, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	t.Run("returns true for existing rule", func(t *testing.T) {
-		if !matcher.HasRule("tenant-limit") {
+		if !matcher.hasRule("tenant-limit") {
 			t.Error("expected HasRule to return true for existing rule")
 		}
 	})
 
 	t.Run("returns true for another existing rule", func(t *testing.T) {
-		if !matcher.HasRule("global-limit") {
+		if !matcher.hasRule("global-limit") {
 			t.Error("expected HasRule to return true for existing rule")
 		}
 	})
 
 	t.Run("returns false for non-existing rule", func(t *testing.T) {
-		if matcher.HasRule("non-existent") {
+		if matcher.hasRule("non-existent") {
 			t.Error("expected HasRule to return false for non-existing rule")
 		}
 	})
 
 	t.Run("returns false for empty name", func(t *testing.T) {
-		if matcher.HasRule("") {
+		if matcher.hasRule("") {
 			t.Error("expected HasRule to return false for empty name")
 		}
 	})
@@ -278,8 +278,8 @@ func TestRuleMatcher_GetAllRules(t *testing.T) {
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
-	allRules := matcher.GetAllRules()
+	matcher := newRuleMatcher(rules)
+	allRules := matcher.getAllRules()
 
 	// 应该只返回启用的规则
 	if len(allRules) != 2 {
@@ -309,7 +309,7 @@ func TestRuleMatcher_GetEffectiveBurst(t *testing.T) {
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	tests := []struct {
 		name      string
@@ -335,11 +335,11 @@ func TestRuleMatcher_GetEffectiveBurst(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rule, found := matcher.FindRule(tt.key, "tenant-limit")
+			rule, found := matcher.findRule(tt.key, "tenant-limit")
 			if !found {
 				t.Fatal("rule not found")
 			}
-			burst := matcher.GetEffectiveBurst(rule, tt.key)
+			burst := matcher.getEffectiveBurst(rule, tt.key)
 			if burst != tt.wantBurst {
 				t.Errorf("GetEffectiveBurst() = %d, want %d", burst, tt.wantBurst)
 			}
@@ -361,15 +361,15 @@ func TestRuleMatcher_GetEffectiveLimit_WithOverrideWindow(t *testing.T) {
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 
 	t.Run("override with explicit window", func(t *testing.T) {
 		key := Key{Tenant: "vip-corp"}
-		rule, found := matcher.FindRule(key, "tenant-limit")
+		rule, found := matcher.findRule(key, "tenant-limit")
 		if !found {
 			t.Fatal("rule not found")
 		}
-		_, window := matcher.GetEffectiveLimit(rule, key)
+		_, window := matcher.getEffectiveLimit(rule, key)
 		if window != 30*time.Second {
 			t.Errorf("GetEffectiveLimit() window = %v, want %v", window, 30*time.Second)
 		}
@@ -377,11 +377,11 @@ func TestRuleMatcher_GetEffectiveLimit_WithOverrideWindow(t *testing.T) {
 
 	t.Run("override without window uses rule default", func(t *testing.T) {
 		key := Key{Tenant: "premium-user"}
-		rule, found := matcher.FindRule(key, "tenant-limit")
+		rule, found := matcher.findRule(key, "tenant-limit")
 		if !found {
 			t.Fatal("rule not found")
 		}
-		_, window := matcher.GetEffectiveLimit(rule, key)
+		_, window := matcher.getEffectiveLimit(rule, key)
 		if window != time.Minute {
 			t.Errorf("GetEffectiveLimit() window = %v, want %v", window, time.Minute)
 		}
@@ -396,7 +396,7 @@ func BenchmarkRuleMatcher_FindRule(b *testing.B) {
 		CallerRule("caller", 500, time.Minute),
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 	key := Key{
 		Tenant: "tenant123",
 		Caller: "order-service",
@@ -408,7 +408,7 @@ func BenchmarkRuleMatcher_FindRule(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = matcher.FindRule(key, "tenant")
+		_, _ = matcher.findRule(key, "tenant")
 	}
 }
 
@@ -427,14 +427,14 @@ func BenchmarkRuleMatcher_GetEffectiveLimit(b *testing.B) {
 		},
 	}
 
-	matcher := NewRuleMatcher(rules)
+	matcher := newRuleMatcher(rules)
 	key := Key{Tenant: "vip-enterprise"}
-	rule, _ := matcher.FindRule(key, "tenant-limit")
+	rule, _ := matcher.findRule(key, "tenant-limit")
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = matcher.GetEffectiveLimit(rule, key)
+		_, _ = matcher.getEffectiveLimit(rule, key)
 	}
 }

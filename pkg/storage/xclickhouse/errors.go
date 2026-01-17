@@ -1,6 +1,11 @@
 package xclickhouse
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/omeyang/xkit/internal/storageopt"
+)
 
 // 包级别错误定义。
 var (
@@ -11,13 +16,16 @@ var (
 	ErrClosed = errors.New("xclickhouse: connection closed")
 
 	// ErrInvalidPage 表示页码无效。
-	ErrInvalidPage = errors.New("xclickhouse: invalid page number, must be >= 1")
+	// 此错误包装了 storageopt.ErrInvalidPage，可以使用 errors.Is 检查任一错误。
+	ErrInvalidPage = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPage)
 
 	// ErrInvalidPageSize 表示页大小无效。
-	ErrInvalidPageSize = errors.New("xclickhouse: invalid page size, must be >= 1")
+	// 此错误包装了 storageopt.ErrInvalidPageSize，可以使用 errors.Is 检查任一错误。
+	ErrInvalidPageSize = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPageSize)
 
 	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。
-	ErrPageOverflow = errors.New("xclickhouse: page calculation overflow, reduce page number or page size")
+	// 此错误包装了 storageopt.ErrPageOverflow，可以使用 errors.Is 检查任一错误。
+	ErrPageOverflow = fmt.Errorf("xclickhouse: %w", storageopt.ErrPageOverflow)
 
 	// ErrEmptyQuery 表示查询语句为空。
 	ErrEmptyQuery = errors.New("xclickhouse: empty query")

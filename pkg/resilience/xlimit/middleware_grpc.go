@@ -108,8 +108,8 @@ func WithGRPCResourceExtractor(extractor func(context.Context, *grpc.UnaryServer
 
 // GRPCInterceptorOptions gRPC 拦截器选项
 type GRPCInterceptorOptions struct {
-	KeyExtractor *GRPCKeyExtractor
-	SkipFunc     func(ctx context.Context, info *grpc.UnaryServerInfo) bool
+	KeyExtractor   *GRPCKeyExtractor
+	SkipFunc       func(ctx context.Context, info *grpc.UnaryServerInfo) bool
 	StreamSkipFunc func(ctx context.Context, info *grpc.StreamServerInfo) bool
 }
 

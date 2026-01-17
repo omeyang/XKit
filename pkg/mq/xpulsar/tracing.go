@@ -2,28 +2,12 @@ package xpulsar
 
 import (
 	"context"
-	"time"
 
+	"github.com/omeyang/xkit/internal/mqcore"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 )
-
-// BackoffConfig 退避配置
-type BackoffConfig struct {
-	InitialDelay time.Duration // 初始延迟，默认 100ms
-	MaxDelay     time.Duration // 最大延迟，默认 30s
-	Multiplier   float64       // 退避乘数，默认 2.0
-}
-
-// DefaultBackoffConfig 返回默认退避配置
-func DefaultBackoffConfig() BackoffConfig {
-	return BackoffConfig{
-		InitialDelay: 100 * time.Millisecond,
-		MaxDelay:     30 * time.Second,
-		Multiplier:   2.0,
-	}
-}
 
 // MessageHandler 定义 Pulsar 消息处理函数。
 type MessageHandler func(ctx context.Context, msg pulsar.Message) error
@@ -203,41 +187,35 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 // ConsumeLoop 循环消费消息直到 ctx 取消。
 // 使用默认退避配置避免错误时 CPU 100%。
 func (c *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandler) error {
-	return c.ConsumeLoopWithBackoff(ctx, handler, DefaultBackoffConfig())
+	return c.ConsumeLoopWithPolicy(ctx, handler, nil)
+}
+
+// ConsumeLoopWithPolicy 启动带退避策略的消费循环。
+// 使用 xretry.BackoffPolicy 接口，支持更灵活的退避策略配置。
+//
+// 参数：
+//   - ctx: 上下文，取消时退出循环
+//   - handler: 消息处理函数
+//   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
+//
+// 推荐使用此方法替代 ConsumeLoopWithBackoff。
+func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
+	consume := func(ctx context.Context) error {
+		return c.Consume(ctx, handler)
+	}
+
+	opts := []mqcore.ConsumeLoopOption{}
+	if backoff != nil {
+		opts = append(opts, mqcore.WithBackoff(backoff))
+	}
+
+	return mqcore.RunConsumeLoop(ctx, consume, opts...)
 }
 
 // ConsumeLoopWithBackoff 带退避的消费循环。
-// 在持续错误情况下使用指数退避，成功消费后重置退避。
+//
+// Deprecated: 请使用 ConsumeLoopWithPolicy 替代，它支持更灵活的 xretry.BackoffPolicy 接口。
+// 此方法保留用于向后兼容。
 func (c *TracingConsumer) ConsumeLoopWithBackoff(ctx context.Context, handler MessageHandler, config BackoffConfig) error {
-	currentDelay := config.InitialDelay
-	consecutiveErrors := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if err := c.Consume(ctx, handler); err != nil {
-				consecutiveErrors++
-
-				// 应用指数退避
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(currentDelay):
-				}
-
-				// 计算下一次延迟
-				nextDelay := time.Duration(float64(currentDelay) * config.Multiplier)
-				if nextDelay > config.MaxDelay {
-					nextDelay = config.MaxDelay
-				}
-				currentDelay = nextDelay
-			} else {
-				// 成功消费，重置退避
-				currentDelay = config.InitialDelay
-				consecutiveErrors = 0
-			}
-		}
-	}
+	return c.ConsumeLoopWithPolicy(ctx, handler, config.ToBackoffPolicy())
 }

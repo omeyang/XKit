@@ -3,22 +3,27 @@ package xlimit
 import (
 	"context"
 	"errors"
+	"log/slog"
 )
 
 // fallbackLimiter 带降级能力的限流器
 // 当分布式限流器（Redis）不可用时，自动降级到备选策略
 type fallbackLimiter struct {
-	distributed Limiter
-	local       Limiter
-	strategy    FallbackStrategy
+	distributed    Limiter
+	local          Limiter
+	strategy       FallbackStrategy
+	opts           *options
+	customFallback FallbackFunc
 }
 
 // newFallbackLimiter 创建带降级的限流器
-func newFallbackLimiter(distributed, local Limiter, strategy FallbackStrategy) *fallbackLimiter {
+func newFallbackLimiter(distributed, local Limiter, opts *options) *fallbackLimiter {
 	return &fallbackLimiter{
-		distributed: distributed,
-		local:       local,
-		strategy:    strategy,
+		distributed:    distributed,
+		local:          local,
+		strategy:       opts.config.Fallback,
+		opts:           opts,
+		customFallback: opts.customFallback,
 	}
 }
 
@@ -35,30 +40,53 @@ func (f *fallbackLimiter) AllowN(ctx context.Context, key Key, n int) (*Result, 
 	}
 
 	// 检查是否是 Redis 不可用错误
-	if !isRedisError(err) {
+	if !IsRedisError(err) {
 		return nil, err
 	}
 
-	// 执行降级策略
+	// 记录降级日志和指标
+	f.logFallback(ctx, err)
+	if f.opts.metrics != nil {
+		f.opts.metrics.RecordFallback(ctx, f.strategy, err.Error())
+	}
+
+	// 触发降级回调
+	if f.opts.onFallback != nil {
+		f.opts.onFallback(key, f.strategy, err)
+	}
+
+	// 优先使用自定义降级函数
+	if f.customFallback != nil {
+		return f.customFallback(ctx, key, n, err)
+	}
+
+	// 执行默认降级策略
 	return f.fallback(ctx, key, n)
+}
+
+// logFallback 记录降级日志
+func (f *fallbackLimiter) logFallback(ctx context.Context, err error) {
+	if f.opts.logger != nil {
+		f.opts.logger.Warn(ctx, "rate limiter falling back due to Redis error",
+			slog.String("strategy", string(f.strategy)),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // fallback 执行降级策略
 func (f *fallbackLimiter) fallback(ctx context.Context, key Key, n int) (*Result, error) {
 	switch f.strategy {
 	case FallbackLocal:
-		// 降级到本地限流
 		return f.local.AllowN(ctx, key, n)
 
 	case FallbackOpen:
-		// 放行所有请求
 		return &Result{
 			Allowed: true,
 			Rule:    "fallback-open",
 		}, nil
 
 	case FallbackClose:
-		// 拒绝所有请求
 		return &Result{
 			Allowed: false,
 			Rule:    "fallback-close",
@@ -72,21 +100,23 @@ func (f *fallbackLimiter) fallback(ctx context.Context, key Key, n int) (*Result
 
 // Reset 重置指定键的限流计数
 func (f *fallbackLimiter) Reset(ctx context.Context, key Key) error {
-	// 同时重置分布式和本地计数
 	var errs []error
 
-	if err := f.distributed.Reset(ctx, key); err != nil && !isRedisError(err) {
-		errs = append(errs, err)
+	// 使用类型断言检查 distributed 是否实现 Resetter
+	if r, ok := f.distributed.(Resetter); ok {
+		if err := r.Reset(ctx, key); err != nil && !IsRedisError(err) {
+			errs = append(errs, err)
+		}
 	}
 
-	if err := f.local.Reset(ctx, key); err != nil {
-		errs = append(errs, err)
+	// 使用类型断言检查 local 是否实现 Resetter
+	if r, ok := f.local.(Resetter); ok {
+		if err := r.Reset(ctx, key); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Close 关闭限流器
@@ -101,45 +131,40 @@ func (f *fallbackLimiter) Close() error {
 		errs = append(errs, err)
 	}
 
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// isRedisError 检查是否是 Redis 相关错误
-func isRedisError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// 检查常见的 Redis 错误
-	errStr := err.Error()
-	redisErrors := []string{
-		"connection refused",
-		"connection reset",
-		"i/o timeout",
-		"EOF",
-		"no connection",
-		"broken pipe",
-		"redis:",
-	}
-
-	for _, pattern := range redisErrors {
-		if contains(errStr, pattern) {
-			return true
+// Query 查询当前配额状态（不消耗配额）
+// 优先从分布式限流器查询，失败时降级到本地
+func (f *fallbackLimiter) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
+	// 使用类型断言检查 distributed 是否实现 Querier
+	if q, ok := f.distributed.(Querier); ok {
+		info, err := q.Query(ctx, key)
+		if err == nil {
+			return info, nil
 		}
-	}
 
-	return errors.Is(err, ErrRedisUnavailable)
-}
-
-// contains 检查字符串是否包含子串（简单实现）
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+		// 如果是 Redis 错误，尝试从本地查询
+		if IsRedisError(err) {
+			if localQ, localOK := f.local.(Querier); localOK {
+				return localQ.Query(ctx, key)
+			}
 		}
+
+		return nil, err
 	}
-	return false
+
+	// distributed 不支持 Query，尝试从 local 查询
+	if q, ok := f.local.(Querier); ok {
+		return q.Query(ctx, key)
+	}
+
+	return nil, errors.New("xlimit: query not supported")
 }
+
+// 确保 fallbackLimiter 实现了可选接口
+var (
+	_ Limiter  = (*fallbackLimiter)(nil)
+	_ Querier  = (*fallbackLimiter)(nil)
+	_ Resetter = (*fallbackLimiter)(nil)
+)

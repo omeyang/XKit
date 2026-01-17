@@ -123,7 +123,11 @@ func TestLocalLimiter_Reset(t *testing.T) {
 	}
 
 	// 重置
-	err = limiter.Reset(ctx, key)
+	resetter, ok := limiter.(Resetter)
+	if !ok {
+		t.Fatal("limiter does not implement Resetter")
+	}
+	err = resetter.Reset(ctx, key)
 	if err != nil {
 		t.Fatalf("Reset failed: %v", err)
 	}
@@ -257,7 +261,11 @@ func TestLocalLimiter_Closed(t *testing.T) {
 	}
 
 	// Reset 也应该返回错误
-	err = limiter.Reset(ctx, key)
+	resetter, ok := limiter.(Resetter)
+	if !ok {
+		t.Fatal("limiter does not implement Resetter")
+	}
+	err = resetter.Reset(ctx, key)
 	if err != ErrLimiterClosed {
 		t.Errorf("expected ErrLimiterClosed, got %v", err)
 	}

@@ -9,4 +9,5 @@
 //   - NoopTracer：空实现，用于不需要追踪的场景
 //   - 共享错误定义
 //   - Context 追踪信息合并
+//   - RunConsumeLoop：基于 xretry.BackoffPolicy 的消费循环工具
 package mqcore

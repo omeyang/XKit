@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
-	"github.com/omeyang/xkit/pkg/storage/internal/storageopt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -58,12 +58,9 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 
 	w.pingCount.Add(1)
 
-	// 如果设置了超时，使用带超时的 context
-	if w.options.HealthTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, w.options.HealthTimeout)
-		defer cancel()
-	}
+	// 使用 storageopt 的健康检查超时
+	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
+	defer cancel()
 
 	if err := w.conn.Ping(ctx); err != nil {
 		w.pingErrors.Add(1)

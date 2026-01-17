@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
-	"github.com/omeyang/xkit/pkg/storage/internal/storageopt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -58,12 +58,9 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 
 	w.pingCount.Add(1)
 
-	// 如果设置了超时，使用带超时的 context
-	if w.options.HealthTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, w.options.HealthTimeout)
-		defer cancel()
-	}
+	// 使用 storageopt 的健康检查超时
+	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
+	defer cancel()
 
 	if err := w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
 		w.pingErrors.Add(1)
@@ -199,13 +196,14 @@ func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, fil
 }
 
 // convertPaginationError 将 storageopt 的分页错误转换为 xmongo 的错误类型。
+// 由于 xmongo 的分页错误已包装 storageopt 的错误，errors.Is 可以匹配任一错误。
 func convertPaginationError(err error) error {
-	switch {
-	case errors.Is(err, storageopt.ErrInvalidPage):
+	switch err {
+	case storageopt.ErrInvalidPage:
 		return ErrInvalidPage
-	case errors.Is(err, storageopt.ErrInvalidPageSize):
+	case storageopt.ErrInvalidPageSize:
 		return ErrInvalidPageSize
-	case errors.Is(err, storageopt.ErrPageOverflow):
+	case storageopt.ErrPageOverflow:
 		return ErrPageOverflow
 	default:
 		return err

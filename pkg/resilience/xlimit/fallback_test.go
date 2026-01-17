@@ -4,6 +4,9 @@ package xlimit
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -37,13 +40,20 @@ func (m *mockFailingLimiter) Close() error {
 	return nil
 }
 
+func (m *mockFailingLimiter) Query(_ context.Context, _ Key) (*QuotaInfo, error) {
+	if m.failOnAllow {
+		return nil, m.failErr
+	}
+	return &QuotaInfo{Limit: 100, Remaining: 99, Rule: "mock"}, nil
+}
+
 func TestFallbackLimiter_NoFallback(t *testing.T) {
 	// 当分布式限流正常工作时，不应该触发降级
 	distributed := &mockFailingLimiter{failOnAllow: false}
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -64,12 +74,12 @@ func TestFallbackLimiter_FallbackToLocal(t *testing.T) {
 	// 当 Redis 故障时，降级到本地限流
 	distributed := &mockFailingLimiter{
 		failOnAllow: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "fallback-tenant"}
@@ -92,12 +102,12 @@ func TestFallbackLimiter_FallbackOpen(t *testing.T) {
 	// fail-open 策略：Redis 故障时放行所有请求
 	distributed := &mockFailingLimiter{
 		failOnAllow: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 1, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackOpen)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackOpen}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "open-tenant"}
@@ -121,12 +131,12 @@ func TestFallbackLimiter_FallbackClose(t *testing.T) {
 	// fail-close 策略：Redis 故障时拒绝所有请求
 	distributed := &mockFailingLimiter{
 		failOnAllow: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 100, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackClose)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackClose}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "close-tenant"}
@@ -156,7 +166,7 @@ func TestFallbackLimiter_NonRedisError(t *testing.T) {
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "error-tenant"}
@@ -173,12 +183,12 @@ func TestFallbackLimiter_NonRedisError(t *testing.T) {
 func TestFallbackLimiter_AllowN(t *testing.T) {
 	distributed := &mockFailingLimiter{
 		failOnAllow: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -198,7 +208,7 @@ func TestFallbackLimiter_Reset(t *testing.T) {
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
@@ -214,12 +224,12 @@ func TestFallbackLimiter_ResetWithRedisError(t *testing.T) {
 	// Redis 故障时 Reset 应该忽略 Redis 错误并继续重置本地
 	distributed := &mockFailingLimiter{
 		failOnReset: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-fallback-tenant"}
@@ -235,7 +245,7 @@ func TestFallbackLimiter_Close(t *testing.T) {
 	distributed := &mockFailingLimiter{}
 	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	err := fallback.Close()
 	if err != nil {
@@ -250,13 +260,14 @@ func TestIsRedisError(t *testing.T) {
 		expected bool
 	}{
 		{"nil error", nil, false},
-		{"connection refused", errors.New("connection refused"), true},
-		{"connection reset", errors.New("read tcp: connection reset by peer"), true},
-		{"i/o timeout", errors.New("i/o timeout"), true},
-		{"EOF", errors.New("EOF"), true},
-		{"no connection", errors.New("no connection available"), true},
-		{"broken pipe", errors.New("write: broken pipe"), true},
-		{"redis error", errors.New("redis: connection pool exhausted"), true},
+		{"syscall ECONNREFUSED", syscall.ECONNREFUSED, true},
+		{"syscall ECONNRESET", syscall.ECONNRESET, true},
+		{"syscall ETIMEDOUT", syscall.ETIMEDOUT, true},
+		{"syscall EPIPE", syscall.EPIPE, true},
+		{"io.EOF", io.EOF, true},
+		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF, true},
+		{"net.OpError", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		{"net.DNSError", &net.DNSError{Err: "lookup failed"}, true},
 		{"ErrRedisUnavailable", ErrRedisUnavailable, true},
 		{"other error", errors.New("some other error"), false},
 		{"validation error", ErrInvalidRule, false},
@@ -264,35 +275,9 @@ func TestIsRedisError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := isRedisError(tc.err)
+			result := IsRedisError(tc.err)
 			if result != tc.expected {
-				t.Errorf("isRedisError(%v) = %v, expected %v", tc.err, result, tc.expected)
-			}
-		})
-	}
-}
-
-func TestContains(t *testing.T) {
-	tests := []struct {
-		s        string
-		substr   string
-		expected bool
-	}{
-		{"hello world", "world", true},
-		{"hello world", "hello", true},
-		{"hello world", "lo wo", true},
-		{"hello world", "xyz", false},
-		{"", "abc", false},
-		{"abc", "", true},
-		{"abc", "abc", true},
-		{"abc", "abcd", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.s+"_"+tc.substr, func(t *testing.T) {
-			result := contains(tc.s, tc.substr)
-			if result != tc.expected {
-				t.Errorf("contains(%q, %q) = %v, expected %v", tc.s, tc.substr, result, tc.expected)
+				t.Errorf("IsRedisError(%v) = %v, expected %v", tc.err, result, tc.expected)
 			}
 		})
 	}
@@ -302,12 +287,12 @@ func TestFallbackLimiter_DefaultStrategy(t *testing.T) {
 	// 测试默认策略（非法策略应该回退到本地）
 	distributed := &mockFailingLimiter{
 		failOnAllow: true,
-		failErr:     errors.New("connection refused"),
+		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
 	local, _ := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
 	defer local.Close()
 
-	fallback := newFallbackLimiter(distributed, local, FallbackStrategy("unknown"))
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackStrategy("unknown")}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "default-tenant"}
@@ -348,7 +333,7 @@ func TestFallbackLimiter_CloseWithErrors(t *testing.T) {
 		closeErr:    closeErr,
 	}
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	err := fallback.Close()
 	if err == nil {
@@ -367,7 +352,7 @@ func TestFallbackLimiter_CloseWithDistributedError(t *testing.T) {
 		failOnClose: false,
 	}
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	err := fallback.Close()
 	if err == nil {
@@ -386,7 +371,7 @@ func TestFallbackLimiter_CloseWithLocalError(t *testing.T) {
 		closeErr:    closeErr,
 	}
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	err := fallback.Close()
 	if err == nil {
@@ -414,7 +399,7 @@ func TestFallbackLimiter_ResetWithLocalError(t *testing.T) {
 		resetErr: resetErr, // 本地失败
 	}
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-error-tenant"}
@@ -435,7 +420,7 @@ func TestFallbackLimiter_ResetWithNonRedisDistributedError(t *testing.T) {
 		resetErr: nil,
 	}
 
-	fallback := newFallbackLimiter(distributed, local, FallbackLocal)
+	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-non-redis-tenant"}

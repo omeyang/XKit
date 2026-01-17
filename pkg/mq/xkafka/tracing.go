@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
+	"github.com/omeyang/xkit/internal/mqcore"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -141,42 +141,41 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 // ConsumeLoop 循环消费消息直到 ctx 取消。
 // 使用默认退避配置避免错误时 CPU 100%。
 func (w *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandler) error {
-	return w.ConsumeLoopWithBackoff(ctx, handler, DefaultBackoffConfig())
+	return w.ConsumeLoopWithPolicy(ctx, handler, nil)
+}
+
+// ConsumeLoopWithPolicy 启动带退避策略的消费循环。
+// 使用 xretry.BackoffPolicy 接口，支持更灵活的退避策略配置。
+//
+// 参数：
+//   - ctx: 上下文，取消时退出循环
+//   - handler: 消息处理函数
+//   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
+//
+// 推荐使用此方法替代 ConsumeLoopWithBackoff。
+func (w *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
+	consume := func(ctx context.Context) error {
+		return w.Consume(ctx, handler)
+	}
+
+	onError := func(_ error) {
+		w.errorsCount.Add(1)
+	}
+
+	opts := []mqcore.ConsumeLoopOption{
+		mqcore.WithOnError(onError),
+	}
+	if backoff != nil {
+		opts = append(opts, mqcore.WithBackoff(backoff))
+	}
+
+	return mqcore.RunConsumeLoop(ctx, consume, opts...)
 }
 
 // ConsumeLoopWithBackoff 带退避的消费循环。
-// 在持续错误情况下使用指数退避，成功消费后重置退避。
+//
+// Deprecated: 请使用 ConsumeLoopWithPolicy 替代，它支持更灵活的 xretry.BackoffPolicy 接口。
+// 此方法保留用于向后兼容。
 func (w *TracingConsumer) ConsumeLoopWithBackoff(ctx context.Context, handler MessageHandler, config BackoffConfig) error {
-	currentDelay := config.InitialDelay
-	consecutiveErrors := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if err := w.Consume(ctx, handler); err != nil {
-				w.errorsCount.Add(1)
-				consecutiveErrors++
-
-				// 应用指数退避
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(currentDelay):
-				}
-
-				// 计算下一次延迟
-				nextDelay := time.Duration(float64(currentDelay) * config.Multiplier)
-				if nextDelay > config.MaxDelay {
-					nextDelay = config.MaxDelay
-				}
-				currentDelay = nextDelay
-			} else {
-				// 成功消费，重置退避
-				currentDelay = config.InitialDelay
-				consecutiveErrors = 0
-			}
-		}
-	}
+	return w.ConsumeLoopWithPolicy(ctx, handler, config.ToBackoffPolicy())
 }

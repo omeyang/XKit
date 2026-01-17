@@ -3,6 +3,7 @@ package xlimit
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,7 +221,7 @@ func TestNew_WithKeyPrefix(t *testing.T) {
 	// 验证至少有一个键包含自定义前缀
 	hasPrefix := false
 	for _, k := range keys {
-		if contains(k, "myapp:ratelimit:") {
+		if strings.Contains(k, "myapp:ratelimit:") {
 			hasPrefix = true
 			break
 		}

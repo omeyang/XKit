@@ -105,7 +105,7 @@ func FuzzRuleMatcher(f *testing.F) {
 			CallerRule("caller", 500, time.Minute),
 		}
 
-		matcher := NewRuleMatcher(rules)
+		matcher := newRuleMatcher(rules)
 		key := Key{
 			Tenant: tenant,
 			Caller: caller,
@@ -115,16 +115,16 @@ func FuzzRuleMatcher(f *testing.F) {
 
 		// 所有操作都不应该 panic
 		for _, ruleName := range []string{"tenant", "global", "tenant-api", "caller", "nonexistent"} {
-			rule, found := matcher.FindRule(key, ruleName)
+			rule, found := matcher.findRule(key, ruleName)
 			if found {
-				_, _ = matcher.GetEffectiveLimit(rule, key)
-				_ = matcher.GetEffectiveBurst(rule, key)
-				_ = matcher.RenderKey(rule, key, "prefix:")
+				_, _ = matcher.getEffectiveLimit(rule, key)
+				_ = matcher.getEffectiveBurst(rule, key)
+				_ = matcher.renderKey(rule, key, "prefix:")
 			}
 		}
 
-		_ = matcher.GetAllRules()
-		_ = matcher.HasRule("tenant")
+		_ = matcher.getAllRules()
+		_ = matcher.hasRule("tenant")
 	})
 }
 

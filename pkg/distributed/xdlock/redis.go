@@ -55,8 +55,55 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 	}, nil
 }
 
-// NewMutex 创建指定 key 的分布式锁实例。
-func (f *redisFactory) NewMutex(key string, opts ...MutexOption) Locker {
+// TryLock 非阻塞式获取锁，返回 LockHandle。
+func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if f.closed.Load() {
+		return nil, ErrFactoryClosed
+	}
+
+	mutex, fullKey := f.createMutex(key, opts...)
+
+	if err := mutex.TryLockContext(ctx); err != nil {
+		err = wrapRedisError(err)
+		if errors.Is(err, ErrLockHeld) {
+			return nil, nil // 锁被占用，返回 (nil, nil)
+		}
+		return nil, err
+	}
+
+	return &redisLockHandle{
+		factory: f,
+		mutex:   mutex,
+		key:     fullKey,
+	}, nil
+}
+
+// Lock 阻塞式获取锁，返回 LockHandle。
+func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if f.closed.Load() {
+		return nil, ErrFactoryClosed
+	}
+
+	mutex, fullKey := f.createMutex(key, opts...)
+
+	if err := mutex.LockContext(ctx); err != nil {
+		// redsync 不会传递 context 错误，需要单独检查
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, wrapRedisError(err)
+	}
+
+	return &redisLockHandle{
+		factory: f,
+		mutex:   mutex,
+		key:     fullKey,
+	}, nil
+}
+
+// createMutex 创建 redsync.Mutex（内部方法）。
+// 返回 mutex 和完整的 key（包含前缀）。
+func (f *redisFactory) createMutex(key string, opts ...MutexOption) (*redsync.Mutex, string) {
 	options := defaultMutexOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -86,13 +133,7 @@ func (f *redisFactory) NewMutex(key string, opts ...MutexOption) Locker {
 		rsOpts = append(rsOpts, redsync.WithSetNXOnExtend())
 	}
 
-	mutex := f.rs.NewMutex(fullKey, rsOpts...)
-
-	return &redisLocker{
-		factory: f,
-		mutex:   mutex,
-		key:     fullKey,
-	}
+	return f.rs.NewMutex(fullKey, rsOpts...), fullKey
 }
 
 // Close 关闭工厂。
@@ -132,119 +173,62 @@ func (f *redisFactory) Redsync() Redsync {
 }
 
 // =============================================================================
-// Redis 锁实现
+// Redis LockHandle 实现
 // =============================================================================
 
-// redisLocker 实现 RedisLocker 接口。
-type redisLocker struct {
+// redisLockHandle 实现 LockHandle 接口。
+// 每次成功获取锁时创建，封装了唯一的锁标识。
+type redisLockHandle struct {
 	factory *redisFactory
 	mutex   *redsync.Mutex
 	key     string
-	locked  atomic.Bool
-}
-
-// Lock 阻塞式获取锁。
-// 会根据配置的重试次数和延迟进行重试。
-func (l *redisLocker) Lock(ctx context.Context) error {
-	if l.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
-	if err := l.mutex.LockContext(ctx); err != nil {
-		return wrapRedisError(err)
-	}
-
-	l.locked.Store(true)
-	return nil
-}
-
-// TryLock 非阻塞式获取锁。
-// 只尝试一次，失败立即返回。
-func (l *redisLocker) TryLock(ctx context.Context) error {
-	if l.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
-	if err := l.mutex.TryLockContext(ctx); err != nil {
-		return wrapRedisError(err)
-	}
-
-	l.locked.Store(true)
-	return nil
 }
 
 // Unlock 释放锁。
-func (l *redisLocker) Unlock(ctx context.Context) error {
-	if l.factory.closed.Load() {
-		l.locked.Store(false)
+func (h *redisLockHandle) Unlock(ctx context.Context) error {
+	if h.factory.closed.Load() {
 		return ErrFactoryClosed
 	}
 
-	if !l.locked.Load() {
-		return ErrNotLocked
-	}
-
-	ok, err := l.mutex.UnlockContext(ctx)
+	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
-		// 解锁失败可能是因为锁已过期，更新状态
 		wrappedErr := wrapRedisError(err)
-		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrLockFailed) {
-			l.locked.Store(false)
+		// 锁过期也视为"未持有锁"
+		if errors.Is(wrappedErr, ErrLockExpired) {
+			return ErrLockNotHeld
 		}
 		return wrappedErr
 	}
 	if !ok {
-		// 锁已过期，更新状态
-		l.locked.Store(false)
-		return ErrLockExpired
+		return ErrLockNotHeld
 	}
-
-	l.locked.Store(false)
 	return nil
 }
 
 // Extend 续期锁。
-// 延长锁的有效期，适用于长时间运行的任务。
-func (l *redisLocker) Extend(ctx context.Context) error {
-	if l.factory.closed.Load() {
+func (h *redisLockHandle) Extend(ctx context.Context) error {
+	if h.factory.closed.Load() {
 		return ErrFactoryClosed
 	}
 
-	if !l.locked.Load() {
-		return ErrNotLocked
-	}
-
-	ok, err := l.mutex.ExtendContext(ctx)
+	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 续期失败可能是因为锁已过期
-		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrExtendFailed) {
-			l.locked.Store(false)
+		// 续期失败视为"未持有锁"
+		if errors.Is(wrappedErr, ErrExtendFailed) || errors.Is(wrappedErr, ErrLockExpired) {
+			return ErrLockNotHeld
 		}
 		return wrappedErr
 	}
 	if !ok {
-		// 续期失败，锁可能已过期
-		l.locked.Store(false)
-		return ErrExtendFailed
+		return ErrLockNotHeld
 	}
-
 	return nil
 }
 
-// RedisMutex 返回底层 redsync.Mutex。
-func (l *redisLocker) RedisMutex() RedisMutex {
-	return l.mutex
-}
-
-// Value 返回锁的唯一值。
-func (l *redisLocker) Value() string {
-	return l.mutex.Value()
-}
-
-// Until 返回锁的过期时间（Unix 时间戳，毫秒）。
-func (l *redisLocker) Until() int64 {
-	return l.mutex.Until().UnixMilli()
+// Key 返回锁的 key。
+func (h *redisLockHandle) Key() string {
+	return h.key
 }
 
 // =============================================================================
@@ -257,6 +241,17 @@ func wrapRedisError(err error) error {
 		return nil
 	}
 
+	// context 错误优先保持原样（用于取消和超时场景）
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	// ErrTaken 是一个结构体类型，需要使用 errors.As 检查
+	var errTaken *redsync.ErrTaken
+	if errors.As(err, &errTaken) {
+		return ErrLockHeld
+	}
+
 	// redsync 错误
 	if errors.Is(err, redsync.ErrFailed) {
 		return ErrLockFailed
@@ -266,17 +261,6 @@ func wrapRedisError(err error) error {
 	}
 	if errors.Is(err, redsync.ErrLockAlreadyExpired) {
 		return ErrLockExpired
-	}
-
-	// ErrTaken 是一个结构体类型，需要使用 errors.As 检查
-	var errTaken *redsync.ErrTaken
-	if errors.As(err, &errTaken) {
-		return ErrLockHeld
-	}
-
-	// context 错误保持原样
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
 	}
 
 	return err

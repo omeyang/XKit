@@ -52,8 +52,12 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 	}, nil
 }
 
-// NewMutex 创建指定 key 的分布式锁实例。
-func (f *etcdFactory) NewMutex(key string, opts ...MutexOption) Locker {
+// TryLock 非阻塞式获取锁，返回 LockHandle。
+func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if err := f.checkSession(); err != nil {
+		return nil, err
+	}
+
 	options := defaultMutexOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -62,10 +66,56 @@ func (f *etcdFactory) NewMutex(key string, opts ...MutexOption) Locker {
 	fullKey := options.KeyPrefix + key
 	mutex := concurrency.NewMutex(f.session, fullKey)
 
-	return &etcdLocker{
+	if err := mutex.TryLock(ctx); err != nil {
+		err = wrapEtcdError(err)
+		if errors.Is(err, ErrLockHeld) {
+			return nil, nil // 锁被占用，返回 (nil, nil)
+		}
+		return nil, err
+	}
+
+	return &etcdLockHandle{
 		factory: f,
 		mutex:   mutex,
-		key:     fullKey,
+		key:     key,
+	}, nil
+}
+
+// Lock 阻塞式获取锁，返回 LockHandle。
+func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if err := f.checkSession(); err != nil {
+		return nil, err
+	}
+
+	options := defaultMutexOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	fullKey := options.KeyPrefix + key
+	mutex := concurrency.NewMutex(f.session, fullKey)
+
+	if err := mutex.Lock(ctx); err != nil {
+		return nil, wrapEtcdError(err)
+	}
+
+	return &etcdLockHandle{
+		factory: f,
+		mutex:   mutex,
+		key:     key,
+	}, nil
+}
+
+// checkSession 检查 Session 是否有效（内部方法）。
+func (f *etcdFactory) checkSession() error {
+	if f.closed.Load() {
+		return ErrFactoryClosed
+	}
+	select {
+	case <-f.session.Done():
+		return ErrSessionExpired
+	default:
+		return nil
 	}
 }
 
@@ -105,97 +155,39 @@ func (f *etcdFactory) Session() Session {
 }
 
 // =============================================================================
-// etcd 锁实现
+// etcd LockHandle 实现
 // =============================================================================
 
-// etcdLocker 实现 EtcdLocker 接口。
-type etcdLocker struct {
+// etcdLockHandle 实现 LockHandle 接口。
+// 每次成功获取锁时创建，封装了唯一的锁标识。
+type etcdLockHandle struct {
 	factory *etcdFactory
 	mutex   *concurrency.Mutex
 	key     string
-	locked  atomic.Bool
-}
-
-// Lock 阻塞式获取锁。
-func (l *etcdLocker) Lock(ctx context.Context) error {
-	if err := l.checkSession(); err != nil {
-		return err
-	}
-
-	if err := l.mutex.Lock(ctx); err != nil {
-		return wrapEtcdError(err)
-	}
-
-	l.locked.Store(true)
-	return nil
-}
-
-// TryLock 非阻塞式获取锁。
-func (l *etcdLocker) TryLock(ctx context.Context) error {
-	if err := l.checkSession(); err != nil {
-		return err
-	}
-
-	if err := l.mutex.TryLock(ctx); err != nil {
-		return wrapEtcdError(err)
-	}
-
-	l.locked.Store(true)
-	return nil
 }
 
 // Unlock 释放锁。
-func (l *etcdLocker) Unlock(ctx context.Context) error {
-	// 先检查 session 是否有效
-	if err := l.checkSession(); err != nil {
-		// session 已过期，锁已自动释放
-		l.locked.Store(false)
+func (h *etcdLockHandle) Unlock(ctx context.Context) error {
+	if err := h.factory.checkSession(); err != nil {
 		return err
 	}
 
-	if !l.locked.Load() {
-		return ErrNotLocked
+	if err := h.mutex.Unlock(ctx); err != nil {
+		return wrapEtcdError(err)
 	}
-
-	if err := l.mutex.Unlock(ctx); err != nil {
-		// 解锁失败可能是因为锁已过期，更新状态
-		wrappedErr := wrapEtcdError(err)
-		if errors.Is(wrappedErr, ErrSessionExpired) || errors.Is(wrappedErr, ErrNotLocked) {
-			l.locked.Store(false)
-		}
-		return wrappedErr
-	}
-
-	l.locked.Store(false)
 	return nil
 }
 
-// Extend etcd 使用 Session 自动续期，不支持手动续期。
-func (l *etcdLocker) Extend(_ context.Context) error {
-	return ErrExtendNotSupported
+// Extend etcd 使用 Session 自动续期，此方法返回 nil。
+// etcd 的 Session 会自动保持心跳，无需手动续期。
+func (h *etcdLockHandle) Extend(_ context.Context) error {
+	// etcd 使用 Session 自动续期，无需手动操作
+	return nil
 }
 
-// Mutex 返回底层 concurrency.Mutex。
-func (l *etcdLocker) Mutex() Mutex {
-	return l.mutex
-}
-
-// Key 返回锁的完整 key。
-func (l *etcdLocker) Key() string {
-	return l.key
-}
-
-// checkSession 检查 Session 是否有效。
-func (l *etcdLocker) checkSession() error {
-	if l.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-	select {
-	case <-l.factory.session.Done():
-		return ErrSessionExpired
-	default:
-		return nil
-	}
+// Key 返回锁的 key。
+func (h *etcdLockHandle) Key() string {
+	return h.key
 }
 
 // =============================================================================

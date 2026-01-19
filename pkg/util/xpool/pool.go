@@ -1,12 +1,12 @@
-package storageopt
+package xpool
 
 import (
 	"log/slog"
 	"sync"
 )
 
-// WorkerPool 是一个简单的 worker pool 实现。
-// 用于异步执行慢查询钩子等任务。
+// WorkerPool 是一个泛型 worker pool 实现。
+// 用于异步执行任务，支持优雅关闭和 panic 恢复。
 type WorkerPool[T any] struct {
 	workers   int
 	queueSize int
@@ -21,7 +21,7 @@ type WorkerPool[T any] struct {
 //
 // 参数：
 //   - workers: worker 数量，最小为 1
-//   - queueSize: 任务队列大小，最小为 1
+//   - queueSize: 任务队列大小，最小为 1（默认 100）
 //   - handler: 任务处理函数
 func NewWorkerPool[T any](workers, queueSize int, handler func(T)) *WorkerPool[T] {
 	if workers < 1 {
@@ -58,7 +58,7 @@ func (p *WorkerPool[T]) worker() {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("storageopt: worker panic recovered", "panic", r)
+					slog.Error("xpool: worker panic recovered", "panic", r)
 				}
 			}()
 			p.handler(task)
@@ -86,7 +86,7 @@ func (p *WorkerPool[T]) Submit(task T) (ok bool) {
 		return true
 	default:
 		// 队列满，丢弃任务
-		slog.Warn("storageopt: async queue full, task dropped")
+		slog.Warn("xpool: async queue full, task dropped")
 		return false
 	}
 }
@@ -102,4 +102,14 @@ func (p *WorkerPool[T]) Stop() {
 		// 3. 等待所有 worker 处理完剩余任务后退出
 		p.wg.Wait()
 	})
+}
+
+// Workers 返回 worker 数量。
+func (p *WorkerPool[T]) Workers() int {
+	return p.workers
+}
+
+// QueueSize 返回队列大小。
+func (p *WorkerPool[T]) QueueSize() int {
+	return p.queueSize
 }

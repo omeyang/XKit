@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/omeyang/xkit/pkg/util/xpool"
 )
 
 // SlowQueryHook 慢查询同步回调钩子。
@@ -56,7 +58,7 @@ const (
 // 封装了同步/异步钩子的调用逻辑。
 type SlowQueryDetector[T any] struct {
 	options SlowQueryOptions[T]
-	pool    *WorkerPool[T]
+	pool    *xpool.WorkerPool[T]
 	mu      sync.RWMutex
 	closed  bool
 }
@@ -133,7 +135,7 @@ func (d *SlowQueryDetector[T]) ensurePoolStarted() {
 	}
 
 	if d.options.AsyncHook != nil {
-		d.pool = NewWorkerPool(
+		d.pool = xpool.NewWorkerPool(
 			d.options.AsyncWorkerPoolSize,
 			d.options.AsyncQueueSize,
 			d.options.AsyncHook,

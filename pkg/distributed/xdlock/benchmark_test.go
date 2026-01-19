@@ -41,7 +41,7 @@ func setupMiniredis(b *testing.B) (*miniredis.Miniredis, redis.UniversalClient) 
 func BenchmarkNewRedisFactory(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -51,57 +51,7 @@ func BenchmarkNewRedisFactory(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		factory.Close()
-	}
-}
-
-// BenchmarkRedisFactory_NewMutex 测试创建锁实例的性能。
-func BenchmarkRedisFactory_NewMutex(b *testing.B) {
-	mr, client := setupMiniredis(b)
-	defer mr.Close()
-	defer client.Close()
-
-	factory, err := xdlock.NewRedisFactory(client)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer factory.Close()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		_ = factory.NewMutex(fmt.Sprintf("key-%d", i))
-	}
-}
-
-// BenchmarkRedisFactory_NewMutex_WithOptions 测试带选项创建锁实例的性能。
-func BenchmarkRedisFactory_NewMutex_WithOptions(b *testing.B) {
-	mr, client := setupMiniredis(b)
-	defer mr.Close()
-	defer client.Close()
-
-	factory, err := xdlock.NewRedisFactory(client)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer factory.Close()
-
-	opts := []xdlock.MutexOption{
-		xdlock.WithKeyPrefix("myapp:"),
-		xdlock.WithExpiry(10 * time.Second),
-		xdlock.WithTries(5),
-		xdlock.WithRetryDelay(100 * time.Millisecond),
-		xdlock.WithDriftFactor(0.02),
-		xdlock.WithTimeoutFactor(0.1),
-		xdlock.WithFailFast(true),
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		_ = factory.NewMutex(fmt.Sprintf("key-%d", i), opts...)
+		_ = factory.Close()
 	}
 }
 
@@ -109,13 +59,13 @@ func BenchmarkRedisFactory_NewMutex_WithOptions(b *testing.B) {
 func BenchmarkRedisFactory_Health(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -130,20 +80,20 @@ func BenchmarkRedisFactory_Health(b *testing.B) {
 }
 
 // =============================================================================
-// Redis 锁操作基准测试
+// Redis 锁操作基准测试（使用 Handle API）
 // =============================================================================
 
-// BenchmarkRedisLocker_Lock 测试阻塞式获取锁性能。
-func BenchmarkRedisLocker_Lock(b *testing.B) {
+// BenchmarkRedisFactory_Lock 测试阻塞式获取锁性能。
+func BenchmarkRedisFactory_Lock(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -152,27 +102,27 @@ func BenchmarkRedisLocker_Lock(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// 每次使用不同的 key 避免锁冲突
-		locker := factory.NewMutex(fmt.Sprintf("bench-lock-%d", i))
-		if err := locker.Lock(ctx); err != nil {
+		handle, err := factory.Lock(ctx, fmt.Sprintf("bench-lock-%d", i), xdlock.WithTries(1))
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := locker.Unlock(ctx); err != nil {
+		if err := handle.Unlock(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkRedisLocker_TryLock 测试非阻塞式获取锁性能。
-func BenchmarkRedisLocker_TryLock(b *testing.B) {
+// BenchmarkRedisFactory_TryLock 测试非阻塞式获取锁性能。
+func BenchmarkRedisFactory_TryLock(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -180,109 +130,117 @@ func BenchmarkRedisLocker_TryLock(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		locker := factory.NewMutex(fmt.Sprintf("bench-trylock-%d", i))
-		if err := locker.TryLock(ctx); err != nil {
+		handle, err := factory.TryLock(ctx, fmt.Sprintf("bench-trylock-%d", i))
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := locker.Unlock(ctx); err != nil {
+		if handle == nil {
+			b.Fatal("expected handle, got nil")
+		}
+		if err := handle.Unlock(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkRedisLocker_Unlock 测试释放锁性能。
-func BenchmarkRedisLocker_Unlock(b *testing.B) {
+// BenchmarkRedisFactory_Unlock 测试释放锁性能。
+func BenchmarkRedisFactory_Unlock(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
 	// 预先创建锁并获取
-	lockers := make([]xdlock.Locker, b.N)
+	handles := make([]xdlock.LockHandle, b.N)
 	for i := 0; i < b.N; i++ {
-		locker := factory.NewMutex(fmt.Sprintf("bench-unlock-%d", i))
-		if err := locker.Lock(ctx); err != nil {
+		handle, err := factory.TryLock(ctx, fmt.Sprintf("bench-unlock-%d", i))
+		if err != nil {
 			b.Fatal(err)
 		}
-		lockers[i] = locker
+		if handle == nil {
+			b.Fatalf("expected handle for key bench-unlock-%d", i)
+		}
+		handles[i] = handle
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		if err := lockers[i].Unlock(ctx); err != nil {
+		if err := handles[i].Unlock(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkRedisLocker_Extend 测试续期锁性能。
-func BenchmarkRedisLocker_Extend(b *testing.B) {
+// BenchmarkRedisLockHandle_Extend 测试续期锁性能。
+func BenchmarkRedisLockHandle_Extend(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
 	// 创建并获取锁
-	locker := factory.NewMutex("bench-extend")
-	if err := locker.Lock(ctx); err != nil {
+	handle, err := factory.TryLock(ctx, "bench-extend", xdlock.WithExpiry(30*time.Second))
+	if err != nil {
 		b.Fatal(err)
 	}
-	defer locker.Unlock(ctx)
+	if handle == nil {
+		b.Fatal("expected handle, got nil")
+	}
+	defer func() { _ = handle.Unlock(ctx) }()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		if err := locker.Extend(ctx); err != nil {
+		if err := handle.Extend(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkRedisLocker_LockUnlock_Cycle 测试完整的锁获取-释放周期。
-func BenchmarkRedisLocker_LockUnlock_Cycle(b *testing.B) {
+// BenchmarkRedisFactory_LockUnlock_Cycle 测试完整的锁获取-释放周期。
+func BenchmarkRedisFactory_LockUnlock_Cycle(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
-
-	// 使用单个 key，模拟实际场景中的锁竞争
-	locker := factory.NewMutex("bench-cycle",
-		xdlock.WithExpiry(time.Second),
-		xdlock.WithTries(1),
-	)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		if err := locker.Lock(ctx); err != nil {
+		// 使用单个 key，模拟实际场景中的锁竞争
+		handle, err := factory.Lock(ctx, "bench-cycle",
+			xdlock.WithExpiry(time.Second),
+			xdlock.WithTries(1),
+		)
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := locker.Unlock(ctx); err != nil {
+		if err := handle.Unlock(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -292,17 +250,17 @@ func BenchmarkRedisLocker_LockUnlock_Cycle(b *testing.B) {
 // 并发基准测试
 // =============================================================================
 
-// BenchmarkRedisLocker_Lock_Parallel 测试并发获取锁性能。
-func BenchmarkRedisLocker_Lock_Parallel(b *testing.B) {
+// BenchmarkRedisFactory_Lock_Parallel 测试并发获取锁性能。
+func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 	var counter int64
@@ -315,12 +273,16 @@ func BenchmarkRedisLocker_Lock_Parallel(b *testing.B) {
 		for pb.Next() {
 			// 每个 goroutine 使用唯一 key
 			key := fmt.Sprintf("parallel-lock-%d-%d", counter, i)
-			locker := factory.NewMutex(key)
-			if err := locker.Lock(ctx); err != nil {
+			handle, err := factory.TryLock(ctx, key)
+			if err != nil {
 				b.Error(err)
 				return
 			}
-			if err := locker.Unlock(ctx); err != nil {
+			if handle == nil {
+				b.Error("expected handle, got nil")
+				return
+			}
+			if err := handle.Unlock(ctx); err != nil {
 				b.Error(err)
 				return
 			}
@@ -329,17 +291,17 @@ func BenchmarkRedisLocker_Lock_Parallel(b *testing.B) {
 	})
 }
 
-// BenchmarkRedisLocker_Contention 测试锁竞争场景性能。
-func BenchmarkRedisLocker_Contention(b *testing.B) {
+// BenchmarkRedisFactory_Lock_Contention 测试锁竞争场景性能。
+func BenchmarkRedisFactory_Lock_Contention(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -353,19 +315,19 @@ func BenchmarkRedisLocker_Contention(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			key := fmt.Sprintf("contention-%d", i%numKeys)
-			locker := factory.NewMutex(key,
+			handle, err := factory.Lock(ctx, key,
 				xdlock.WithExpiry(100*time.Millisecond),
 				xdlock.WithTries(10),
 				xdlock.WithRetryDelay(10*time.Millisecond),
 			)
 
-			if err := locker.Lock(ctx); err != nil {
+			if err != nil {
 				// 竞争激烈时可能获取失败，跳过
 				i++
 				continue
 			}
 			// 模拟短暂的临界区操作
-			locker.Unlock(ctx)
+			_ = handle.Unlock(ctx)
 			i++
 		}
 	})
@@ -375,13 +337,13 @@ func BenchmarkRedisLocker_Contention(b *testing.B) {
 func BenchmarkRedisFactory_Health_Parallel(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -501,17 +463,17 @@ func BenchmarkRedlock_ThreeNodes(b *testing.B) {
 	defer mr3.Close()
 
 	client1 := redis.NewClient(&redis.Options{Addr: mr1.Addr()})
-	defer client1.Close()
+	defer func() { _ = client1.Close() }()
 	client2 := redis.NewClient(&redis.Options{Addr: mr2.Addr()})
-	defer client2.Close()
+	defer func() { _ = client2.Close() }()
 	client3 := redis.NewClient(&redis.Options{Addr: mr3.Addr()})
-	defer client3.Close()
+	defer func() { _ = client3.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client1, client2, client3)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -519,11 +481,14 @@ func BenchmarkRedlock_ThreeNodes(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		locker := factory.NewMutex(fmt.Sprintf("redlock-%d", i))
-		if err := locker.Lock(ctx); err != nil {
+		handle, err := factory.TryLock(ctx, fmt.Sprintf("redlock-%d", i))
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := locker.Unlock(ctx); err != nil {
+		if handle == nil {
+			b.Fatal("expected handle, got nil")
+		}
+		if err := handle.Unlock(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -537,13 +502,13 @@ func BenchmarkRedlock_ThreeNodes(b *testing.B) {
 func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 	mr, client := setupMiniredis(b)
 	defer mr.Close()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 	opts := []xdlock.MutexOption{
@@ -562,12 +527,10 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 		go func(gid int) {
 			defer wg.Done()
 			for i := 0; i < b.N/numGoroutines; i++ {
-				locker := factory.NewMutex(
-					fmt.Sprintf("highvol-%d-%d", gid, i),
-					opts...,
-				)
-				if err := locker.Lock(ctx); err == nil {
-					locker.Unlock(ctx)
+				key := fmt.Sprintf("highvol-%d-%d", gid, i)
+				handle, err := factory.TryLock(ctx, key, opts...)
+				if err == nil && handle != nil {
+					_ = handle.Unlock(ctx)
 				}
 			}
 		}(g)

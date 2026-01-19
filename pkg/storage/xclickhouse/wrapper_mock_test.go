@@ -23,8 +23,8 @@ func TestHealth_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, conn.pingCount)
-	assert.Equal(t, int64(1), w.pingCount.Load())
-	assert.Equal(t, int64(0), w.pingErrors.Load())
+	assert.Equal(t, int64(1), w.healthCounter.PingCount())
+	assert.Equal(t, int64(0), w.healthCounter.PingErrors())
 }
 
 func TestHealth_Error(t *testing.T) {
@@ -39,8 +39,8 @@ func TestHealth_Error(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, 1, conn.pingCount)
-	assert.Equal(t, int64(1), w.pingCount.Load())
-	assert.Equal(t, int64(1), w.pingErrors.Load())
+	assert.Equal(t, int64(1), w.healthCounter.PingCount())
+	assert.Equal(t, int64(1), w.healthCounter.PingErrors())
 }
 
 func TestHealth_WithTimeout(t *testing.T) {
@@ -164,7 +164,7 @@ func TestQueryPage_CountQueryError(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "count query failed")
-	assert.Equal(t, int64(1), w.queryErrors.Load())
+	assert.Equal(t, int64(1), w.queryCounter.QueryErrors())
 }
 
 func TestQueryPage_DataQueryError(t *testing.T) {
@@ -303,7 +303,7 @@ func TestQueryPage_SlowQueryHook(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "SELECT * FROM users", captured.Query)
 	assert.True(t, captured.Duration >= 10*time.Millisecond)
-	assert.Equal(t, int64(1), w.slowQueries.Load())
+	assert.Equal(t, int64(1), w.slowQueryCounter.Count())
 }
 
 func TestBatchInsert_Success(t *testing.T) {

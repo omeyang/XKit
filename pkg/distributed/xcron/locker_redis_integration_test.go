@@ -85,26 +85,26 @@ func TestRedisLocker_TryLock_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// 首次获取锁应成功
-	acquired, err := locker.TryLock(ctx, "test-job", 10*time.Second)
+	handle, err := locker.TryLock(ctx, "test-job", 10*time.Second)
 	require.NoError(t, err)
-	assert.True(t, acquired)
+	require.NotNil(t, handle, "首次获取锁应成功")
 
 	// 同一实例再次获取应失败（SETNX 语义）
-	acquired2, err := locker.TryLock(ctx, "test-job", 10*time.Second)
+	handle2, err := locker.TryLock(ctx, "test-job", 10*time.Second)
 	require.NoError(t, err)
-	assert.False(t, acquired2)
+	assert.Nil(t, handle2, "锁已被持有，再次获取应失败")
 
 	// 释放锁
-	err = locker.Unlock(ctx, "test-job")
+	err = handle.Unlock(ctx)
 	require.NoError(t, err)
 
 	// 释放后应能再次获取
-	acquired3, err := locker.TryLock(ctx, "test-job", 10*time.Second)
+	handle3, err := locker.TryLock(ctx, "test-job", 10*time.Second)
 	require.NoError(t, err)
-	assert.True(t, acquired3)
+	require.NotNil(t, handle3, "释放后应能再次获取")
 
 	// 清理
-	locker.Unlock(ctx, "test-job")
+	handle3.Unlock(ctx)
 }
 
 func TestRedisLocker_Unlock_NotHeld_Integration(t *testing.T) {
@@ -114,8 +114,17 @@ func TestRedisLocker_Unlock_NotHeld_Integration(t *testing.T) {
 	locker := xcron.NewRedisLocker(client, xcron.WithRedisIdentity("instance-1"))
 	ctx := context.Background()
 
-	// 尝试释放未持有的锁
-	err := locker.Unlock(ctx, "non-existent-lock")
+	// 获取锁
+	handle, err := locker.TryLock(ctx, "unlock-test", 10*time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 释放锁
+	err = handle.Unlock(ctx)
+	require.NoError(t, err)
+
+	// 再次释放已释放的锁应失败
+	err = handle.Unlock(ctx)
 	assert.ErrorIs(t, err, xcron.ErrLockNotHeld)
 }
 
@@ -127,17 +136,18 @@ func TestRedisLocker_Unlock_WrongOwner_Integration(t *testing.T) {
 
 	// 实例 1 获取锁
 	locker1 := xcron.NewRedisLocker(client, xcron.WithRedisIdentity("instance-1"))
-	acquired, err := locker1.TryLock(ctx, "owner-test", 30*time.Second)
+	handle1, err := locker1.TryLock(ctx, "owner-test", 30*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle1)
 
-	// 实例 2 尝试释放（应失败）
+	// 实例 2 尝试获取同一个锁（应失败）
 	locker2 := xcron.NewRedisLocker(client, xcron.WithRedisIdentity("instance-2"))
-	err = locker2.Unlock(ctx, "owner-test")
-	assert.ErrorIs(t, err, xcron.ErrLockNotHeld)
+	handle2, err := locker2.TryLock(ctx, "owner-test", 30*time.Second)
+	require.NoError(t, err)
+	assert.Nil(t, handle2, "锁已被 instance-1 持有")
 
 	// 实例 1 释放（应成功）
-	err = locker1.Unlock(ctx, "owner-test")
+	err = handle1.Unlock(ctx)
 	assert.NoError(t, err)
 }
 
@@ -149,15 +159,15 @@ func TestRedisLocker_Renew_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// 获取锁
-	acquired, err := locker.TryLock(ctx, "renew-test", 5*time.Second)
+	handle, err := locker.TryLock(ctx, "renew-test", 5*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle)
 
 	// 等待一段时间后续期
 	time.Sleep(1 * time.Second)
 
 	// 续期
-	err = locker.Renew(ctx, "renew-test", 10*time.Second)
+	err = handle.Renew(ctx, 10*time.Second)
 	require.NoError(t, err)
 
 	// 验证锁仍然存在（通过 TTL 检查）
@@ -166,7 +176,7 @@ func TestRedisLocker_Renew_Integration(t *testing.T) {
 	assert.Greater(t, ttl, 5*time.Second, "续期后 TTL 应大于 5 秒")
 
 	// 清理
-	locker.Unlock(ctx, "renew-test")
+	handle.Unlock(ctx)
 }
 
 func TestRedisLocker_Renew_NotHeld_Integration(t *testing.T) {
@@ -176,8 +186,17 @@ func TestRedisLocker_Renew_NotHeld_Integration(t *testing.T) {
 	locker := xcron.NewRedisLocker(client)
 	ctx := context.Background()
 
+	// 获取锁
+	handle, err := locker.TryLock(ctx, "renew-not-held", 10*time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 释放锁
+	err = handle.Unlock(ctx)
+	require.NoError(t, err)
+
 	// 尝试续期未持有的锁
-	err := locker.Renew(ctx, "non-existent", 10*time.Second)
+	err = handle.Renew(ctx, 10*time.Second)
 	assert.ErrorIs(t, err, xcron.ErrLockNotHeld)
 }
 
@@ -189,17 +208,18 @@ func TestRedisLocker_Renew_WrongOwner_Integration(t *testing.T) {
 
 	// 实例 1 获取锁
 	locker1 := xcron.NewRedisLocker(client, xcron.WithRedisIdentity("instance-1"))
-	acquired, err := locker1.TryLock(ctx, "renew-owner-test", 30*time.Second)
+	handle1, err := locker1.TryLock(ctx, "renew-owner-test", 30*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle1)
 
-	// 实例 2 尝试续期（应失败）
+	// 实例 2 尝试获取（会失败，返回 nil handle）
 	locker2 := xcron.NewRedisLocker(client, xcron.WithRedisIdentity("instance-2"))
-	err = locker2.Renew(ctx, "renew-owner-test", 30*time.Second)
-	assert.ErrorIs(t, err, xcron.ErrLockNotHeld)
+	handle2, err := locker2.TryLock(ctx, "renew-owner-test", 30*time.Second)
+	require.NoError(t, err)
+	assert.Nil(t, handle2, "锁已被 instance-1 持有")
 
 	// 清理
-	locker1.Unlock(ctx, "renew-owner-test")
+	handle1.Unlock(ctx)
 }
 
 // =============================================================================
@@ -214,20 +234,22 @@ func TestRedisLocker_TTLExpiry_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// 使用较短的 TTL
-	acquired, err := locker.TryLock(ctx, "ttl-test", 2*time.Second)
+	handle, err := locker.TryLock(ctx, "ttl-test", 2*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle)
 
 	// 等待锁过期
 	time.Sleep(3 * time.Second)
 
 	// 现在应该能再次获取锁（原锁已过期）
-	acquired2, err := locker.TryLock(ctx, "ttl-test", 10*time.Second)
+	handle2, err := locker.TryLock(ctx, "ttl-test", 10*time.Second)
 	require.NoError(t, err)
-	assert.True(t, acquired2, "锁过期后应能重新获取")
+	assert.NotNil(t, handle2, "锁过期后应能重新获取")
 
 	// 清理
-	locker.Unlock(ctx, "ttl-test")
+	if handle2 != nil {
+		handle2.Unlock(ctx)
+	}
 }
 
 // =============================================================================
@@ -256,17 +278,17 @@ func TestRedisLocker_Concurrent_Integration(t *testing.T) {
 				xcron.WithRedisIdentity("worker-"+string(rune('A'+id))),
 			)
 
-			acquired, err := locker.TryLock(ctx, lockKey, 10*time.Second)
+			handle, err := locker.TryLock(ctx, lockKey, 10*time.Second)
 			if err != nil {
 				t.Logf("Worker %d: TryLock error: %v", id, err)
 				return
 			}
 
-			if acquired {
+			if handle != nil {
 				atomic.AddInt64(&successCount, 1)
 				// 持有锁一小段时间
 				time.Sleep(100 * time.Millisecond)
-				locker.Unlock(ctx, lockKey)
+				handle.Unlock(ctx)
 			}
 		}(i)
 	}
@@ -302,14 +324,17 @@ func TestRedisLocker_MutualExclusion_Integration(t *testing.T) {
 			)
 
 			for j := 0; j < iterations; j++ {
+				var handle xcron.LockHandle
+				var err error
+
 				// 轮询获取锁
 				for {
-					acquired, err := locker.TryLock(ctx, lockKey, 5*time.Second)
+					handle, err = locker.TryLock(ctx, lockKey, 5*time.Second)
 					if err != nil {
 						t.Logf("Worker %d: TryLock error: %v", id, err)
 						return
 					}
-					if acquired {
+					if handle != nil {
 						break
 					}
 					// 短暂等待后重试
@@ -330,7 +355,7 @@ func TestRedisLocker_MutualExclusion_Integration(t *testing.T) {
 				time.Sleep(20 * time.Millisecond)
 
 				atomic.AddInt64(&inCriticalSection, -1)
-				locker.Unlock(ctx, lockKey)
+				handle.Unlock(ctx)
 			}
 		}(i)
 	}
@@ -353,9 +378,9 @@ func TestRedisLocker_WithKeyPrefix_Integration(t *testing.T) {
 		xcron.WithRedisKeyPrefix("myapp:cron:"),
 	)
 
-	acquired, err := locker.TryLock(ctx, "prefix-test", 10*time.Second)
+	handle, err := locker.TryLock(ctx, "prefix-test", 10*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle)
 
 	// 验证 key 前缀
 	exists, err := client.Exists(ctx, "myapp:cron:prefix-test").Result()
@@ -368,7 +393,7 @@ func TestRedisLocker_WithKeyPrefix_Integration(t *testing.T) {
 	assert.Equal(t, int64(0), exists2, "默认前缀下不应存在")
 
 	// 清理
-	locker.Unlock(ctx, "prefix-test")
+	handle.Unlock(ctx)
 }
 
 func TestRedisLocker_Identity_Integration(t *testing.T) {
@@ -383,17 +408,17 @@ func TestRedisLocker_Identity_Integration(t *testing.T) {
 
 	assert.Equal(t, "custom-identity-123", locker.Identity())
 
-	acquired, err := locker.TryLock(ctx, "identity-test", 10*time.Second)
+	handle, err := locker.TryLock(ctx, "identity-test", 10*time.Second)
 	require.NoError(t, err)
-	require.True(t, acquired)
+	require.NotNil(t, handle)
 
-	// 验证锁的值是我们设置的 identity
+	// 验证锁的值包含我们设置的 identity
 	value, err := client.Get(ctx, "xcron:lock:identity-test").Result()
 	require.NoError(t, err)
-	assert.Equal(t, "custom-identity-123", value)
+	assert.Contains(t, value, "custom-identity-123")
 
 	// 清理
-	locker.Unlock(ctx, "identity-test")
+	handle.Unlock(ctx)
 }
 
 // =============================================================================
@@ -413,8 +438,9 @@ func TestRedisLocker_WithScheduler_Integration(t *testing.T) {
 	scheduler := xcron.New(xcron.WithLocker(locker))
 
 	// 添加一个简单任务
-	_, err := scheduler.AddFunc("@every 1s", func() {
+	_, err := scheduler.AddFunc("@every 1s", func(_ context.Context) error {
 		atomic.AddInt64(&executed, 1)
+		return nil
 	}, xcron.WithName("test-job"), xcron.WithLockTTL(5*time.Second))
 	require.NoError(t, err)
 
@@ -427,4 +453,6 @@ func TestRedisLocker_WithScheduler_Integration(t *testing.T) {
 	// 验证任务执行了
 	count := atomic.LoadInt64(&executed)
 	assert.GreaterOrEqual(t, count, int64(2), "任务应至少执行 2 次")
+
+	_ = ctx // 使用 ctx 避免未使用警告
 }

@@ -27,6 +27,11 @@ var (
 // =============================================================================
 
 // Config 平台初始化配置
+//
+// 注意：此结构体与 xctx.Platform 有部分字段重叠（HasParent, UnclassRegionID），
+// 但用途不同：
+//   - Config: 进程级全局配置，包含 PlatformID
+//   - xctx.Platform: 请求级 context，用于批量获取平台信息
 type Config struct {
 	// PlatformID 平台 ID（必填，来自 AUTH 服务）
 	PlatformID string

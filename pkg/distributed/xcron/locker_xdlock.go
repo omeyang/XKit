@@ -75,39 +75,33 @@ func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) *Xdlo
 
 // TryLock 尝试获取锁（非阻塞）。
 //
-// 每次调用创建新的 Mutex 实例，确保不同任务之间隔离。
+// 使用 xdlock.Factory 的新 handle-based API 直接获取锁。
 //
 // 对于 etcd 后端，ttl 参数会被忽略，因为 etcd 使用 Session TTL。
 // 对于 Redis 后端，ttl 将作为锁的过期时间。
 func (a *XdlockAdapter) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
 	fullKey := a.keyPrefix + key
 
-	// 创建 Mutex，配置 TTL
+	// 配置选项
 	mutexOpts := []xdlock.MutexOption{
 		xdlock.WithKeyPrefix(""), // 已在 fullKey 中包含前缀
 	}
-
-	// 对于 Redis，设置过期时间
 	if ttl > 0 {
 		mutexOpts = append(mutexOpts, xdlock.WithExpiry(ttl))
 	}
 
-	locker := a.factory.NewMutex(fullKey, mutexOpts...)
-
-	// 尝试获取锁
-	err := locker.TryLock(ctx)
+	// 直接使用 Factory 的 TryLock 方法
+	handle, err := a.factory.TryLock(ctx, fullKey, mutexOpts...)
 	if err != nil {
-		// ErrLockHeld 表示锁被其他持有者占用，这是正常情况
-		if errors.Is(err, xdlock.ErrLockHeld) {
-			return nil, nil
-		}
 		return nil, err
+	}
+	if handle == nil {
+		return nil, nil // 锁被占用
 	}
 
 	return &xdlockHandle{
-		locker: locker,
+		handle: handle,
 		key:    key,
-		ttl:    ttl,
 	}, nil
 }
 
@@ -117,19 +111,18 @@ func (a *XdlockAdapter) Factory() xdlock.Factory {
 	return a.factory
 }
 
-// xdlockHandle 包装 xdlock.Locker，实现 xcron.LockHandle 接口
+// xdlockHandle 包装 xdlock.LockHandle，实现 xcron.LockHandle 接口
 type xdlockHandle struct {
-	locker xdlock.Locker
+	handle xdlock.LockHandle
 	key    string
-	ttl    time.Duration
 }
 
 // Unlock 释放锁。
 func (h *xdlockHandle) Unlock(ctx context.Context) error {
-	err := h.locker.Unlock(ctx)
+	err := h.handle.Unlock(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockExpired) || errors.Is(err, xdlock.ErrNotLocked) {
+		if errors.Is(err, xdlock.ErrLockNotHeld) {
 			return ErrLockNotHeld
 		}
 		return err
@@ -141,15 +134,11 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 //
 // 对于 etcd 后端，此操作返回 nil（etcd 使用 Session 自动续期）。
 // 对于 Redis 后端，调用 Extend 续期。
-func (h *xdlockHandle) Renew(ctx context.Context, ttl time.Duration) error {
-	err := h.locker.Extend(ctx)
+func (h *xdlockHandle) Renew(ctx context.Context, _ time.Duration) error {
+	err := h.handle.Extend(ctx)
 	if err != nil {
-		// etcd 不支持手动续期，返回成功（Session 自动续期）
-		if errors.Is(err, xdlock.ErrExtendNotSupported) {
-			return nil
-		}
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrExtendFailed) || errors.Is(err, xdlock.ErrNotLocked) {
+		if errors.Is(err, xdlock.ErrLockNotHeld) || errors.Is(err, xdlock.ErrExtendFailed) {
 			return ErrLockNotHeld
 		}
 		return err

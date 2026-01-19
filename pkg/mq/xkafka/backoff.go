@@ -1,6 +1,8 @@
 package xkafka
 
 import (
+	"time"
+
 	"github.com/omeyang/xkit/internal/mqcore"
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
@@ -26,7 +28,11 @@ type BackoffConfig = mqcore.BackoffConfig //nolint:staticcheck // 向后兼容
 //
 // Deprecated: 请使用 xretry.NewExponentialBackoff() 替代。
 func DefaultBackoffConfig() BackoffConfig {
-	return mqcore.DefaultBackoffConfig()
+	return BackoffConfig{
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     30 * time.Second,
+		Multiplier:   2.0,
+	}
 }
 
 // DefaultBackoffPolicy 返回默认退避策略。
@@ -36,5 +42,5 @@ func DefaultBackoffConfig() BackoffConfig {
 //   - Multiplier: 2.0
 //   - Jitter: 0.1 (10%)
 func DefaultBackoffPolicy() BackoffPolicy {
-	return mqcore.DefaultBackoff()
+	return xretry.NewExponentialBackoff()
 }

@@ -159,8 +159,10 @@ func TestDistributed_BasicRateLimiting_Integration(t *testing.T) {
 		result, _ := limiter.Allow(ctx, key)
 		assert.False(t, result.Allowed)
 
-		// 重置配额
-		err = limiter.Reset(ctx, key)
+		// 重置配额（使用 Resetter 接口）
+		resetter, ok := limiter.(Resetter)
+		require.True(t, ok, "limiter should implement Resetter interface")
+		err = resetter.Reset(ctx, key)
 		require.NoError(t, err)
 
 		// 等待 Redis 删除操作完成

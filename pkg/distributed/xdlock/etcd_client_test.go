@@ -186,7 +186,7 @@ func TestWithEtcdHealthCheck(t *testing.T) {
 
 func TestWithEtcdTLS(t *testing.T) {
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, //nolint:gosec // G402: 测试代码中故意使用
+		MinVersion: tls.VersionTLS12,
 	}
 	opts := defaultEtcdClientOptions()
 
@@ -348,7 +348,7 @@ func BenchmarkEtcdConfig_Validate(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = config.Validate() //nolint:errcheck // benchmark
+		_ = config.Validate()
 	}
 }
 
@@ -406,15 +406,12 @@ func TestNewEtcdFactoryFromConfig_Integration(t *testing.T) {
 	defer factory.Close()
 	defer client.Close()
 
-	// 测试创建锁
-	locker := factory.NewMutex("test-lock")
-	require.NotNil(t, locker)
-
 	// 测试锁操作
 	ctx := context.Background()
-	err = locker.Lock(ctx)
+	handle, err := factory.Lock(ctx, "test-lock")
 	require.NoError(t, err)
+	require.NotNil(t, handle)
 
-	err = locker.Unlock(ctx)
+	err = handle.Unlock(ctx)
 	require.NoError(t, err)
 }

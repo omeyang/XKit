@@ -31,7 +31,6 @@ type Client = *clientv3.Client
 type Session = *concurrency.Session
 
 // Mutex 是 etcd concurrency.Mutex 的类型别名。
-// 用于 EtcdLocker.Mutex() 方法的返回类型。
 //
 // Mutex 提供：
 //   - Lock: 阻塞式获取锁
@@ -47,13 +46,10 @@ type Mutex = *concurrency.Mutex
 // Redsync 是 redsync.Redsync 的类型别名。
 // 用于 RedisFactory.Redsync() 方法的返回类型。
 //
-// Redsync 提供：
-//   - NewMutex: 创建分布式锁
-//   - Redlock 算法支持（多节点模式）
+// Redsync 提供 Redlock 算法支持（多节点模式）。
 type Redsync = *redsync.Redsync
 
 // RedisMutex 是 redsync.Mutex 的类型别名。
-// 用于 RedisLocker.Mutex() 方法的返回类型。
 //
 // RedisMutex 提供：
 //   - Lock: 阻塞式获取锁

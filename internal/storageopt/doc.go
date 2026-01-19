@@ -7,5 +7,5 @@
 //   - 健康检查配置常量
 //   - 分页参数验证函数
 //   - 慢查询检测器（支持同步/异步钩子）
-//   - Worker Pool 实现
+//   - 统计计数器（TotalCount、SuccessCount、FailureCount）
 package storageopt

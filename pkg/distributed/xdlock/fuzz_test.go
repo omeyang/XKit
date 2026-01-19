@@ -58,7 +58,7 @@ func FuzzNewRedisFactory(f *testing.F) {
 		defer func() {
 			for i := 0; i < numClients; i++ {
 				if clients[i] != nil {
-					clients[i].Close()
+					_ = clients[i].Close()
 				}
 				if mrs[i] != nil {
 					mrs[i].Close()
@@ -71,7 +71,7 @@ func FuzzNewRedisFactory(f *testing.F) {
 			t.Errorf("unexpected error creating factory: %v", err)
 			return
 		}
-		defer factory.Close()
+		defer func() { _ = factory.Close() }()
 
 		// 验证工厂功能正常
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -122,7 +122,7 @@ func FuzzNewRedisFactory_NilClients(f *testing.F) {
 		defer func() {
 			for i := 0; i < total; i++ {
 				if clients[i] != nil {
-					clients[i].Close()
+					_ = clients[i].Close()
 				}
 				if mrs[i] != nil {
 					mrs[i].Close()
@@ -139,11 +139,11 @@ func FuzzNewRedisFactory_NilClients(f *testing.F) {
 }
 
 // =============================================================================
-// Mutex Key 名称 Fuzz 测试
+// TryLock Key 名称 Fuzz 测试
 // =============================================================================
 
-// FuzzNewMutex_KeyName 测试各种 key 名称的处理。
-func FuzzNewMutex_KeyName(f *testing.F) {
+// FuzzTryLock_KeyName 测试各种 key 名称的处理。
+func FuzzTryLock_KeyName(f *testing.F) {
 	// 种子语料库
 	// 有效值
 	f.Add("my-lock")
@@ -181,30 +181,24 @@ func FuzzNewMutex_KeyName(f *testing.F) {
 		defer mr.Close()
 
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
 			t.Fatalf("failed to create factory: %v", err)
 		}
-		defer factory.Close()
-
-		// 创建锁实例不应该 panic
-		locker := factory.NewMutex(key)
-		if locker == nil {
-			t.Error("locker should not be nil")
-			return
-		}
+		defer func() { _ = factory.Close() }()
 
 		// 对于非空 key，尝试获取和释放锁
 		if key != "" && len(key) < 1000 {
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 
-			err := locker.TryLock(ctx)
-			if err == nil {
+			// TryLock 不应该 panic
+			handle, err := factory.TryLock(ctx, key)
+			if err == nil && handle != nil {
 				// 成功获取锁，释放它
-				_ = locker.Unlock(ctx)
+				_ = handle.Unlock(ctx)
 			}
 			// 错误时不报告，因为某些特殊 key 可能导致 Redis 错误
 		}
@@ -342,8 +336,8 @@ func FuzzWithTimeoutFactor(f *testing.F) {
 	})
 }
 
-// FuzzMutexOptions_Combined 测试组合选项。
-func FuzzMutexOptions_Combined(f *testing.F) {
+// FuzzTryLock_CombinedOptions 测试组合选项。
+func FuzzTryLock_CombinedOptions(f *testing.F) {
 	f.Add("prefix:", int64(time.Second), 5, int64(100*time.Millisecond), 0.01, 0.05, true, false)
 
 	f.Fuzz(func(t *testing.T,
@@ -371,15 +365,18 @@ func FuzzMutexOptions_Combined(f *testing.F) {
 		defer mr.Close()
 
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
 			return
 		}
-		defer factory.Close()
+		defer func() { _ = factory.Close() }()
 
-		// 创建带所有选项的锁不应该 panic
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// 使用所有选项创建锁不应该 panic
 		opts := []xdlock.MutexOption{
 			xdlock.WithKeyPrefix(prefix),
 			xdlock.WithExpiry(time.Duration(expiryNs)),
@@ -391,9 +388,9 @@ func FuzzMutexOptions_Combined(f *testing.F) {
 			xdlock.WithShufflePools(shufflePools),
 		}
 
-		locker := factory.NewMutex("test-key", opts...)
-		if locker == nil {
-			t.Error("locker should not be nil")
+		handle, err := factory.TryLock(ctx, "test-key", opts...)
+		if err == nil && handle != nil {
+			_ = handle.Unlock(ctx)
 		}
 	})
 }
@@ -442,18 +439,18 @@ func FuzzWithEtcdContext(f *testing.F) {
 // 锁操作 Fuzz 测试
 // =============================================================================
 
-// FuzzLocker_Operations 测试锁操作的鲁棒性。
-func FuzzLocker_Operations(f *testing.F) {
-	// ops: 0=Lock, 1=TryLock, 2=Unlock, 3=Extend
-	f.Add("key", []byte{0, 2})       // Lock + Unlock
-	f.Add("key", []byte{1, 2})       // TryLock + Unlock
-	f.Add("key", []byte{0, 3, 2})    // Lock + Extend + Unlock
-	f.Add("key", []byte{2})          // Unlock without Lock
-	f.Add("key", []byte{3})          // Extend without Lock
-	f.Add("key", []byte{0, 0})       // Double Lock
+// FuzzLockHandle_Operations 测试锁操作的鲁棒性。
+func FuzzLockHandle_Operations(f *testing.F) {
+	// ops: 0=TryLock, 1=Lock, 2=Unlock, 3=Extend
+	f.Add("key", []byte{0, 2})       // TryLock + Unlock
+	f.Add("key", []byte{1, 2})       // Lock + Unlock
+	f.Add("key", []byte{0, 3, 2})    // TryLock + Extend + Unlock
+	f.Add("key", []byte{2})          // Unlock without lock (no-op)
+	f.Add("key", []byte{3})          // Extend without lock (no-op)
+	f.Add("key", []byte{0, 0})       // Double TryLock
 	f.Add("key", []byte{0, 2, 2})    // Double Unlock
 	f.Add("key", []byte{})           // No operations
-	f.Add("key", []byte{0, 2, 0, 2}) // Lock + Unlock + Lock + Unlock
+	f.Add("key", []byte{0, 2, 0, 2}) // TryLock + Unlock + TryLock + Unlock
 
 	f.Fuzz(func(t *testing.T, key string, ops []byte) {
 		if len(key) == 0 || len(key) > 100 || len(ops) > 20 {
@@ -467,40 +464,66 @@ func FuzzLocker_Operations(f *testing.F) {
 		defer mr.Close()
 
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
 			return
 		}
-		defer factory.Close()
-
-		locker := factory.NewMutex(key,
-			xdlock.WithExpiry(time.Second),
-			xdlock.WithTries(1),
-		)
+		defer func() { _ = factory.Close() }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 
+		lockOpts := []xdlock.MutexOption{
+			xdlock.WithExpiry(time.Second),
+			xdlock.WithTries(1),
+		}
+
+		// 追踪当前持有的 handle
+		var currentHandle xdlock.LockHandle
+
 		// 执行操作序列，不应该 panic
 		for _, op := range ops {
 			switch op % 4 {
-			case 0: // Lock
-				_ = locker.Lock(ctx)
-			case 1: // TryLock
-				_ = locker.TryLock(ctx)
+			case 0: // TryLock
+				handle, err := factory.TryLock(ctx, key, lockOpts...)
+				if err == nil && handle != nil {
+					// 如果有旧 handle，先释放
+					if currentHandle != nil {
+						_ = currentHandle.Unlock(ctx)
+					}
+					currentHandle = handle
+				}
+			case 1: // Lock
+				handle, err := factory.Lock(ctx, key, lockOpts...)
+				if err == nil && handle != nil {
+					if currentHandle != nil {
+						_ = currentHandle.Unlock(ctx)
+					}
+					currentHandle = handle
+				}
 			case 2: // Unlock
-				_ = locker.Unlock(ctx)
+				if currentHandle != nil {
+					_ = currentHandle.Unlock(ctx)
+					currentHandle = nil
+				}
 			case 3: // Extend
-				_ = locker.Extend(ctx)
+				if currentHandle != nil {
+					_ = currentHandle.Extend(ctx)
+				}
 			}
+		}
+
+		// 清理
+		if currentHandle != nil {
+			_ = currentHandle.Unlock(ctx)
 		}
 	})
 }
 
-// FuzzLocker_ContextTimeout 测试不同超时值的处理。
-func FuzzLocker_ContextTimeout(f *testing.F) {
+// FuzzTryLock_ContextTimeout 测试不同超时值的处理。
+func FuzzTryLock_ContextTimeout(f *testing.F) {
 	f.Add(int64(0))
 	f.Add(int64(time.Millisecond))
 	f.Add(int64(10 * time.Millisecond))
@@ -524,26 +547,22 @@ func FuzzLocker_ContextTimeout(f *testing.F) {
 		defer mr.Close()
 
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
 			return
 		}
-		defer factory.Close()
-
-		locker := factory.NewMutex("timeout-test",
-			xdlock.WithTries(1),
-		)
+		defer func() { _ = factory.Close() }()
 
 		timeout := time.Duration(timeoutNs)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		// 操作可能超时或成功，但不应该 panic
-		err = locker.TryLock(ctx)
-		if err == nil {
-			_ = locker.Unlock(context.Background())
+		handle, err := factory.TryLock(ctx, "timeout-test", xdlock.WithTries(1))
+		if err == nil && handle != nil {
+			_ = handle.Unlock(context.Background())
 		}
 	})
 }
@@ -555,7 +574,7 @@ func FuzzLocker_ContextTimeout(f *testing.F) {
 // FuzzFactoryClose_Operations 测试工厂关闭后的操作。
 func FuzzFactoryClose_Operations(f *testing.F) {
 	f.Add(true, true)   // Close 后 Health
-	f.Add(true, false)  // Close 后 NewMutex
+	f.Add(true, false)  // Close 后 TryLock
 	f.Add(false, true)  // 不 Close
 	f.Add(false, false) // 不 Close
 
@@ -567,7 +586,7 @@ func FuzzFactoryClose_Operations(f *testing.F) {
 		defer mr.Close()
 
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
@@ -575,7 +594,7 @@ func FuzzFactoryClose_Operations(f *testing.F) {
 		}
 
 		if closeFirst {
-			factory.Close()
+			_ = factory.Close()
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -587,12 +606,14 @@ func FuzzFactoryClose_Operations(f *testing.F) {
 				t.Error("expected error after close")
 			}
 		} else {
-			locker := factory.NewMutex("test")
-			_ = locker.TryLock(ctx)
+			handle, _ := factory.TryLock(ctx, "test")
+			if handle != nil {
+				_ = handle.Unlock(ctx)
+			}
 		}
 
 		if !closeFirst {
-			factory.Close()
+			_ = factory.Close()
 		}
 	})
 }

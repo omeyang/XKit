@@ -219,15 +219,6 @@ func TestWrapper_Stats_Pool_NilConn(t *testing.T) {
 	assert.Equal(t, 0, stats.InUse)
 }
 
-func TestMeasureOperation(t *testing.T) {
-	start := time.Now()
-	time.Sleep(10 * time.Millisecond)
-	duration := measureOperation(start)
-
-	assert.True(t, duration >= 10*time.Millisecond)
-	assert.True(t, duration < 100*time.Millisecond)
-}
-
 func TestBuildCountQuery(t *testing.T) {
 	// 使用子查询包装方式，避免复杂 SQL 解析问题
 	tests := []struct {

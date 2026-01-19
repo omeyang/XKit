@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
-	"sync/atomic"
 	"time"
 
 	"github.com/omeyang/xkit/internal/storageopt"
@@ -27,12 +26,10 @@ type clickhouseWrapper struct {
 	// 慢查询检测器
 	slowQueryDetector *storageopt.SlowQueryDetector[SlowQueryInfo]
 
-	// 统计计数器
-	pingCount   atomic.Int64
-	pingErrors  atomic.Int64
-	queryCount  atomic.Int64
-	queryErrors atomic.Int64
-	slowQueries atomic.Int64
+	// 统计计数器（使用 storageopt 通用实现）
+	healthCounter    storageopt.HealthCounter
+	queryCounter     storageopt.QueryCounter
+	slowQueryCounter storageopt.SlowQueryCounter
 }
 
 const clickhouseComponent = "xclickhouse"
@@ -56,14 +53,14 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 		span.End(xmetrics.Result{Err: err})
 	}()
 
-	w.pingCount.Add(1)
+	w.healthCounter.IncPing()
 
 	// 使用 storageopt 的健康检查超时
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
 	if err := w.conn.Ping(ctx); err != nil {
-		w.pingErrors.Add(1)
+		w.healthCounter.IncPingError()
 		return err
 	}
 
@@ -73,11 +70,11 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 // Stats 返回统计信息。
 func (w *clickhouseWrapper) Stats() Stats {
 	return Stats{
-		PingCount:   w.pingCount.Load(),
-		PingErrors:  w.pingErrors.Load(),
-		QueryCount:  w.queryCount.Load(),
-		QueryErrors: w.queryErrors.Load(),
-		SlowQueries: w.slowQueries.Load(),
+		PingCount:   w.healthCounter.PingCount(),
+		PingErrors:  w.healthCounter.PingErrors(),
+		QueryCount:  w.queryCounter.QueryCount(),
+		QueryErrors: w.queryCounter.QueryErrors(),
+		SlowQueries: w.slowQueryCounter.Count(),
 		Pool:        PoolStats{},
 	}
 }
@@ -118,7 +115,7 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 		},
 	})
 	defer func() {
-		duration := measureOperation(start)
+		duration := storageopt.MeasureOperation(start)
 		slow := w.maybeSlowQuery(ctx, SlowQueryInfo{
 			Query:    query,
 			Args:     args,
@@ -236,11 +233,11 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 
 // executeCountQuery 执行计数查询。
 func (w *clickhouseWrapper) executeCountQuery(ctx context.Context, query string, args ...any) (int64, error) {
-	w.queryCount.Add(1)
+	w.queryCounter.IncQuery()
 	countQuery := buildCountQuery(query)
 	var total int64
 	if err := w.conn.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		w.queryErrors.Add(1)
+		w.queryCounter.IncQueryError()
 		return 0, fmt.Errorf("count query failed: %w", err)
 	}
 	return total, nil
@@ -249,12 +246,12 @@ func (w *clickhouseWrapper) executeCountQuery(ctx context.Context, query string,
 // executePageQuery 执行分页数据查询。
 // pageSize 和 offset 由调用方传入，避免重复计算。
 func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, pageSize, offset int64, args ...any) ([]string, [][]any, error) {
-	w.queryCount.Add(1)
+	w.queryCounter.IncQuery()
 	pageQuery := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, pageSize, offset)
 
 	rows, err := w.conn.Query(ctx, pageQuery, args...)
 	if err != nil {
-		w.queryErrors.Add(1)
+		w.queryCounter.IncQueryError()
 		return nil, nil, fmt.Errorf("page query failed: %w", err)
 	}
 
@@ -263,7 +260,7 @@ func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, 
 	closeErr := rows.Close()
 	var wrappedCloseErr error
 	if closeErr != nil {
-		w.queryErrors.Add(1)
+		w.queryCounter.IncQueryError()
 		wrappedCloseErr = fmt.Errorf("close rows failed: %w", closeErr)
 	}
 	if err := errors.Join(scanErr, wrappedCloseErr); err != nil {
@@ -293,7 +290,7 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
-			w.queryErrors.Add(1)
+			w.queryCounter.IncQueryError()
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
@@ -306,7 +303,7 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		w.queryErrors.Add(1)
+		w.queryCounter.IncQueryError()
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
@@ -366,7 +363,7 @@ func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows 
 		},
 	})
 	defer func() {
-		duration := measureOperation(start)
+		duration := storageopt.MeasureOperation(start)
 		slow := w.maybeSlowQuery(ctx, SlowQueryInfo{
 			Query:    fmt.Sprintf("INSERT INTO %s", table),
 			Duration: duration,
@@ -489,7 +486,7 @@ func (w *clickhouseWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryIn
 
 	isSlow := w.slowQueryDetector.MaybeSlowQuery(ctx, info, info.Duration)
 	if isSlow {
-		w.slowQueries.Add(1)
+		w.slowQueryCounter.Inc()
 	}
 	return isSlow
 }
@@ -497,11 +494,6 @@ func (w *clickhouseWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryIn
 // =============================================================================
 // 辅助函数
 // =============================================================================
-
-// measureOperation 测量操作耗时。
-func measureOperation(start time.Time) time.Duration {
-	return time.Since(start)
-}
 
 // buildCountQuery 根据原始查询构建 COUNT 查询。
 // 使用子查询包装方式，避免复杂 SQL 解析问题（子查询、CTE、UNION 等）。

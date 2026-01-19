@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/omeyang/xkit/internal/storageopt"
@@ -29,10 +28,9 @@ type mongoWrapper struct {
 	// 慢查询检测器
 	slowQueryDetector *storageopt.SlowQueryDetector[SlowQueryInfo]
 
-	// 统计计数器
-	pingCount   atomic.Int64
-	pingErrors  atomic.Int64
-	slowQueries atomic.Int64
+	// 统计计数器（使用 storageopt 通用实现）
+	healthCounter    storageopt.HealthCounter
+	slowQueryCounter storageopt.SlowQueryCounter
 }
 
 const mongoComponent = "xmongo"
@@ -56,14 +54,14 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 		span.End(xmetrics.Result{Err: err})
 	}()
 
-	w.pingCount.Add(1)
+	w.healthCounter.IncPing()
 
 	// 使用 storageopt 的健康检查超时
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
 	if err := w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
-		w.pingErrors.Add(1)
+		w.healthCounter.IncPingError()
 		return err
 	}
 
@@ -73,9 +71,9 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 // Stats 返回统计信息。
 func (w *mongoWrapper) Stats() Stats {
 	return Stats{
-		PingCount:   w.pingCount.Load(),
-		PingErrors:  w.pingErrors.Load(),
-		SlowQueries: w.slowQueries.Load(),
+		PingCount:   w.healthCounter.PingCount(),
+		PingErrors:  w.healthCounter.PingErrors(),
+		SlowQueries: w.slowQueryCounter.Count(),
 		Pool:        w.getPoolStats(),
 	}
 }
@@ -148,7 +146,7 @@ func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) b
 
 	triggered := w.slowQueryDetector.MaybeSlowQuery(ctx, info, info.Duration)
 	if triggered {
-		w.slowQueries.Add(1)
+		w.slowQueryCounter.Inc()
 	}
 	return triggered
 }
@@ -156,11 +154,6 @@ func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) b
 // =============================================================================
 // 辅助函数
 // =============================================================================
-
-// measureOperation 测量操作耗时。
-func measureOperation(start time.Time) time.Duration {
-	return time.Since(start)
-}
 
 // buildSlowQueryInfo 构建慢查询信息。
 func buildSlowQueryInfo(coll *mongo.Collection, operation string, filter any, duration time.Duration) SlowQueryInfo {
@@ -232,7 +225,7 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		},
 	})
 	defer func() {
-		info.Duration = measureOperation(start)
+		info.Duration = storageopt.MeasureOperation(start)
 		slow := w.maybeSlowQuery(ctx, info)
 
 		var attrs []xmetrics.Attr
@@ -320,7 +313,7 @@ func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOpe
 		},
 	})
 	defer func() {
-		info.Duration = measureOperation(start)
+		info.Duration = storageopt.MeasureOperation(start)
 		slow := w.maybeSlowQuery(ctx, info)
 
 		var attrs []xmetrics.Attr

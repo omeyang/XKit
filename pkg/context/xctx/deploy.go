@@ -3,8 +3,8 @@ package xctx
 import (
 	"context"
 	"fmt"
-	"strings"
 
+	"github.com/omeyang/xkit/internal/deploy"
 	"github.com/omeyang/xkit/pkg/context/xenv"
 )
 
@@ -16,14 +16,17 @@ import (
 //
 // 用于区分本地/私有化部署（LOCAL）和 SaaS 云部署（SAAS）。
 // 通常从 ConfigMap 环境变量 DEPLOYMENT_TYPE 获取。
-type DeploymentType string
+//
+// 这是 deploy.Type 的类型别名，用于请求级 context 传播。
+// 如需进程级环境配置，请使用 xenv.DeployType。
+type DeploymentType = deploy.Type
 
 const (
 	// DeploymentLocal 本地/私有化部署
-	DeploymentLocal DeploymentType = "LOCAL"
+	DeploymentLocal = deploy.Local
 
 	// DeploymentSaaS SaaS 云部署
-	DeploymentSaaS DeploymentType = "SAAS"
+	DeploymentSaaS = deploy.SaaS
 )
 
 // =============================================================================
@@ -46,30 +49,6 @@ const (
 // =============================================================================
 
 const keyDeploymentType = contextKey("xctx:deployment_type")
-
-// =============================================================================
-// DeploymentType 类型方法
-// =============================================================================
-
-// String 返回部署类型的字符串表示
-func (d DeploymentType) String() string {
-	return string(d)
-}
-
-// IsLocal 判断是否为本地/私有化部署
-func (d DeploymentType) IsLocal() bool {
-	return d == DeploymentLocal
-}
-
-// IsSaaS 判断是否为 SaaS 云部署
-func (d DeploymentType) IsSaaS() bool {
-	return d == DeploymentSaaS
-}
-
-// IsValid 判断部署类型是否有效（为已知类型）
-func (d DeploymentType) IsValid() bool {
-	return d == DeploymentLocal || d == DeploymentSaaS
-}
 
 // =============================================================================
 // DeploymentType Context 操作
@@ -168,53 +147,49 @@ func IsSaaS(ctx context.Context) (bool, error) {
 //   - "LOCAL", "local", "Local" -> DeploymentLocal
 //   - "SAAS", "saas", "SaaS" -> DeploymentSaaS
 func ParseDeploymentType(s string) (DeploymentType, error) {
-	normalized := strings.ToUpper(strings.TrimSpace(s))
-	switch normalized {
-	case "LOCAL":
-		return DeploymentLocal, nil
-	case "SAAS":
-		return DeploymentSaaS, nil
-	case "":
-		return "", ErrMissingDeploymentTypeValue
-	default:
+	dt, err := deploy.Parse(s)
+	if err != nil {
+		if err == deploy.ErrMissingValue {
+			return "", ErrMissingDeploymentTypeValue
+		}
 		return "", fmt.Errorf("%w: %q", ErrInvalidDeploymentType, s)
 	}
+	return dt, nil
 }
 
 // =============================================================================
-// 类型转换（xctx.DeploymentType <-> xenv.DeployType）
+// 类型转换（向后兼容）
 // =============================================================================
 //
-// xctx.DeploymentType 和 xenv.DeployType 是两个功能相同但用途不同的类型：
-//   - xctx.DeploymentType: 用于请求级 context 传播，随每个请求携带
-//   - xenv.DeployType: 用于进程级环境配置，从环境变量初始化后全局共享
+// 由于 xctx.DeploymentType 和 xenv.DeployType 现在都是 deploy.Type 的类型别名，
+// 它们实际上是同一类型，可以直接互换使用，无需转换。
 //
-// 两者底层值相同（LOCAL/SAAS），以下函数提供安全的类型转换。
+// 以下函数保留用于向后兼容，但实际上只是简单返回传入的值。
 
 // ToEnvDeployType 将 xctx.DeploymentType 转换为 xenv.DeployType
 //
-// 用于在请求级 context 和进程级环境配置之间进行类型转换。
-// 如果需要将 context 中的部署类型与全局配置进行比较，可以使用此方法。
+// Deprecated: 由于两者现在是同一类型的别名，可以直接使用，无需转换。
+// 此函数保留用于向后兼容。
 //
 // 示例：
 //
 //	dt, _ := xctx.GetDeploymentType(ctx)
-//	if dt.ToEnvDeployType() == xenv.Type() {
+//	if dt == xenv.Type() {  // 直接比较即可
 //	    // 请求的部署类型与全局配置一致
 //	}
-func (d DeploymentType) ToEnvDeployType() xenv.DeployType {
-	return xenv.DeployType(d)
+func ToEnvDeployType(d DeploymentType) xenv.DeployType {
+	return d
 }
 
 // FromEnvDeployType 从 xenv.DeployType 创建 xctx.DeploymentType
 //
-// 用于将进程级配置转换为可注入 context 的类型。
-// 典型场景：在请求入口处将全局配置注入 context。
+// Deprecated: 由于两者现在是同一类型的别名，可以直接使用，无需转换。
+// 此函数保留用于向后兼容。
 //
 // 示例：
 //
-//	dt := xctx.FromEnvDeployType(xenv.Type())
+//	dt := xenv.Type()           // 直接使用即可
 //	ctx, _ := xctx.WithDeploymentType(ctx, dt)
 func FromEnvDeployType(dt xenv.DeployType) DeploymentType {
-	return DeploymentType(dt)
+	return dt
 }

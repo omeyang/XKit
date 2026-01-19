@@ -127,7 +127,7 @@ func TestClientOperationsInterface(t *testing.T) {
 }
 
 // TestCollectionAdapter_OperationMethods 测试 collectionAdapter 的操作方法
-// 这些方法会因为没有真实的 MongoDB 服务器而失败，但会覆盖代码路径
+// 此测试主要验证代码路径可达，可能成功（有 MongoDB）或失败（无 MongoDB）
 func TestCollectionAdapter_OperationMethods(t *testing.T) {
 	// 创建一个客户端 - 使用延迟连接
 	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
@@ -145,16 +145,30 @@ func TestCollectionAdapter_OperationMethods(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// 测试 CountDocuments - 会因为超时或连接失败而报错，但覆盖代码路径
-	_, err = adapter.CountDocuments(ctx, map[string]any{})
-	// 我们期望这会失败（没有真实的 MongoDB），但代码路径被执行了
-	assert.Error(t, err)
+	// 测试 CountDocuments - 可能成功或失败，主要验证代码路径可达
+	count, err := adapter.CountDocuments(ctx, map[string]any{})
+	if err != nil {
+		// 无 MongoDB 或连接失败
+		t.Logf("CountDocuments failed (expected without MongoDB): %v", err)
+	} else {
+		// 有 MongoDB 运行时
+		assert.GreaterOrEqual(t, count, int64(0))
+	}
 
 	// 测试 Find
-	_, err = adapter.Find(ctx, map[string]any{})
-	assert.Error(t, err)
+	cursor, err := adapter.Find(ctx, map[string]any{})
+	if err != nil {
+		t.Logf("Find failed (expected without MongoDB): %v", err)
+	} else {
+		assert.NotNil(t, cursor)
+		cursor.Close(ctx) //nolint:errcheck // test cleanup
+	}
 
 	// 测试 InsertMany
-	_, err = adapter.InsertMany(ctx, []any{map[string]any{"test": 1}})
-	assert.Error(t, err)
+	result, err := adapter.InsertMany(ctx, []any{map[string]any{"test": 1}})
+	if err != nil {
+		t.Logf("InsertMany failed (expected without MongoDB): %v", err)
+	} else {
+		assert.NotNil(t, result)
+	}
 }

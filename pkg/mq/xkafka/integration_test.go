@@ -11,7 +11,6 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 	kafkaContainer "github.com/testcontainers/testcontainers-go/modules/kafka"
 
 	"github.com/omeyang/xkit/pkg/mq/xkafka"

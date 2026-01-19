@@ -228,15 +228,6 @@ func TestWrapper_GetPoolStats_NilClient(t *testing.T) {
 	assert.Equal(t, 0, stats.InUseConnections)
 }
 
-func TestMeasureOperation(t *testing.T) {
-	start := time.Now()
-	time.Sleep(10 * time.Millisecond)
-	duration := measureOperation(start)
-
-	assert.True(t, duration >= 10*time.Millisecond)
-	assert.True(t, duration < 100*time.Millisecond)
-}
-
 func TestBuildSlowQueryInfo(t *testing.T) {
 	// 测试 nil collection
 	info := buildSlowQueryInfo(nil, "find", map[string]any{"name": "test"}, 100*time.Millisecond)
@@ -756,15 +747,23 @@ func TestWrapper_FindPage_ValidParams_WithRealCollection(t *testing.T) {
 	}
 	coll := client.Database("testdb").Collection("testcoll")
 
-	// When: findPage is called with valid params (will fail due to no MongoDB)
+	// When: findPage is called with valid params
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	result, err := w.findPage(ctx, coll, map[string]any{}, PageOptions{Page: 1, PageSize: 10})
 
-	// Then: should return error (connection failure), but code path is covered
-	assert.Nil(t, result)
-	assert.Error(t, err)
+	// Then: 可能成功（有 MongoDB）或失败（无 MongoDB），两者都是有效的代码路径
+	// 此测试主要验证代码路径可达，而非特定结果
+	if err != nil {
+		// 无 MongoDB 或连接失败
+		assert.Nil(t, result)
+	} else {
+		// 有 MongoDB 运行时，应返回有效结果
+		assert.NotNil(t, result)
+		assert.GreaterOrEqual(t, result.Page, int64(1))
+		assert.GreaterOrEqual(t, result.PageSize, int64(1))
+	}
 }
 
 func TestWrapper_BulkWrite_EmptyDocs_WithRealCollection(t *testing.T) {
@@ -803,16 +802,22 @@ func TestWrapper_BulkWrite_ValidParams_WithRealCollection(t *testing.T) {
 	}
 	coll := client.Database("testdb").Collection("testcoll")
 
-	// When: bulkWrite is called with valid params (will fail due to no MongoDB)
+	// When: bulkWrite is called with valid params
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	docs := []any{map[string]any{"name": "test"}}
 	result, err := w.bulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 10})
 
-	// Then: bulkWrite returns result with errors and also returns the combined error
-	// The connection failure is captured in both result.Errors and returned as err
-	assert.Error(t, err) // bulkWrite 收集错误并返回合并的错误
+	// Then: 可能成功（有 MongoDB）或失败（无 MongoDB），两者都是有效的代码路径
+	// 此测试主要验证代码路径可达，而非特定结果
 	assert.NotNil(t, result)
-	assert.NotEmpty(t, result.Errors) // errors are also captured in the result
+	if err != nil {
+		// 无 MongoDB 或连接失败 - 错误被收集在 result.Errors 中
+		assert.NotEmpty(t, result.Errors)
+	} else {
+		// 有 MongoDB 运行时，应返回成功结果
+		assert.Empty(t, result.Errors)
+		assert.Equal(t, int64(1), result.InsertedCount)
+	}
 }

@@ -315,9 +315,9 @@ func TestDeploymentType_ToEnvDeployType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.dt.ToEnvDeployType()
+			got := xctx.ToEnvDeployType(tt.dt)
 			if got != tt.want {
-				t.Errorf("DeploymentType(%q).ToEnvDeployType() = %q, want %q", tt.dt, got, tt.want)
+				t.Errorf("ToEnvDeployType(%q) = %q, want %q", tt.dt, got, tt.want)
 			}
 			// 验证双向一致性
 			if got.String() != tt.dt.String() {
@@ -357,7 +357,7 @@ func TestDeploymentTypeConversion_RoundTrip(t *testing.T) {
 	// 测试双向转换的一致性
 	t.Run("xctx->xenv->xctx", func(t *testing.T) {
 		original := xctx.DeploymentLocal
-		converted := original.ToEnvDeployType()
+		converted := xctx.ToEnvDeployType(original)
 		roundTrip := xctx.FromEnvDeployType(converted)
 		if roundTrip != original {
 			t.Errorf("RoundTrip failed: %q -> %q -> %q", original, converted, roundTrip)
@@ -367,7 +367,7 @@ func TestDeploymentTypeConversion_RoundTrip(t *testing.T) {
 	t.Run("xenv->xctx->xenv", func(t *testing.T) {
 		original := xenv.DeploySaaS
 		converted := xctx.FromEnvDeployType(original)
-		roundTrip := converted.ToEnvDeployType()
+		roundTrip := xctx.ToEnvDeployType(converted)
 		if roundTrip != original {
 			t.Errorf("RoundTrip failed: %q -> %q -> %q", original, converted, roundTrip)
 		}

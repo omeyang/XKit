@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/omeyang/xkit/internal/deploy"
 )
 
 // =============================================================================
@@ -17,35 +19,18 @@ import (
 //
 // 用于区分本地/私有化部署（LOCAL）和 SaaS 云部署（SAAS）。
 // 通常从 ConfigMap 环境变量 DEPLOYMENT_TYPE 获取。
-type DeployType string
+//
+// 这是 deploy.Type 的类型别名，用于进程级环境配置。
+// 如需请求级 context 传播，请使用 xctx.DeploymentType。
+type DeployType = deploy.Type
 
 const (
 	// DeployLocal 本地/私有化部署
-	DeployLocal DeployType = "LOCAL"
+	DeployLocal = deploy.Local
 
 	// DeploySaaS SaaS 云部署
-	DeploySaaS DeployType = "SAAS"
+	DeploySaaS = deploy.SaaS
 )
-
-// String 返回部署类型的字符串表示
-func (d DeployType) String() string {
-	return string(d)
-}
-
-// IsLocal 判断是否为本地/私有化部署
-func (d DeployType) IsLocal() bool {
-	return d == DeployLocal
-}
-
-// IsSaaS 判断是否为 SaaS 云部署
-func (d DeployType) IsSaaS() bool {
-	return d == DeploySaaS
-}
-
-// IsValid 判断部署类型是否有效（为已知类型）
-func (d DeployType) IsValid() bool {
-	return d == DeployLocal || d == DeploySaaS
-}
 
 // =============================================================================
 // 错误定义
@@ -62,7 +47,7 @@ var (
 	ErrMissingEnv = errors.New("xenv: missing DEPLOYMENT_TYPE env var")
 
 	// ErrInvalidType 部署类型非法（不是 LOCAL/SAAS）
-	ErrInvalidType = errors.New("xenv: invalid deployment type")
+	ErrInvalidType = deploy.ErrInvalidType
 )
 
 // =============================================================================
@@ -229,14 +214,12 @@ func RequireType() (DeployType, error) {
 //   - "SAAS", "saas", "SaaS" -> DeploySaaS
 func Parse(s string) (DeployType, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(s))
-	switch normalized {
-	case "LOCAL":
-		return DeployLocal, nil
-	case "SAAS":
-		return DeploySaaS, nil
-	case "":
+	if normalized == "" {
 		return "", ErrMissingEnv
-	default:
-		return "", fmt.Errorf("%w: %q", ErrInvalidType, s)
 	}
+	dt, err := deploy.Parse(normalized)
+	if err != nil {
+		return "", ErrInvalidType
+	}
+	return dt, nil
 }

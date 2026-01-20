@@ -1,4 +1,4 @@
-package storageopt
+package xpool
 
 import (
 	"sync"
@@ -116,8 +116,8 @@ func TestWorkerPool_PanicRecovery(t *testing.T) {
 func TestWorkerPool_DefaultValues(t *testing.T) {
 	// 测试默认值处理
 	pool := NewWorkerPool(0, 0, func(_ int) {})
-	assert.Equal(t, 1, pool.workers)
-	assert.Equal(t, 100, pool.queueSize)
+	assert.Equal(t, 1, pool.Workers())
+	assert.Equal(t, 100, pool.QueueSize())
 }
 
 func TestWorkerPool_Concurrent(t *testing.T) {
@@ -144,4 +144,25 @@ func TestWorkerPool_Concurrent(t *testing.T) {
 
 	// 应该处理了大部分任务（可能有些被丢弃）
 	assert.Greater(t, processed.Load(), int64(0))
+}
+
+func TestWorkerPool_GracefulShutdown(t *testing.T) {
+	var processed atomic.Int32
+
+	pool := NewWorkerPool(1, 100, func(_ int) {
+		time.Sleep(10 * time.Millisecond)
+		processed.Add(1)
+	})
+	pool.Start()
+
+	// 提交 10 个任务
+	for i := 0; i < 10; i++ {
+		pool.Submit(i)
+	}
+
+	// 停止并等待
+	pool.Stop()
+
+	// 由于优雅关闭，所有任务应该都被处理了
+	assert.Equal(t, int32(10), processed.Load())
 }

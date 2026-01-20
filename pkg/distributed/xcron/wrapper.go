@@ -185,11 +185,7 @@ func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 		// 计算退避时间
 		var backoff time.Duration
 		if w.opts.backoff != nil {
-			if wait := w.opts.backoff.Backoff(attempt); wait != nil {
-				if d, ok := wait.(time.Duration); ok {
-					backoff = d
-				}
-			}
+			backoff = w.opts.backoff.NextDelay(attempt)
 		}
 
 		w.logWarn(ctx, "job failed, will retry",

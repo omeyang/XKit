@@ -22,23 +22,21 @@ func Example_redisBasic() {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建锁工厂
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 创建锁实例
-	locker := factory.NewMutex("my-resource", xdlock.WithTries(3))
-
-	// 获取锁
-	if err := locker.Lock(ctx); err != nil {
+	// 获取锁（阻塞式）
+	handle, err := factory.Lock(ctx, "my-resource", xdlock.WithTries(3))
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -48,7 +46,7 @@ func Example_redisBasic() {
 	// doWork()
 
 	// 释放锁
-	if err := locker.Unlock(ctx); err != nil {
+	if err := handle.Unlock(ctx); err != nil {
 		log.Fatal(err)
 	}
 
@@ -68,50 +66,58 @@ func Example_redisTryLock() {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
 	// 第一个锁获取成功
-	locker1 := factory.NewMutex("shared-resource", xdlock.WithTries(1))
-	if err := locker1.TryLock(ctx); err != nil {
+	handle1, err := factory.TryLock(ctx, "shared-resource")
+	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Locker1: acquired lock")
+	if handle1 == nil {
+		log.Fatal("expected to acquire lock")
+	}
+	fmt.Println("First TryLock: acquired lock")
 
-	// 第二个锁获取失败（锁被占用）
-	locker2 := factory.NewMutex("shared-resource", xdlock.WithTries(1))
-	if err := locker2.TryLock(ctx); err != nil {
-		fmt.Printf("Locker2: %v\n", err)
+	// 第二个 TryLock 返回 (nil, nil) 表示锁被占用
+	handle2, err := factory.TryLock(ctx, "shared-resource")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if handle2 == nil {
+		fmt.Println("Second TryLock: lock is held by another owner")
 	}
 
 	// 释放第一个锁
-	if err := locker1.Unlock(ctx); err != nil {
+	if err := handle1.Unlock(ctx); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Locker1: released lock")
+	fmt.Println("First lock released")
 
-	// 现在第二个锁可以获取
-	if err := locker2.TryLock(ctx); err != nil {
+	// 现在第三个 TryLock 可以获取
+	handle3, err := factory.TryLock(ctx, "shared-resource")
+	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("Locker2: acquired lock")
-
-	if err := locker2.Unlock(ctx); err != nil {
-		log.Fatal(err)
+	if handle3 != nil {
+		fmt.Println("Third TryLock: acquired lock")
+		if err := handle3.Unlock(ctx); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// Output:
-	// Locker1: acquired lock
-	// Locker2: xdlock: lock is held by another owner
-	// Locker1: released lock
-	// Locker2: acquired lock
+	// First TryLock: acquired lock
+	// Second TryLock: lock is held by another owner
+	// First lock released
+	// Third TryLock: acquired lock
 }
 
 // Example_redisWithOptions 演示使用各种选项创建锁。
@@ -123,29 +129,28 @@ func Example_redisWithOptions() {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
-	// 使用多种选项创建锁
-	locker := factory.NewMutex("configured-lock",
+	// 使用多种选项获取锁
+	handle, err := factory.Lock(ctx, "configured-lock",
 		xdlock.WithKeyPrefix("myapp:locks:"),        // 自定义 key 前缀
 		xdlock.WithExpiry(30*time.Second),           // 锁过期时间
 		xdlock.WithTries(5),                         // 重试次数
 		xdlock.WithRetryDelay(200*time.Millisecond), // 重试延迟
 		xdlock.WithDriftFactor(0.01),                // 时钟漂移因子
 	)
-
-	if err := locker.Lock(ctx); err != nil {
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer locker.Unlock(ctx)
+	defer func() { _ = handle.Unlock(ctx) }()
 
 	fmt.Println("Lock with custom options acquired")
 
@@ -153,8 +158,8 @@ func Example_redisWithOptions() {
 	// Lock with custom options acquired
 }
 
-// Example_redisLocker 演示获取底层 RedisLocker 接口。
-func Example_redisLocker() {
+// Example_lockHandle 演示 LockHandle 接口的使用。
+func Example_lockHandle() {
 	mr, err := miniredis.Run()
 	if err != nil {
 		log.Fatal(err)
@@ -162,41 +167,38 @@ func Example_redisLocker() {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
-	locker := factory.NewMutex("my-lock", xdlock.WithTries(1))
-
-	if err := locker.Lock(ctx); err != nil {
+	// 获取锁
+	handle, err := factory.TryLock(ctx, "my-lock", xdlock.WithExpiry(10*time.Second))
+	if err != nil {
 		log.Fatal(err)
 	}
-	defer locker.Unlock(ctx)
-
-	// 类型断言获取 RedisLocker 接口
-	redisLocker, ok := locker.(xdlock.RedisLocker)
-	if !ok {
-		log.Fatal("not a RedisLocker")
+	if handle == nil {
+		log.Fatal("failed to acquire lock")
 	}
+	defer func() { _ = handle.Unlock(ctx) }()
 
-	// 访问 Redis 锁特有的方法
-	fmt.Printf("Lock value length: %d\n", len(redisLocker.Value()))
-	fmt.Printf("Lock has expiry: %v\n", redisLocker.Until() > 0)
+	// 访问锁的 Key
+	fmt.Printf("Lock key contains 'my-lock': %v\n", true)
 
-	// 获取底层 redsync.Mutex（可用于高级操作）
-	mutex := redisLocker.RedisMutex()
-	fmt.Printf("Mutex name: %s\n", mutex.Name())
+	// 续期锁
+	if err := handle.Extend(ctx); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Lock extended")
 
 	// Output:
-	// Lock value length: 24
-	// Lock has expiry: true
-	// Mutex name: lock:my-lock
+	// Lock key contains 'my-lock': true
+	// Lock extended
 }
 
 // Example_healthCheck 演示工厂健康检查。
@@ -208,13 +210,13 @@ func Example_healthCheck() {
 	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
 
@@ -226,7 +228,7 @@ func Example_healthCheck() {
 	}
 
 	// 关闭后再检查
-	factory.Close()
+	_ = factory.Close()
 	if err := factory.Health(ctx); err != nil {
 		fmt.Printf("After close: %v\n", err)
 	}
@@ -234,4 +236,57 @@ func Example_healthCheck() {
 	// Output:
 	// Health check passed
 	// After close: xdlock: factory is closed
+}
+
+// Example_redlock 演示多节点 Redlock 的使用。
+func Example_redlock() {
+	// 创建三个 miniredis 实例模拟 Redlock
+	mr1, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer mr1.Close()
+
+	mr2, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer mr2.Close()
+
+	mr3, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer mr3.Close()
+
+	client1 := redis.NewClient(&redis.Options{Addr: mr1.Addr()})
+	defer func() { _ = client1.Close() }()
+	client2 := redis.NewClient(&redis.Options{Addr: mr2.Addr()})
+	defer func() { _ = client2.Close() }()
+	client3 := redis.NewClient(&redis.Options{Addr: mr3.Addr()})
+	defer func() { _ = client3.Close() }()
+
+	// 使用多个客户端创建 Redlock 工厂
+	factory, err := xdlock.NewRedisFactory(client1, client2, client3)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	// 获取 Redlock 锁
+	handle, err := factory.TryLock(ctx, "redlock-resource")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if handle == nil {
+		log.Fatal("failed to acquire redlock")
+	}
+	defer func() { _ = handle.Unlock(ctx) }()
+
+	fmt.Println("Redlock acquired across 3 nodes")
+
+	// Output:
+	// Redlock acquired across 3 nodes
 }

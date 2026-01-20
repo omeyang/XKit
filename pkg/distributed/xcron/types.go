@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
 
 // JobID 任务唯一标识，直接复用 cron.EntryID。
@@ -56,13 +58,14 @@ type RetryPolicy interface {
 	ShouldRetry(attempt int, err error) bool
 }
 
-// BackoffPolicy 退避策略接口，兼容 xretry.BackoffPolicy。
+// BackoffPolicy 退避策略接口，直接复用 xretry.BackoffPolicy。
 // 用于配置重试之间的等待时间。
-type BackoffPolicy interface {
-	// Backoff 返回下次重试前的等待时间
-	// attempt: 当前重试次数（从 1 开始）
-	Backoff(attempt int) (wait any) // 返回 time.Duration 或实现特定接口
-}
+//
+// 推荐使用 xretry 包中的实现：
+//   - xretry.NewConstantBackoff(delay)
+//   - xretry.NewExponentialBackoff(opts...)
+//   - xretry.NewLinearBackoff(opts...)
+type BackoffPolicy = xretry.BackoffPolicy
 
 // Observer 可观测性接口，兼容 xmetrics.Observer。
 // 用于任务执行的链路追踪。

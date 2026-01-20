@@ -135,7 +135,7 @@ func newMockBackoffPolicy(d time.Duration) *mockBackoffPolicy {
 	return &mockBackoffPolicy{backoffDuration: d}
 }
 
-func (p *mockBackoffPolicy) Backoff(attempt int) any {
+func (p *mockBackoffPolicy) NextDelay(attempt int) time.Duration {
 	return p.backoffDuration
 }
 
@@ -838,72 +838,6 @@ func (h *renewErrorLockHandle) Key() string {
 
 var _ Locker = (*renewErrorLocker)(nil)
 var _ LockHandle = (*renewErrorLockHandle)(nil)
-
-// ============================================================================
-// Backoff Policy Edge Cases
-// ============================================================================
-
-// nonDurationBackoff 返回非 time.Duration 类型的退避策略
-type nonDurationBackoff struct{}
-
-func (p *nonDurationBackoff) Backoff(attempt int) any {
-	return "not a duration"
-}
-
-var _ BackoffPolicy = (*nonDurationBackoff)(nil)
-
-func TestJobWrapper_RunWithRetry_NonDurationBackoff(t *testing.T) {
-	var attempts int
-	job := JobFunc(func(ctx context.Context) error {
-		attempts++
-		if attempts < 2 {
-			return errors.New("error")
-		}
-		return nil
-	})
-
-	opts := defaultJobOptions()
-	opts.name = "retry-job"
-	opts.retry = newMockRetryPolicy(3)
-	opts.backoff = &nonDurationBackoff{}
-
-	wrapper := newJobWrapper(job, NoopLocker(), newMockLogger(), nil, opts)
-	err := wrapper.runWithRetry(context.Background())
-
-	assert.NoError(t, err)
-	assert.Equal(t, 2, attempts)
-}
-
-// nilBackoff 返回 nil 的退避策略
-type nilBackoff struct{}
-
-func (p *nilBackoff) Backoff(attempt int) any {
-	return nil
-}
-
-var _ BackoffPolicy = (*nilBackoff)(nil)
-
-func TestJobWrapper_RunWithRetry_NilBackoff(t *testing.T) {
-	var attempts int
-	job := JobFunc(func(ctx context.Context) error {
-		attempts++
-		if attempts < 2 {
-			return errors.New("error")
-		}
-		return nil
-	})
-
-	opts := defaultJobOptions()
-	opts.name = "retry-job"
-	opts.retry = newMockRetryPolicy(3)
-	opts.backoff = &nilBackoff{}
-
-	wrapper := newJobWrapper(job, NoopLocker(), newMockLogger(), nil, opts)
-	err := wrapper.runWithRetry(context.Background())
-
-	assert.NoError(t, err)
-	assert.Equal(t, 2, attempts)
-}
 
 // ============================================================================
 // WithImmediate Option Tests

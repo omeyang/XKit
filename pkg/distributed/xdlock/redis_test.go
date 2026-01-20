@@ -5,6 +5,7 @@ package xdlock_test
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,10 +20,27 @@ import (
 	"github.com/omeyang/xkit/pkg/distributed/xdlock"
 )
 
-// setupRedis 启动 Redis 容器并返回客户端。
+// setupRedis 启动 Redis 容器或连接到已有 Redis。
+// 如果设置了 XKIT_REDIS_ADDR 环境变量，直接使用外部 Redis。
 func setupRedis(t *testing.T) (redis.UniversalClient, func()) {
 	t.Helper()
 
+	// 优先使用环境变量指定的 Redis
+	if addr := os.Getenv("XKIT_REDIS_ADDR"); addr != "" {
+		client := redis.NewClient(&redis.Options{
+			Addr: addr,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := client.Ping(ctx).Err(); err != nil {
+			t.Skipf("无法连接到 Redis %s: %v", addr, err)
+		}
+
+		return client, func() { _ = client.Close() }
+	}
+
+	// 使用 testcontainers 启动 Redis
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{
 		Image:        "redis:7-alpine",
@@ -34,21 +52,29 @@ func setupRedis(t *testing.T) (redis.UniversalClient, func()) {
 		ContainerRequest: req,
 		Started:          true,
 	})
-	require.NoError(t, err, "failed to start redis container")
+	if err != nil {
+		t.Skipf("无法启动 Redis 容器: %v", err)
+	}
 
 	endpoint, err := container.Endpoint(ctx, "")
-	require.NoError(t, err, "failed to get redis endpoint")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("获取 Redis 端点失败: %v", err)
+	}
 
 	client := redis.NewClient(&redis.Options{
 		Addr: endpoint,
 	})
 
 	// 验证连接
-	require.NoError(t, client.Ping(ctx).Err(), "failed to ping redis")
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("无法连接到 Redis: %v", err)
+	}
 
 	cleanup := func() {
-		client.Close()
-		container.Terminate(ctx)
+		_ = client.Close()
+		_ = container.Terminate(ctx)
 	}
 
 	return client, cleanup
@@ -64,7 +90,7 @@ func TestNewRedisFactory_Success(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	assert.NotNil(t, factory.Redsync())
 }
@@ -75,7 +101,7 @@ func TestRedisFactory_Health(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -91,7 +117,7 @@ func TestRedisFactory_HealthAfterClose(t *testing.T) {
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
 
-	factory.Close()
+	_ = factory.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -113,180 +139,183 @@ func TestRedisFactory_CloseIdempotent(t *testing.T) {
 }
 
 // =============================================================================
-// 锁基本操作测试
+// 锁基本操作测试（使用 Handle API）
 // =============================================================================
 
-func TestRedisLocker_LockUnlock(t *testing.T) {
+func TestRedisFactory_LockUnlock(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	locker := factory.NewMutex("test-lock")
 
 	// 获取锁
-	err = locker.Lock(ctx)
+	handle, err := factory.Lock(ctx, "test-lock", xdlock.WithTries(1))
 	require.NoError(t, err)
+	require.NotNil(t, handle)
 
 	// 释放锁
-	err = locker.Unlock(ctx)
+	err = handle.Unlock(ctx)
 	assert.NoError(t, err)
 }
 
-func TestRedisLocker_TryLock(t *testing.T) {
+func TestRedisFactory_TryLock_Success(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	locker := factory.NewMutex("test-trylock", xdlock.WithTries(1))
 
 	// TryLock 成功
-	err = locker.TryLock(ctx)
+	handle, err := factory.TryLock(ctx, "test-trylock")
 	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 验证 Key
+	assert.Contains(t, handle.Key(), "test-trylock")
 
 	// 释放锁
-	err = locker.Unlock(ctx)
+	err = handle.Unlock(ctx)
 	assert.NoError(t, err)
 }
 
-func TestRedisLocker_TryLockFailed(t *testing.T) {
+func TestRedisFactory_TryLock_LockHeld(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 第一个 locker 获取锁
-	locker1 := factory.NewMutex("test-trylock-fail", xdlock.WithTries(1))
-	err = locker1.Lock(ctx)
+	// 第一个 TryLock 成功
+	handle1, err := factory.TryLock(ctx, "test-trylock-fail")
 	require.NoError(t, err)
-	defer locker1.Unlock(ctx)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx) }()
 
-	// 第二个 locker TryLock 应该失败
-	locker2 := factory.NewMutex("test-trylock-fail", xdlock.WithTries(1))
-	err = locker2.TryLock(ctx)
-	assert.ErrorIs(t, err, xdlock.ErrLockFailed)
+	// 第二个 TryLock 应该返回 (nil, nil) 表示锁被占用
+	handle2, err := factory.TryLock(ctx, "test-trylock-fail")
+	assert.NoError(t, err)
+	assert.Nil(t, handle2)
 }
 
-func TestRedisLocker_Extend(t *testing.T) {
+func TestRedisFactory_Lock_LockHeld(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	locker := factory.NewMutex("test-extend", xdlock.WithExpiry(5*time.Second))
-	err = locker.Lock(ctx)
+	// 第一个 Lock 成功
+	handle1, err := factory.Lock(ctx, "test-lock-fail", xdlock.WithTries(1))
 	require.NoError(t, err)
-	defer locker.Unlock(ctx)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx) }()
+
+	// 第二个 Lock 应该失败（锁被其他持有者占用，tries=1 不重试）
+	handle2, err := factory.Lock(ctx, "test-lock-fail", xdlock.WithTries(1))
+	assert.Error(t, err)
+	assert.Nil(t, handle2)
+}
+
+func TestRedisLockHandle_Extend(t *testing.T) {
+	client, cleanup := setupRedis(t)
+	defer cleanup()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	handle, err := factory.TryLock(ctx, "test-extend", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
 
 	// 等待一段时间后续期
 	time.Sleep(1 * time.Second)
 
 	// Redis 支持续期
-	err = locker.Extend(ctx)
+	err = handle.Extend(ctx)
 	assert.NoError(t, err)
 }
 
-func TestRedisLocker_ExtendNotLocked(t *testing.T) {
+func TestRedisFactory_WithKeyPrefix(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	locker := factory.NewMutex("test-extend-not-locked")
-
-	// 未获取锁时调用 Extend
-	err = locker.Extend(ctx)
-	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
-}
-
-func TestRedisLocker_WithKeyPrefix(t *testing.T) {
-	client, cleanup := setupRedis(t)
-	defer cleanup()
-
-	factory, err := xdlock.NewRedisFactory(client)
-	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	locker := factory.NewMutex("mykey", xdlock.WithKeyPrefix("myapp:"))
-
-	// 正常获取和释放锁
-	err = locker.Lock(ctx)
+	handle, err := factory.TryLock(ctx, "mykey", xdlock.WithKeyPrefix("myapp:"))
 	require.NoError(t, err)
-	defer locker.Unlock(ctx)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
 
-	// 验证锁值存在
-	redisLocker, ok := locker.(xdlock.RedisLocker)
-	require.True(t, ok)
-	assert.NotEmpty(t, redisLocker.Value())
+	// 验证 Key 包含前缀
+	assert.Contains(t, handle.Key(), "myapp:")
+	assert.Contains(t, handle.Key(), "mykey")
 }
 
-func TestRedisLocker_ContextCanceled(t *testing.T) {
+func TestRedisFactory_Lock_ContextCanceled(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
-	// 第一个 locker 持有锁
+	// 第一个 handle 持有锁
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel1()
-	locker1 := factory.NewMutex("test-ctx-cancel")
-	err = locker1.Lock(ctx1)
+	handle1, err := factory.TryLock(ctx1, "test-ctx-cancel")
 	require.NoError(t, err)
-	defer locker1.Unlock(ctx1)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx1) }()
 
-	// 第二个 locker 尝试获取锁，但 context 会被取消
+	// 第二个 Lock 尝试获取锁，但 context 会被取消
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel2()
-	locker2 := factory.NewMutex("test-ctx-cancel",
+	handle2, err := factory.Lock(ctx2, "test-ctx-cancel",
 		xdlock.WithTries(100),
 		xdlock.WithRetryDelay(100*time.Millisecond),
 	)
-	err = locker2.Lock(ctx2)
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
+	assert.Nil(t, handle2)
 }
 
 // =============================================================================
 // 并发测试
 // =============================================================================
 
-func TestRedisLocker_Concurrent(t *testing.T) {
+func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	const goroutines = 10
 	var counter int64
@@ -300,15 +329,15 @@ func TestRedisLocker_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			locker := factory.NewMutex("concurrent-lock",
+			handle, err := factory.Lock(ctx, "concurrent-lock",
 				xdlock.WithTries(50),
 				xdlock.WithRetryDelay(100*time.Millisecond),
 			)
-			if err := locker.Lock(ctx); err != nil {
+			if err != nil {
 				t.Logf("Lock failed: %v", err)
 				return
 			}
-			defer locker.Unlock(ctx)
+			defer func() { _ = handle.Unlock(ctx) }()
 
 			// 临界区：递增计数器
 			atomic.AddInt64(&counter, 1)
@@ -319,13 +348,13 @@ func TestRedisLocker_Concurrent(t *testing.T) {
 	assert.Equal(t, int64(goroutines), counter)
 }
 
-func TestRedisLocker_MutualExclusion(t *testing.T) {
+func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	const goroutines = 5
 	const iterations = 10
@@ -342,11 +371,11 @@ func TestRedisLocker_MutualExclusion(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < iterations; j++ {
-				locker := factory.NewMutex("mutual-exclusion",
+				handle, err := factory.Lock(ctx, "mutual-exclusion",
 					xdlock.WithTries(50),
 					xdlock.WithRetryDelay(100*time.Millisecond),
 				)
-				if err := locker.Lock(ctx); err != nil {
+				if err != nil {
 					t.Logf("Lock failed: %v", err)
 					continue
 				}
@@ -361,7 +390,7 @@ func TestRedisLocker_MutualExclusion(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 
 				atomic.AddInt64(&counter, -1)
-				locker.Unlock(ctx)
+				_ = handle.Unlock(ctx)
 			}
 		}()
 	}
@@ -374,67 +403,62 @@ func TestRedisLocker_MutualExclusion(t *testing.T) {
 // 选项测试
 // =============================================================================
 
-func TestRedisLocker_WithExpiry(t *testing.T) {
+func TestRedisFactory_Lock_WithExpiry(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// 使用较短的过期时间
-	locker := factory.NewMutex("test-expiry", xdlock.WithExpiry(1*time.Second))
-
-	err = locker.Lock(ctx)
+	handle, err := factory.TryLock(ctx, "test-expiry", xdlock.WithExpiry(1*time.Second))
 	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
 
-	// 验证锁存在
-	redisLocker := locker.(xdlock.RedisLocker)
-	assert.NotZero(t, redisLocker.Until())
-
-	locker.Unlock(ctx)
+	// 验证 Key
+	assert.Contains(t, handle.Key(), "test-expiry")
 }
 
-func TestRedisLocker_WithRetryDelayFunc(t *testing.T) {
+func TestRedisFactory_Lock_WithRetryDelayFunc(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// 自定义重试延迟函数（指数退避）
-	locker := factory.NewMutex("test-retry-func",
+	handle, err := factory.Lock(ctx, "test-retry-func",
+		xdlock.WithTries(1),
 		xdlock.WithRetryDelayFunc(func(tries int) time.Duration {
 			return time.Duration(tries) * 50 * time.Millisecond
 		}),
 	)
-
-	err = locker.Lock(ctx)
 	require.NoError(t, err)
-	defer locker.Unlock(ctx)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
 }
 
 // =============================================================================
-// 接口实现验证
+// Redsync 接口测试
 // =============================================================================
 
-func TestRedisLocker_ImplementsRedisLocker(t *testing.T) {
+func TestRedisFactory_Redsync(t *testing.T) {
 	client, cleanup := setupRedis(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
-	locker := factory.NewMutex("test")
-	redisLocker, ok := locker.(xdlock.RedisLocker)
-	assert.True(t, ok)
-	assert.NotNil(t, redisLocker.RedisMutex())
+	redsync := factory.Redsync()
+	assert.NotNil(t, redsync)
 }

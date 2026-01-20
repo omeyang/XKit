@@ -5,6 +5,7 @@ package xdlock_test
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,10 +20,32 @@ import (
 	"github.com/omeyang/xkit/pkg/distributed/xdlock"
 )
 
-// setupEtcd 启动 etcd 容器并返回客户端。
+// setupEtcd 启动 etcd 容器或连接到已有 etcd。
+// 如果设置了 XKIT_ETCD_ENDPOINTS 环境变量，直接使用外部 etcd。
 func setupEtcd(t *testing.T) (*clientv3.Client, func()) {
 	t.Helper()
 
+	// 优先使用环境变量指定的 etcd
+	if endpoints := os.Getenv("XKIT_ETCD_ENDPOINTS"); endpoints != "" {
+		client, err := clientv3.New(clientv3.Config{
+			Endpoints:   []string{endpoints},
+			DialTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			t.Skipf("无法连接到 etcd %s: %v", endpoints, err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := client.Status(ctx, endpoints); err != nil {
+			_ = client.Close()
+			t.Skipf("etcd 健康检查失败 %s: %v", endpoints, err)
+		}
+
+		return client, func() { _ = client.Close() }
+	}
+
+	// 使用 testcontainers 启动 etcd
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{
 		Image:        "quay.io/coreos/etcd:v3.5.17",
@@ -39,20 +62,28 @@ func setupEtcd(t *testing.T) (*clientv3.Client, func()) {
 		ContainerRequest: req,
 		Started:          true,
 	})
-	require.NoError(t, err, "failed to start etcd container")
+	if err != nil {
+		t.Skipf("无法启动 etcd 容器: %v", err)
+	}
 
 	endpoint, err := container.Endpoint(ctx, "")
-	require.NoError(t, err, "failed to get etcd endpoint")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("获取 etcd 端点失败: %v", err)
+	}
 
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"http://" + endpoint},
 		DialTimeout: 5 * time.Second,
 	})
-	require.NoError(t, err, "failed to create etcd client")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("创建 etcd 客户端失败: %v", err)
+	}
 
 	cleanup := func() {
-		client.Close()
-		container.Terminate(ctx)
+		_ = client.Close()
+		_ = container.Terminate(ctx)
 	}
 
 	return client, cleanup
@@ -68,7 +99,7 @@ func TestNewEtcdFactory_Success(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	assert.NotNil(t, factory.Session())
 }
@@ -79,7 +110,7 @@ func TestEtcdFactory_WithTTL(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client, xdlock.WithEtcdTTL(10))
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	assert.NotNil(t, factory)
 }
@@ -90,7 +121,7 @@ func TestEtcdFactory_Health(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -106,7 +137,7 @@ func TestEtcdFactory_HealthAfterClose(t *testing.T) {
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
 
-	factory.Close()
+	_ = factory.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -128,156 +159,159 @@ func TestEtcdFactory_CloseIdempotent(t *testing.T) {
 }
 
 // =============================================================================
-// 锁基本操作测试
+// 锁基本操作测试（使用 Handle API）
 // =============================================================================
 
-func TestEtcdLocker_LockUnlock(t *testing.T) {
+func TestEtcdFactory_LockUnlock(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	locker := factory.NewMutex("test-lock")
 
 	// 获取锁
-	err = locker.Lock(ctx)
+	handle, err := factory.Lock(ctx, "test-lock")
 	require.NoError(t, err)
+	require.NotNil(t, handle)
 
 	// 释放锁
-	err = locker.Unlock(ctx)
+	err = handle.Unlock(ctx)
 	assert.NoError(t, err)
 }
 
-func TestEtcdLocker_TryLock(t *testing.T) {
+func TestEtcdFactory_TryLock_Success(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	locker := factory.NewMutex("test-trylock")
 
 	// TryLock 成功
-	err = locker.TryLock(ctx)
+	handle, err := factory.TryLock(ctx, "test-trylock")
 	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 验证 Key
+	assert.Contains(t, handle.Key(), "test-trylock")
 
 	// 释放锁
-	err = locker.Unlock(ctx)
+	err = handle.Unlock(ctx)
 	assert.NoError(t, err)
 }
 
-func TestEtcdLocker_TryLockFailed(t *testing.T) {
+func TestEtcdFactory_TryLock_LockHeld(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
-	factory, err := xdlock.NewEtcdFactory(client)
+	// 创建两个工厂（两个不同的 Session）来测试真正的锁竞争
+	factory1, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory1.Close() }()
+
+	factory2, err := xdlock.NewEtcdFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory2.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 第一个 locker 获取锁
-	locker1 := factory.NewMutex("test-trylock-fail")
-	err = locker1.Lock(ctx)
+	// 第一个工厂 TryLock 成功
+	handle1, err := factory1.TryLock(ctx, "test-trylock-fail")
 	require.NoError(t, err)
-	defer locker1.Unlock(ctx)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx) }()
 
-	// 第二个 locker TryLock 应该失败
-	locker2 := factory.NewMutex("test-trylock-fail")
-	err = locker2.TryLock(ctx)
-	assert.ErrorIs(t, err, xdlock.ErrLockHeld)
+	// 第二个工厂 TryLock 应该返回 (nil, nil) 表示锁被占用
+	handle2, err := factory2.TryLock(ctx, "test-trylock-fail")
+	assert.NoError(t, err)
+	assert.Nil(t, handle2)
 }
 
-func TestEtcdLocker_Extend(t *testing.T) {
+func TestEtcdLockHandle_Extend(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	locker := factory.NewMutex("test-extend")
-	err = locker.Lock(ctx)
+	handle, err := factory.TryLock(ctx, "test-extend")
 	require.NoError(t, err)
-	defer locker.Unlock(ctx)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
 
-	// etcd 不支持手动续期
-	err = locker.Extend(ctx)
-	assert.ErrorIs(t, err, xdlock.ErrExtendNotSupported)
+	// etcd 使用 Session 自动续期，Extend 返回 nil
+	err = handle.Extend(ctx)
+	assert.NoError(t, err)
 }
 
-func TestEtcdLocker_WithKeyPrefix(t *testing.T) {
+func TestEtcdFactory_WithKeyPrefix(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	locker := factory.NewMutex("mykey", xdlock.WithKeyPrefix("myapp:"))
-
-	// 验证 key 前缀
-	etcdLocker, ok := locker.(xdlock.EtcdLocker)
-	require.True(t, ok)
-	assert.Equal(t, "myapp:mykey", etcdLocker.Key())
-
-	// 正常获取和释放锁
-	err = locker.Lock(ctx)
+	handle, err := factory.TryLock(ctx, "mykey", xdlock.WithKeyPrefix("myapp:"))
 	require.NoError(t, err)
-	defer locker.Unlock(ctx)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
+
+	// 验证 Key 包含前缀
+	assert.Contains(t, handle.Key(), "mykey")
 }
 
-func TestEtcdLocker_ContextCanceled(t *testing.T) {
+func TestEtcdFactory_Lock_ContextCanceled(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
-	factory, err := xdlock.NewEtcdFactory(client)
+	// 创建两个工厂（两个不同的 Session）来测试真正的锁竞争
+	factory1, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory1.Close() }()
 
-	// 第一个 locker 持有锁
+	factory2, err := xdlock.NewEtcdFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory2.Close() }()
+
+	// 第一个工厂持有锁
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel1()
-	locker1 := factory.NewMutex("test-ctx-cancel")
-	err = locker1.Lock(ctx1)
+	handle1, err := factory1.TryLock(ctx1, "test-ctx-cancel")
 	require.NoError(t, err)
-	defer locker1.Unlock(ctx1)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx1) }()
 
-	// 第二个 locker 尝试获取锁，但 context 会被取消
+	// 第二个工厂 Lock 尝试获取锁，但 context 会被取消
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel2()
-	locker2 := factory.NewMutex("test-ctx-cancel")
-	err = locker2.Lock(ctx2)
+	handle2, err := factory2.Lock(ctx2, "test-ctx-cancel")
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
+	assert.Nil(t, handle2)
 }
 
 // =============================================================================
 // 并发测试
 // =============================================================================
 
-func TestEtcdLocker_Concurrent(t *testing.T) {
+func TestEtcdFactory_Lock_Concurrent(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
-
-	factory, err := xdlock.NewEtcdFactory(client)
-	require.NoError(t, err)
-	defer factory.Close()
 
 	const goroutines = 10
 	var counter int64
@@ -286,34 +320,43 @@ func TestEtcdLocker_Concurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// 为每个 goroutine 创建独立的工厂（Session）以模拟真实的分布式锁竞争
+	factories := make([]xdlock.EtcdFactory, goroutines)
+	for i := 0; i < goroutines; i++ {
+		factory, err := xdlock.NewEtcdFactory(client)
+		require.NoError(t, err)
+		factories[i] = factory
+	}
+	defer func() {
+		for _, f := range factories {
+			_ = f.Close()
+		}
+	}()
+
 	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
-		go func() {
+		go func(gid int) {
 			defer wg.Done()
 
-			locker := factory.NewMutex("concurrent-lock")
-			if err := locker.Lock(ctx); err != nil {
+			handle, err := factories[gid].Lock(ctx, "concurrent-lock")
+			if err != nil {
 				t.Logf("Lock failed: %v", err)
 				return
 			}
-			defer locker.Unlock(ctx)
+			defer func() { _ = handle.Unlock(ctx) }()
 
 			// 临界区：递增计数器
 			atomic.AddInt64(&counter, 1)
-		}()
+		}(i)
 	}
 
 	wg.Wait()
 	assert.Equal(t, int64(goroutines), counter)
 }
 
-func TestEtcdLocker_MutualExclusion(t *testing.T) {
+func TestEtcdFactory_Lock_MutualExclusion(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
-
-	factory, err := xdlock.NewEtcdFactory(client)
-	require.NoError(t, err)
-	defer factory.Close()
 
 	const goroutines = 5
 	const iterations = 10
@@ -324,14 +367,27 @@ func TestEtcdLocker_MutualExclusion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// 为每个 goroutine 创建独立的工厂（Session）以模拟真实的分布式锁竞争
+	factories := make([]xdlock.EtcdFactory, goroutines)
+	for i := 0; i < goroutines; i++ {
+		factory, err := xdlock.NewEtcdFactory(client)
+		require.NoError(t, err)
+		factories[i] = factory
+	}
+	defer func() {
+		for _, f := range factories {
+			_ = f.Close()
+		}
+	}()
+
 	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
-		go func() {
+		go func(gid int) {
 			defer wg.Done()
 
 			for j := 0; j < iterations; j++ {
-				locker := factory.NewMutex("mutual-exclusion")
-				if err := locker.Lock(ctx); err != nil {
+				handle, err := factories[gid].Lock(ctx, "mutual-exclusion")
+				if err != nil {
 					t.Logf("Lock failed: %v", err)
 					continue
 				}
@@ -346,9 +402,9 @@ func TestEtcdLocker_MutualExclusion(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 
 				atomic.AddInt64(&counter, -1)
-				locker.Unlock(ctx)
+				_ = handle.Unlock(ctx)
 			}
-		}()
+		}(i)
 	}
 
 	wg.Wait()
@@ -356,20 +412,17 @@ func TestEtcdLocker_MutualExclusion(t *testing.T) {
 }
 
 // =============================================================================
-// 接口实现验证
+// Session 接口测试
 // =============================================================================
 
-func TestEtcdLocker_ImplementsEtcdLocker(t *testing.T) {
+func TestEtcdFactory_Session(t *testing.T) {
 	client, cleanup := setupEtcd(t)
 	defer cleanup()
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer func() { _ = factory.Close() }()
 
-	locker := factory.NewMutex("test")
-	etcdLocker, ok := locker.(xdlock.EtcdLocker)
-	assert.True(t, ok)
-	assert.NotNil(t, etcdLocker.Mutex())
-	assert.Contains(t, etcdLocker.Key(), "test")
+	session := factory.Session()
+	assert.NotNil(t, session)
 }

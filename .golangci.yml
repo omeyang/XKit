@@ -153,8 +153,8 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
-        source: "client\\.Close"  # Redis client close in test cleanup
-      # xdlock factory/locker cleanup in tests
+        source: "client\\d?\\.(Close|Ping)"  # Redis client close/ping in test cleanup
+      # xdlock factory/locker/handle cleanup in tests
       - path: _test\.go
         linters:
           - errcheck
@@ -162,7 +162,19 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
-        source: "locker\\.(Lock|Unlock|Extend)"  # xdlock locker operations in tests
+        source: "locker\\.(Lock|Unlock|Extend)"  # xdlock locker operations in tests (deprecated)
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "handle\\d?\\.(Unlock|Extend)"  # xdlock handle operations in tests (new API)
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "currentHandle\\.(Unlock|Extend)"  # xdlock handle operations in fuzz tests
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "config\\.Validate"  # config validation in benchmarks
       # Trace ID/Span ID parsing in tests (known valid values)
       - path: _test\.go
         linters:

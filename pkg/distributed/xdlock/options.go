@@ -99,7 +99,7 @@ func defaultMutexOptions() *mutexOptions {
 //
 // 示例：
 //
-//	locker := factory.NewMutex("my-resource", xdlock.WithKeyPrefix("myapp:"))
+//	handle, _ := factory.TryLock(ctx, "my-resource", xdlock.WithKeyPrefix("myapp:"))
 //	// 实际 key: "myapp:my-resource"
 func WithKeyPrefix(prefix string) MutexOption {
 	return func(o *mutexOptions) {

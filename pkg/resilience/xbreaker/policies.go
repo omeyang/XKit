@@ -10,13 +10,17 @@ type ConsecutiveFailuresPolicy struct {
 
 // NewConsecutiveFailures 创建连续失败熔断策略
 //
-// threshold: 触发熔断的连续失败次数
+// threshold: 触发熔断的连续失败次数，最小值为 1。
+// 如果传入 0，将被修正为 1（与 xretry.NewFixedRetry 行为一致）。
 //
 // 示例:
 //
 //	policy := xbreaker.NewConsecutiveFailures(5)
 //	// 连续失败 5 次后触发熔断
 func NewConsecutiveFailures(threshold uint32) *ConsecutiveFailuresPolicy {
+	if threshold < 1 {
+		threshold = 1
+	}
 	return &ConsecutiveFailuresPolicy{
 		threshold: threshold,
 	}
@@ -96,13 +100,17 @@ type FailureCountPolicy struct {
 
 // NewFailureCount 创建失败次数熔断策略
 //
-// threshold: 触发熔断的失败次数
+// threshold: 触发熔断的失败次数，最小值为 1。
+// 如果传入 0，将被修正为 1（与 xretry.NewFixedRetry 行为一致）。
 //
 // 示例:
 //
 //	policy := xbreaker.NewFailureCount(10)
 //	// 统计窗口内失败 10 次后触发熔断
 func NewFailureCount(threshold uint32) *FailureCountPolicy {
+	if threshold < 1 {
+		threshold = 1
+	}
 	return &FailureCountPolicy{
 		threshold: threshold,
 	}

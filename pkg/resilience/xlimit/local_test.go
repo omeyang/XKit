@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的错误处理简化
 package xlimit
 
 import (
@@ -15,7 +14,7 @@ func TestLocalLimiter_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -39,7 +38,7 @@ func TestLocalLimiter_ExhaustQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "exhaust-tenant"}
@@ -75,7 +74,7 @@ func TestLocalLimiter_AllowN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -106,18 +105,24 @@ func TestLocalLimiter_Reset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
 
 	// 消耗配额
-	for i := 0; i < 5; i++ {
-		limiter.Allow(ctx, key)
+	for range 5 {
+		_, err = limiter.Allow(ctx, key)
+		if err != nil {
+			t.Fatalf("Allow failed: %v", err)
+		}
 	}
 
 	// 验证配额耗尽
-	result, _ := limiter.Allow(ctx, key)
+	result, err := limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if result.Allowed {
 		t.Error("should be denied before reset")
 	}
@@ -133,7 +138,10 @@ func TestLocalLimiter_Reset(t *testing.T) {
 	}
 
 	// 验证配额恢复
-	result, _ = limiter.Allow(ctx, key)
+	result, err = limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if !result.Allowed {
 		t.Error("should be allowed after reset")
 	}
@@ -149,7 +157,7 @@ func TestLocalLimiter_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "multi-rule-tenant"}
@@ -170,26 +178,35 @@ func TestLocalLimiter_DifferentTenants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
 	// 租户 A
 	keyA := Key{Tenant: "tenant-a"}
-	for i := 0; i < 2; i++ {
-		result, _ := limiter.Allow(ctx, keyA)
+	for i := range 2 {
+		result, err := limiter.Allow(ctx, keyA)
+		if err != nil {
+			t.Fatalf("Allow failed: %v", err)
+		}
 		if !result.Allowed {
 			t.Errorf("tenant-a request %d should be allowed", i+1)
 		}
 	}
-	result, _ := limiter.Allow(ctx, keyA)
+	result, err := limiter.Allow(ctx, keyA)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if result.Allowed {
 		t.Error("tenant-a should be limited")
 	}
 
 	// 租户 B 应该有独立配额
 	keyB := Key{Tenant: "tenant-b"}
-	result, _ = limiter.Allow(ctx, keyB)
+	result, err = limiter.Allow(ctx, keyB)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if !result.Allowed {
 		t.Error("tenant-b should be allowed (independent quota)")
 	}
@@ -202,7 +219,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "concurrent-tenant"}
@@ -279,18 +296,24 @@ func TestLocalLimiter_TokenRefill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "refill-tenant"}
 
 	// 消耗配额
-	for i := 0; i < 10; i++ {
-		limiter.Allow(ctx, key)
+	for range 10 {
+		_, err = limiter.Allow(ctx, key)
+		if err != nil {
+			t.Fatalf("Allow failed: %v", err)
+		}
 	}
 
 	// 验证配额耗尽
-	result, _ := limiter.Allow(ctx, key)
+	result, err := limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if result.Allowed {
 		t.Error("should be denied after exhausting quota")
 	}
@@ -299,7 +322,10 @@ func TestLocalLimiter_TokenRefill(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// 应该有部分令牌补充
-	result, _ = limiter.Allow(ctx, key)
+	result, err = limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	// 50ms / 100ms = 50% * 10 = 5 tokens refilled
 	// 结果可能因时间精度而有所不同
 	t.Logf("After 50ms wait: allowed=%v, remaining=%d", result.Allowed, result.Remaining)
@@ -320,20 +346,26 @@ func TestLocalLimiter_Override(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
 	// 普通租户
 	normalKey := Key{Tenant: "normal"}
-	result, _ := limiter.Allow(ctx, normalKey)
+	result, err := limiter.Allow(ctx, normalKey)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if result.Limit != 10 {
 		t.Errorf("expected limit 10 for normal tenant, got %d", result.Limit)
 	}
 
 	// VIP 租户
 	vipKey := Key{Tenant: "vip"}
-	result, _ = limiter.Allow(ctx, vipKey)
+	result, err = limiter.Allow(ctx, vipKey)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if result.Limit != 100 {
 		t.Errorf("expected limit 100 for VIP tenant, got %d", result.Limit)
 	}
@@ -354,19 +386,25 @@ func TestLocalLimiter_Callback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "callback-tenant"}
 
 	// 第一个请求应该触发 onAllow
-	limiter.Allow(ctx, key)
+	_, err = limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if !allowCalled {
 		t.Error("onAllow should be called")
 	}
 
 	// 第二个请求应该触发 onDeny
-	limiter.Allow(ctx, key)
+	_, err = limiter.Allow(ctx, key)
+	if err != nil {
+		t.Fatalf("Allow failed: %v", err)
+	}
 	if !denyCalled {
 		t.Error("onDeny should be called")
 	}
@@ -379,7 +417,7 @@ func BenchmarkLocalLimiter_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "bench-tenant"}
@@ -389,7 +427,7 @@ func BenchmarkLocalLimiter_Allow(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = limiter.Allow(ctx, key)
+			_, _ = limiter.Allow(ctx, key) //nolint:errcheck // benchmark
 		}
 	})
 }

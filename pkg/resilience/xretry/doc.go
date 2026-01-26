@@ -49,5 +49,11 @@
 //
 // 详细用法参见各函数文档和 example_test.go。
 //
+// # 性能
+//
+// 退避策略使用 crypto/rand 生成抖动随机数，确保安全随机性。
+// 单次 NextDelay 调用耗时约 50-100ns，对于重试场景（通常每秒最多几次）
+// 此性能开销完全可接受。如需禁用抖动以获得确定性行为，可使用 WithJitter(0)。
+//
 // [avast/retry-go/v5]: https://github.com/avast/retry-go
 package xretry

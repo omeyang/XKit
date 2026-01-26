@@ -49,12 +49,25 @@ func hasDotDotSegment(path string) bool {
 
 // SanitizePath 对文件路径进行安全检查和规范化
 //
-// 防御措施：
-//   - 路径规范化（消除 . 和 ..）
-//   - 检测路径穿越攻击
+// 功能：
+//   - 路径规范化（消除 . 和冗余斜杠）
+//   - 阻止相对路径穿越（如 "../etc/passwd"）
 //   - 拒绝空路径和纯目录路径
 //
-// 返回规范化后的安全路径，或错误（如果路径不安全）。
+// 重要限制：
+//   - 绝对路径的 ".." 会被 filepath.Clean 正常解析
+//   - 例如："/var/log/../etc" -> "/etc"（这是合法的绝对路径，不是穿越）
+//   - 如需将路径限制在特定目录内，请使用 SafeJoin
+//
+// 适用场景：
+//   - 验证用户输入的文件名格式
+//   - 防止相对路径穿越攻击
+//
+// 不适用场景：
+//   - 需要将文件限制在特定目录内（请用 SafeJoin）
+//   - 需要防止绝对路径访问敏感文件（请用系统权限控制）
+//
+// 返回规范化后的路径，或错误（如果路径格式无效）。
 func SanitizePath(filename string) (string, error) {
 	if filename == "" {
 		return "", errors.New("xfile: filename is required")
@@ -235,9 +248,22 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 	return realJoined, nil
 }
 
+// maxSymlinkDepth 是 evalSymlinksPartial 递归的最大深度
+// 与 Linux 路径最大深度一致，防止栈溢出
+const maxSymlinkDepth = 255
+
 // evalSymlinksPartial 尽可能解析符号链接
 // 对于不存在的文件，解析其存在的父目录部分
 func evalSymlinksPartial(path string) (string, error) {
+	return evalSymlinksPartialWithDepth(path, 0)
+}
+
+// evalSymlinksPartialWithDepth 带深度限制的符号链接解析
+func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
+	if depth > maxSymlinkDepth {
+		return "", errors.New("xfile: path too deep")
+	}
+
 	// 先尝试直接解析
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
@@ -251,7 +277,7 @@ func evalSymlinksPartial(path string) (string, error) {
 	resolvedDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		// 递归解析父目录
-		resolvedDir, err = evalSymlinksPartial(dir)
+		resolvedDir, err = evalSymlinksPartialWithDepth(dir, depth+1)
 		if err != nil {
 			return "", err
 		}

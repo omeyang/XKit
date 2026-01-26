@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的错误处理简化
 package xlimit
 
 import (
@@ -33,8 +32,8 @@ func setupGRPCTestLimiter(t *testing.T, limit int) Limiter {
 	}
 
 	t.Cleanup(func() {
-		limiter.Close()
-		client.Close()
+		_ = limiter.Close() //nolint:errcheck // cleanup
+		_ = client.Close()  //nolint:errcheck // cleanup
 		mr.Close()
 	})
 
@@ -352,7 +351,7 @@ func BenchmarkUnaryServerInterceptor(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	interceptor := UnaryServerInterceptor(limiter)
 
@@ -372,7 +371,7 @@ func BenchmarkUnaryServerInterceptor(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = interceptor(ctx, "request", info, handler)
+			_, _ = interceptor(ctx, "request", info, handler) //nolint:errcheck // benchmark
 		}
 	})
 }

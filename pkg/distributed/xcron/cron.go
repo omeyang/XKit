@@ -120,7 +120,14 @@ func (s *cronScheduler) Stop() context.Context {
 	return ctx
 }
 
-// Cron 返回底层 *cron.Cron
+// Cron 返回底层 *cron.Cron 实例。
+//
+// 警告：直接使用底层 cron 添加的任务会绕过 xcron 的分布式锁机制，
+// 在多副本场景下可能导致任务重复执行。建议仅用于：
+//   - 访问 cron.Entry 等只读信息
+//   - 调试和监控目的
+//
+// 如需添加分布式安全的任务，请使用 AddFunc 或 AddJob 方法。
 func (s *cronScheduler) Cron() *cron.Cron {
 	return s.cron
 }

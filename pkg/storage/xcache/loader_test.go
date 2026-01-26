@@ -26,7 +26,12 @@ func newTestRedis(t *testing.T) (Redis, *miniredis.Miniredis) {
 	require.NoError(t, err)
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+		PoolSize:     2,
+		MaxRetries:   1,
 	})
 
 	cache, err := NewRedis(client)
@@ -97,7 +102,12 @@ func TestLoader_Load_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	t.Cleanup(func() { mr.Close() })
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		PoolSize:     1,
+		MaxRetries:   0,
 	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
@@ -271,7 +281,12 @@ func TestLoader_LoadHash_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	t.Cleanup(func() { mr.Close() })
 
 	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
+		Addr:         mr.Addr(),
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		PoolSize:     1,
+		MaxRetries:   0,
 	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)

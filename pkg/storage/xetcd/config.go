@@ -2,6 +2,7 @@ package xetcd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -103,6 +104,7 @@ func DefaultConfig() *Config {
 //   - "localhost:2379"
 //   - "192.168.1.1:2379"
 //   - "etcd.example.com:2379"
+//   - "[::1]:2379"（IPv6 格式）
 func (c *Config) Validate() error {
 	if len(c.Endpoints) == 0 {
 		return ErrNoEndpoints
@@ -113,14 +115,60 @@ func (c *Config) Validate() error {
 		if ep == "" {
 			return fmt.Errorf("%w: endpoint[%d] is empty", ErrInvalidEndpoint, i)
 		}
-		// 检查是否包含 host:port 格式
-		// 使用 LastIndex 而非 Index 以支持 IPv6 地址如 [::1]:2379
-		if !strings.Contains(ep, ":") {
-			return fmt.Errorf("%w: endpoint[%d]=%q missing port", ErrInvalidEndpoint, i, ep)
+		if err := validateEndpoint(ep); err != nil {
+			return fmt.Errorf("%w: endpoint[%d]=%q %v", ErrInvalidEndpoint, i, ep, err)
 		}
 	}
 
 	return nil
+}
+
+// validateEndpoint 验证单个 endpoint 的格式。
+// 支持 IPv4、IPv6 和域名格式，必须包含有效端口。
+func validateEndpoint(ep string) error {
+	endpoint := ep
+
+	// 1. 去除可能的 scheme 前缀（如 http://、https://）
+	if idx := strings.Index(ep, "://"); idx != -1 {
+		endpoint = ep[idx+3:]
+	}
+
+	// 2. 处理 IPv6 格式 [host]:port
+	if strings.HasPrefix(endpoint, "[") {
+		// 必须有 ]:port 格式
+		idx := strings.LastIndex(endpoint, "]:")
+		if idx == -1 {
+			return fmt.Errorf("invalid IPv6 endpoint format, expected [host]:port")
+		}
+		portPart := endpoint[idx+2:]
+		if portPart == "" {
+			return fmt.Errorf("missing port after IPv6 address")
+		}
+		if !isValidPort(portPart) {
+			return fmt.Errorf("invalid port %q", portPart)
+		}
+		return nil
+	}
+
+	// 3. 处理 IPv4/hostname 格式 host:port
+	lastColon := strings.LastIndex(endpoint, ":")
+	if lastColon == -1 {
+		return fmt.Errorf("missing port")
+	}
+	portPart := endpoint[lastColon+1:]
+	if portPart == "" {
+		return fmt.Errorf("missing port")
+	}
+	if !isValidPort(portPart) {
+		return fmt.Errorf("invalid port %q", portPart)
+	}
+	return nil
+}
+
+// isValidPort 检查端口号是否有效（1-65535）。
+func isValidPort(s string) bool {
+	port, err := strconv.Atoi(s)
+	return err == nil && port > 0 && port <= 65535
 }
 
 // applyDefaults 应用默认值，返回新的配置（不修改原配置）。

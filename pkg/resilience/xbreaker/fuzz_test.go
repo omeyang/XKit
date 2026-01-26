@@ -19,27 +19,27 @@ func FuzzConsecutiveFailures(f *testing.F) {
 	f.Fuzz(func(t *testing.T, threshold uint32) {
 		policy := NewConsecutiveFailures(threshold)
 
-		if policy.Threshold() != threshold {
-			t.Errorf("Threshold mismatch: got %d, want %d", policy.Threshold(), threshold)
+		// threshold < 1 被修正为 1
+		expectedThreshold := max(threshold, 1)
+		if policy.Threshold() != expectedThreshold {
+			t.Errorf("Threshold mismatch: got %d, want %d", policy.Threshold(), expectedThreshold)
 		}
 
 		// 测试 ReadyToTrip
 		counts := gobreaker.Counts{
-			ConsecutiveFailures: threshold,
+			ConsecutiveFailures: expectedThreshold,
 		}
 		result := policy.ReadyToTrip(counts)
-		if threshold > 0 && !result {
+		if !result {
 			t.Errorf("Expected ReadyToTrip=true for ConsecutiveFailures=%d, threshold=%d",
-				counts.ConsecutiveFailures, threshold)
+				counts.ConsecutiveFailures, expectedThreshold)
 		}
 
-		// 低于阈值不应触发
-		if threshold > 0 {
-			counts.ConsecutiveFailures = threshold - 1
-			if policy.ReadyToTrip(counts) {
-				t.Errorf("Expected ReadyToTrip=false for ConsecutiveFailures=%d, threshold=%d",
-					counts.ConsecutiveFailures, threshold)
-			}
+		// 低于阈值不应触发（expectedThreshold 至少为 1）
+		counts.ConsecutiveFailures = expectedThreshold - 1
+		if policy.ReadyToTrip(counts) {
+			t.Errorf("Expected ReadyToTrip=false for ConsecutiveFailures=%d, threshold=%d",
+				counts.ConsecutiveFailures, expectedThreshold)
 		}
 	})
 }
@@ -94,18 +94,20 @@ func FuzzFailureCount(f *testing.F) {
 	f.Fuzz(func(t *testing.T, threshold uint32) {
 		policy := NewFailureCount(threshold)
 
-		if policy.Threshold() != threshold {
-			t.Errorf("Threshold mismatch: got %d, want %d", policy.Threshold(), threshold)
+		// threshold < 1 被修正为 1
+		expectedThreshold := max(threshold, 1)
+		if policy.Threshold() != expectedThreshold {
+			t.Errorf("Threshold mismatch: got %d, want %d", policy.Threshold(), expectedThreshold)
 		}
 
 		// 达到阈值应触发
 		counts := gobreaker.Counts{
-			TotalFailures: threshold,
+			TotalFailures: expectedThreshold,
 		}
 		result := policy.ReadyToTrip(counts)
-		if threshold > 0 && !result {
+		if !result {
 			t.Errorf("Expected ReadyToTrip=true for TotalFailures=%d, threshold=%d",
-				counts.TotalFailures, threshold)
+				counts.TotalFailures, expectedThreshold)
 		}
 	})
 }

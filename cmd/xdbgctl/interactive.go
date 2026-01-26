@@ -1,0 +1,159 @@
+//go:build !windows
+
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
+
+// cmdInteractive 交互模式（REPL）。
+func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duration) error {
+	client := NewClient(socketPath, timeout)
+
+	// 测试连接
+	if err := client.Ping(ctx); err != nil {
+		return fmt.Errorf("无法连接到调试服务: %w", err)
+	}
+
+	fmt.Println("xdbgctl 交互模式")
+	fmt.Println("输入 'help' 查看可用命令，'quit' 或 'exit' 退出")
+	fmt.Println()
+
+	return runREPL(ctx, client)
+}
+
+// runREPL 运行 REPL 循环。
+// 使用 goroutine + channel 实现可取消的输入读取，确保 Ctrl+C 能立即退出。
+func runREPL(ctx context.Context, client *Client) error {
+	inputCh := make(chan string)
+	errCh := make(chan error)
+
+	// 在单独的 goroutine 中读取输入，避免阻塞 context 取消
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			inputCh <- scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			errCh <- err
+		}
+		close(inputCh)
+	}()
+
+	for {
+		fmt.Print("xdbg> ")
+
+		select {
+		case <-ctx.Done():
+			fmt.Println("\n再见!")
+			return nil
+		case err := <-errCh:
+			return fmt.Errorf("读取输入错误: %w", err)
+		case line, ok := <-inputCh:
+			if !ok {
+				// EOF，正常退出
+				fmt.Println()
+				return nil
+			}
+			line = strings.TrimSpace(line)
+			if shouldExit := processLine(ctx, client, line); shouldExit {
+				return nil
+			}
+		}
+	}
+}
+
+// processLine 处理单行输入，返回 true 表示应该退出。
+func processLine(ctx context.Context, client *Client, line string) bool {
+	if line == "" {
+		return false
+	}
+
+	// 检查退出命令
+	if line == "quit" || line == "exit" {
+		fmt.Println("再见!")
+		return true
+	}
+
+	// 解析命令和参数
+	parts := parseCommandLine(line)
+	if len(parts) == 0 {
+		return false
+	}
+
+	executeAndPrint(ctx, client, parts[0], parts[1:])
+	return false
+}
+
+// executeAndPrint 执行命令并打印结果。
+func executeAndPrint(ctx context.Context, client *Client, command string, args []string) {
+	resp, err := client.Execute(ctx, command, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		return
+	}
+
+	if !resp.Success {
+		fmt.Fprintf(os.Stderr, "错误: %s\n", resp.Error)
+		return
+	}
+
+	if resp.Output != "" {
+		fmt.Println(resp.Output)
+	}
+
+	if resp.Truncated {
+		fmt.Fprintf(os.Stderr, "[警告: 输出已截断，原始大小: %d 字节]\n", resp.OriginalSize)
+	}
+
+	fmt.Println()
+}
+
+// parseCommandLine 解析命令行，支持引号。
+func parseCommandLine(line string) []string {
+	var parts []string
+	var current strings.Builder
+	var inQuote bool
+	var quoteChar rune
+
+	for _, r := range line {
+		switch {
+		case isQuoteStart(r, inQuote):
+			inQuote = true
+			quoteChar = r
+		case isQuoteEnd(r, quoteChar, inQuote):
+			inQuote = false
+			quoteChar = 0
+		case isWordSeparator(r, inQuote):
+			if current.Len() > 0 {
+				parts = append(parts, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+
+	return parts
+}
+
+func isQuoteStart(r rune, inQuote bool) bool {
+	return (r == '"' || r == '\'') && !inQuote
+}
+
+func isQuoteEnd(r, quoteChar rune, inQuote bool) bool {
+	return r == quoteChar && inQuote
+}
+
+func isWordSeparator(r rune, inQuote bool) bool {
+	return r == ' ' && !inQuote
+}

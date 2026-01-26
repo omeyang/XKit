@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的清理操作不检查错误
 package xlimit
 
 import (
@@ -25,7 +24,7 @@ func TestNew_Validation(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }() //nolint:errcheck // defer cleanup
 
 	t.Run("valid config", func(t *testing.T) {
 		limiter, err := New(rdb,
@@ -37,7 +36,7 @@ func TestNew_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer limiter.Close()
+		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 	})
 
 	t.Run("invalid rule - empty name", func(t *testing.T) {
@@ -79,7 +78,7 @@ func TestNew_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer limiter.Close()
+		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 	})
 }
 
@@ -94,7 +93,7 @@ func TestNewLocal_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer limiter.Close()
+		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 	})
 
 	t.Run("invalid rule", func(t *testing.T) {
@@ -122,7 +121,7 @@ func TestNewLocal_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer limiter.Close()
+		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 	})
 }
 
@@ -136,7 +135,7 @@ func TestNew_WithCallbacks(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }() //nolint:errcheck // defer cleanup
 
 	var allowCalled, denyCalled bool
 
@@ -152,7 +151,7 @@ func TestNew_WithCallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test"}
@@ -192,7 +191,7 @@ func TestNew_WithKeyPrefix(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }() //nolint:errcheck // defer cleanup
 
 	limiter, err := New(rdb,
 		WithRules(TenantRule("tenant", 100, time.Minute)),
@@ -201,7 +200,7 @@ func TestNew_WithKeyPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test"}
@@ -242,7 +241,7 @@ func TestNew_MultipleRules(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }() //nolint:errcheck // defer cleanup
 
 	limiter, err := New(rdb,
 		WithRules(
@@ -254,7 +253,7 @@ func TestNew_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test", Method: "POST", Path: "/v1/orders"}

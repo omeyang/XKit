@@ -39,13 +39,15 @@ func TestPlatformID(t *testing.T) {
 	})
 
 	t.Run("nil context返回空字符串", func(t *testing.T) {
-		if got := xctx.PlatformID(nil); got != "" {
+		var nilCtx context.Context
+		if got := xctx.PlatformID(nilCtx); got != "" {
 			t.Errorf("PlatformID(nil) = %q, want empty", got)
 		}
 	})
 
 	t.Run("nil context注入返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.WithPlatformID(nil, "platform-001")
+		var nilCtx context.Context
+		_, err := xctx.WithPlatformID(nilCtx, "platform-001")
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithPlatformID(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -83,13 +85,15 @@ func TestTenantFields(t *testing.T) {
 			})
 
 			t.Run("nil context返回空字符串", func(t *testing.T) {
-				if got := tc.getter(nil); got != "" {
+				var nilCtx context.Context
+				if got := tc.getter(nilCtx); got != "" {
 					t.Errorf("%s(nil) = %q, want empty", tc.fieldName, got)
 				}
 			})
 
 			t.Run("nil context注入返回ErrNilContext", func(t *testing.T) {
-				_, err := tc.setter(nil, tc.testValue)
+				var nilCtx context.Context
+				_, err := tc.setter(nilCtx, tc.testValue)
 				if !errors.Is(err, xctx.ErrNilContext) {
 					t.Errorf("With%s(nil) error = %v, want %v", tc.fieldName, err, xctx.ErrNilContext)
 				}
@@ -102,7 +106,6 @@ func TestTenantFields(t *testing.T) {
 // Identity 结构体测试
 // =============================================================================
 
-//nolint:dupl // similar pattern to TestGetTrace but tests different type
 func TestGetIdentity(t *testing.T) {
 	t.Run("空context返回空结构体", func(t *testing.T) {
 		id := xctx.GetIdentity(context.Background())
@@ -290,7 +293,6 @@ func ExampleIdentity_Validate() {
 // WithIdentity 批量注入测试
 // =============================================================================
 
-//nolint:dupl,gocyclo // 与 TestWithTrace 结构相似但测试不同API，测试用例完整性优先
 func TestWithIdentity(t *testing.T) {
 	t.Run("全部字段非空", func(t *testing.T) {
 		id := xctx.Identity{
@@ -352,8 +354,9 @@ func TestWithIdentity(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		var nilCtx context.Context
 		id := xctx.Identity{PlatformID: "p1"}
-		_, err := xctx.WithIdentity(nil, id)
+		_, err := xctx.WithIdentity(nilCtx, id)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithIdentity(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}

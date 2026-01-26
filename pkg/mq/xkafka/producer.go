@@ -16,8 +16,9 @@ type producerWrapper struct {
 	producer *kafka.Producer
 	options  *producerOptions
 
-	// mu 保护对底层 producer 的并发访问
-	// confluent-kafka-go 的 Producer 不是线程安全的
+	// mu 保护 GetMetadata、Flush、Close 等管理操作的并发访问。
+	// 注意：Producer.Produce() 本身是线程安全的，不需要加锁。
+	// 锁仅用于确保管理操作（如健康检查、关闭）的原子性。
 	mu sync.Mutex
 
 	// 统计信息

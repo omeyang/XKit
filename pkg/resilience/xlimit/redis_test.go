@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的 defer Close() 和示例调用允许忽略错误
 package xlimit
 
 import (
@@ -40,7 +39,7 @@ func TestDistributedLimiter_Allow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -94,7 +93,7 @@ func TestDistributedLimiter_AllowN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -133,7 +132,7 @@ func TestDistributedLimiter_Reset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
@@ -191,7 +190,7 @@ func TestDistributedLimiter_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -247,7 +246,7 @@ func TestDistributedLimiter_Override(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -295,7 +294,7 @@ func TestDistributedLimiter_Callback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "callback-tenant"}
@@ -344,7 +343,7 @@ func BenchmarkDistributedLimiter_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "bench-tenant"}
@@ -354,7 +353,7 @@ func BenchmarkDistributedLimiter_Allow(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = limiter.Allow(ctx, key)
+			_, _ = limiter.Allow(ctx, key) //nolint:errcheck // benchmark
 		}
 	})
 }

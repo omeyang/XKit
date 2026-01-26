@@ -22,10 +22,11 @@ func TestWithContext(t *testing.T) {
 }
 
 func TestWithContext_Nil(t *testing.T) {
+	var nilCtx context.Context
 	o := defaultOptions()
 	original := o.ctx
 
-	WithContext(nil)(o)
+	WithContext(nilCtx)(o)
 
 	if o.ctx != original {
 		t.Error("nil context should not change the option")

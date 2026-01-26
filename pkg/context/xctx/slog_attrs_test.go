@@ -125,7 +125,8 @@ func TestDeploymentAttrs(t *testing.T) {
 	})
 
 	t.Run("nil context返回错误", func(t *testing.T) {
-		_, err := xctx.DeploymentAttrs(nil)
+		var nilCtx context.Context
+		_, err := xctx.DeploymentAttrs(nilCtx)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("DeploymentAttrs(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -317,16 +318,17 @@ func TestLogAttrs_Values(t *testing.T) {
 }
 
 func TestLogAttrs_NilContext(t *testing.T) {
-	if len(xctx.IdentityAttrs(nil)) != 0 {
+	var nilCtx context.Context
+	if len(xctx.IdentityAttrs(nilCtx)) != 0 {
 		t.Errorf("IdentityAttrs(nil) should return empty")
 	}
-	if len(xctx.TraceAttrs(nil)) != 0 {
+	if len(xctx.TraceAttrs(nilCtx)) != 0 {
 		t.Errorf("TraceAttrs(nil) should return empty")
 	}
-	if len(xctx.PlatformAttrs(nil)) != 0 {
+	if len(xctx.PlatformAttrs(nilCtx)) != 0 {
 		t.Errorf("PlatformAttrs(nil) should return empty")
 	}
-	_, err := xctx.LogAttrs(nil)
+	_, err := xctx.LogAttrs(nilCtx)
 	if !errors.Is(err, xctx.ErrNilContext) {
 		t.Errorf("LogAttrs(nil) error = %v, want %v", err, xctx.ErrNilContext)
 	}

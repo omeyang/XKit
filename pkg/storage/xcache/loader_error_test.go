@@ -13,21 +13,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestRedisForError 创建用于错误场景测试的 Redis 缓存实例，使用更短的超时和更少的重试。
+func newTestRedisForError(t *testing.T, opts ...RedisOption) (Redis, *miniredis.Miniredis) {
+	t.Helper()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		PoolSize:     1,
+		MaxRetries:   0, // 不重试，立即失败
+	})
+
+	cache, err := NewRedis(client, opts...)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = cache.Close() })
+
+	return cache, mr
+}
+
 // =============================================================================
 // Redis 连接错误场景测试
 // =============================================================================
 
 func TestLoader_Load_WhenRedisConnectionError_FallsBackToBackend(t *testing.T) {
 	// Given - 测试 Redis 连接错误时回源加载
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t)
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -51,15 +67,7 @@ func TestLoader_Load_WhenRedisConnectionError_FallsBackToBackend(t *testing.T) {
 
 func TestLoader_LoadHash_WhenRedisConnectionError_FallsBackToBackend(t *testing.T) {
 	// Given - 测试 Hash 版本 Redis 连接错误时回源加载
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t)
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -83,15 +91,7 @@ func TestLoader_LoadHash_WhenRedisConnectionError_FallsBackToBackend(t *testing.
 
 func TestLoader_Load_WithDistributedLock_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	// Given - 测试启用分布式锁时 Redis 错误回源
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -117,15 +117,7 @@ func TestLoader_Load_WithDistributedLock_WhenRedisError_FallsBackToBackend(t *te
 
 func TestLoader_LoadHash_WithDistributedLock_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	// Given - Hash 版本分布式锁 Redis 错误回源
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -152,15 +144,7 @@ func TestLoader_LoadHash_WithDistributedLock_WhenRedisError_FallsBackToBackend(t
 
 func TestLoader_Load_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing.T) {
 	// Given - 测试 waitAndRetry 过程中 Redis 出错时回源加载
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
 	// 预先占用锁
 	mr.Set("lock:waitkey", "occupied")
@@ -193,15 +177,7 @@ func TestLoader_Load_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing.T) 
 
 func TestLoader_LoadHash_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing.T) {
 	// Given - Hash 版本 waitAndRetry Redis 错误测试
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
 	// 使用 hashFieldKey 生成一致的锁 key
 	hashWaitLockKey := "hlock:" + hashFieldKey("waithash", "field")
@@ -236,15 +212,7 @@ func TestLoader_LoadHash_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing
 
 func TestLoader_Load_WhenRedisError_AndContextCancelled_ReturnsContextError(t *testing.T) {
 	// Given - Redis 错误 + context 取消，应该返回 context 错误
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t)
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -263,7 +231,7 @@ func TestLoader_Load_WhenRedisError_AndContextCancelled_ReturnsContextError(t *t
 	}
 
 	// When
-	_, err = loader.Load(ctx, "ctxkey", loadFn, time.Hour)
+	_, err := loader.Load(ctx, "ctxkey", loadFn, time.Hour)
 
 	// Then - 应返回 context 错误
 	require.Error(t, err)
@@ -272,15 +240,7 @@ func TestLoader_Load_WhenRedisError_AndContextCancelled_ReturnsContextError(t *t
 
 func TestLoader_LoadHash_WhenRedisError_AndContextCancelled_ReturnsContextError(t *testing.T) {
 	// Given - Hash 版本 Redis 错误 + context 取消
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t)
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -297,7 +257,7 @@ func TestLoader_LoadHash_WhenRedisError_AndContextCancelled_ReturnsContextError(
 	}
 
 	// When
-	_, err = loader.LoadHash(ctx, "ctxhash", "field", loadFn, time.Hour)
+	_, err := loader.LoadHash(ctx, "ctxhash", "field", loadFn, time.Hour)
 
 	// Then
 	require.Error(t, err)
@@ -307,15 +267,7 @@ func TestLoader_LoadHash_WhenRedisError_AndContextCancelled_ReturnsContextError(
 func TestLoader_Load_WhenRedisErrorAfterLock_AndContextCancelled_ReturnsContextError(t *testing.T) {
 	// Given - 获取锁成功，但第二次 Get 时 Redis 错误 + context 取消
 	// 这是测试 loadWithDistLock 行 137-140 的路径
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -341,7 +293,7 @@ func TestLoader_Load_WhenRedisErrorAfterLock_AndContextCancelled_ReturnsContextE
 	}()
 
 	// When
-	_, err = loader.Load(ctx, "lockctx", loadFn, time.Hour)
+	_, err := loader.Load(ctx, "lockctx", loadFn, time.Hour)
 
 	// Then - 可能返回 context 错误或后端值
 	// 由于时序问题，这可能走不同的路径
@@ -354,18 +306,8 @@ func TestLoader_Load_WhenRedisErrorAfterLock_AndContextCancelled_ReturnsContextE
 func TestLoader_Load_WithDistLock_CacheHitAfterLockAcquired_ReturnsCachedValue(t *testing.T) {
 	// Given - 测试获取锁后缓存命中 (行 134-136)
 	// 模拟：goroutine A 获取锁后在加载时，goroutine B 已经填充了缓存
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = cache.Close()
-		mr.Close()
-	})
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
+	t.Cleanup(func() { mr.Close() })
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -402,18 +344,8 @@ func TestLoader_Load_WithDistLock_CacheHitAfterLockAcquired_ReturnsCachedValue(t
 
 func TestLoader_LoadHash_WithDistLock_CacheHitAfterLockAcquired(t *testing.T) {
 	// Given - Hash 版本：获取锁后缓存命中
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = cache.Close()
-		mr.Close()
-	})
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
+	t.Cleanup(func() { mr.Close() })
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -452,16 +384,8 @@ func TestLoader_LoadHash_WithDistLock_CacheHitAfterLockAcquired(t *testing.T) {
 
 func TestLoader_Load_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	// Given - 配置了无效的 LockTTL（0 或负数）
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -475,7 +399,7 @@ func TestLoader_Load_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	}
 
 	// When
-	_, err = loader.Load(context.Background(), "testkey", loadFn, time.Hour)
+	_, err := loader.Load(context.Background(), "testkey", loadFn, time.Hour)
 
 	// Then - 配置错误应该返回 ErrInvalidConfig
 	require.Error(t, err)
@@ -485,16 +409,8 @@ func TestLoader_Load_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 
 func TestLoader_LoadHash_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	// Given - 配置了无效的 LockTTL（0 或负数）
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
+	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
-
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	cache, err := NewRedis(client, WithLockKeyPrefix(""))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
 
 	loader := NewLoader(cache,
 		WithSingleflight(false),
@@ -508,7 +424,7 @@ func TestLoader_LoadHash_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	}
 
 	// When
-	_, err = loader.LoadHash(context.Background(), "hashkey", "field", loadFn, time.Hour)
+	_, err := loader.LoadHash(context.Background(), "hashkey", "field", loadFn, time.Hour)
 
 	// Then - 配置错误应该返回 ErrInvalidConfig
 	require.Error(t, err)

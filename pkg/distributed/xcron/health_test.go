@@ -39,7 +39,7 @@ func TestHealthCheck_WithJobs(t *testing.T) {
 
 	assert.Equal(t, HealthStatusHealthy, result.Status)
 	assert.Equal(t, 1, result.RegisteredJobs)
-	assert.True(t, result.Running)
+	assert.True(t, result.HasJobs)
 }
 
 func TestHealthCheck_AfterExecution(t *testing.T) {
@@ -310,6 +310,6 @@ func TestNewHealthChecker_InvalidScheduler(t *testing.T) {
 	result := fallback.Check(context.Background())
 
 	assert.Equal(t, HealthStatusUnhealthy, result.Status)
-	assert.False(t, result.Running)
+	assert.False(t, result.HasJobs)
 	assert.Equal(t, "test error", result.Message)
 }

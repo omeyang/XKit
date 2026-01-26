@@ -16,7 +16,7 @@ func ExampleNew() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configContent := `
@@ -152,7 +152,7 @@ func ExampleNew_withOptions() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configContent := `
@@ -186,7 +186,7 @@ func ExampleConfig_Reload() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	initialContent := `

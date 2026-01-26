@@ -133,7 +133,7 @@ func FuzzNoopLocker(f *testing.F) {
 		}
 
 		// 再次获取锁用于测试 Renew
-		handle, _ = locker.TryLock(ctx, key, ttl) //nolint:errcheck // fuzz 测试忽略错误
+		handle, _ = locker.TryLock(ctx, key, ttl)
 		// Renew 总是成功
 		if err := handle.Renew(ctx, ttl); err != nil {
 			t.Errorf("Renew should not error: %v", err)

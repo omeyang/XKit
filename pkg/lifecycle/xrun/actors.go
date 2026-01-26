@@ -1,0 +1,113 @@
+package xrun
+
+import (
+	"context"
+	"os"
+	"syscall"
+	"time"
+)
+
+// DefaultSignals 返回默认监听的系统信号列表。
+//
+// 每次调用返回新的切片，调用者可安全修改。
+func DefaultSignals() []os.Signal {
+	return []os.Signal{
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+	}
+}
+
+// testSigChanKey 用于在测试中通过 context 注入信号通道。
+type testSigChanKey struct{}
+
+// testSigChan 从 context 中获取测试信号通道（生产环境返回 nil）。
+func testSigChan(ctx context.Context) <-chan os.Signal {
+	c, ok := ctx.Value(testSigChanKey{}).(<-chan os.Signal)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
+// withTestSigChan 在 context 中注入测试信号通道。
+func withTestSigChan(ctx context.Context, c <-chan os.Signal) context.Context {
+	return context.WithValue(ctx, testSigChanKey{}, c)
+}
+
+// ----------------------------------------------------------------------------
+// 服务函数（推荐使用）
+// ----------------------------------------------------------------------------
+
+// Ticker 返回周期性执行任务的服务函数。
+//
+// fn 会在每个周期执行。当 ctx 被取消时，返回 ctx.Err()。
+// immediate 为 true 时，会在启动时立即执行一次。
+//
+// 示例：
+//
+//	g.Go(xrun.Ticker(time.Minute, true, func(ctx context.Context) error {
+//	    return doPeriodicWork(ctx)
+//	}))
+func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		// 立即执行一次
+		if immediate {
+			if err := fn(ctx); err != nil {
+				return err
+			}
+		}
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := fn(ctx); err != nil {
+					return err
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+// Timer 返回延迟执行一次任务的服务函数。
+//
+// 在指定延迟后执行 fn。当 ctx 被取消时，返回 ctx.Err()。
+//
+// 示例：
+//
+//	g.Go(xrun.Timer(5*time.Second, func(ctx context.Context) error {
+//	    return doDelayedWork(ctx)
+//	}))
+func Timer(delay time.Duration, fn func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+			return fn(ctx)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// WaitForDone 返回等待 context 取消的服务函数。
+//
+// 这是一个占位服务，用于保持 Group 运行直到收到取消信号。
+//
+// 示例：
+//
+//	g.Go(xrun.WaitForDone())
+func WaitForDone() func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+}

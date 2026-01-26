@@ -28,10 +28,15 @@ func TestConsecutiveFailuresPolicy(t *testing.T) {
 		assert.True(t, policy.ReadyToTrip(counts))
 	})
 
-	t.Run("zero threshold", func(t *testing.T) {
+	t.Run("zero threshold clamped to 1", func(t *testing.T) {
 		policy := NewConsecutiveFailures(0)
+		// threshold=0 被修正为 1
+		assert.Equal(t, uint32(1), policy.Threshold())
+		// 0 < 1，不触发熔断
 		counts := Counts{ConsecutiveFailures: 0}
-
+		assert.False(t, policy.ReadyToTrip(counts))
+		// 1 >= 1，触发熔断
+		counts = Counts{ConsecutiveFailures: 1}
 		assert.True(t, policy.ReadyToTrip(counts))
 	})
 
@@ -144,6 +149,18 @@ func TestFailureCountPolicy(t *testing.T) {
 	t.Run("threshold getter", func(t *testing.T) {
 		policy := NewFailureCount(10)
 		assert.Equal(t, uint32(10), policy.Threshold())
+	})
+
+	t.Run("zero threshold clamped to 1", func(t *testing.T) {
+		policy := NewFailureCount(0)
+		// threshold=0 被修正为 1
+		assert.Equal(t, uint32(1), policy.Threshold())
+		// 0 < 1，不触发熔断
+		counts := Counts{TotalFailures: 0}
+		assert.False(t, policy.ReadyToTrip(counts))
+		// 1 >= 1，触发熔断
+		counts = Counts{TotalFailures: 1}
+		assert.True(t, policy.ReadyToTrip(counts))
 	})
 }
 

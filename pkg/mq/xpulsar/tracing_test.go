@@ -339,12 +339,13 @@ func TestTracingProducer_Send_Success(t *testing.T) {
 }
 
 func TestTracingProducer_Send_NilContext(t *testing.T) {
+	var nilCtx context.Context
 	mp := &mockProducer{}
 	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	// 传入 nil context，应该内部替换为 context.Background()
-	id, err := producer.Send(nil, msg)
+	id, err := producer.Send(nilCtx, msg)
 
 	assert.NoError(t, err)
 	assert.Nil(t, id)
@@ -383,12 +384,13 @@ func TestTracingProducer_SendAsync_Success(t *testing.T) {
 }
 
 func TestTracingProducer_SendAsync_NilContext(t *testing.T) {
+	var nilCtx context.Context
 	mp := &mockProducer{}
 	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	var called bool
-	producer.SendAsync(nil, msg, func(id pulsar.MessageID, m *pulsar.ProducerMessage, err error) {
+	producer.SendAsync(nilCtx, msg, func(id pulsar.MessageID, m *pulsar.ProducerMessage, err error) {
 		called = true
 	})
 
@@ -437,11 +439,12 @@ func TestTracingConsumer_ReceiveWithContext_Success(t *testing.T) {
 }
 
 func TestTracingConsumer_ReceiveWithContext_NilContext(t *testing.T) {
+	var nilCtx context.Context
 	msg := &mockTracingMessage{properties: map[string]string{}}
 	mc := &mockConsumer{receiveMsg: msg}
 	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
 
-	ctx, receivedMsg, err := consumer.ReceiveWithContext(nil)
+	ctx, receivedMsg, err := consumer.ReceiveWithContext(nilCtx)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, ctx)

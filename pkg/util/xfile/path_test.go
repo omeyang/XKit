@@ -396,6 +396,38 @@ func TestSafeJoinVsSanitizePath(t *testing.T) {
 	})
 }
 
+// TestEvalSymlinksPartialDeepPath 测试深层路径不会栈溢出
+func TestEvalSymlinksPartialDeepPath(t *testing.T) {
+	// 构造一个超深的路径（超过 maxSymlinkDepth）
+	deepPath := "/a"
+	for i := 0; i < 300; i++ {
+		deepPath += "/b"
+	}
+	// 使用导出的 SafeJoinWithOptions 间接测试
+	// 因为 evalSymlinksPartialWithDepth 是内部函数
+	_, err := SafeJoinWithOptions("/tmp", "test.log", SafeJoinOptions{
+		ResolveSymlinks: true,
+	})
+	// 正常路径应该成功
+	if err != nil {
+		t.Logf("SafeJoinWithOptions 返回错误（可能是 /tmp 不存在）: %v", err)
+	}
+
+	// 测试超深路径通过内部函数
+	// 由于 evalSymlinksPartialWithDepth 是内部函数，我们通过构造一个不存在的深层路径来测试
+	// 当目录不存在时，evalSymlinksPartial 会递归调用自己
+	deepBase := "/nonexistent"
+	for i := 0; i < 300; i++ {
+		deepBase += "/level"
+	}
+	_, err = evalSymlinksPartialWithDepth(deepBase+"/file.log", 0)
+	if err == nil {
+		t.Error("期望深层路径返回错误，但没有")
+	} else if !strings.Contains(err.Error(), "path too deep") {
+		t.Logf("返回了其他错误（预期）: %v", err)
+	}
+}
+
 // TestSafeJoinWithOptionsSymlinks 测试符号链接解析
 func TestSafeJoinWithOptionsSymlinks(t *testing.T) {
 	// 使用 /tmp 作为测试基准目录（总是存在）

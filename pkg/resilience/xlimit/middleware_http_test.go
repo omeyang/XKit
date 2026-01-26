@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的错误处理简化
 package xlimit
 
 import (
@@ -30,8 +29,8 @@ func setupTestLimiter(t *testing.T, limit int) Limiter {
 	}
 
 	t.Cleanup(func() {
-		limiter.Close()
-		client.Close()
+		_ = limiter.Close() //nolint:errcheck // cleanup
+		_ = client.Close()  //nolint:errcheck // cleanup
 		mr.Close()
 	})
 
@@ -45,7 +44,7 @@ func TestHTTPMiddleware_Basic(t *testing.T) {
 	// 创建测试处理器
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK")) //nolint:errcheck // test handler
 	}))
 
 	// 第一个请求应该通过
@@ -107,7 +106,7 @@ func TestHTTPMiddleware_CustomDenyHandler(t *testing.T) {
 	customDenyHandler := func(w http.ResponseWriter, _ *http.Request, result *Result) {
 		w.Header().Set("X-Custom-Header", "rate-limited")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("Custom: " + result.Rule))
+		_, _ = w.Write([]byte("Custom: " + result.Rule)) //nolint:errcheck // test handler
 	}
 
 	middleware := HTTPMiddleware(limiter, WithDenyHandler(customDenyHandler))
@@ -217,7 +216,7 @@ func TestHTTPMiddleware_LocalLimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create local limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter)
 
@@ -306,7 +305,7 @@ func BenchmarkHTTPMiddleware(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter)
 

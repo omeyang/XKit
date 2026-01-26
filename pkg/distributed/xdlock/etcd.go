@@ -178,10 +178,18 @@ func (h *etcdLockHandle) Unlock(ctx context.Context) error {
 	return nil
 }
 
-// Extend etcd 使用 Session 自动续期，此方法返回 nil。
-// etcd 的 Session 会自动保持心跳，无需手动续期。
+// Extend 检查 Session 状态。
+//
+// etcd 使用 Session 自动续期（keep-alive），无需手动续期。
+// 此方法仅验证 Session 是否仍然有效，若已过期返回 ErrSessionExpired。
+//
+// 与 Redis 后端不同，etcd 的续期完全自动，调用此方法不会延长锁的有效期，
+// 而是检查 Session 是否健康。推荐在长时间运行的任务中定期调用以检测 Session 状态。
 func (h *etcdLockHandle) Extend(_ context.Context) error {
-	// etcd 使用 Session 自动续期，无需手动操作
+	// 检查 Session 是否仍然有效
+	if err := h.factory.checkSession(); err != nil {
+		return err
+	}
 	return nil
 }
 

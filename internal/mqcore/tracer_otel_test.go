@@ -194,7 +194,8 @@ func TestOTelTracer_Extract_InvalidTraceparent(t *testing.T) {
 // =============================================================================
 
 func TestEnsureSpanContext_NilContext(t *testing.T) {
-	result := ensureSpanContext(nil)
+	var nilCtx context.Context
+	result := ensureSpanContext(nilCtx)
 
 	assert.NotNil(t, result)
 }

@@ -160,10 +160,11 @@ func TestNoopObserver_Start(t *testing.T) {
 func TestNoopObserver_Start_NilContext(t *testing.T) {
 	t.Parallel()
 
+	var nilCtx context.Context
 	observer := NoopObserver{}
 
 	// NoopObserver 对 nil ctx 也应该安全
-	newCtx, span := observer.Start(nil, SpanOptions{})
+	newCtx, span := observer.Start(nilCtx, SpanOptions{})
 
 	assert.Nil(t, newCtx)
 	assert.NotNil(t, span)
@@ -289,8 +290,9 @@ func TestStart_WithNoopObserver(t *testing.T) {
 func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
+	var nilCtx context.Context
 	// nil context + nil observer
-	newCtx, span := Start(nil, nil, SpanOptions{})
+	newCtx, span := Start(nilCtx, nil, SpanOptions{})
 
 	assert.Nil(t, newCtx)
 	assert.NotNil(t, span)

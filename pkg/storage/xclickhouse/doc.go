@@ -31,4 +31,16 @@
 //	result, _ := ch.QueryPage(ctx, "SELECT id, name FROM users", xclickhouse.PageOptions{
 //	    Page: 1, PageSize: 10,
 //	})
+//
+// # 已知限制
+//
+// ## FORMAT/SETTINGS 检测
+//
+// QueryPage 使用正则表达式检测 FORMAT 和 SETTINGS 子句。
+// 此方法是有意的设计权衡，而非 bug：
+//   - 正则检测可能对字符串字面量产生误判（如 WHERE name = 'FORMAT'）
+//   - 这是已知限制，复杂 SQL 解析成本过高
+//   - 遇到误判时，请使用 Conn() 直接执行查询
+//
+// 相关错误：ErrQueryContainsFormat, ErrQueryContainsSettings
 package xclickhouse

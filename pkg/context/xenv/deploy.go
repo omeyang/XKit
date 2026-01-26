@@ -219,7 +219,7 @@ func Parse(s string) (DeployType, error) {
 	}
 	dt, err := deploy.Parse(normalized)
 	if err != nil {
-		return "", ErrInvalidType
+		return "", fmt.Errorf("%w: %q", ErrInvalidType, s)
 	}
 	return dt, nil
 }

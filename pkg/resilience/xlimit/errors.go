@@ -85,63 +85,14 @@ func (e *LimitError) Retryable() bool {
 }
 
 // =============================================================================
-// 兼容旧 API 的 RateLimitError
-// =============================================================================
-
-// RateLimitError 包含限流结果的详细错误
-//
-// Deprecated: 请使用 LimitError 代替
-type RateLimitError struct {
-	result *Result
-}
-
-// NewRateLimitError 创建限流错误
-//
-// Deprecated: 请使用 LimitError 代替
-func NewRateLimitError(result *Result) *RateLimitError {
-	return &RateLimitError{result: result}
-}
-
-// Error 实现 error 接口
-func (e *RateLimitError) Error() string {
-	if e.result == nil {
-		return ErrRateLimited.Error()
-	}
-	return fmt.Sprintf("xlimit: rate limited by rule %q, key=%s, remaining=%d",
-		e.result.Rule, e.result.Key, e.result.Remaining)
-}
-
-// Is 支持 errors.Is 检查
-func (e *RateLimitError) Is(target error) bool {
-	return target == ErrRateLimited
-}
-
-// Unwrap 返回底层错误
-func (e *RateLimitError) Unwrap() error {
-	return ErrRateLimited
-}
-
-// Result 返回限流结果
-func (e *RateLimitError) Result() *Result {
-	return e.result
-}
-
-// =============================================================================
 // 错误检查函数
 // =============================================================================
 
 // IsDenied 检查错误是否为限流错误
 //
-// 支持 LimitError 和 RateLimitError。
+// 支持 LimitError。
 func IsDenied(err error) bool {
 	return errors.Is(err, ErrRateLimited)
-}
-
-// IsRateLimited 检查错误是否为限流错误
-//
-// Deprecated: 请使用 IsDenied 代替
-func IsRateLimited(err error) bool {
-	return IsDenied(err)
 }
 
 // IsRetryable 检查错误是否可重试

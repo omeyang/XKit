@@ -64,4 +64,21 @@
 //
 // EnsureXxx 系列函数的语义是"确保非空"，对已存在的值不做验证/不纠正。
 // 如需格式校验，请在业务层或网关层自行实现。
+//
+// # 推荐的校验位置
+//
+// 建议在网关/入口层（而非 xctx 包内）进行格式校验：
+//
+//	func ValidateTraceID(traceID string) error {
+//	    // W3C Trace Context 规范：32位小写十六进制
+//	    if len(traceID) != 32 {
+//	        return fmt.Errorf("invalid trace_id length: %d", len(traceID))
+//	    }
+//	    if _, err := hex.DecodeString(traceID); err != nil {
+//	        return fmt.Errorf("invalid trace_id format: %w", err)
+//	    }
+//	    return nil
+//	}
+//
+// 这样可以在入口处拒绝非法请求，同时允许内部服务在必要时传播非标准值。
 package xctx

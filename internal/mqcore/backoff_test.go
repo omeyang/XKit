@@ -152,3 +152,46 @@ func TestWithBackoff_NilIgnored(t *testing.T) {
 		t.Error("nil backoff should be ignored")
 	}
 }
+
+// mockResettableBackoff 实现 ResettableBackoff 接口用于测试
+type mockResettableBackoff struct {
+	delay      time.Duration
+	resetCount atomic.Int32
+}
+
+func (m *mockResettableBackoff) NextDelay(_ int) time.Duration {
+	return m.delay
+}
+
+func (m *mockResettableBackoff) Reset() {
+	m.resetCount.Add(1)
+}
+
+func TestRunConsumeLoop_ResettableBackoff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	var count atomic.Int32
+	consume := func(ctx context.Context) error {
+		n := count.Add(1)
+		// 第一次失败，之后成功
+		if n == 1 {
+			return errors.New("temporary error")
+		}
+		return nil
+	}
+
+	backoff := &mockResettableBackoff{delay: 10 * time.Millisecond}
+
+	err := RunConsumeLoop(ctx, consume, WithBackoff(backoff))
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+
+	// 验证 Reset() 被调用（每次成功消费后都应该调用）
+	resetCount := backoff.resetCount.Load()
+	if resetCount < 1 {
+		t.Errorf("expected Reset() to be called at least once, got %d calls", resetCount)
+	}
+}

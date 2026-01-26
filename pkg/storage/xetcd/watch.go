@@ -64,6 +64,14 @@ type Event struct {
 	//	}
 	Revision int64
 
+	// CompactRevision etcd 数据压缩版本号。
+	// 仅在错误事件中有意义（Error != nil）。
+	// 当 Watch 因 compaction 失败时，此值表示数据被压缩到的版本。
+	// 恢复时应从 max(lastRevision+1, compactRevision) 开始。
+	//
+	// 值为 0 表示错误不是由 compaction 引起的。
+	CompactRevision int64
+
 	// Error Watch 错误。
 	// 非 nil 时表示 Watch 失败，Key 和 Value 字段无意义。
 	// 接收到错误事件后，通道将被关闭，不会再有后续事件。
@@ -102,7 +110,7 @@ func WithRevision(rev int64) WatchOption {
 }
 
 // WithBufferSize 设置事件通道缓冲区大小。
-// 默认为 DefaultWatchBufferSize (64)。
+// 默认为 DefaultWatchBufferSize (256)。
 // 较大的缓冲区可以减少事件处理慢时的阻塞，但会增加内存占用。
 func WithBufferSize(size int) WatchOption {
 	return func(o *watchOptions) {
@@ -222,8 +230,9 @@ func (c *Client) runWatchLoop(ctx context.Context, key string, etcdOpts []client
 				return
 			}
 			if resp.Err() != nil {
-				// 发送错误事件，包含最后成功的 revision，便于调用方恢复
-				c.sendErrorEvent(ctx, eventCh, resp.Err(), lastRevision)
+				// 发送错误事件，包含最后成功的 revision 和压缩版本号，便于调用方恢复
+				// resp.CompactRevision 在 compaction 错误时非零
+				c.sendErrorEvent(ctx, eventCh, resp.Err(), lastRevision, resp.CompactRevision)
 				return
 			}
 			var dispatchedRev int64
@@ -240,9 +249,10 @@ func (c *Client) runWatchLoop(ctx context.Context, key string, etcdOpts []client
 
 // sendErrorEvent 发送错误事件到通道。
 // lastRevision 是最后成功处理的 revision，便于调用方使用 WithRevision 恢复 Watch。
-func (c *Client) sendErrorEvent(ctx context.Context, eventCh chan<- Event, err error, lastRevision int64) {
+// compactRevision 是 etcd 的压缩版本号，当错误由 compaction 引起时非零。
+func (c *Client) sendErrorEvent(ctx context.Context, eventCh chan<- Event, err error, lastRevision, compactRevision int64) {
 	select {
-	case eventCh <- Event{Error: err, Revision: lastRevision}:
+	case eventCh <- Event{Error: err, Revision: lastRevision, CompactRevision: compactRevision}:
 	case <-ctx.Done():
 		// context 已取消，不发送错误事件
 	}
@@ -398,7 +408,7 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 			return
 		}
 
-		watchOpts := c.buildRetryWatchOptions(opts, state.lastRevision)
+		watchOpts := c.buildRetryWatchOptions(opts, state)
 		innerCh, err := c.Watch(ctx, key, watchOpts...)
 		if err != nil {
 			if c.handleWatchRetry(ctx, cfg, state, err) {
@@ -407,9 +417,12 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 			continue
 		}
 
-		shouldExit, rev := c.consumeEventsUntilError(ctx, innerCh, eventCh)
+		shouldExit, rev, compactRev := c.consumeEventsUntilError(ctx, innerCh, eventCh)
 		if rev > 0 {
 			state.lastRevision = rev
+		}
+		if compactRev > 0 {
+			state.compactRevision = compactRev
 		}
 		if shouldExit {
 			return
@@ -423,9 +436,10 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 
 // watchRetryState 保存 watch 重试状态。
 type watchRetryState struct {
-	lastRevision int64
-	backoff      time.Duration
-	retryCount   int
+	lastRevision    int64
+	compactRevision int64 // 最近一次 compaction 错误的压缩版本号
+	backoff         time.Duration
+	retryCount      int
 }
 
 // shouldStopWatch 检查是否应停止 watch。
@@ -438,12 +452,23 @@ func (c *Client) shouldStopWatch(ctx context.Context) bool {
 	return c.isClosed()
 }
 
-// buildRetryWatchOptions 构建重试 watch 的选项，如有 lastRevision 则从该位置恢复。
-func (c *Client) buildRetryWatchOptions(opts []WatchOption, lastRevision int64) []WatchOption {
+// buildRetryWatchOptions 构建重试 watch 的选项，根据状态从合适的 revision 恢复。
+// 当发生 compaction 错误时，会使用 max(lastRevision+1, compactRevision) 作为起始版本。
+func (c *Client) buildRetryWatchOptions(opts []WatchOption, state *watchRetryState) []WatchOption {
 	watchOpts := make([]WatchOption, len(opts))
 	copy(watchOpts, opts)
-	if lastRevision > 0 {
-		watchOpts = append(watchOpts, WithRevision(lastRevision+1))
+
+	// 计算恢复的起始 revision
+	// 正常情况：从 lastRevision+1 开始
+	// compaction 情况：如果 lastRevision+1 < compactRevision，需要从 compactRevision 开始
+	// 因为已压缩的版本无法 watch
+	startRev := state.lastRevision + 1
+	if state.compactRevision > 0 && startRev < state.compactRevision {
+		startRev = state.compactRevision
+	}
+
+	if startRev > 1 { // startRev > 1 表示有有效的恢复点（lastRevision > 0 或有 compaction）
+		watchOpts = append(watchOpts, WithRevision(startRev))
 	}
 	return watchOpts
 }
@@ -464,31 +489,32 @@ func (c *Client) handleWatchRetry(ctx context.Context, cfg RetryConfig, state *w
 }
 
 // consumeEventsUntilError 消费事件直到发生错误。
-// 返回 (shouldExit, lastRevision)。
-func (c *Client) consumeEventsUntilError(ctx context.Context, innerCh <-chan Event, eventCh chan<- Event) (bool, int64) {
+// 返回 (shouldExit, lastRevision, compactRevision)。
+// compactRevision 在 compaction 错误时非零，用于恢复时跳过已压缩的版本。
+func (c *Client) consumeEventsUntilError(ctx context.Context, innerCh <-chan Event, eventCh chan<- Event) (bool, int64, int64) {
 	var lastRevision int64
 	for {
 		select {
 		case <-ctx.Done():
-			return true, lastRevision
+			return true, lastRevision, 0
 		case event, ok := <-innerCh:
 			if !ok {
 				// 通道关闭，需要重连
-				return false, lastRevision
+				return false, lastRevision, 0
 			}
 			if event.Error != nil {
 				// 发生错误，需要重连
 				if event.Revision > 0 {
 					lastRevision = event.Revision
 				}
-				return false, lastRevision
+				return false, lastRevision, event.CompactRevision
 			}
 			// 正常事件，转发到输出通道
 			lastRevision = event.Revision
 			select {
 			case eventCh <- event:
 			case <-ctx.Done():
-				return true, lastRevision
+				return true, lastRevision, 0
 			}
 		}
 	}

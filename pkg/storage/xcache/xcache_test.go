@@ -92,7 +92,14 @@ func newTestRedisCache(t *testing.T) (Redis, *miniredis.Miniredis) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+		PoolSize:     2,
+		MaxRetries:   1,
+	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
 
@@ -256,7 +263,14 @@ func TestRedisWrapper_Lock_ConnectionError(t *testing.T) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		PoolSize:     1,
+		MaxRetries:   0,
+	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
 
@@ -275,7 +289,14 @@ func TestRedisWrapper_Lock_WithRetry_ConnectionErrorDuringRetry(t *testing.T) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		PoolSize:     1,
+		MaxRetries:   0,
+	})
 	cache, err := NewRedis(client, WithLockRetry(50*time.Millisecond, 5))
 	require.NoError(t, err)
 

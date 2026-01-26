@@ -51,7 +51,7 @@ func ExampleNew() {
 		log.Printf("query error: %v", err)
 	}
 	if rows != nil {
-		defer rows.Close() //nolint:errcheck
+		defer func() { _ = rows.Close() }() //nolint:errcheck // defer cleanup
 	}
 }
 

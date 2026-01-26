@@ -55,7 +55,8 @@ func TestWithHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.WithHasParent(nil, true)
+		var nilCtx context.Context
+		_, err := xctx.WithHasParent(nilCtx, true)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithHasParent(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -74,7 +75,8 @@ func TestHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回false和ok=false", func(t *testing.T) {
-		v, ok := xctx.HasParent(nil)
+		var nilCtx context.Context
+		v, ok := xctx.HasParent(nilCtx)
 		if ok {
 			t.Error("HasParent(nil) ok = true, want false")
 		}
@@ -110,7 +112,8 @@ func TestMustHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回false", func(t *testing.T) {
-		if xctx.MustHasParent(nil) {
+		var nilCtx context.Context
+		if xctx.MustHasParent(nilCtx) {
 			t.Error("MustHasParent(nil) = true, want false")
 		}
 	})
@@ -164,7 +167,8 @@ func TestRequireHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.RequireHasParent(nil)
+		var nilCtx context.Context
+		_, err := xctx.RequireHasParent(nilCtx)
 		if err == nil {
 			t.Error("RequireHasParent(nil) should return error")
 		}
@@ -258,7 +262,8 @@ func TestWithUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.WithUnclassRegionID(nil, "region-001")
+		var nilCtx context.Context
+		_, err := xctx.WithUnclassRegionID(nilCtx, "region-001")
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithUnclassRegionID(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -274,7 +279,8 @@ func TestUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("nil context返回空字符串", func(t *testing.T) {
-		got := xctx.UnclassRegionID(nil)
+		var nilCtx context.Context
+		got := xctx.UnclassRegionID(nilCtx)
 		if got != "" {
 			t.Errorf("UnclassRegionID(nil) = %q, want empty", got)
 		}
@@ -297,7 +303,8 @@ func TestGetPlatform(t *testing.T) {
 	})
 
 	t.Run("nil context返回零值", func(t *testing.T) {
-		p := xctx.GetPlatform(nil)
+		var nilCtx context.Context
+		p := xctx.GetPlatform(nilCtx)
 		if p.HasParent {
 			t.Error("GetPlatform(nil).HasParent = true, want false")
 		}
@@ -394,8 +401,9 @@ func TestWithPlatform(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		var nilCtx context.Context
 		p := xctx.Platform{HasParent: true}
-		_, err := xctx.WithPlatform(nil, p)
+		_, err := xctx.WithPlatform(nilCtx, p)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithPlatform(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}

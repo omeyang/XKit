@@ -19,16 +19,32 @@ type LockFunc func(ctx context.Context, key string, ttl time.Duration) (Unlocker
 
 // Loader 定义 Cache-Aside 模式的加载器接口。
 // 内置 singleflight 防止缓存击穿，可选分布式锁保护。
+//
+// # Singleflight 去重说明
+//
+// singleflight 去重仅基于 key（对于 LoadHash 是 key+field），不包含 ttl。
+// 这意味着同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
+// 最终缓存的 TTL 取决于首个请求的配置。
+//
+// 这是设计决策而非 bug：同一数据应使用一致的 TTL 配置。
+// 如果业务确实需要为同一 key 使用不同的 TTL，应使用不同的 key 或禁用 singleflight。
 type Loader interface {
 	// Load 从缓存加载数据，未命中时调用 loader 函数回源。
 	// 流程：缓存查询 → 未命中时回源 → 写入缓存 → 返回数据。
 	// 内置 singleflight，同一 key 并发请求只回源一次。
+	//
+	// 注意：singleflight 去重仅基于 key，不包含 ttl。
+	// 同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
+	// 最终缓存的 TTL 取决于首个请求的配置。
 	Load(ctx context.Context, key string, loader LoadFunc, ttl time.Duration) ([]byte, error)
 
 	// LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
 	// 适用于租户隔离场景，key 为 Hash 名称，field 为具体字段。
 	// ttl 用于设置整个 Hash key 的过期时间。
 	// 默认行为是每次写入时刷新 TTL，可通过 WithHashTTLRefresh(false) 改为仅首次写入时设置。
+	//
+	// 注意：singleflight 去重基于 key+field 组合，不包含 ttl。
+	// 同一 key+field 的并发请求（即使 ttl 不同）只会触发一次回源。
 	LoadHash(ctx context.Context, key, field string, loader LoadFunc, ttl time.Duration) ([]byte, error)
 }
 

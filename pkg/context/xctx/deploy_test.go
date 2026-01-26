@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
-	"github.com/omeyang/xkit/pkg/context/xenv"
 )
 
 // =============================================================================
@@ -97,7 +96,8 @@ func TestDeploymentType_IsValid(t *testing.T) {
 
 func TestWithDeploymentType(t *testing.T) {
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.WithDeploymentType(nil, xctx.DeploymentLocal)
+		var nilCtx context.Context
+		_, err := xctx.WithDeploymentType(nilCtx, xctx.DeploymentLocal)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithDeploymentType(nil, ...) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -146,7 +146,8 @@ func TestGetDeploymentType(t *testing.T) {
 	})
 
 	t.Run("nil context返回错误", func(t *testing.T) {
-		_, err := xctx.GetDeploymentType(nil)
+		var nilCtx context.Context
+		_, err := xctx.GetDeploymentType(nilCtx)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("GetDeploymentType(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -295,83 +296,6 @@ func TestDeploymentKeyConstants(t *testing.T) {
 	if xctx.EnvDeploymentType != "DEPLOYMENT_TYPE" {
 		t.Errorf("EnvDeploymentType = %q, want %q", xctx.EnvDeploymentType, "DEPLOYMENT_TYPE")
 	}
-}
-
-// =============================================================================
-// 类型转换测试（xctx.DeploymentType <-> xenv.DeployType）
-// =============================================================================
-
-func TestDeploymentType_ToEnvDeployType(t *testing.T) {
-	tests := []struct {
-		name string
-		dt   xctx.DeploymentType
-		want xenv.DeployType
-	}{
-		{"LOCAL转换", xctx.DeploymentLocal, xenv.DeployLocal},
-		{"SAAS转换", xctx.DeploymentSaaS, xenv.DeploySaaS},
-		{"空值转换", xctx.DeploymentType(""), xenv.DeployType("")},
-		{"非法值保持原样", xctx.DeploymentType("INVALID"), xenv.DeployType("INVALID")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := xctx.ToEnvDeployType(tt.dt)
-			if got != tt.want {
-				t.Errorf("ToEnvDeployType(%q) = %q, want %q", tt.dt, got, tt.want)
-			}
-			// 验证双向一致性
-			if got.String() != tt.dt.String() {
-				t.Errorf("String() 不一致: got %q, want %q", got.String(), tt.dt.String())
-			}
-		})
-	}
-}
-
-func TestFromEnvDeployType(t *testing.T) {
-	tests := []struct {
-		name string
-		dt   xenv.DeployType
-		want xctx.DeploymentType
-	}{
-		{"LOCAL转换", xenv.DeployLocal, xctx.DeploymentLocal},
-		{"SAAS转换", xenv.DeploySaaS, xctx.DeploymentSaaS},
-		{"空值转换", xenv.DeployType(""), xctx.DeploymentType("")},
-		{"非法值保持原样", xenv.DeployType("INVALID"), xctx.DeploymentType("INVALID")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := xctx.FromEnvDeployType(tt.dt)
-			if got != tt.want {
-				t.Errorf("FromEnvDeployType(%q) = %q, want %q", tt.dt, got, tt.want)
-			}
-			// 验证双向一致性
-			if got.String() != tt.dt.String() {
-				t.Errorf("String() 不一致: got %q, want %q", got.String(), tt.dt.String())
-			}
-		})
-	}
-}
-
-func TestDeploymentTypeConversion_RoundTrip(t *testing.T) {
-	// 测试双向转换的一致性
-	t.Run("xctx->xenv->xctx", func(t *testing.T) {
-		original := xctx.DeploymentLocal
-		converted := xctx.ToEnvDeployType(original)
-		roundTrip := xctx.FromEnvDeployType(converted)
-		if roundTrip != original {
-			t.Errorf("RoundTrip failed: %q -> %q -> %q", original, converted, roundTrip)
-		}
-	})
-
-	t.Run("xenv->xctx->xenv", func(t *testing.T) {
-		original := xenv.DeploySaaS
-		converted := xctx.FromEnvDeployType(original)
-		roundTrip := xctx.ToEnvDeployType(converted)
-		if roundTrip != original {
-			t.Errorf("RoundTrip failed: %q -> %q -> %q", original, converted, roundTrip)
-		}
-	})
 }
 
 // =============================================================================

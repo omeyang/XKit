@@ -132,10 +132,11 @@ func TestWithEtcdClientContext(t *testing.T) {
 }
 
 func TestWithEtcdClientContext_Nil(t *testing.T) {
+	var nilCtx context.Context
 	originalCtx := context.Background()
 	opts := &etcdClientOptions{Context: originalCtx}
 
-	WithEtcdClientContext(nil)(opts)
+	WithEtcdClientContext(nilCtx)(opts)
 
 	// nil context 不应修改现有 context
 	assert.Equal(t, originalCtx, opts.Context)

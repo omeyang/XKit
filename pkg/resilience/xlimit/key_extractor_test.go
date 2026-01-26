@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的错误处理简化
 package xlimit
 
 import (

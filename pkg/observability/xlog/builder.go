@@ -240,6 +240,10 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 		return nil, nil, b.err
 	}
 
+	if b.output == nil {
+		return nil, nil, fmt.Errorf("xlog: output writer is nil")
+	}
+
 	// 创建 handler
 	opts := &slog.HandlerOptions{
 		Level:     b.levelVar,

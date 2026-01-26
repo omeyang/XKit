@@ -47,7 +47,4 @@ var (
 var (
 	// ErrEmptyDocs 表示文档列表为空。
 	ErrEmptyDocs = errors.New("xmongo: empty documents")
-
-	// ErrInvalidBatchSize 表示批次大小无效（必须 >= 1）。
-	ErrInvalidBatchSize = errors.New("xmongo: invalid batch size, must be >= 1")
 )

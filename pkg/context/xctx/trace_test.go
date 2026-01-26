@@ -34,12 +34,13 @@ func TestTraceID(t *testing.T) {
 		t.Errorf("TraceID(overwrite) = %q, want %q", got, "new-trace")
 	}
 
-	if got := xctx.TraceID(nil); got != "" {
+	var nilCtx context.Context
+	if got := xctx.TraceID(nilCtx); got != "" {
 		t.Errorf("TraceID(nil) = %q, want empty", got)
 	}
 
 	// nil context 注入返回 ErrNilContext
-	_, err = xctx.WithTraceID(nil, "trace-123")
+	_, err = xctx.WithTraceID(nilCtx, "trace-123")
 	if !errors.Is(err, xctx.ErrNilContext) {
 		t.Errorf("WithTraceID(nil) error = %v, want %v", err, xctx.ErrNilContext)
 	}
@@ -100,7 +101,6 @@ func TestSpanAndRequestID(t *testing.T) {
 // Trace 结构体测试
 // =============================================================================
 
-//nolint:dupl // similar pattern to TestGetIdentity but tests different type
 func TestGetTrace(t *testing.T) {
 	t.Run("空context返回空结构体", func(t *testing.T) {
 		tr := xctx.GetTrace(context.Background())
@@ -273,7 +273,6 @@ func TestEnsureIDs(t *testing.T) {
 	}
 }
 
-//nolint:gocyclo // comprehensive test with multiple validation checks
 func TestEnsureTrace(t *testing.T) {
 	t.Run("空context全部生成", func(t *testing.T) {
 		ctx, err := xctx.EnsureTrace(context.Background())
@@ -332,7 +331,8 @@ func TestEnsureTrace(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
-		_, err := xctx.EnsureTrace(nil)
+		var nilCtx context.Context
+		_, err := xctx.EnsureTrace(nilCtx)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("EnsureTrace(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}
@@ -373,7 +373,6 @@ func ExampleEnsureTrace() {
 // WithTrace 批量注入测试
 // =============================================================================
 
-//nolint:dupl,gocyclo // 与 TestWithIdentity 结构相似但测试不同API，测试用例完整性优先
 func TestWithTrace(t *testing.T) {
 	t.Run("全部字段非空", func(t *testing.T) {
 		tr := xctx.Trace{
@@ -435,8 +434,9 @@ func TestWithTrace(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		var nilCtx context.Context
 		tr := xctx.Trace{TraceID: "t1"}
-		_, err := xctx.WithTrace(nil, tr)
+		_, err := xctx.WithTrace(nilCtx, tr)
 		if !errors.Is(err, xctx.ErrNilContext) {
 			t.Errorf("WithTrace(nil) error = %v, want %v", err, xctx.ErrNilContext)
 		}

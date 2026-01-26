@@ -27,6 +27,13 @@
 //   - 第一个 caller cancel 不影响其他 caller 获取结果
 //   - 默认超时 30 秒（可通过 WithLoadTimeout 配置）
 //
+// # Singleflight 去重说明
+//
+// singleflight 去重仅基于 key（对于 LoadHash 是 key+field），不包含 ttl。
+// 这意味着同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
+// 最终缓存的 TTL 取决于首个请求的配置。
+// 这是设计决策：同一数据应使用一致的 TTL 配置。
+//
 // # 分布式锁
 //
 // 锁 key 格式：lock:{prefix}{key}

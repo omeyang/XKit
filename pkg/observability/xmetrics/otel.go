@@ -82,7 +82,7 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 		metric.WithUnit("1"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("xobs: create counter failed: %w", err)
+		return nil, fmt.Errorf("xmetrics: create counter failed: %w", err)
 	}
 
 	duration, err := meter.Float64Histogram(
@@ -91,7 +91,7 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 		metric.WithUnit("s"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("xobs: create histogram failed: %w", err)
+		return nil, fmt.Errorf("xmetrics: create histogram failed: %w", err)
 	}
 
 	return &otelObserver{

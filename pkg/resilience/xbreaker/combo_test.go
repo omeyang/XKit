@@ -339,7 +339,6 @@ func TestBreakerRetryer_Integration(t *testing.T) {
 
 		// 3次调用都失败（每次重试2次也失败），触发熔断
 		for i := 0; i < 3; i++ {
-			//nolint:errcheck
 			_, _ = ExecuteWithRetry(ctx, combo, func() (string, error) {
 				return "", errors.New("service unavailable")
 			})

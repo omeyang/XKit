@@ -77,14 +77,21 @@ type DLQMetadata struct {
 	LastFailureTime   time.Time `json:"last_failure_time"`
 }
 
-// DLQStats DLQ 统计信息
+// DLQStats DLQ 统计信息。
+// 提示：handler 失败次数 = RetriedMessages + DeadLetterMessages - SuccessAfterRetry
 type DLQStats struct {
-	TotalMessages      int64            `json:"total_messages"`
-	RetriedMessages    int64            `json:"retried_messages"`
-	DeadLetterMessages int64            `json:"dead_letter_messages"`
-	SuccessAfterRetry  int64            `json:"success_after_retry"`
-	LastDLQTime        time.Time        `json:"last_dlq_time,omitempty"`
-	ByTopic            map[string]int64 `json:"by_topic,omitempty"`
+	// TotalMessages 处理的消息总数（包括成功和失败）。
+	TotalMessages int64 `json:"total_messages"`
+	// RetriedMessages 触发重试的消息数。
+	RetriedMessages int64 `json:"retried_messages"`
+	// DeadLetterMessages 进入死信队列的消息数。
+	DeadLetterMessages int64 `json:"dead_letter_messages"`
+	// SuccessAfterRetry 重试后成功处理的消息数。
+	SuccessAfterRetry int64 `json:"success_after_retry"`
+	// LastDLQTime 最近一次消息进入 DLQ 的时间。
+	LastDLQTime time.Time `json:"last_dlq_time,omitempty"`
+	// ByTopic 按原始 Topic 分组的 DLQ 消息统计。
+	ByTopic map[string]int64 `json:"by_topic,omitempty"`
 }
 
 // Clone 返回统计信息的副本

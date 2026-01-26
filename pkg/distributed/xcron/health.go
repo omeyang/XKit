@@ -26,8 +26,9 @@ const (
 type HealthCheck struct {
 	// Status 总体健康状态
 	Status HealthStatus `json:"status"`
-	// Running 调度器是否正在运行
-	Running bool `json:"running"`
+	// HasJobs 是否有已注册的任务。
+	// 注意：此字段不表示调度器是否已启动，仅表示是否有任务注册。
+	HasJobs bool `json:"has_jobs"`
 	// RegisteredJobs 已注册的任务数量
 	RegisteredJobs int `json:"registered_jobs"`
 	// TotalExecutions 总执行次数
@@ -176,7 +177,7 @@ func (c *schedulerHealthChecker) Check(ctx context.Context) *HealthCheck {
 func (c *schedulerHealthChecker) buildBaseResult(stats *Stats, numEntries int) *HealthCheck {
 	result := &HealthCheck{
 		Status:          HealthStatusHealthy,
-		Running:         numEntries > 0,
+		HasJobs:         numEntries > 0,
 		RegisteredJobs:  numEntries,
 		TotalExecutions: stats.TotalExecutions(),
 		SuccessCount:    stats.SuccessCount(),
@@ -252,7 +253,7 @@ type fallbackHealthChecker struct {
 func (c *fallbackHealthChecker) Check(_ context.Context) *HealthCheck {
 	return &HealthCheck{
 		Status:    HealthStatusUnhealthy,
-		Running:   false,
+		HasJobs:   false,
 		Message:   c.message,
 		CheckTime: time.Now(),
 	}

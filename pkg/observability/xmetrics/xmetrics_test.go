@@ -156,8 +156,9 @@ func TestStart_WithAllKinds(t *testing.T) {
 func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
+	var nilCtx context.Context
 	// nil context + nil observer
-	newCtx, span := xmetrics.Start(nil, nil, xmetrics.SpanOptions{})
+	newCtx, span := xmetrics.Start(nilCtx, nil, xmetrics.SpanOptions{})
 
 	assert.Nil(t, newCtx)
 	assert.NotNil(t, span)

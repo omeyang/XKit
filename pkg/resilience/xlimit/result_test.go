@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的 defer Close() 允许忽略错误
 package xlimit
 
 import (
@@ -105,7 +104,7 @@ func TestResult_SetHeaders(t *testing.T) {
 	result.SetHeaders(recorder)
 
 	resp := recorder.Result()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // defer cleanup
 
 	if resp.Header.Get("X-RateLimit-Limit") != "100" {
 		t.Errorf("expected X-RateLimit-Limit=100, got %s", resp.Header.Get("X-RateLimit-Limit"))

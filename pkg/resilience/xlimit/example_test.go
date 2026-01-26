@@ -1,9 +1,9 @@
-//nolint:errcheck // 示例代码允许忽略错误以保持代码简洁
 package xlimit_test
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -16,10 +16,13 @@ import (
 
 func Example_tenantRateLimit() {
 	// 创建 Redis 客户端（示例使用 miniredis）
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器，配置租户级限流规则
 	limiter, err := xlimit.New(client,
@@ -32,7 +35,7 @@ func Example_tenantRateLimit() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 执行限流检查
 	ctx := context.Background()
@@ -54,10 +57,13 @@ func Example_tenantRateLimit() {
 
 func Example_tenantOverride() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器，VIP 租户有更高配额
 	limiter, err := xlimit.New(client,
@@ -77,20 +83,32 @@ func Example_tenantOverride() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 
 	// 普通租户
-	result1, _ := limiter.Allow(ctx, xlimit.Key{Tenant: "normal-user"})
+	result1, err := limiter.Allow(ctx, xlimit.Key{Tenant: "normal-user"})
+	if err != nil {
+		fmt.Println("限流检查失败:", err)
+		return
+	}
 	fmt.Println("普通租户配额:", result1.Limit)
 
 	// VIP 精确匹配
-	result2, _ := limiter.Allow(ctx, xlimit.Key{Tenant: "vip-corp"})
+	result2, err := limiter.Allow(ctx, xlimit.Key{Tenant: "vip-corp"})
+	if err != nil {
+		fmt.Println("限流检查失败:", err)
+		return
+	}
 	fmt.Println("VIP-corp 配额:", result2.Limit)
 
 	// VIP 通配匹配
-	result3, _ := limiter.Allow(ctx, xlimit.Key{Tenant: "vip-enterprise"})
+	result3, err := limiter.Allow(ctx, xlimit.Key{Tenant: "vip-enterprise"})
+	if err != nil {
+		fmt.Println("限流检查失败:", err)
+		return
+	}
 	fmt.Println("VIP-enterprise 配额:", result3.Limit)
 
 	// Output:
@@ -110,14 +128,18 @@ func Example_localLimiter() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer limiter.Close()
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "local-tenant"}
 
 	// 快速消耗配额
-	for i := 0; i < 12; i++ {
-		result, _ := limiter.Allow(ctx, key)
+	for i := range 12 {
+		result, err := limiter.Allow(ctx, key)
+		if err != nil {
+			fmt.Println("限流检查失败:", err)
+			return
+		}
 		if !result.Allowed {
 			fmt.Println("第", i+1, "个请求被限流")
 			break
@@ -169,13 +191,16 @@ func Example_keyBuilder() {
 
 func Example_callback() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器，配置回调
-	limiter, _ := xlimit.New(client,
+	limiter, err := xlimit.New(client,
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 2, time.Minute)),
 		xlimit.WithFallback(""),
 		xlimit.WithOnAllow(func(key xlimit.Key, result *xlimit.Result) {
@@ -185,14 +210,18 @@ func Example_callback() {
 			fmt.Printf("拒绝: tenant=%s, rule=%s\n", key.Tenant, result.Rule)
 		}),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "callback-tenant"}
 
-	// 发送 3 个请求
-	for i := 0; i < 3; i++ {
-		limiter.Allow(ctx, key)
+	// 发送 3 个请求（回调函数会处理输出）
+	for range 3 {
+		_, _ = limiter.Allow(ctx, key) //nolint:errcheck // 示例：结果由回调处理
 	}
 	// Output:
 	// 允许: tenant=callback-tenant, remaining=1
@@ -202,17 +231,24 @@ func Example_callback() {
 
 func Example_httpMiddleware() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器
-	limiter, _ := xlimit.New(client,
+	limiter, err := xlimit.New(client,
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 2, time.Minute)),
 		xlimit.WithFallback(""),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 创建 HTTP 中间件
 	middleware := xlimit.HTTPMiddleware(limiter)
@@ -220,11 +256,11 @@ func Example_httpMiddleware() {
 	// 创建处理器
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "OK")
+		_, _ = fmt.Fprint(w, "OK") //nolint:errcheck // HTTP handler: 写入错误通常表示客户端断开
 	}))
 
 	// 发送请求
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
 		req.Header.Set("X-Tenant-ID", "test-tenant")
 		rr := httptest.NewRecorder()
@@ -244,17 +280,24 @@ func Example_httpMiddleware() {
 
 func Example_grpcInterceptor() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器
-	limiter, _ := xlimit.New(client,
+	limiter, err := xlimit.New(client,
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 100, time.Minute)),
 		xlimit.WithFallback(""),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 创建 gRPC 拦截器
 	unaryInterceptor := xlimit.UnaryServerInterceptor(limiter)
@@ -271,24 +314,31 @@ func Example_grpcInterceptor() {
 
 func Example_quotaQuery() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器
-	limiter, _ := xlimit.New(client,
+	limiter, err := xlimit.New(client,
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 10, time.Minute)),
 		xlimit.WithFallback(""),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "query-tenant"}
 
-	// 先消耗一些配额
-	limiter.Allow(ctx, key)
-	limiter.Allow(ctx, key)
+	// 先消耗一些配额（仅用于设置测试状态，错误不影响示例）
+	_, _ = limiter.Allow(ctx, key) //nolint:errcheck // 示例：仅用于消耗配额
+	_, _ = limiter.Allow(ctx, key) //nolint:errcheck // 示例：仅用于消耗配额
 
 	// 查询当前配额（不消耗配额）
 	querier, ok := limiter.(xlimit.Querier)
@@ -314,17 +364,25 @@ func Example_quotaQuery() {
 
 func Example_dynamicPodCount() {
 	// 创建本地限流器，配置动态 Pod 数量
-	limiter, _ := xlimit.NewLocal(
+	limiter, err := xlimit.NewLocal(
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 100, time.Second)),
 		// 从环境变量获取 Pod 数量，默认 4
 		xlimit.WithPodCountProvider(xlimit.NewEnvPodCount("POD_COUNT", 4)),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "pod-count-tenant"}
 
-	result, _ := limiter.Allow(ctx, key)
+	result, err := limiter.Allow(ctx, key)
+	if err != nil {
+		fmt.Println("限流检查失败:", err)
+		return
+	}
 	// 本地配额 = 100 / 4 = 25
 	fmt.Println("本地配额:", result.Limit)
 
@@ -334,13 +392,16 @@ func Example_dynamicPodCount() {
 
 func Example_customFallback() {
 	// 创建 Redis 客户端
-	mr, _ := miniredis.Run()
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer mr.Close()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 创建限流器，配置自定义降级
-	limiter, _ := xlimit.New(client,
+	limiter, err := xlimit.New(client,
 		xlimit.WithRules(xlimit.TenantRule("tenant-limit", 100, time.Minute)),
 		xlimit.WithFallback(xlimit.FallbackLocal),
 		xlimit.WithCustomFallback(func(_ context.Context, key xlimit.Key, _ int, _ error) (*xlimit.Result, error) {
@@ -351,7 +412,11 @@ func Example_customFallback() {
 			return &xlimit.Result{Allowed: false, Rule: "custom-fallback"}, nil
 		}),
 	)
-	defer limiter.Close()
+	if err != nil {
+		fmt.Println("创建限流器失败:", err)
+		return
+	}
+	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	fmt.Println("自定义降级限流器创建成功")
 

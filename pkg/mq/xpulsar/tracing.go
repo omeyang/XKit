@@ -157,6 +157,7 @@ func (c *TracingConsumer) ReceiveWithContext(ctx context.Context) (context.Conte
 }
 
 // Consume 消费一条消息并执行处理函数。
+// 成功时自动 Ack，失败时自动 Nack。
 func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (err error) {
 	if handler == nil {
 		return ErrNilHandler
@@ -181,7 +182,17 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	}()
 
 	err = handler(msgCtx, msg)
-	return err
+	if err != nil {
+		// 处理失败，Nack 消息以便重试
+		c.Nack(msg)
+		return err
+	}
+
+	// 处理成功，Ack 消息
+	// 注意：Ack 错误通常不应阻止业务流程，因为消息已成功处理。
+	// Pulsar 客户端会在后台重试 Ack。返回 Ack 错误会导致消息被重复处理。
+	_ = c.Ack(msg) //nolint:errcheck // Ack failure should not affect successfully processed message
+	return nil
 }
 
 // ConsumeLoop 循环消费消息直到 ctx 取消。
@@ -191,14 +202,12 @@ func (c *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 }
 
 // ConsumeLoopWithPolicy 启动带退避策略的消费循环。
-// 使用 xretry.BackoffPolicy 接口，支持更灵活的退避策略配置。
+// 使用 xretry.BackoffPolicy 接口，支持灵活的退避策略配置。
 //
 // 参数：
 //   - ctx: 上下文，取消时退出循环
 //   - handler: 消息处理函数
 //   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
-//
-// 推荐使用此方法替代 ConsumeLoopWithBackoff。
 func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
 	consume := func(ctx context.Context) error {
 		return c.Consume(ctx, handler)
@@ -210,12 +219,4 @@ func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Mes
 	}
 
 	return mqcore.RunConsumeLoop(ctx, consume, opts...)
-}
-
-// ConsumeLoopWithBackoff 带退避的消费循环。
-//
-// Deprecated: 请使用 ConsumeLoopWithPolicy 替代，它支持更灵活的 xretry.BackoffPolicy 接口。
-// 此方法保留用于向后兼容。
-func (c *TracingConsumer) ConsumeLoopWithBackoff(ctx context.Context, handler MessageHandler, config BackoffConfig) error {
-	return c.ConsumeLoopWithPolicy(ctx, handler, config.ToBackoffPolicy())
 }

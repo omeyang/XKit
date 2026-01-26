@@ -162,7 +162,7 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
-        source: "locker\\.(Lock|Unlock|Extend)"  # xdlock locker operations in tests (deprecated)
+        source: "locker\\.(Lock|Unlock|Extend)"  # xdlock locker operations in tests
       - path: _test\.go
         linters:
           - errcheck
@@ -235,6 +235,20 @@ linters:
         linters:
           - staticcheck
         text: "SA1029"
+      # xauth test files: common test patterns
+      # Test files have many unchecked error returns for JSON encoding/decoding,
+      # HTTP handlers, client close, cache operations etc. These are acceptable in tests.
+      - path: xauth/.*_test\.go
+        linters:
+          - errcheck
+      - path: xauth/.*_test\.go
+        linters:
+          - gosec
+        text: "G101"  # Potential hardcoded credentials in tests (test data)
+      - path: xauth/.*_test\.go
+        linters:
+          - gosec
+        text: "G402"  # TLS InsecureSkipVerify in tests (test configuration)
 
 issues:
   max-issues-per-linter: 0

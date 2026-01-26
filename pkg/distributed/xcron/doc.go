@@ -40,6 +40,26 @@
 //   - WithRetry: 重试策略
 //   - WithImmediate: 注册后立即执行一次
 //
+// # 任务实现要求
+//
+// 任务函数必须正确响应 context 取消信号。当锁续期失败或任务超时时，
+// xcron 会通过取消 context 来中止任务。如果任务不检查 ctx.Done()，
+// 可能在锁已失效后继续执行，导致并发问题。
+//
+// 推荐模式：
+//
+//	func myTask(ctx context.Context) error {
+//	    for i := 0; i < 100; i++ {
+//	        select {
+//	        case <-ctx.Done():
+//	            return ctx.Err() // 响应取消
+//	        default:
+//	        }
+//	        // 执行工作...
+//	    }
+//	    return nil
+//	}
+//
 // # 分布式锁
 //
 // xcron 使用 LockHandle 模式，每次 TryLock 成功返回封装唯一 token 的 handle，

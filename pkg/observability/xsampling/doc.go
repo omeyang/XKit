@@ -50,9 +50,9 @@
 //
 // # 性能
 //
-// 采样决策经过优化，热路径零内存分配。使用 math/rand/v2（Go 1.22+）
-// 作为随机数源，单次采样决策耗时约 10ns，相比 crypto/rand 提升约 10 倍。
-// 对于采样场景，统计随机性完全足够，无需密码学安全随机数。
+// 采样决策经过优化，热路径零内存分配。使用 crypto/rand 作为随机数源，
+// 确保安全随机性，单次采样决策耗时约 50-100ns。对于采样场景（通常每请求
+// 调用一次），此性能开销完全可接受。
 //
 // 基准结果（示例环境：linux/amd64, Xeon E5-2630 v4, `go test -bench=. -benchmem ./pkg/xsampling`）：
 //   - BenchmarkKeyBasedSampler: ~29.7 ns/op, 0 allocs/op

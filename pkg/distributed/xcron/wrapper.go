@@ -142,7 +142,10 @@ func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) error {
 	if rh != nil && rh.lockHandle != nil {
 		defer func() {
 			w.stopRenew(rh)
-			if err := rh.lockHandle.Unlock(ctx); err != nil {
+			// 使用独立的 context 进行 Unlock，避免任务取消导致释放失败
+			unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer unlockCancel()
+			if err := rh.lockHandle.Unlock(unlockCtx); err != nil {
 				w.logWarn(ctx, "failed to release lock",
 					"job", w.opts.name, "error", err)
 			}

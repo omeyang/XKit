@@ -15,6 +15,8 @@ type WorkerPool[T any] struct {
 	wg        sync.WaitGroup
 	stopOnce  sync.Once
 	stopped   chan struct{}
+	started   bool       // 是否已启动
+	startMu   sync.Mutex // 保护 started 字段
 }
 
 // NewWorkerPool 创建 worker pool。
@@ -22,8 +24,13 @@ type WorkerPool[T any] struct {
 // 参数：
 //   - workers: worker 数量，最小为 1
 //   - queueSize: 任务队列大小，最小为 1（默认 100）
-//   - handler: 任务处理函数
+//   - handler: 任务处理函数，不能为 nil
+//
+// 如果 handler 为 nil，会 panic。
 func NewWorkerPool[T any](workers, queueSize int, handler func(T)) *WorkerPool[T] {
+	if handler == nil {
+		panic("xpool: handler cannot be nil")
+	}
 	if workers < 1 {
 		workers = 1
 	}
@@ -40,7 +47,16 @@ func NewWorkerPool[T any](workers, queueSize int, handler func(T)) *WorkerPool[T
 }
 
 // Start 启动 worker pool。
+// 该方法是幂等的：多次调用只会启动一次 worker。
 func (p *WorkerPool[T]) Start() {
+	p.startMu.Lock()
+	defer p.startMu.Unlock()
+
+	if p.started {
+		return // 幂等：已启动则直接返回
+	}
+	p.started = true
+
 	for i := 0; i < p.workers; i++ {
 		p.wg.Add(1)
 		go p.worker()

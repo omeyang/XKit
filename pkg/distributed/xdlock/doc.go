@@ -34,7 +34,7 @@
 //	| 特性 | etcd | Redis (redsync) |
 //	|------|------|-----------------|
 //	| 续期方式 | 自动（Session） | 手动（Extend） |
-//	| Extend() | 返回 ErrExtendNotSupported | 正常工作 |
+//	| Extend() | 检查 Session 状态（返回 nil 或 ErrSessionExpired） | 延长锁 TTL |
 //	| 多节点支持 | 原生（etcd 集群） | Redlock 算法 |
 //	| 锁释放 | 立即生效 | 立即生效 |
 //

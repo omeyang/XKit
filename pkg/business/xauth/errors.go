@@ -1,0 +1,270 @@
+package xauth
+
+import (
+	"errors"
+	"fmt"
+)
+
+// =============================================================================
+// 配置错误
+// =============================================================================
+
+var (
+	// ErrNilConfig 表示传入的配置为 nil。
+	ErrNilConfig = errors.New("xauth: nil config")
+
+	// ErrMissingHost 表示认证服务地址未配置。
+	ErrMissingHost = errors.New("xauth: missing host")
+
+	// ErrInvalidTimeout 表示超时配置无效。
+	ErrInvalidTimeout = errors.New("xauth: invalid timeout")
+
+	// ErrInvalidRefreshThreshold 表示 Token 刷新阈值无效。
+	ErrInvalidRefreshThreshold = errors.New("xauth: invalid refresh threshold")
+)
+
+// =============================================================================
+// 认证错误
+// =============================================================================
+
+var (
+	// ErrMissingTenantID 表示租户 ID 未提供。
+	ErrMissingTenantID = errors.New("xauth: missing tenant_id")
+
+	// ErrMissingToken 表示 Token 未提供。
+	ErrMissingToken = errors.New("xauth: missing token")
+
+	// ErrMissingAPIKey 表示 API Key 未配置。
+	ErrMissingAPIKey = errors.New("xauth: missing api_key")
+
+	// ErrMissingCredentials 表示认证凭据未配置（client_id/client_secret 或 api_key）。
+	ErrMissingCredentials = errors.New("xauth: missing credentials (client_id/client_secret or api_key)")
+)
+
+// =============================================================================
+// Token 错误
+// =============================================================================
+
+var (
+	// ErrTokenNotFound 表示缓存中未找到 Token。
+	ErrTokenNotFound = errors.New("xauth: token not found")
+
+	// ErrTokenExpired 表示 Token 已过期。
+	ErrTokenExpired = errors.New("xauth: token expired")
+
+	// ErrTokenInvalid 表示 Token 无效（验证失败）。
+	ErrTokenInvalid = errors.New("xauth: token invalid")
+
+	// ErrRefreshTokenNotFound 表示 Refresh Token 未找到。
+	ErrRefreshTokenNotFound = errors.New("xauth: refresh token not found")
+)
+
+// =============================================================================
+// 请求错误
+// =============================================================================
+
+var (
+	// ErrRequestFailed 表示 HTTP 请求失败。
+	ErrRequestFailed = errors.New("xauth: request failed")
+
+	// ErrResponseInvalid 表示响应格式无效。
+	ErrResponseInvalid = errors.New("xauth: invalid response")
+
+	// ErrResponseTooLarge 表示响应体超过最大限制。
+	// 默认限制为 10MB，超过此限制的响应会被拒绝而非截断。
+	ErrResponseTooLarge = errors.New("xauth: response body exceeds maximum size limit")
+
+	// ErrUnauthorized 表示认证失败（401）。
+	ErrUnauthorized = errors.New("xauth: unauthorized")
+
+	// ErrForbidden 表示权限不足（403）。
+	ErrForbidden = errors.New("xauth: forbidden")
+
+	// ErrNotFound 表示资源不存在（404）。
+	ErrNotFound = errors.New("xauth: not found")
+
+	// ErrServerError 表示服务端错误（5xx）。
+	ErrServerError = errors.New("xauth: server error")
+)
+
+// =============================================================================
+// 平台信息错误
+// =============================================================================
+
+var (
+	// ErrPlatformIDNotFound 表示平台 ID 未找到。
+	ErrPlatformIDNotFound = errors.New("xauth: platform_id not found")
+
+	// ErrUnclassRegionIDNotFound 表示未归类组 Region ID 未找到。
+	ErrUnclassRegionIDNotFound = errors.New("xauth: unclass_region_id not found")
+)
+
+// =============================================================================
+// 缓存错误
+// =============================================================================
+
+var (
+	// ErrCacheMiss 表示缓存未命中。
+	ErrCacheMiss = errors.New("xauth: cache miss")
+
+	// ErrCacheSetFailed 表示缓存写入失败。
+	ErrCacheSetFailed = errors.New("xauth: cache set failed")
+)
+
+// =============================================================================
+// 客户端状态错误
+// =============================================================================
+
+var (
+	// ErrClientClosed 表示客户端已关闭。
+	ErrClientClosed = errors.New("xauth: client closed")
+)
+
+// =============================================================================
+// 可重试错误包装
+// =============================================================================
+
+// RetryableError 可重试错误接口。
+// 实现此接口的错误会被自动识别为可重试或不可重试。
+type RetryableError interface {
+	error
+	Retryable() bool
+}
+
+// TemporaryError 临时性错误（应该重试）。
+type TemporaryError struct {
+	Err error
+}
+
+// NewTemporaryError 创建临时性错误。
+func NewTemporaryError(err error) *TemporaryError {
+	return &TemporaryError{Err: err}
+}
+
+func (e *TemporaryError) Error() string {
+	if e.Err == nil {
+		return "xauth: temporary error"
+	}
+	return e.Err.Error()
+}
+
+func (e *TemporaryError) Unwrap() error {
+	return e.Err
+}
+
+func (e *TemporaryError) Retryable() bool {
+	return true
+}
+
+// PermanentError 永久性错误（不应重试）。
+type PermanentError struct {
+	Err error
+}
+
+// NewPermanentError 创建永久性错误。
+func NewPermanentError(err error) *PermanentError {
+	return &PermanentError{Err: err}
+}
+
+func (e *PermanentError) Error() string {
+	if e.Err == nil {
+		return "xauth: permanent error"
+	}
+	return e.Err.Error()
+}
+
+func (e *PermanentError) Unwrap() error {
+	return e.Err
+}
+
+func (e *PermanentError) Retryable() bool {
+	return false
+}
+
+// IsRetryable 检查错误是否可重试。
+//
+// 规则：
+//   - nil 错误：不需要重试（视为成功）
+//   - 实现 RetryableError 接口：根据 Retryable() 返回值判断
+//   - ErrServerError：可重试
+//   - ErrRequestFailed：可重试
+//   - 其他错误：默认不可重试
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var re RetryableError
+	if errors.As(err, &re) {
+		return re.Retryable()
+	}
+
+	// 特定错误类型的可重试判断
+	if errors.Is(err, ErrServerError) || errors.Is(err, ErrRequestFailed) {
+		return true
+	}
+
+	// 默认：不可重试
+	return false
+}
+
+// IsPermanent 检查错误是否为永久性错误。
+func IsPermanent(err error) bool {
+	if err == nil {
+		return false
+	}
+	return !IsRetryable(err)
+}
+
+// =============================================================================
+// API 错误包装
+// =============================================================================
+
+// APIError 表示 API 返回的错误。
+type APIError struct {
+	StatusCode int
+	Code       int
+	Message    string
+	Err        error
+}
+
+// NewAPIError 创建 API 错误。
+func NewAPIError(statusCode, code int, message string) *APIError {
+	return &APIError{
+		StatusCode: statusCode,
+		Code:       code,
+		Message:    message,
+	}
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("xauth: api error: status=%d, code=%d, message=%s", e.StatusCode, e.Code, e.Message)
+	}
+	return fmt.Sprintf("xauth: api error: status=%d, code=%d", e.StatusCode, e.Code)
+}
+
+func (e *APIError) Unwrap() error {
+	return e.Err
+}
+
+// Retryable 判断 API 错误是否可重试。
+// 5xx 错误视为可重试，4xx 错误视为不可重试。
+func (e *APIError) Retryable() bool {
+	return e.StatusCode >= 500
+}
+
+// Is 实现 errors.Is 接口。
+func (e *APIError) Is(target error) bool {
+	switch {
+	case e.StatusCode == 401:
+		return errors.Is(target, ErrUnauthorized)
+	case e.StatusCode == 403:
+		return errors.Is(target, ErrForbidden)
+	case e.StatusCode == 404:
+		return errors.Is(target, ErrNotFound)
+	case e.StatusCode >= 500:
+		return errors.Is(target, ErrServerError)
+	}
+	return false
+}

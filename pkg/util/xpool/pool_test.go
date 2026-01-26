@@ -166,3 +166,34 @@ func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	// 由于优雅关闭，所有任务应该都被处理了
 	assert.Equal(t, int32(10), processed.Load())
 }
+
+func TestWorkerPool_StartIdempotent(t *testing.T) {
+	var processed atomic.Int32
+
+	pool := NewWorkerPool(2, 10, func(_ int) {
+		processed.Add(1)
+	})
+
+	// 多次调用 Start
+	pool.Start()
+	pool.Start()
+	pool.Start()
+
+	// 提交任务
+	for i := 0; i < 5; i++ {
+		pool.Submit(i)
+	}
+
+	// 等待任务处理
+	time.Sleep(100 * time.Millisecond)
+	pool.Stop()
+
+	// 应该只有 2 个 worker（不是 6 个），所有任务都被处理
+	assert.Equal(t, int32(5), processed.Load())
+}
+
+func TestWorkerPool_NilHandler(t *testing.T) {
+	assert.Panics(t, func() {
+		NewWorkerPool[int](2, 10, nil)
+	})
+}

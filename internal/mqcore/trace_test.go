@@ -15,8 +15,9 @@ import (
 // =============================================================================
 
 func TestMergeTraceContext_NilBase(t *testing.T) {
+	var nilCtx context.Context
 	extracted := context.Background()
-	result := MergeTraceContext(nil, extracted)
+	result := MergeTraceContext(nilCtx, extracted)
 	assert.Equal(t, extracted, result)
 }
 
@@ -27,7 +28,8 @@ func TestMergeTraceContext_NilExtracted(t *testing.T) {
 }
 
 func TestMergeTraceContext_BothNil(t *testing.T) {
-	result := MergeTraceContext(nil, nil)
+	var nilCtx context.Context
+	result := MergeTraceContext(nilCtx, nilCtx)
 	assert.Nil(t, result)
 }
 

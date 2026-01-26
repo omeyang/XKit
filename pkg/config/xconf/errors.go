@@ -7,9 +7,6 @@ var (
 	// ErrEmptyPath 表示配置文件路径为空。
 	ErrEmptyPath = errors.New("xconf: empty config path")
 
-	// ErrEmptyData 表示配置数据为空。
-	ErrEmptyData = errors.New("xconf: empty config data")
-
 	// ErrUnsupportedFormat 表示不支持的配置格式。
 	ErrUnsupportedFormat = errors.New("xconf: unsupported config format")
 

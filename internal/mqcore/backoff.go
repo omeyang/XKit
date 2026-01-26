@@ -50,44 +50,6 @@ func DefaultBackoff() xretry.BackoffPolicy {
 	return xretry.NewExponentialBackoff()
 }
 
-// =============================================================================
-// 向后兼容的 BackoffConfig 类型
-// =============================================================================
-
-// BackoffConfig 退避配置。
-//
-// Deprecated: 请直接使用 xretry.BackoffPolicy 接口。
-// 推荐使用 xretry.NewExponentialBackoff() 创建退避策略。
-//
-// 此类型保留用于向后兼容。
-type BackoffConfig struct {
-	InitialDelay time.Duration // 初始延迟，默认 100ms
-	MaxDelay     time.Duration // 最大延迟，默认 30s
-	Multiplier   float64       // 退避乘数，默认 2.0
-}
-
-// DefaultBackoffConfig 返回默认退避配置。
-//
-// Deprecated: 请使用 xretry.NewExponentialBackoff() 替代。
-func DefaultBackoffConfig() BackoffConfig {
-	return BackoffConfig{
-		InitialDelay: 100 * time.Millisecond,
-		MaxDelay:     30 * time.Second,
-		Multiplier:   2.0,
-	}
-}
-
-// ToBackoffPolicy 将 BackoffConfig 转换为 BackoffPolicy。
-// 内部使用，将旧配置转换为新的策略接口。
-func (c BackoffConfig) ToBackoffPolicy() xretry.BackoffPolicy {
-	return xretry.NewExponentialBackoff(
-		xretry.WithInitialDelay(c.InitialDelay),
-		xretry.WithMaxDelay(c.MaxDelay),
-		xretry.WithMultiplier(c.Multiplier),
-		xretry.WithJitter(0), // 旧配置不支持 jitter，设为 0 保持兼容
-	)
-}
-
 // RunConsumeLoop 运行消费循环，使用退避策略处理错误。
 //
 // 循环逻辑：
@@ -137,6 +99,10 @@ func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoo
 			} else {
 				// 成功消费，重置退避
 				attempt = 0
+				// 如果退避策略支持重置，调用 Reset()
+				if resettable, ok := options.Backoff.(xretry.ResettableBackoff); ok {
+					resettable.Reset()
+				}
 			}
 		}
 	}

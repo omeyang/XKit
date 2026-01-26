@@ -159,7 +159,7 @@ func (h *redisLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
 	return nil
 }
 
-// Key 返回锁的 key（不含前缀）。
+// Key 返回锁的完整 key（含前缀）。
 func (h *redisLockHandle) Key() string {
 	return h.key
 }

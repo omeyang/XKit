@@ -39,9 +39,6 @@ var (
 	// ErrEmptyRows 表示待插入数据为空。
 	ErrEmptyRows = errors.New("xclickhouse: empty rows")
 
-	// ErrInvalidBatchSize 表示批次大小无效。
-	ErrInvalidBatchSize = errors.New("xclickhouse: invalid batch size, must be >= 1")
-
 	// ErrQueryContainsFormat 表示查询包含 FORMAT 子句。
 	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
 	//

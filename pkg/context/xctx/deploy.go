@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/omeyang/xkit/internal/deploy"
-	"github.com/omeyang/xkit/pkg/context/xenv"
 )
 
 // =============================================================================
@@ -69,6 +68,12 @@ func WithDeploymentType(ctx context.Context, dt DeploymentType) (context.Context
 //
 // 不进行验证，仅返回原始值。适用于只需读取值而不关心验证的场景。
 // 如需验证部署类型有效性，请使用 GetDeploymentType。
+//
+// 命名说明：本函数命名为 DeploymentTypeRaw 而非 DeploymentType，原因如下：
+//   - 包内其他字段使用 Xxx(ctx) 命名模式（如 TenantID, TraceID），但这些字段无需验证
+//   - DeploymentType 需要区分"原始读取"和"验证读取"两种语义
+//   - DeploymentType 与类型别名 DeploymentType 重名，使用 Raw 后缀避免混淆
+//   - Raw 后缀明确表示"返回未验证的原始值"，与 GetDeploymentType 的验证语义形成对比
 func DeploymentTypeRaw(ctx context.Context) DeploymentType {
 	if ctx == nil {
 		return ""
@@ -157,39 +162,3 @@ func ParseDeploymentType(s string) (DeploymentType, error) {
 	return dt, nil
 }
 
-// =============================================================================
-// 类型转换（向后兼容）
-// =============================================================================
-//
-// 由于 xctx.DeploymentType 和 xenv.DeployType 现在都是 deploy.Type 的类型别名，
-// 它们实际上是同一类型，可以直接互换使用，无需转换。
-//
-// 以下函数保留用于向后兼容，但实际上只是简单返回传入的值。
-
-// ToEnvDeployType 将 xctx.DeploymentType 转换为 xenv.DeployType
-//
-// Deprecated: 由于两者现在是同一类型的别名，可以直接使用，无需转换。
-// 此函数保留用于向后兼容。
-//
-// 示例：
-//
-//	dt, _ := xctx.GetDeploymentType(ctx)
-//	if dt == xenv.Type() {  // 直接比较即可
-//	    // 请求的部署类型与全局配置一致
-//	}
-func ToEnvDeployType(d DeploymentType) xenv.DeployType {
-	return d
-}
-
-// FromEnvDeployType 从 xenv.DeployType 创建 xctx.DeploymentType
-//
-// Deprecated: 由于两者现在是同一类型的别名，可以直接使用，无需转换。
-// 此函数保留用于向后兼容。
-//
-// 示例：
-//
-//	dt := xenv.Type()           // 直接使用即可
-//	ctx, _ := xctx.WithDeploymentType(ctx, dt)
-func FromEnvDeployType(dt xenv.DeployType) DeploymentType {
-	return dt
-}

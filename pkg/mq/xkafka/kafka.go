@@ -74,7 +74,9 @@ type ConsumerStats struct {
 	MessagesConsumed int64
 	// BytesConsumed 已消费的字节数。
 	BytesConsumed int64
-	// Errors 消费失败的次数。
+	// Errors 未能成功处理的错误次数。
+	// 注意：对于 ConsumerWithDLQ，成功重试或发送到 DLQ 的消息不计入此统计。
+	// 要追踪 handler 失败次数，请使用 DLQStats。
 	Errors int64
 	// Lag 消费延迟（与最新偏移量的差值）。
 	Lag int64

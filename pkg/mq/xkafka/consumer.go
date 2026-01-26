@@ -17,8 +17,9 @@ type consumerWrapper struct {
 	consumer *kafka.Consumer
 	options  *consumerOptions
 
-	// mu 保护对底层 consumer 的并发访问
-	// confluent-kafka-go 的 Consumer 不是线程安全的
+	// mu 保护 Assignment、Committed、QueryWatermarkOffsets、Close 等管理操作的并发访问。
+	// 注意：Consumer.ReadMessage() 本身是线程安全的，不需要加锁。
+	// 锁仅用于确保管理操作（如健康检查、统计计算、关闭）的原子性。
 	mu sync.Mutex
 
 	// 统计信息

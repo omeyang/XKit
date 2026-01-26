@@ -51,7 +51,7 @@ func FuzzDLQPolicy_Validate(f *testing.F) {
 		err := policy.Validate()
 
 		// 验证不变式
-		switch { //nolint:gocritic // if-else chain is clearer here for error checking
+		switch {
 		case dlqTopic == "":
 			if !errors.Is(err, ErrDLQTopicRequired) {
 				t.Errorf("expected ErrDLQTopicRequired for empty dlqTopic, got: %v", err)

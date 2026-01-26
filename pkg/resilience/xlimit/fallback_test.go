@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试文件中的错误处理简化
 package xlimit
 
 import (
@@ -50,8 +49,11 @@ func (m *mockFailingLimiter) Query(_ context.Context, _ Key) (*QuotaInfo, error)
 func TestFallbackLimiter_NoFallback(t *testing.T) {
 	// 当分布式限流正常工作时，不应该触发降级
 	distributed := &mockFailingLimiter{failOnAllow: false}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -76,8 +78,11 @@ func TestFallbackLimiter_FallbackToLocal(t *testing.T) {
 		failOnAllow: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -104,8 +109,11 @@ func TestFallbackLimiter_FallbackOpen(t *testing.T) {
 		failOnAllow: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 1, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 1, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackOpen}})
 
@@ -113,7 +121,7 @@ func TestFallbackLimiter_FallbackOpen(t *testing.T) {
 	key := Key{Tenant: "open-tenant"}
 
 	// 即使本地限流器配额耗尽，fail-open 也应该放行
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		result, err := fallback.Allow(ctx, key)
 		if err != nil {
 			t.Fatalf("expected no error on fallback-open, got %v", err)
@@ -133,8 +141,11 @@ func TestFallbackLimiter_FallbackClose(t *testing.T) {
 		failOnAllow: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 100, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 100, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackClose}})
 
@@ -163,15 +174,18 @@ func TestFallbackLimiter_NonRedisError(t *testing.T) {
 		failOnAllow: true,
 		failErr:     nonRedisErr,
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
 	ctx := context.Background()
 	key := Key{Tenant: "error-tenant"}
 
-	_, err := fallback.Allow(ctx, key)
+	_, err = fallback.Allow(ctx, key)
 	if err == nil {
 		t.Fatal("expected error to propagate")
 	}
@@ -185,8 +199,11 @@ func TestFallbackLimiter_AllowN(t *testing.T) {
 		failOnAllow: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -205,8 +222,11 @@ func TestFallbackLimiter_AllowN(t *testing.T) {
 
 func TestFallbackLimiter_Reset(t *testing.T) {
 	distributed := &mockFailingLimiter{failOnReset: false}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -214,7 +234,7 @@ func TestFallbackLimiter_Reset(t *testing.T) {
 	key := Key{Tenant: "reset-tenant"}
 
 	// 重置应该同时重置分布式和本地
-	err := fallback.Reset(ctx, key)
+	err = fallback.Reset(ctx, key)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -226,8 +246,11 @@ func TestFallbackLimiter_ResetWithRedisError(t *testing.T) {
 		failOnReset: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -235,7 +258,7 @@ func TestFallbackLimiter_ResetWithRedisError(t *testing.T) {
 	key := Key{Tenant: "reset-fallback-tenant"}
 
 	// Redis 错误应该被忽略
-	err := fallback.Reset(ctx, key)
+	err = fallback.Reset(ctx, key)
 	if err != nil {
 		t.Fatalf("expected Redis error to be ignored, got %v", err)
 	}
@@ -243,11 +266,14 @@ func TestFallbackLimiter_ResetWithRedisError(t *testing.T) {
 
 func TestFallbackLimiter_Close(t *testing.T) {
 	distributed := &mockFailingLimiter{}
-	local, _ := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
-	err := fallback.Close()
+	err = fallback.Close()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -289,8 +315,11 @@ func TestFallbackLimiter_DefaultStrategy(t *testing.T) {
 		failOnAllow: true,
 		failErr:     syscall.ECONNREFUSED, // 使用真实的连接错误类型
 	}
-	local, _ := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
-	defer local.Close()
+	local, err := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
+	if err != nil {
+		t.Fatalf("NewLocal failed: %v", err)
+	}
+	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackStrategy("unknown")}})
 

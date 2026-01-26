@@ -1,4 +1,3 @@
-//nolint:errcheck // 测试代码中 defer 调用忽略 Shutdown 错误
 package xlimit
 
 import (
@@ -24,7 +23,7 @@ func TestNewMetrics(t *testing.T) {
 	t.Run("valid meter provider creates metrics", func(t *testing.T) {
 		reader := metric.NewManualReader()
 		provider := metric.NewMeterProvider(metric.WithReader(reader))
-		defer func() { _ = provider.Shutdown(context.Background()) }()
+		defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 		m, err := NewMetrics(provider)
 		if err != nil {
@@ -39,7 +38,7 @@ func TestNewMetrics(t *testing.T) {
 func TestMetrics_RecordAllow(t *testing.T) {
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
+	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
 	if err != nil {
@@ -96,7 +95,7 @@ func TestMetrics_RecordAllow(t *testing.T) {
 func TestMetrics_RecordFallback(t *testing.T) {
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
+	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
 	if err != nil {
@@ -140,7 +139,7 @@ func TestMetrics_NilSafe(t *testing.T) {
 func TestMetrics_CanceledContext(t *testing.T) {
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
+	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
 	if err != nil {

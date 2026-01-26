@@ -248,6 +248,10 @@ func injectHTTPTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace
 // InjectToRequest 将租户信息注入 HTTP 请求。
 // 从 context 提取租户信息并设置到请求 Header，用于跨服务调用时传播。
 // 同时也会注入服务级的平台信息（从 xplatform 获取）。
+//
+// 如果 req 为 nil 或 req.Header 为 nil，函数静默返回不执行任何操作。
+// 这是防御性设计：http.NewRequest 保证 Header 非空，但某些测试场景或
+// 手动构造的 Request 可能出现 nil Header，此时静默跳过比 panic 更安全。
 func InjectToRequest(ctx context.Context, req *http.Request) {
 	if req == nil || req.Header == nil {
 		return

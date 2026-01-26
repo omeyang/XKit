@@ -122,7 +122,8 @@ func TestOTelObserver_Start_NilContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// nil context 应该被安全处理
-	newCtx, span := obs.Start(nil, SpanOptions{
+	var nilCtx context.Context
+	newCtx, span := obs.Start(nilCtx, SpanOptions{
 		Component: "test",
 		Operation: "nil-ctx",
 	})

@@ -109,14 +109,12 @@ func (c *dlqConsumer) ConsumeLoop(ctx context.Context, handler MessageHandler) e
 }
 
 // ConsumeLoopWithPolicy 启动带退避策略的消费循环。
-// 使用 xretry.BackoffPolicy 接口，支持更灵活的退避策略配置。
+// 使用 xretry.BackoffPolicy 接口，支持灵活的退避策略配置。
 //
 // 参数：
 //   - ctx: 上下文，取消时退出循环
 //   - handler: 消息处理函数
 //   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
-//
-// 推荐使用此方法替代 ConsumeLoopWithBackoff。
 func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
 	consume := func(ctx context.Context) error {
 		return c.ConsumeWithRetry(ctx, handler)
@@ -134,14 +132,6 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 	}
 
 	return mqcore.RunConsumeLoop(ctx, consume, opts...)
-}
-
-// ConsumeLoopWithBackoff 启动带退避的消费循环。
-//
-// Deprecated: 请使用 ConsumeLoopWithPolicy 替代，它支持更灵活的 xretry.BackoffPolicy 接口。
-// 此方法保留用于向后兼容。
-func (c *dlqConsumer) ConsumeLoopWithBackoff(ctx context.Context, handler MessageHandler, config BackoffConfig) error {
-	return c.ConsumeLoopWithPolicy(ctx, handler, config.ToBackoffPolicy())
 }
 
 // processMessage 处理单条消息
@@ -211,6 +201,9 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 
 // SendToDLQ 手动发送消息到 DLQ
 func (c *dlqConsumer) SendToDLQ(ctx context.Context, msg *kafka.Message, reason error) error {
+	if msg == nil {
+		return ErrNilMessage
+	}
 	retryCount := getRetryCount(msg)
 	return c.sendToDLQInternal(ctx, msg, reason, retryCount)
 }

@@ -161,7 +161,7 @@ func cmdToggle(_ context.Context, socketPath string, pidFlag int, nameFlag strin
 		// 优先级 3: 尝试通过 Socket 文件发现进程
 		discoveredPID, err := findProcessBySocket(socketPath)
 		if err != nil {
-			// 不再自动回退到 PID 1，要求用户明确指定
+			// 要求用户明确指定目标进程
 			hint := "请使用 --pid 或 --name 参数指定目标进程"
 			if isContainerEnvironment() {
 				hint = "在容器环境中，请使用 --pid 1（如主进程是目标）、--name <进程名> 或指定具体 PID"

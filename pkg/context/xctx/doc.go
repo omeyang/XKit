@@ -24,17 +24,6 @@
 //   - LOCAL : 本地/私有化部署
 //   - SAAS  : SaaS 云部署
 //
-// # 快速开始
-//
-//	// 注入身份和追踪信息
-//	ctx, _ := xctx.WithPlatformID(ctx, "platform-001")
-//	ctx, _ = xctx.WithTenantID(ctx, "tenant-002")
-//	ctx, _ = xctx.EnsureTrace(ctx) // 自动生成 TraceID、SpanID、RequestID
-//
-//	// 提取日志属性
-//	attrs, _ := xctx.LogAttrs(ctx)
-//	slog.LogAttrs(ctx, slog.LevelInfo, "request started", attrs...)
-//
 // # 命名约定
 //
 //	WithXxx(ctx, value)    - 注入：将 value 写入 context
@@ -67,18 +56,6 @@
 //
 // # 推荐的校验位置
 //
-// 建议在网关/入口层（而非 xctx 包内）进行格式校验：
-//
-//	func ValidateTraceID(traceID string) error {
-//	    // W3C Trace Context 规范：32位小写十六进制
-//	    if len(traceID) != 32 {
-//	        return fmt.Errorf("invalid trace_id length: %d", len(traceID))
-//	    }
-//	    if _, err := hex.DecodeString(traceID); err != nil {
-//	        return fmt.Errorf("invalid trace_id format: %w", err)
-//	    }
-//	    return nil
-//	}
-//
+// 建议在网关/入口层（而非 xctx 包内）进行格式校验。
 // 这样可以在入口处拒绝非法请求，同时允许内部服务在必要时传播非标准值。
 package xctx

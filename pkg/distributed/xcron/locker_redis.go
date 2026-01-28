@@ -53,7 +53,7 @@ var (
 type RedisLocker struct {
 	client   redis.UniversalClient
 	prefix   string // 锁 key 前缀
-	identity string // 当前实例标识（用于日志，不再用于锁值）
+	identity string // 当前实例标识（仅用于日志）
 }
 
 // redisLockHandle 表示一次成功的 Redis 锁获取

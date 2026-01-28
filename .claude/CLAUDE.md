@@ -57,7 +57,10 @@ task kube-down         # 停止所有服务
 | Distributed | `xdlock`, `xcron` | 分布式锁、定时任务 |
 | MQ | `xkafka`, `xpulsar` | 消息队列客户端 |
 | Config | `xconf` | 配置管理 |
-| Util | `xfile`, `xpool` | 文件工具、Worker Pool |
+| Business | `xauth` | 认证服务客户端 |
+| Debug | `xdbg` | 运行时调试服务 |
+| Lifecycle | `xrun` | 进程生命周期管理 |
+| Util | `xfile`, `xjson`, `xkeylock`, `xlru`, `xnet`, `xpool`, `xproc`, `xsys`, `xutil` | 文件、JSON、锁、缓存、网络、协程池、进程、系统、泛型工具 |
 
 **关键模式：**
 - 每个包都有 `doc.go` 提供包文档

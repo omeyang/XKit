@@ -12,7 +12,7 @@ import (
 // Retryer 组合了 RetryPolicy（重试策略）和 BackoffPolicy（退避策略），
 // 提供统一的重试执行能力。
 //
-// 底层使用 avast/retry-go/v5 实现，同时保持与原有接口的兼容性。
+// 底层使用 avast/retry-go/v5 实现。
 // 如需使用 retry-go 的完整功能，可以通过 Retrier() 方法获取底层实例。
 type Retryer struct {
 	retryPolicy   RetryPolicy
@@ -144,7 +144,7 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 		}))
 	}
 
-	// 只返回最后一个错误，与原有行为保持一致
+	// 只返回最后一个错误，简化调用方的错误处理
 	opts = append(opts, LastErrorOnly(true))
 
 	return opts
@@ -156,14 +156,6 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 使用 retry-go 的完整功能。
 //
 // 注意：每次调用都会创建新的 Retrier 实例。
-//
-// 示例:
-//
-//	r := xretry.NewRetryer()
-//	// 使用底层 Retrier 直接执行
-//	err := r.Retrier(ctx).Do(func() error {
-//	    return doSomething()
-//	})
 func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 	return retry.New(r.buildOptions(ctx)...)
 }

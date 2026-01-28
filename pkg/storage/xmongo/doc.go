@@ -17,19 +17,4 @@
 //   - FindPage()：分页查询
 //   - BulkWrite()：批量写入（支持 context 取消）
 //
-// # 快速开始
-//
-//	m, err := xmongo.New(client,
-//	    xmongo.WithSlowQueryThreshold(100*time.Millisecond),
-//	)
-//	defer m.Close(context.Background())
-//
-//	// 直接使用底层客户端
-//	coll := m.Client().Database("mydb").Collection("users")
-//	_, err = coll.InsertOne(ctx, bson.M{"name": "test"})
-//
-//	// 分页查询
-//	result, _ := m.FindPage(ctx, coll, bson.M{"status": "active"}, xmongo.PageOptions{
-//	    Page: 1, PageSize: 10,
-//	})
 package xmongo

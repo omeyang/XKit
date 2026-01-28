@@ -12,25 +12,6 @@
 //   - LOCAL: 本地/私有化部署
 //   - SAAS: SaaS 云部署
 //
-// # 快速开始
-//
-// 服务启动时初始化：
-//
-//	func main() {
-//	    // 从环境变量 DEPLOYMENT_TYPE 初始化
-//	    if err := xenv.Init(); err != nil {
-//	        log.Fatal(err)
-//	    }
-//
-//	    // 或者失败时 panic
-//	    xenv.MustInit()
-//
-//	    // 现在可以使用全局函数
-//	    fmt.Println("Deploy Type:", xenv.Type())
-//	    fmt.Println("Is Local:", xenv.IsLocal())
-//	    fmt.Println("Is SaaS:", xenv.IsSaaS())
-//	}
-//
 // # 环境变量
 //
 // xenv 从以下环境变量读取配置：

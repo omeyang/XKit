@@ -6,16 +6,6 @@
 // 业务代码只依赖接口；具体实现可替换。
 // 默认实现基于 OpenTelemetry，兼容主流可观测栈。
 //
-// # 使用示例
-//
-//	obs, _ := xmetrics.NewOTelObserver()
-//	ctx, span := xmetrics.Start(ctx, obs, xmetrics.SpanOptions{
-//		Component: "xmongo",
-//		Operation: "find_page",
-//		Kind:      xmetrics.KindClient,
-//	})
-//	defer span.End(xmetrics.Result{Err: err})
-//
 // # 指标命名
 //
 // 统一指标：

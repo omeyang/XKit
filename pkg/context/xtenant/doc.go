@@ -79,22 +79,6 @@
 //
 //   - 默认行为：仅传播上游已有的追踪字段，不自动生成
 //
-// 使用示例：
-//
-//	// 网关服务：自动生成追踪信息
-//	xtenant.HTTPMiddlewareWithOptions(
-//	    xtenant.WithEnsureTrace(),
-//	)
-//
-//	// 下游服务：只传播追踪信息（默认行为）
-//	xtenant.HTTPMiddleware()
-//
-//	// 要求租户信息
-//	xtenant.HTTPMiddlewareWithOptions(
-//	    xtenant.WithRequireTenantID(),
-//	    xtenant.WithEnsureTrace(),
-//	)
-//
 // # 线程安全
 //
 // 所有导出函数都是线程安全的：

@@ -151,8 +151,7 @@ func (b *LinearBackoff) NextDelay(attempt int) time.Duration {
 		attempt = 1
 	}
 
-	// 安全溢出检测：通过预计算最大允许的乘数来避免溢出
-	// 这比之前的方法更可靠，因为它在溢出发生前就进行检测
+	// 安全溢出检测：通过预计算最大允许的乘数来避免溢出，在溢出发生前就进行检测
 	//
 	// 原理：如果 increment * (attempt-1) > maxDelay - initialDelay，
 	// 则结果必定超过 maxDelay，应直接返回 maxDelay。

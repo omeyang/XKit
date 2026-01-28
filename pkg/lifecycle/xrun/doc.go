@@ -13,64 +13,6 @@
 // 基于 context 的协调：当任一服务返回错误或收到终止信号时，
 // context 会被取消，所有服务应该监听 ctx.Done() 并优雅退出。
 //
-// # 快速开始
-//
-// 最简单的用法：
-//
-//	err := xrun.Run(context.Background(),
-//	    func(ctx context.Context) error {
-//	        server := &http.Server{Addr: ":8080"}
-//	        go func() {
-//	            <-ctx.Done()
-//	            server.Shutdown(context.Background())
-//	        }()
-//	        return server.ListenAndServe()
-//	    },
-//	)
-//
-// 使用 HTTPServer 辅助函数：
-//
-//	server := &http.Server{Addr: ":8080", Handler: mux}
-//	err := xrun.Run(ctx, xrun.HTTPServer(server, 10*time.Second))
-//
-// 使用 Group 管理多个服务：
-//
-//	g, ctx := xrun.NewGroup(ctx, xrun.WithName("my-service"))
-//
-//	// 添加 HTTP 服务器
-//	g.Go(xrun.HTTPServer(httpServer, 10*time.Second))
-//
-//	// 添加自定义服务
-//	g.Go(func(ctx context.Context) error {
-//	    for {
-//	        select {
-//	        case <-ctx.Done():
-//	            return ctx.Err()
-//	        case msg := <-msgChan:
-//	            process(msg)
-//	        }
-//	    }
-//	})
-//
-//	// 等待所有服务退出
-//	if err := g.Wait(); err != nil {
-//	    log.Fatal(err)
-//	}
-//
-// # Service 接口
-//
-// 实现 Service 接口的服务可以使用 RunServices 统一管理：
-//
-//	type MyService struct{}
-//
-//	func (s *MyService) Run(ctx context.Context) error {
-//	    // 监听 ctx.Done() 以响应关闭
-//	    <-ctx.Done()
-//	    return ctx.Err()
-//	}
-//
-//	err := xrun.RunServices(ctx, &MyService{}, httpServer, grpcServer)
-//
 // # 与 Kubernetes 配合
 //
 // Kubernetes 会在 Pod 终止前发送 SIGTERM 信号。
@@ -89,14 +31,6 @@
 //   - 如果 context.Canceled 来自服务内部（causeCtx 未被取消），不过滤，直接返回
 //   - 当 Group 被取消且有显式 cause 时（如 SignalError），Wait() 返回该 cause
 //   - 当 Group 被取消且无显式 cause 时，Wait() 返回 nil
-//
-// 信号退出示例：
-//
-//	err := xrun.Run(ctx, myService)
-//	var sigErr *xrun.SignalError
-//	if errors.As(err, &sigErr) {
-//	    log.Printf("received signal: %v", sigErr.Signal)
-//	}
 //
 // # 设计决策
 //

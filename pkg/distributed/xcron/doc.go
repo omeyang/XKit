@@ -17,20 +17,6 @@
 //   - 多副本（在线）：使用 RedisLocker，基于 Redis 分布式锁
 //   - 多副本（离线）：使用 K8sLocker，基于 K8S Lease 资源
 //
-// # 快速开始
-//
-//	// 单副本
-//	scheduler := xcron.New()
-//	scheduler.AddFunc("@every 1m", func(ctx context.Context) error {
-//	    return doSomething(ctx)
-//	}, xcron.WithName("my-task"))
-//	scheduler.Start()
-//	defer scheduler.Stop()
-//
-//	// 多副本（Redis 锁）
-//	locker := xcron.NewRedisLocker(redisClient)
-//	scheduler := xcron.New(xcron.WithLocker(locker))
-//
 // # 任务选项
 //
 //   - WithName: 任务名（用作锁 key，必须唯一）
@@ -45,20 +31,6 @@
 // 任务函数必须正确响应 context 取消信号。当锁续期失败或任务超时时，
 // xcron 会通过取消 context 来中止任务。如果任务不检查 ctx.Done()，
 // 可能在锁已失效后继续执行，导致并发问题。
-//
-// 推荐模式：
-//
-//	func myTask(ctx context.Context) error {
-//	    for i := 0; i < 100; i++ {
-//	        select {
-//	        case <-ctx.Done():
-//	            return ctx.Err() // 响应取消
-//	        default:
-//	        }
-//	        // 执行工作...
-//	    }
-//	    return nil
-//	}
 //
 // # 分布式锁
 //

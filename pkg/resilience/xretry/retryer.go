@@ -2,17 +2,38 @@ package xretry
 
 import (
 	"context"
+	"math"
 	"time"
 
 	retry "github.com/avast/retry-go/v5"
 )
+
+// safeIntToUint 将 int 安全转换为 uint。
+// 负数返回 0，正数直接转换。
+// 用于将 MaxAttempts (int) 传递给 retry-go 的 Attempts (uint)。
+func safeIntToUint(n int) uint {
+	if n <= 0 {
+		return 0
+	}
+	return uint(n)
+}
+
+// safeUintToInt 将 uint 安全转换为 int。
+// 超过 MaxInt 的值会被截断到 MaxInt。
+// 用于将 retry-go 的重试次数 (uint) 传递给用户回调 (int)。
+func safeUintToInt(n uint) int {
+	if n > uint(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(n)
+}
 
 // Retryer 重试执行器
 //
 // Retryer 组合了 RetryPolicy（重试策略）和 BackoffPolicy（退避策略），
 // 提供统一的重试执行能力。
 //
-// 底层使用 avast/retry-go/v5 实现，同时保持与原有接口的兼容性。
+// 底层使用 avast/retry-go/v5 实现。
 // 如需使用 retry-go 的完整功能，可以通过 Retrier() 方法获取底层实例。
 type Retryer struct {
 	retryPolicy   RetryPolicy
@@ -106,13 +127,12 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	}
 
 	// 设置重试次数
-	// maxAttempts <= 0 视为无限重试，避免负值转 uint 时溢出
+	// maxAttempts <= 0 视为无限重试
 	maxAttempts := retryPolicy.MaxAttempts()
 	if maxAttempts <= 0 {
 		opts = append(opts, UntilSucceeded())
 	} else {
-		// #nosec G115 -- maxAttempts 已验证为正整数
-		opts = append(opts, Attempts(uint(maxAttempts)))
+		opts = append(opts, Attempts(safeIntToUint(maxAttempts)))
 	}
 
 	// 设置重试条件
@@ -130,21 +150,19 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 
 	// 设置延迟类型（使用 BackoffPolicy）
 	opts = append(opts, DelayType(func(n uint, _ error, _ DelayContext) time.Duration {
-		// #nosec G115 -- n 是重试次数，不会超过 maxAttempts
 		// 注意：retry-go v5 中 DelayType 的 n 从 1 开始，与 BackoffPolicy.NextDelay 一致
-		return backoffPolicy.NextDelay(int(n))
+		return backoffPolicy.NextDelay(safeUintToInt(n))
 	}))
 
 	// 设置重试回调
 	if r.onRetry != nil {
 		opts = append(opts, OnRetry(func(n uint, err error) {
-			// #nosec G115 -- n 是重试次数，不会超过 maxAttempts
 			// 注意：retry-go v5 中 OnRetry 的 n 从 0 开始，需要 +1 转换为 1-based
-			r.onRetry(int(n)+1, err)
+			r.onRetry(safeUintToInt(n)+1, err)
 		}))
 	}
 
-	// 只返回最后一个错误，与原有行为保持一致
+	// 只返回最后一个错误，简化调用方的错误处理
 	opts = append(opts, LastErrorOnly(true))
 
 	return opts
@@ -156,14 +174,6 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 使用 retry-go 的完整功能。
 //
 // 注意：每次调用都会创建新的 Retrier 实例。
-//
-// 示例:
-//
-//	r := xretry.NewRetryer()
-//	// 使用底层 Retrier 直接执行
-//	err := r.Retrier(ctx).Do(func() error {
-//	    return doSomething()
-//	})
 func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 	return retry.New(r.buildOptions(ctx)...)
 }

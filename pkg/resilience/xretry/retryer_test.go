@@ -263,7 +263,7 @@ func TestZeroValueRetryer(t *testing.T) {
 }
 
 // TestBackoffDelayCorrectness 验证 BackoffPolicy.NextDelay 参数正确传递
-// 此测试防止 off-by-one 回归（历史问题：retry-go DelayType 的 n 参数从 1 开始，非 0）
+// 此测试验证退避延迟参数正确传递，防止 off-by-one 回归
 func TestBackoffDelayCorrectness(t *testing.T) {
 	var delayAttempts []int
 

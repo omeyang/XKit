@@ -32,49 +32,15 @@
 //   - Socket 文件发现需要调试服务已启用（Socket 已创建）
 //   - 若服务未启用，需使用 --pid 或 --name 参数指定目标进程
 //
-// # 基本用法
-//
-//	// 创建调试服务
-//	srv, err := xdbg.New(
-//	    xdbg.WithAutoShutdown(5 * time.Minute),
-//	)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//
-//	// 启动服务（在后台监听触发事件）
-//	ctx := context.Background()
-//	if err := srv.Start(ctx); err != nil {
-//	    log.Fatal(err)
-//	}
-//
-//	// 应用退出时关闭
-//	defer srv.Stop()
-//
 // # 自定义命令
 //
-// 可以注册自定义调试命令：
-//
-//	srv.RegisterCommand(&MyCommand{})
+// 可以注册自定义调试命令。
 //
 // # xkit 集成
 //
-// 通过 Option 注入 xkit 组件，启用对应的调试命令：
-//
-//	srv, _ := xdbg.New(
-//	    xdbg.WithBreakerRegistry(breakerRegistry),
-//	    xdbg.WithLimiterRegistry(limiterRegistry),
-//	)
+// 通过 Option 注入 xkit 组件，启用对应的调试命令。
 //
 // # 客户端工具
 //
-// xdbgctl 是配套的客户端工具，支持单命令模式和交互模式：
-//
-//	# 单命令模式
-//	xdbgctl setlog debug
-//	xdbgctl stack
-//	xdbgctl pprof heap
-//
-//	# 交互模式
-//	xdbgctl interactive
+// xdbgctl 是配套的客户端工具，支持单命令模式和交互模式。
 package xdbg

@@ -20,25 +20,5 @@
 //   - CompositePolicy：组合多个策略
 //   - SlowCallRatioPolicy：慢调用熔断
 //
-// # 快速开始
-//
-//	breaker := xbreaker.NewBreaker("my-service",
-//	    xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(5)),
-//	    xbreaker.WithTimeout(30*time.Second),
-//	)
-//
-//	result, err := xbreaker.Execute(ctx, breaker, func() (string, error) {
-//	    return callRemoteService()
-//	})
-//
-//	if xbreaker.IsOpen(err) {
-//	    log.Println("服务熔断中")
-//	}
-//
-// # 与 xretry 组合
-//
-//	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
-//	result, err := xbreaker.ExecuteWithRetry(ctx, combo, operation)
-//
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

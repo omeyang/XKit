@@ -72,11 +72,7 @@
 // 潜在影响：当上游只传递部分字段时（如仅传 TraceID），当前服务会生成新的 SpanID，
 // 这可能导致链路图上出现"伪父子关系"——新生成的 SpanID 与上游的 SpanID 无关联。
 //
-// 如需严格控制自动生成行为，可使用选项禁用：
-//
-//	xtrace.HTTPMiddlewareWithOptions(xtrace.WithAutoGenerate(false))
-//	xtrace.GRPCUnaryServerInterceptorWithOptions(xtrace.WithGRPCAutoGenerate(false))
-//
+// 如需严格控制自动生成行为，可使用选项禁用。
 // 禁用后，缺失的字段将保持为空，不会自动生成。
 //
 // # W3C traceparent 大小写处理
@@ -86,7 +82,7 @@
 // 确保输出符合 W3C 规范，避免被严格实现拒绝。
 //
 // 解析时（ExtractFromHTTPHeader/ExtractFromMetadata）同时接受大写和小写输入，
-// 保持向后兼容性。
+// 确保与不同实现的互操作性。
 //
 // # trace-flags 格式校验
 //

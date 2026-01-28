@@ -14,31 +14,6 @@
 //   - LRU 淘汰：缓存满时自动淘汰最久未访问的条目
 //   - 并发安全：所有操作都是线程安全的
 //
-// # 基本用法
-//
-//	cache, err := xlru.New[string, *UserData](xlru.Config{
-//	    Size: 1000,           // 最大条目数
-//	    TTL:  5 * time.Minute, // 条目过期时间
-//	})
-//	if err != nil {
-//	    return err
-//	}
-//
-//	// 设置值
-//	cache.Set("user:123", userData)
-//
-//	// 获取值（自动检查过期）
-//	data, ok := cache.Get("user:123")
-//	if !ok {
-//	    // 缓存 miss 或已过期
-//	}
-//
-//	// 删除
-//	cache.Delete("user:123")
-//
-//	// 清空
-//	cache.Clear()
-//
 // # 配置选项
 //
 // Config 结构体提供必需的配置：

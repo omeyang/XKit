@@ -27,19 +27,7 @@
 //
 // 方式一：使用 Retryer（推荐用于需要接口抽象的场景）
 //
-//	retryer := xretry.NewRetryer(
-//	    xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
-//	    xretry.WithBackoffPolicy(xretry.NewExponentialBackoff()),
-//	)
-//	err := retryer.Do(ctx, func(ctx context.Context) error {
-//	    return doSomething()
-//	})
-//
 // 方式二：直接使用 retry-go 风格（推荐用于简单场景）
-//
-//	err := xretry.Do(ctx, func() error {
-//	    return doSomething()
-//	}, xretry.Attempts(3), xretry.Delay(100*time.Millisecond))
 //
 // # 错误分类
 //

@@ -189,10 +189,9 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 }
 
 // defaultTLSConfig 返回默认 TLS 配置。
-// 默认跳过证书验证，与 gobase/xdrauth 原实现保持向后兼容。
-// 生产环境建议通过 Config.TLS 配置安全的 TLS 选项。
+// 默认跳过证书验证，生产环境建议通过 Config.TLS 配置安全的 TLS 选项。
 func defaultTLSConfig() *tls.Config {
-	//nolint:gosec // G402: 保持与原实现向后兼容，生产环境应配置 TLS
+	//nolint:gosec // G402: 默认跳过证书验证以简化开发环境配置，生产环境应配置 TLS
 	return &tls.Config{
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS12,

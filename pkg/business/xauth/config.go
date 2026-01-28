@@ -131,7 +131,7 @@ type Config struct {
 	PlatformDataCacheTTL time.Duration
 
 	// TLS TLS 配置。
-	// 为 nil 时使用默认配置（跳过证书验证，与 gobase/xdrauth 保持向后兼容）。
+	// 为 nil 时使用默认配置（跳过证书验证）。
 	// 生产环境强烈建议显式配置 TLS 选项。
 	TLS *TLSConfig
 }
@@ -191,7 +191,7 @@ func (c *Config) ApplyDefaults() {
 		c.ClientID = getDefaultClientID()
 	}
 
-	// ClientSecret 默认与 ClientID 相同（遵循原实现）
+	// ClientSecret 默认与 ClientID 相同
 	if c.ClientSecret == "" {
 		c.ClientSecret = c.ClientID
 	}

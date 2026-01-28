@@ -17,21 +17,6 @@
 //   - QueryPage()：分页查询（统计为 2 次查询）
 //   - BatchInsert()：批量插入
 //
-// # 快速开始
-//
-//	ch, err := xclickhouse.New(conn,
-//	    xclickhouse.WithSlowQueryThreshold(100*time.Millisecond),
-//	)
-//	defer ch.Close()
-//
-//	// 直接使用底层连接
-//	rows, err := ch.Conn().Query(ctx, "SELECT * FROM users")
-//
-//	// 分页查询
-//	result, _ := ch.QueryPage(ctx, "SELECT id, name FROM users", xclickhouse.PageOptions{
-//	    Page: 1, PageSize: 10,
-//	})
-//
 // # 已知限制
 //
 // ## FORMAT/SETTINGS 检测

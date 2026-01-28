@@ -63,7 +63,7 @@ type Options struct {
 	// EnableAutoRetryOn401 是否启用 401 自动重试。
 	// 启用后，Request 方法遇到 401 错误时会自动清除 Token 缓存并重试一次。
 	// 这有助于处理服务端吊销 Token 的场景。
-	// 默认不启用（保持向后兼容）。
+	// 默认不启用。
 	EnableAutoRetryOn401 bool
 }
 

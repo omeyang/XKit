@@ -387,8 +387,8 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 		}
 	})
 
-	t.Run("backward compatibility with old data", func(t *testing.T) {
-		// Simulate old data without ObtainedAtUnix
+	t.Run("missing ObtainedAtUnix fallback", func(t *testing.T) {
+		// 缺少 ObtainedAtUnix 字段的数据
 		jsonData := `{"access_token":"old-token","expires_in":3600}`
 
 		var token TokenInfo
@@ -398,10 +398,10 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 
 		// ObtainedAtUnix should be 0
 		if token.ObtainedAtUnix != 0 {
-			t.Errorf("ObtainedAtUnix = %d, expected 0 for old data", token.ObtainedAtUnix)
+			t.Errorf("ObtainedAtUnix = %d, expected 0", token.ObtainedAtUnix)
 		}
 
-		// Simulate RedisCacheStore.GetToken logic for backward compatibility
+		// 模拟 RedisCacheStore.GetToken 的容错逻辑
 		if token.ObtainedAtUnix > 0 {
 			token.ObtainedAt = time.Unix(token.ObtainedAtUnix, 0)
 		} else if token.ObtainedAt.IsZero() {
@@ -410,7 +410,7 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 
 		// ObtainedAt should be set to current time (fallback)
 		if token.ObtainedAt.IsZero() {
-			t.Error("ObtainedAt should be set for backward compatibility")
+			t.Error("ObtainedAt should be set via fallback")
 		}
 	})
 }

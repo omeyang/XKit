@@ -7,7 +7,7 @@ import (
 	"go4.org/netipx"
 )
 
-// WireRange 是 IP 范围的序列化格式，兼容 gobase MIPRange。
+// WireRange 是 IP 范围的序列化格式。
 // 使用 JSON 标签 {"s":"start","e":"end"} 和 BSON 标签。
 type WireRange struct {
 	S string `json:"s" bson:"s"`

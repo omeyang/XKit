@@ -75,7 +75,7 @@ func (s *RedisCacheStore) GetToken(ctx context.Context, tenantID string) (*Token
 	if token.ObtainedAtUnix > 0 {
 		token.ObtainedAt = time.Unix(token.ObtainedAtUnix, 0)
 	} else if token.ObtainedAt.IsZero() {
-		// 兼容旧数据：无 ObtainedAtUnix 时使用当前时间
+		// 容错处理：无 ObtainedAtUnix 时使用当前时间
 		token.ObtainedAt = time.Now()
 	}
 	if token.ExpiresAt.IsZero() && token.ExpiresIn > 0 {

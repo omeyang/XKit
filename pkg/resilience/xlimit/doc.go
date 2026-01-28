@@ -27,39 +27,6 @@
 // 支持层级限流策略（串行检查，任一层级拒绝则拒绝）：
 //   - 全局限流 → 租户限流 → API 限流
 //
-// # 快速开始
-//
-//	// 创建分布式限流器
-//	limiter, err := xlimit.New(redisClient,
-//	    xlimit.WithRules(
-//	        xlimit.TenantRule("tenant-limit", 1000, time.Minute),
-//	    ),
-//	    xlimit.WithLogger(logger),
-//	    xlimit.WithObserver(observer),
-//	    xlimit.WithMeterProvider(meterProvider), // 指标收集
-//	)
-//
-//	// 执行限流检查
-//	key := xlimit.Key{Tenant: "tenant-001"}
-//	result, err := limiter.Allow(ctx, key)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//	if !result.Allowed {
-//	    log.Printf("限流触发，请在 %v 后重试", result.RetryAfter)
-//	}
-//
-//	// 查询当前配额（不消耗配额）
-//	info, err := limiter.Query(ctx, key)
-//	if err == nil {
-//	    log.Printf("剩余配额: %d/%d", info.Remaining, info.Limit)
-//	}
-//
-// # HTTP 中间件
-//
-//	mux := http.NewServeMux()
-//	mux.Handle("/api/", xlimit.HTTPMiddleware(limiter)(handler))
-//
 // # 降级策略
 //
 // Redis 故障时支持三种降级策略：
@@ -67,31 +34,15 @@
 //   - FallbackOpen：放行所有请求
 //   - FallbackClose：拒绝所有请求
 //
-// 也支持自定义降级函数：
-//
-//	xlimit.WithCustomFallback(func(ctx context.Context, key xlimit.Key, n int, err error) (*xlimit.Result, error) {
-//	    // 自定义降级逻辑
-//	    return &xlimit.Result{Allowed: true}, nil
-//	})
+// 也支持自定义降级函数。
 //
 // # 动态 Pod 数量
 //
-// 本地降级时支持动态获取 Pod 数量：
-//
-//	// 从环境变量获取
-//	xlimit.WithPodCountProvider(xlimit.NewEnvPodCount("POD_COUNT", 4))
-//
-//	// 静态配置
-//	xlimit.WithPodCount(4)
+// 本地降级时支持动态获取 Pod 数量。
 //
 // # 配置管理
 //
-// 支持从 xconf 加载配置并支持热更新：
-//
-//	provider := xlimit.NewXConfProvider(cfg, "ratelimit")
-//	limiter, _ := xlimit.New(redisClient,
-//	    xlimit.WithConfigProvider(provider),
-//	)
+// 支持从 xconf 加载配置并支持热更新。
 //
 // # 可观测性
 //

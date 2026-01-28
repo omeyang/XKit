@@ -1,7 +1,6 @@
 // Package xkeylock 提供基于 key 的进程内互斥锁。
 //
-// xkeylock 替代 gobase mbase/keylock，适用于需要按业务 key 进行互斥的场景，
-// 如资产创建互斥、风险更新互斥等。
+// 适用于需要按业务 key 进行互斥的场景，如资产创建互斥、风险更新互斥等。
 //
 // # 与 xdlock 的区别
 //
@@ -13,7 +12,7 @@
 //	Handle        Unlock()+Key()       Unlock(ctx)+Extend(ctx)+Key()
 //	性能          纳秒级（内存操作）     毫秒级（网络调用）
 //
-// # 与 gobase keylock 的改进
+// # 特性
 //
 //   - Context 支持：Acquire 支持超时和取消（ctx 不得为 nil，否则 panic）
 //   - TryAcquire：非阻塞获取，语义与 xdlock.TryLock 一致
@@ -22,29 +21,4 @@
 //   - 内存安全：WithMaxKeys(n) 可限制最大 key 数
 //   - 关闭语义：Close() 拒绝新请求，已持有锁不受影响
 //   - Close() 唤醒所有等待中的 Acquire，使其返回 ErrClosed
-//
-// # 基本用法
-//
-//	kl := xkeylock.New()
-//	defer kl.Close()
-//
-//	handle, err := kl.Acquire(ctx, "asset:123")
-//	if err != nil {
-//	    return err
-//	}
-//	defer handle.Unlock()
-//
-//	// 执行受保护的操作...
-//
-// # 非阻塞获取
-//
-//	handle, err := kl.TryAcquire("asset:123")
-//	if err != nil {
-//	    return err
-//	}
-//	if handle == nil {
-//	    // 锁被占用，跳过
-//	    return nil
-//	}
-//	defer handle.Unlock()
 package xkeylock

@@ -14,16 +14,10 @@ import (
 // =============================================================================
 
 // TokenCache 提供双层 Token 缓存。
-// L1: 本地内存缓存（xlru.Cache）- 提供 LRU 淘汰和 TTL 过期
-// L2: Redis 缓存（可选）
-//
-// 设计决策：
-// 使用 xlru 替换 sync.Map 的原因：
-// - xlru 内置 TTL 过期机制，无需手动检查过期时间
-// - xlru 内置 LRU 淘汰策略，无需手动计数和 evict
-// - xlru 完全并发安全，避免 sync.Map 的 Load/Store 竞态窗口
+//   - L1: 本地内存缓存（xlru.Cache），内置 LRU 淘汰和 TTL 过期
+//   - L2: Redis 缓存（可选），支持多实例共享
 type TokenCache struct {
-	// L1 本地缓存 - 使用 xlru 替换 sync.Map
+	// L1 本地缓存
 	local *xlru.Cache[string, *TokenInfo]
 
 	// L2 远程缓存

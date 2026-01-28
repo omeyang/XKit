@@ -8,16 +8,6 @@
 //   - panic 恢复（单个任务失败不影响 pool）
 //   - 队列满时丢弃任务并记录日志
 //
-// # 基本用法
-//
-//	pool := xpool.NewWorkerPool(4, 100, func(task Task) {
-//	    // 处理任务
-//	})
-//	pool.Start()
-//	defer pool.Stop()
-//
-//	pool.Submit(task)
-//
 // # 注意事项
 //
 //   - Submit 是非阻塞的，队列满时会丢弃任务

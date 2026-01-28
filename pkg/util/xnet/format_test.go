@@ -145,8 +145,8 @@ func TestIsValidIP(t *testing.T) {
 	assert.False(t, IsValidIP("256.1.1.1"))
 }
 
-func TestFullIPGobaseCompat(t *testing.T) {
-	// 验证 FullIP/ParseFullIP 与 gobase IP2FullIP/FullIP2IP 输出一致
+func TestFullIPKnownValues(t *testing.T) {
+	// 验证 FormatFullIPAddr 和 ParseFullIP 对常见地址的正确性
 	compat := map[string]string{
 		"192.168.1.1":     "192.168.001.001",
 		"10.0.0.1":        "010.000.000.001",

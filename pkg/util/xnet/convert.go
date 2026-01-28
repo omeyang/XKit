@@ -62,7 +62,7 @@ func AddrToUint32(addr netip.Addr) (uint32, bool) {
 }
 
 // AddrFromBigInt 从 [*big.Int] 创建 [netip.Addr]。
-// 需指定目标 IP 版本。用于兼容旧代码。
+// 需指定目标 IP 版本。
 func AddrFromBigInt(v *big.Int, ver Version) (netip.Addr, error) {
 	if v == nil {
 		return netip.Addr{}, ErrInvalidBigInt
@@ -90,7 +90,7 @@ func AddrFromBigInt(v *big.Int, ver Version) (netip.Addr, error) {
 	}
 }
 
-// AddrToBigInt 将地址转换为 [*big.Int]。用于兼容旧代码。
+// AddrToBigInt 将地址转换为 [*big.Int]。
 // 无效地址返回零值 big.Int。
 func AddrToBigInt(addr netip.Addr) *big.Int {
 	if !addr.IsValid() {

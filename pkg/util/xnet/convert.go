@@ -2,46 +2,10 @@ package xnet
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math/big"
 	"net/netip"
 )
-
-// Version 表示 IP 协议版本。
-type Version uint8
-
-const (
-	// V0 表示无效或未知的 IP 版本。
-	V0 Version = 0
-	// V4 表示 IPv4。
-	V4 Version = 4
-	// V6 表示 IPv6。
-	V6 Version = 6
-)
-
-// String 返回版本的字符串表示。
-func (v Version) String() string {
-	switch v {
-	case V4:
-		return "IPv4"
-	case V6:
-		return "IPv6"
-	default:
-		return "unknown"
-	}
-}
-
-// AddrVersion 返回 addr 的 IP 版本（V4 或 V6）。
-// IPv4-mapped IPv6 地址视为 V4。
-// 无效地址返回 V0。
-func AddrVersion(addr netip.Addr) Version {
-	if addr.Is4() || addr.Is4In6() {
-		return V4
-	}
-	if addr.IsValid() {
-		return V6
-	}
-	return V0
-}
 
 // AddrFromUint32 从 IPv4 的 uint32 表示创建 [netip.Addr]。
 // 使用网络字节序（大端）。
@@ -102,4 +66,91 @@ func AddrToBigInt(addr netip.Addr) *big.Int {
 	}
 	b := addr.As16()
 	return new(big.Int).SetBytes(b[:])
+}
+
+// MapToIPv6 将 IPv4 地址转换为 IPv4-mapped IPv6 地址。
+// 例如：192.168.1.1 → ::ffff:192.168.1.1
+// 如果已经是 IPv6 地址，原样返回。
+// 无效地址返回零值。
+func MapToIPv6(addr netip.Addr) netip.Addr {
+	if !addr.IsValid() {
+		return netip.Addr{}
+	}
+	if addr.Is4() {
+		// netip.AddrFrom16 将 IPv4 转为 IPv4-mapped IPv6
+		return netip.AddrFrom16(addr.As16())
+	}
+	return addr
+}
+
+// UnmapToIPv4 将 IPv4-mapped IPv6 地址转换为纯 IPv4 地址。
+// 例如：::ffff:192.168.1.1 → 192.168.1.1
+// 如果是纯 IPv4，原样返回。
+// 如果是纯 IPv6（非映射），原样返回。
+// 无效地址返回零值。
+func UnmapToIPv4(addr netip.Addr) netip.Addr {
+	if !addr.IsValid() {
+		return netip.Addr{}
+	}
+	if addr.Is4In6() {
+		return addr.Unmap()
+	}
+	return addr
+}
+
+// AddrAdd 对 IP 地址进行加法运算。
+// delta 可以为负数表示减法。
+// 溢出时返回错误。
+//
+// 对于 IPv4 地址，使用 uint64 快速路径（零分配）。
+// 对于 IPv6 地址，使用 big.Int 运算。
+func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
+	if !addr.IsValid() {
+		return netip.Addr{}, ErrInvalidAddress
+	}
+
+	// IPv4 快速路径：直接使用 uint64 运算，避免 big.Int 分配
+	if addr.Is4() || addr.Is4In6() {
+		v, _ := AddrToUint32(addr)
+		v64 := uint64(v)
+		var result uint64
+		if delta >= 0 {
+			// 加法：检查上溢
+			d64 := uint64(delta)
+			if d64 > uint64(^uint32(0))-v64 {
+				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
+			}
+			result = v64 + d64
+		} else {
+			// 减法：检查下溢
+			absDelta := uint64(-delta)
+			if absDelta > v64 {
+				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
+			}
+			result = v64 - absDelta
+		}
+		// 使用字节操作构建地址，避免 uint64->uint32 类型转换
+		return addrFrom4Bytes(result), nil
+	}
+
+	// IPv6 路径：使用 big.Int
+	bi := AddrToBigInt(addr)
+	bi.Add(bi, big.NewInt(delta))
+
+	result, err := AddrFromBigInt(bi, V6)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("address overflow: %w", err)
+	}
+	return result, nil
+}
+
+// addrFrom4Bytes 从 uint64 的低 32 位构建 IPv4 地址。
+// 使用字节操作避免 uint64->uint32 类型转换（避免 gosec G115）。
+func addrFrom4Bytes(v uint64) netip.Addr {
+	var b [4]byte
+	b[0] = byte(v >> 24)
+	b[1] = byte(v >> 16)
+	b[2] = byte(v >> 8)
+	b[3] = byte(v)
+	return netip.AddrFrom4(b)
 }

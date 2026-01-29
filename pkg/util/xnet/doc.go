@@ -116,6 +116,14 @@
 //	    // 处理无效范围
 //	}
 //
+// # Go 版本要求
+//
+// xnet 要求 Go 1.23+（与 xmac 的 [iter.Seq] 依赖对齐）。
+//
+// 注意：Go 1.22.4 及更早版本的 [net/netip] 对 IPv4-mapped IPv6 地址
+// 的分类存在 bug（详见 https://go.dev/issue/67289）。
+// 当前最低要求 Go 1.23 已避开此问题。
+//
 // # 范围转 CIDR
 //
 // 将 IP 范围转换为 CIDR 前缀：

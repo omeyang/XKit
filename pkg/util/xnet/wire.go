@@ -15,11 +15,23 @@ type WireRange struct {
 }
 
 // WireRangeFrom 从 [netipx.IPRange] 创建 WireRange。
+//
+// 注意：此函数不校验 r 的有效性，无效范围会静默转换为可能不正确的字符串。
+// 如需校验，请使用 [WireRangeFromChecked] 或 [WireRangeFromAddrs]。
 func WireRangeFrom(r netipx.IPRange) WireRange {
 	return WireRange{
 		S: r.From().String(),
 		E: r.To().String(),
 	}
+}
+
+// WireRangeFromChecked 从 [netipx.IPRange] 创建 WireRange，带有效性校验。
+// 如果 r 无效（From > To 或包含无效地址），返回错误。
+func WireRangeFromChecked(r netipx.IPRange) (WireRange, error) {
+	if !r.IsValid() {
+		return WireRange{}, fmt.Errorf("%w: invalid IPRange", ErrInvalidRange)
+	}
+	return WireRangeFrom(r), nil
 }
 
 // WireRangeFromAddrs 从起止地址创建 WireRange。

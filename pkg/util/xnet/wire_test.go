@@ -21,6 +21,41 @@ func TestWireRangeFrom(t *testing.T) {
 	assert.Equal(t, "192.168.1.100", w.E)
 }
 
+func TestWireRangeFromChecked(t *testing.T) {
+	// 有效范围
+	validRange := netipx.IPRangeFrom(
+		netip.MustParseAddr("10.0.0.1"),
+		netip.MustParseAddr("10.0.0.100"),
+	)
+	w, err := WireRangeFromChecked(validRange)
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.1", w.S)
+	assert.Equal(t, "10.0.0.100", w.E)
+
+	// 无效范围 (From > To)
+	invalidRange := netipx.IPRangeFrom(
+		netip.MustParseAddr("10.0.0.100"),
+		netip.MustParseAddr("10.0.0.1"),
+	)
+	_, err = WireRangeFromChecked(invalidRange)
+	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// 零值范围
+	var zeroRange netipx.IPRange
+	_, err = WireRangeFromChecked(zeroRange)
+	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// IPv6 有效范围
+	ipv6Range := netipx.IPRangeFrom(
+		netip.MustParseAddr("2001:db8::1"),
+		netip.MustParseAddr("2001:db8::ff"),
+	)
+	w, err = WireRangeFromChecked(ipv6Range)
+	require.NoError(t, err)
+	assert.Equal(t, "2001:db8::1", w.S)
+	assert.Equal(t, "2001:db8::ff", w.E)
+}
+
 func TestWireRangeFromAddrs(t *testing.T) {
 	w, err := WireRangeFromAddrs(
 		netip.MustParseAddr("10.0.0.1"),

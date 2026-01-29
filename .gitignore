@@ -47,6 +47,7 @@ vendor/
 coverage.out
 coverage*.out
 cover_*.out
+*_coverage.out
 *.coverprofile
 
 # 覆盖率 HTML 报告
@@ -148,6 +149,9 @@ $RECYCLE.BIN/
 # CoSpec 规格文件（私有，不提交）
 .cospec/
 COSTRICT.md
+
+# AI 提示词目录（个人使用，不提交）
+.specify/prompts/
 
 # -----------------------------------------------------------------------------
 # 日志文件

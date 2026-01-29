@@ -57,6 +57,47 @@ func TestWireRangeFromAddrs(t *testing.T) {
 		netip.MustParseAddr("10.0.0.1"),
 	)
 	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// Invalid: pure IPv4 mixed with IPv4-mapped IPv6
+	_, err = WireRangeFromAddrs(
+		netip.MustParseAddr("192.168.1.1"),
+		netip.MustParseAddr("::ffff:192.168.1.100"),
+	)
+	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// Invalid: IPv4-mapped IPv6 mixed with pure IPv4
+	_, err = WireRangeFromAddrs(
+		netip.MustParseAddr("::ffff:192.168.1.1"),
+		netip.MustParseAddr("192.168.1.100"),
+	)
+	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// Valid: both IPv4-mapped IPv6
+	w, err = WireRangeFromAddrs(
+		netip.MustParseAddr("::ffff:192.168.1.1"),
+		netip.MustParseAddr("::ffff:192.168.1.100"),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "::ffff:192.168.1.1", w.S)
+	assert.Equal(t, "::ffff:192.168.1.100", w.E)
+}
+
+func TestWireRangeFromAddrs_MixedIPv4AndMapped(t *testing.T) {
+	// 测试纯 IPv4 与 IPv4-mapped IPv6 被视为不同族
+	v4 := netip.MustParseAddr("192.168.1.1")
+	v4in6 := netip.MustParseAddr("::ffff:192.168.1.100")
+
+	// 验证两者的 AddrVersion 相同（都是 V4）
+	assert.Equal(t, V4, AddrVersion(v4))
+	assert.Equal(t, V4, AddrVersion(v4in6))
+
+	// 但 WireRangeFromAddrs 应该拒绝混合
+	_, err := WireRangeFromAddrs(v4, v4in6)
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "mixed address families")
+
+	_, err = WireRangeFromAddrs(v4in6, v4)
+	assert.ErrorIs(t, err, ErrInvalidRange)
 }
 
 func TestWireRangeToIPRange(t *testing.T) {

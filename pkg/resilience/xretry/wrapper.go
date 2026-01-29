@@ -236,8 +236,7 @@ func NewRetrierWithData[T any](opts ...Option) *retry.RetrierWithData[T] {
 //	)
 func ToDelayType(policy BackoffPolicy) DelayTypeFunc {
 	return func(n uint, _ error, _ DelayContext) time.Duration {
-		// #nosec G115 -- n 是重试次数，是有界的小正整数
-		return policy.NextDelay(int(n))
+		return policy.NextDelay(safeUintToInt(n))
 	}
 }
 

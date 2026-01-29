@@ -216,3 +216,72 @@ func TestParseRangesContainsBoundary(t *testing.T) {
 	assert.False(t, set.Contains(netip.MustParseAddr("192.168.2.0")))
 	assert.False(t, set.Contains(netip.MustParseAddr("8.8.8.8")))
 }
+
+func TestParseRangeInvalidRangeEnd(t *testing.T) {
+	_, err := ParseRange("10.0.0.1-invalid")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "invalid range end")
+}
+
+func TestParseRangeInvertedRange(t *testing.T) {
+	// start > end
+	_, err := ParseRange("10.0.0.100-10.0.0.1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeWithMaskErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		errIs error
+	}{
+		{
+			name:  "invalid address in mask notation",
+			input: "invalid/255.255.255.0",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "invalid mask",
+			input: "192.168.1.0/invalid",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "IPv6 with mask notation",
+			input: "2001:db8::1/ffff:ffff::",
+			errIs: ErrInvalidRange,
+		},
+		{
+			name:  "IPv6 address with IPv4 mask",
+			input: "2001:db8::1/255.255.255.0",
+			errIs: ErrInvalidRange,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseRange(tt.input)
+			assert.ErrorIs(t, err, tt.errIs)
+		})
+	}
+}
+
+func TestParseRangeIPv4MappedIPv6(t *testing.T) {
+	// IPv4-mapped IPv6 地址应该能正确解析
+	r, err := ParseRange("::ffff:192.168.1.0/255.255.255.0")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.0", r.From().String())
+	assert.Equal(t, "192.168.1.255", r.To().String())
+}
+
+func TestParseRangeMixedAddressFamilies(t *testing.T) {
+	// IPv4 范围开始，IPv6 范围结束
+	_, err := ParseRange("192.168.1.1-2001:db8::1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeIPv4MappedMask(t *testing.T) {
+	// IPv4-mapped IPv6 掩码也应该能工作
+	r, err := ParseRange("192.168.1.0/::ffff:255.255.255.0")
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.1.0", r.From().String())
+	assert.Equal(t, "192.168.1.255", r.To().String())
+}

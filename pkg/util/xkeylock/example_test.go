@@ -8,7 +8,10 @@ import (
 )
 
 func ExampleNew() {
-	kl := xkeylock.New()
+	kl, err := xkeylock.New()
+	if err != nil {
+		panic(err)
+	}
 
 	handle, err := kl.Acquire(context.Background(), "resource:123")
 	if err != nil {
@@ -28,7 +31,10 @@ func ExampleNew() {
 }
 
 func ExampleKeyLock_TryAcquire() {
-	kl := xkeylock.New()
+	kl, err := xkeylock.New()
+	if err != nil {
+		panic(err)
+	}
 
 	// First acquire
 	h1, err := kl.TryAcquire("resource:123")

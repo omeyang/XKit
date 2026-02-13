@@ -14,7 +14,7 @@ func FuzzAcquireUnlock(f *testing.F) {
 	f.Add("中文key")
 
 	f.Fuzz(func(t *testing.T, key string) {
-		kl := New()
+		kl := newForTest(t)
 		defer kl.Close()
 
 		h, err := kl.Acquire(context.Background(), key)
@@ -37,7 +37,7 @@ func FuzzTryAcquireUnlock(f *testing.F) {
 	f.Add("中文key")
 
 	f.Fuzz(func(t *testing.T, key string) {
-		kl := New()
+		kl := newForTest(t)
 		defer kl.Close()
 
 		h, err := kl.TryAcquire(key)

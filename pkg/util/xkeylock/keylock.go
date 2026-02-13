@@ -20,6 +20,9 @@ type KeyLock interface {
 	// 支持 ctx 超时/取消，ctx 取消时返回 [context.Canceled] 或 [context.DeadlineExceeded]。
 	// KeyLock 已关闭时返回 [ErrClosed]。
 	// ctx 不得为 nil，否则 panic（与标准库 http.NewRequestWithContext 等一致）。
+	//
+	// 注意：锁是非可重入的（non-reentrant）。同一 goroutine 对同一 key 重复调用
+	// Acquire 会死锁。如需可重入语义，请在调用方自行维护持有状态。
 	Acquire(ctx context.Context, key string) (Handle, error)
 
 	// TryAcquire 非阻塞获取锁。
@@ -32,7 +35,8 @@ type KeyLock interface {
 	Len() int
 
 	// Keys 返回当前活跃条目的 key 列表（包含持有者和等待者），仅用于调试。
-	// 返回值是快照，不保证与后续操作一致。
+	// 返回值是快照，不保证跨分片原子性。
+	// 监控/指标采集场景推荐使用 Len（单次原子读取，无锁开销）。
 	Keys() []string
 
 	// Close 关闭 KeyLock。
@@ -44,12 +48,16 @@ type KeyLock interface {
 }
 
 // New 创建一个新的 KeyLock 实例。
-func New(opts ...Option) KeyLock {
+// 配置无效时返回错误（如分片数不是 2 的幂）。
+func New(opts ...Option) (KeyLock, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		if opt != nil {
 			opt(o)
 		}
 	}
-	return newKeyLockImpl(o)
+	if err := o.validate(); err != nil {
+		return nil, err
+	}
+	return newKeyLockImpl(o), nil
 }

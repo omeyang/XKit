@@ -125,6 +125,13 @@ func (kl *keyLockImpl) Acquire(ctx context.Context, key string) (Handle, error) 
 	}
 	select {
 	case entry.ch <- struct{}{}: // 获取成功
+		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
+		// Close 设置 closed 后才关闭 done channel，所以此处 Load 能可靠观测到。
+		if kl.closed.Load() {
+			<-entry.ch
+			kl.releaseRef(key, entry)
+			return nil, ErrClosed
+		}
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	case <-ctx.Done(): // 超时或取消
 		kl.releaseRef(key, entry)
@@ -145,6 +152,11 @@ func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
 	}
 	select {
 	case entry.ch <- struct{}{}: // 获取成功
+		if kl.closed.Load() {
+			<-entry.ch
+			kl.releaseRef(key, entry)
+			return nil, ErrClosed
+		}
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	default: // 锁被占用
 		kl.releaseRef(key, entry)
@@ -185,6 +197,9 @@ func (h *handle) Unlock() error {
 	}
 	<-h.entry.ch
 	h.kl.releaseRef(h.key, h.entry)
+	// 释放引用，防止长期持有 Handle 时阻止 GC 回收 keyLockImpl。
+	h.kl = nil
+	h.entry = nil
 	return nil
 }
 

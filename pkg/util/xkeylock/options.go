@@ -1,5 +1,7 @@
 package xkeylock
 
+import "fmt"
+
 const (
 	defaultShardCount = 32
 )
@@ -32,13 +34,17 @@ func WithMaxKeys(n int) Option {
 
 // WithShardCount 设置分片数量。
 // 更多分片减少争用，但增加内存占用。
-// n 必须为正整数且为 2 的幂，否则 panic。默认 32。
-// 使用 uint 类型：负数在编译期即报错，比运行时 panic 更安全。
+// n 必须为正整数且为 2 的幂，否则 New 返回错误。默认 32。
+// 使用 uint 类型：负数在编译期即报错，比运行时错误更安全。
 func WithShardCount(n uint) Option {
-	if n == 0 || n&(n-1) != 0 {
-		panic("xkeylock: shard count must be a positive power of 2")
-	}
 	return func(o *options) {
 		o.shardCount = n
 	}
+}
+
+func (o *options) validate() error {
+	if o.shardCount == 0 || o.shardCount&(o.shardCount-1) != 0 {
+		return fmt.Errorf("xkeylock: shard count must be a positive power of 2, got %d", o.shardCount)
+	}
+	return nil
 }

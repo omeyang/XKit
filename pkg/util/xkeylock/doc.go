@@ -21,4 +21,5 @@
 //   - 内存安全：WithMaxKeys(n) 可限制最大 key 数
 //   - 关闭语义：Close() 拒绝新请求，已持有锁不受影响
 //   - Close() 唤醒所有等待中的 Acquire，使其返回 ErrClosed
+//   - 非可重入：同一 goroutine 对同一 key 重复 Acquire 会死锁
 package xkeylock

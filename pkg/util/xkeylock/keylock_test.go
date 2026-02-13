@@ -3,6 +3,7 @@ package xkeylock
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,8 +18,16 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+// newForTest 创建 KeyLock，失败时终止测试。
+func newForTest(tb testing.TB, opts ...Option) KeyLock {
+	tb.Helper()
+	kl, err := New(opts...)
+	require.NoError(tb, err)
+	return kl
+}
+
 func TestAcquireNilContext(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	assert.PanicsWithValue(t, "xkeylock: nil Context", func() {
@@ -27,7 +36,7 @@ func TestAcquireNilContext(t *testing.T) {
 }
 
 func TestAcquireAndUnlock(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	h, err := kl.Acquire(context.Background(), "key1")
@@ -39,7 +48,7 @@ func TestAcquireAndUnlock(t *testing.T) {
 }
 
 func TestUnlockIdempotent(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	h, err := kl.Acquire(context.Background(), "key1")
@@ -56,7 +65,7 @@ func TestUnlockIdempotent(t *testing.T) {
 }
 
 func TestTryAcquire(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	// First acquire succeeds
@@ -85,7 +94,7 @@ func TestTryAcquire(t *testing.T) {
 }
 
 func TestAcquireContextCancel(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	// Hold the lock
@@ -103,7 +112,7 @@ func TestAcquireContextCancel(t *testing.T) {
 }
 
 func TestAcquireAfterClose(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	require.NoError(t, kl.Close())
 
 	_, err := kl.Acquire(context.Background(), "key1")
@@ -114,13 +123,13 @@ func TestAcquireAfterClose(t *testing.T) {
 }
 
 func TestCloseIdempotent(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	assert.NoError(t, kl.Close())
 	assert.ErrorIs(t, kl.Close(), ErrClosed)
 }
 
 func TestCloseDoesNotAffectHeldLocks(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 
 	h, err := kl.Acquire(context.Background(), "key1")
 	require.NoError(t, err)
@@ -132,7 +141,7 @@ func TestCloseDoesNotAffectHeldLocks(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	h1, err := kl.Acquire(context.Background(), "a")
@@ -153,7 +162,7 @@ func TestKeys(t *testing.T) {
 }
 
 func TestMaxKeys(t *testing.T) {
-	kl := New(WithMaxKeys(2))
+	kl := newForTest(t, WithMaxKeys(2))
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	h1, err := kl.Acquire(context.Background(), "key1")
@@ -179,27 +188,27 @@ func TestMaxKeys(t *testing.T) {
 
 func TestShardCount(t *testing.T) {
 	// Valid power of 2
-	kl := New(WithShardCount(64))
+	kl := newForTest(t, WithShardCount(64))
 	impl, ok := kl.(*keyLockImpl)
 	require.True(t, ok)
 	assert.Equal(t, 64, len(impl.shards))
 	require.NoError(t, kl.Close())
 
-	// Invalid (not power of 2) — panics
-	assert.PanicsWithValue(t, "xkeylock: shard count must be a positive power of 2", func() {
-		New(WithShardCount(3))
-	})
+	// Invalid (not power of 2) — returns error
+	_, err := New(WithShardCount(3))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "power of 2")
 
-	// Zero — panics
-	assert.PanicsWithValue(t, "xkeylock: shard count must be a positive power of 2", func() {
-		New(WithShardCount(0))
-	})
+	// Zero — returns error
+	_, err = New(WithShardCount(0))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "power of 2")
 
 	// 注意：负数无需测试，WithShardCount 参数为 uint 类型，负数在编译期即报错。
 }
 
 func TestConcurrentMutualExclusion(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	const (
@@ -236,7 +245,7 @@ func TestConcurrentMutualExclusion(t *testing.T) {
 }
 
 func TestConcurrentDifferentKeys(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	const numKeys = 10
@@ -264,7 +273,7 @@ func TestConcurrentDifferentKeys(t *testing.T) {
 
 func TestMaxKeysConcurrent(t *testing.T) {
 	const maxKeys = 10
-	kl := New(WithMaxKeys(maxKeys))
+	kl := newForTest(t, WithMaxKeys(maxKeys))
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	var wg sync.WaitGroup
@@ -319,14 +328,16 @@ func TestMaxKeysConcurrent(t *testing.T) {
 }
 
 func TestAcquireUnblockAfterRelease(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	h, err := kl.Acquire(context.Background(), "key1")
 	require.NoError(t, err)
 
 	acquired := make(chan struct{})
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		h2, acqErr := kl.Acquire(context.Background(), "key1")
 		if acqErr == nil {
 			close(acquired)
@@ -334,8 +345,9 @@ func TestAcquireUnblockAfterRelease(t *testing.T) {
 		}
 	}()
 
-	// Release the lock
-	time.Sleep(10 * time.Millisecond)
+	// 等待 goroutine 启动后释放锁
+	<-started
+	runtime.Gosched()
 	require.NoError(t, h.Unlock())
 
 	select {
@@ -348,14 +360,14 @@ func TestAcquireUnblockAfterRelease(t *testing.T) {
 
 func TestNewWithNilOption(t *testing.T) {
 	// New(nil) 不应 panic。
-	kl := New(nil)
+	kl := newForTest(t, nil)
 	require.NotNil(t, kl)
 	require.NoError(t, kl.Close())
 }
 
 func TestWithMaxKeysZeroAndNegative(t *testing.T) {
 	// WithMaxKeys(0) 表示不限制
-	kl := New(WithMaxKeys(0))
+	kl := newForTest(t, WithMaxKeys(0))
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	handles := make([]Handle, 0, 20)
@@ -371,7 +383,7 @@ func TestWithMaxKeysZeroAndNegative(t *testing.T) {
 
 func TestWithMaxKeysNegative(t *testing.T) {
 	// WithMaxKeys(-1) 归一化为 0，即不限制
-	kl := New(WithMaxKeys(-1))
+	kl := newForTest(t, WithMaxKeys(-1))
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	handles := make([]Handle, 0, 20)
@@ -386,7 +398,7 @@ func TestWithMaxKeysNegative(t *testing.T) {
 }
 
 func TestAcquireAlreadyCancelledContext(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -401,7 +413,7 @@ func TestAcquireAlreadyCancelledContext(t *testing.T) {
 }
 
 func TestTryAcquireAfterClose(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	require.NoError(t, kl.Close())
 
 	h, err := kl.TryAcquire("key1")
@@ -410,7 +422,7 @@ func TestTryAcquireAfterClose(t *testing.T) {
 }
 
 func TestKeysEmpty(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	keys := kl.Keys()
@@ -418,7 +430,7 @@ func TestKeysEmpty(t *testing.T) {
 }
 
 func TestLen(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	assert.Equal(t, 0, kl.Len())
@@ -446,7 +458,7 @@ func TestLen(t *testing.T) {
 }
 
 func TestConcurrentAcquireAndClose(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 
 	// 持有一个锁，让其他 goroutine 阻塞在 Acquire 上
 	h, err := kl.Acquire(context.Background(), "key1")
@@ -455,11 +467,14 @@ func TestConcurrentAcquireAndClose(t *testing.T) {
 	const numWaiters = 10
 	errs := make(chan error, numWaiters)
 	var wg sync.WaitGroup
+	var ready sync.WaitGroup
+	ready.Add(numWaiters)
 
 	for range numWaiters {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			ready.Done() // 标记已启动
 			// 使用 Background（无超时），验证 Close 能唤醒等待者
 			_, acqErr := kl.Acquire(context.Background(), "key1")
 			if acqErr != nil {
@@ -468,8 +483,9 @@ func TestConcurrentAcquireAndClose(t *testing.T) {
 		}()
 	}
 
-	// 等待 goroutine 开始阻塞
-	time.Sleep(20 * time.Millisecond)
+	// 等待所有 goroutine 启动，让出 CPU 使其进入阻塞
+	ready.Wait()
+	runtime.Gosched()
 
 	// 关闭 KeyLock，所有阻塞的 goroutine 应被立即唤醒
 	require.NoError(t, kl.Close())
@@ -485,7 +501,7 @@ func TestConcurrentAcquireAndClose(t *testing.T) {
 }
 
 func TestCloseWakesWaiters(t *testing.T) {
-	kl := New()
+	kl := newForTest(t)
 
 	// 持有锁
 	h, err := kl.Acquire(context.Background(), "key1")
@@ -494,19 +510,23 @@ func TestCloseWakesWaiters(t *testing.T) {
 	const numWaiters = 5
 	results := make(chan error, numWaiters)
 	var wg sync.WaitGroup
+	var ready sync.WaitGroup
+	ready.Add(numWaiters)
 
 	for range numWaiters {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			ready.Done() // 标记已启动
 			// context.Background() 无超时，完全依赖 Close 唤醒
 			_, acqErr := kl.Acquire(context.Background(), "key1")
 			results <- acqErr
 		}()
 	}
 
-	// 等待所有 goroutine 进入阻塞
-	time.Sleep(20 * time.Millisecond)
+	// 等待所有 goroutine 启动，让出 CPU 使其进入阻塞
+	ready.Wait()
+	runtime.Gosched()
 
 	// Close 应立即唤醒所有等待者
 	require.NoError(t, kl.Close())
@@ -534,7 +554,7 @@ func TestCloseWakesWaiters(t *testing.T) {
 }
 
 func TestMultipleKeysConcurrentAcquireRelease(t *testing.T) {
-	kl := New(WithShardCount(4))
+	kl := newForTest(t, WithShardCount(4))
 	defer func() { require.NoError(t, kl.Close()) }()
 
 	const numKeys = 50
@@ -557,4 +577,41 @@ func TestMultipleKeysConcurrentAcquireRelease(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Empty(t, kl.Keys())
+}
+
+// TestCloseBarrier_Stress 验证 S1 修复：并发 Close + Acquire/TryAcquire 不会 panic、
+// 死锁或数据竞争。结合 -race 标志运行以检测并发问题。
+// 基本的"Close 后 Acquire 返回 ErrClosed"语义由 TestAcquireAfterClose 和
+// TestTryAcquireAfterClose 覆盖。
+func TestCloseBarrier_Stress(t *testing.T) {
+	const rounds = 10_000
+
+	for range rounds {
+		kl := newForTest(t)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			h, err := kl.Acquire(context.Background(), "a")
+			if err == nil {
+				assert.NoError(t, h.Unlock())
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+			h, err := kl.TryAcquire("b")
+			if err == nil && h != nil {
+				assert.NoError(t, h.Unlock())
+			}
+		}()
+
+		runtime.Gosched()
+		// Close 可能返回 ErrClosed（若已被并发关闭），此处不断言。
+		kl.Close() //nolint:errcheck // 并发压力测试，Close 可重复调用
+
+		wg.Wait()
+	}
 }

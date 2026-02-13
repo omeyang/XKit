@@ -211,6 +211,16 @@ linters:
       - linters:
           - gosec
         text: "G304"    # Potential file inclusion via variable - acceptable for logging library
+      # xid: sonyflake guarantees machine ID in 0-65535 range; uint16 cast is safe
+      - path: xid/xid\.go
+        linters:
+          - gosec
+        source: "cfg\\.checkMachineID\\(uint16\\(id\\)\\)"
+      # xid: intentional FNV-1a hash truncation to 16-bit machine ID
+      - path: xid/machine\.go
+        linters:
+          - gosec
+        source: "return uint16\\(h\\.Sum32\\(\\)\\)"
       # xrotate: chmod errors are non-critical for log rotation (write succeeded, permission is best-effort)
       - path: xrotate/lumberjack\.go
         linters:

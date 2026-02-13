@@ -1,7 +1,6 @@
 package xid_test
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -10,11 +9,8 @@ import (
 )
 
 func Example_basic() {
-	// 推荐：使用 WithRetry 方法，自动处理时钟回拨
-	id, err := xid.NewStringWithRetry(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
+	// 推荐：使用 MustNewStringWithRetry，自动处理时钟回拨
+	id := xid.MustNewStringWithRetry()
 	// ID 长度通常在 11-13 个字符之间（取决于时间戳）
 	fmt.Printf("Generated ID length in range: %v\n", len(id) >= 10 && len(id) <= 13)
 	fmt.Printf("ID is not empty: %v\n", id != "")
@@ -68,7 +64,7 @@ func Example_concurrent() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids <- xid.MustNewString()
+			ids <- xid.MustNewStringWithRetry()
 		}()
 	}
 

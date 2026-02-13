@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sony/sonyflake/v2"
@@ -18,9 +19,6 @@ import (
 var (
 	// ErrNotInitialized 生成器未初始化
 	ErrNotInitialized = errors.New("xid: generator not initialized")
-
-	// ErrClockBackward 时钟回拨
-	ErrClockBackward = errors.New("xid: clock moved backward")
 
 	// ErrClockBackwardTimeout 时钟回拨等待超时
 	ErrClockBackwardTimeout = errors.New("xid: clock backward wait timeout")
@@ -95,6 +93,8 @@ type Generator struct {
 	sf              *sonyflake.Sonyflake
 	maxWaitDuration time.Duration
 	retryInterval   time.Duration
+	// generateID 生成下一个 ID。默认为 sf.NextID，测试中可替换。
+	generateID func() (int64, error)
 }
 
 // NewGenerator 创建新的 ID 生成器实例。
@@ -107,11 +107,19 @@ type Generator struct {
 //
 // 如果不传入 WithMachineID 选项，默认使用 DefaultMachineID 获取机器 ID。
 func NewGenerator(opts ...Option) (*Generator, error) {
-	cfg := &config{}
+	cfg := &options{}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(cfg)
 		}
+	}
+
+	// fail-fast：先校验配置参数，再创建 sonyflake 实例
+	if cfg.maxWaitDuration < 0 {
+		return nil, fmt.Errorf("xid: max wait duration must be non-negative, got %s", cfg.maxWaitDuration)
+	}
+	if cfg.retryInterval < 0 {
+		return nil, fmt.Errorf("xid: retry interval must be non-negative, got %s", cfg.retryInterval)
 	}
 
 	settings := sonyflake.Settings{}
@@ -128,7 +136,7 @@ func NewGenerator(opts ...Option) (*Generator, error) {
 
 	if cfg.checkMachineID != nil {
 		settings.CheckMachineID = func(id int) bool {
-			return cfg.checkMachineID(uint16(id)) //nolint:gosec // id is guaranteed to be 0-65535 by sonyflake
+			return cfg.checkMachineID(uint16(id))
 		}
 	}
 
@@ -137,19 +145,12 @@ func NewGenerator(opts ...Option) (*Generator, error) {
 		return nil, err
 	}
 
-	// 验证时钟回拨配置（fail-fast：显式传入非正值立即报错）
-	if cfg.maxWaitDuration < 0 {
-		return nil, fmt.Errorf("xid: max wait duration must be non-negative, got %s", cfg.maxWaitDuration)
-	}
-	if cfg.retryInterval < 0 {
-		return nil, fmt.Errorf("xid: retry interval must be non-negative, got %s", cfg.retryInterval)
-	}
-
 	g := &Generator{
 		sf:              sf,
 		maxWaitDuration: DefaultMaxWaitDuration,
 		retryInterval:   DefaultRetryInterval,
 	}
+	g.generateID = sf.NextID
 	if cfg.maxWaitDuration > 0 {
 		g.maxWaitDuration = cfg.maxWaitDuration
 	}
@@ -168,7 +169,7 @@ func NewGenerator(opts ...Option) (*Generator, error) {
 //
 // 返回错误通常是因为时钟回拨。
 func (g *Generator) New() (int64, error) {
-	return g.sf.NextID()
+	return g.generateID()
 }
 
 // NewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试。
@@ -179,17 +180,25 @@ func (g *Generator) New() (int64, error) {
 // 支持通过 context 取消等待。如果等待超过 maxWaitDuration（默认 500ms）
 // 仍无法生成，返回 ErrClockBackwardTimeout。
 func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
+	if ctx == nil {
+		panic("xid: nil Context")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	deadline := time.Now().Add(g.maxWaitDuration)
 	var lastErr error
 
 	for {
-		id, err := g.sf.NextID()
+		id, err := g.generateID()
 		if err == nil {
 			return id, nil
 		}
 		lastErr = err
 
-		// 不可恢复的错误（如时间溢出）立即返回，不重试
+		// 重试策略：仅 ErrOverTimeLimit 不可恢复，立即返回。
+		// Sonyflake v2 的 NextID 只会返回 ErrOverTimeLimit（时钟回拨在内部处理），
+		// 因此"其余错误均重试"在实践中等价于"仅重试时钟回拨"。
 		if errors.Is(err, sonyflake.ErrOverTimeLimit) {
 			return 0, fmt.Errorf("%w: %v", ErrOverTimeLimit, err)
 		}
@@ -232,18 +241,23 @@ func (g *Generator) NewStringWithRetry(ctx context.Context) (string, error) {
 	return strconv.FormatInt(id, 36), nil
 }
 
-// MustNew 生成新的唯一 ID，失败时 panic。
-func (g *Generator) MustNew() int64 {
-	id, err := g.New()
+// MustNewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试，失败时 panic。
+//
+// 内部使用 context.Background()。如需自定义 context，请使用 NewWithRetry。
+func (g *Generator) MustNewWithRetry() int64 {
+	id, err := g.NewWithRetry(context.Background())
 	if err != nil {
 		panic(err)
 	}
 	return id
 }
 
-// MustNewString 生成新的唯一 ID（字符串格式），失败时 panic。
-func (g *Generator) MustNewString() string {
-	s, err := g.NewString()
+// MustNewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试，失败时 panic。
+//
+// 这是生产环境推荐的默认方法。
+// 内部使用 context.Background()。如需自定义 context，请使用 NewStringWithRetry。
+func (g *Generator) MustNewStringWithRetry() string {
+	s, err := g.NewStringWithRetry(context.Background())
 	if err != nil {
 		panic(err)
 	}
@@ -255,9 +269,9 @@ func (g *Generator) MustNewString() string {
 // =============================================================================
 
 var (
-	defaultGen     *Generator
-	defaultGenOnce sync.Once
-	defaultGenErr  error
+	defaultGen atomic.Pointer[Generator]
+	initMu     sync.Mutex
+	initCalled bool // 受 initMu 保护
 )
 
 // =============================================================================
@@ -269,30 +283,54 @@ var (
 // 如果不调用 Init，首次生成 ID 时会使用默认配置自动初始化。
 // 默认配置使用 DefaultMachineID 获取机器 ID。
 //
-// Init 只能调用一次，重复调用返回 [ErrAlreadyInitialized]。
+// Init 只能成功一次，成功后重复调用返回 [ErrAlreadyInitialized]。
 // 如果在 Init 之前已通过 New/NewString 等函数触发了自动初始化，
 // 同样返回 [ErrAlreadyInitialized]。
 // 建议在应用启动时调用，以便尽早发现配置问题。
 //
+// 与 sync.Once 不同，如果 Init 因瞬态错误失败（如网络不可用导致
+// 机器 ID 获取失败），可以再次调用 Init 重试。
+//
 // 如果需要多个独立生成器（如测试场景），请使用 NewGenerator。
 func Init(opts ...Option) error {
-	called := false
-	defaultGenOnce.Do(func() {
-		called = true
-		defaultGen, defaultGenErr = NewGenerator(opts...)
-	})
-	if !called {
+	initMu.Lock()
+	defer initMu.Unlock()
+	if defaultGen.Load() != nil {
 		return ErrAlreadyInitialized
 	}
-	return defaultGenErr
+	initCalled = true
+	gen, err := NewGenerator(opts...)
+	if err != nil {
+		return err
+	}
+	defaultGen.Store(gen)
+	return nil
 }
 
-// ensureInitialized 确保生成器已初始化
-func ensureInitialized() error {
-	defaultGenOnce.Do(func() {
-		defaultGen, defaultGenErr = NewGenerator()
-	})
-	return defaultGenErr
+// ensureInitialized 确保生成器已初始化，返回可用的生成器。
+//
+// 使用 double-checked locking：快速路径仅需一次原子 Load。
+// 如果用户显式调用过 Init 但失败了，不会自动用默认配置覆盖用户意图，
+// 而是返回 ErrNotInitialized，提示用户重新 Init。
+func ensureInitialized() (*Generator, error) {
+	if gen := defaultGen.Load(); gen != nil {
+		return gen, nil
+	}
+	initMu.Lock()
+	defer initMu.Unlock()
+	if gen := defaultGen.Load(); gen != nil {
+		return gen, nil
+	}
+	// 用户显式调用过 Init 但失败了，不覆盖用户意图
+	if initCalled {
+		return nil, ErrNotInitialized
+	}
+	gen, err := NewGenerator()
+	if err != nil {
+		return nil, err
+	}
+	defaultGen.Store(gen)
+	return gen, nil
 }
 
 // =============================================================================
@@ -304,10 +342,11 @@ func ensureInitialized() error {
 // 如果生成器未初始化，会使用默认配置自动初始化。
 // 返回错误通常是因为时钟回拨。
 func New() (int64, error) {
-	if err := ensureInitialized(); err != nil {
+	gen, err := ensureInitialized()
+	if err != nil {
 		return 0, err
 	}
-	return defaultGen.New()
+	return gen.New()
 }
 
 // NewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试。
@@ -316,10 +355,11 @@ func New() (int64, error) {
 // 支持通过 context 取消等待。
 // 如果等待超过 maxWaitDuration（默认 500ms）仍无法生成，返回 ErrClockBackwardTimeout。
 func NewWithRetry(ctx context.Context) (int64, error) {
-	if err := ensureInitialized(); err != nil {
+	gen, err := ensureInitialized()
+	if err != nil {
 		return 0, err
 	}
-	return defaultGen.NewWithRetry(ctx)
+	return gen.NewWithRetry(ctx)
 }
 
 // NewString 生成新的唯一 ID（字符串格式）。
@@ -327,40 +367,46 @@ func NewWithRetry(ctx context.Context) (int64, error) {
 // 使用 base36 编码，结果约 11-13 个字符。
 // 返回错误通常是因为时钟回拨。
 func NewString() (string, error) {
-	if err := ensureInitialized(); err != nil {
+	gen, err := ensureInitialized()
+	if err != nil {
 		return "", err
 	}
-	return defaultGen.NewString()
+	return gen.NewString()
 }
 
 // NewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试。
 //
 // 这是生产环境推荐使用的方法。支持通过 context 取消等待。详见 NewWithRetry。
 func NewStringWithRetry(ctx context.Context) (string, error) {
-	if err := ensureInitialized(); err != nil {
+	gen, err := ensureInitialized()
+	if err != nil {
 		return "", err
 	}
-	return defaultGen.NewStringWithRetry(ctx)
+	return gen.NewStringWithRetry(ctx)
 }
 
-// MustNew 生成新的唯一 ID，失败时 panic。
+// MustNewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试，失败时 panic。
 //
-// 注意：时钟回拨时会 panic。生产环境建议使用 MustNewWithRetry。
-func MustNew() int64 {
-	if err := ensureInitialized(); err != nil {
+// 这是生产环境推荐使用的方法，自动处理短暂的时钟回拨。
+// 内部使用 context.Background()。如需自定义 context，请使用 NewWithRetry。
+func MustNewWithRetry() int64 {
+	gen, err := ensureInitialized()
+	if err != nil {
 		panic(err)
 	}
-	return defaultGen.MustNew()
+	return gen.MustNewWithRetry()
 }
 
-// MustNewString 生成新的唯一 ID（字符串格式），失败时 panic。
+// MustNewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试，失败时 panic。
 //
-// 注意：时钟回拨时会 panic。生产环境建议使用 MustNewStringWithRetry。
-func MustNewString() string {
-	if err := ensureInitialized(); err != nil {
+// 这是生产环境推荐的默认方法，自动处理短暂的时钟回拨。
+// 内部使用 context.Background()。如需自定义 context，请使用 NewStringWithRetry。
+func MustNewStringWithRetry() string {
+	gen, err := ensureInitialized()
+	if err != nil {
 		panic(err)
 	}
-	return defaultGen.MustNewString()
+	return gen.MustNewStringWithRetry()
 }
 
 // =============================================================================
@@ -371,11 +417,11 @@ func MustNewString() string {
 //
 // 字符串必须是 base36 编码的格式（由 NewString 生成）。
 // 验证格式、正数约束以及 Sonyflake 有效位范围（39+8+16=63 位）。
-// 返回 [ErrInvalidID] 如果解析结果不是有效的 Sonyflake ID。
+// 所有无效输入（语法错误、溢出、非正值、超位范围）均返回 [ErrInvalidID]。
 func Parse(s string) (int64, error) {
 	id, err := strconv.ParseInt(s, 36, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %v", ErrInvalidID, err)
 	}
 	if id <= 0 {
 		return 0, fmt.Errorf("%w: value must be positive, got %d", ErrInvalidID, id)

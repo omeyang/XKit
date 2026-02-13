@@ -130,7 +130,7 @@ func hashToMachineID(s string) uint16 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(s)) // hash.Hash.Write never returns error
 	// 取低 16 位，这是有意的截断以适配机器 ID 范围
-	return uint16(h.Sum32()) //nolint:gosec // intentional truncation to 16-bit machine ID
+	return uint16(h.Sum32())
 }
 
 // =============================================================================

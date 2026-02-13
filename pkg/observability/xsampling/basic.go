@@ -2,6 +2,7 @@ package xsampling
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 )
 
@@ -44,6 +45,9 @@ func (s *neverSampler) ShouldSample(_ context.Context) bool {
 // RateSampler 固定比率采样策略
 //
 // 按照指定的比率进行随机采样。例如 rate=0.1 表示 10% 的事件会被采样。
+//
+// 设计决策: 工厂函数返回具体类型而非 Sampler 接口，因为 Rate() 方法提供了
+// 有用的自省能力（如日志、调试），这些无法通过 Sampler 接口获得。
 type RateSampler struct {
 	rate float64
 }
@@ -55,14 +59,12 @@ type RateSampler struct {
 //   - rate=1.0: 等同于 Always()，采样所有事件
 //   - rate=0.1: 约 10% 的事件会被采样
 //
-// rate 超出范围时会被夹紧到 [0.0, 1.0]。
-func NewRateSampler(rate float64) *RateSampler {
-	if rate < 0 {
-		rate = 0
-	} else if rate > 1 {
-		rate = 1
+// rate 超出 [0.0, 1.0] 范围或为 NaN 时返回 ErrInvalidRate。
+func NewRateSampler(rate float64) (*RateSampler, error) {
+	if math.IsNaN(rate) || rate < 0 || rate > 1 {
+		return nil, ErrInvalidRate
 	}
-	return &RateSampler{rate: rate}
+	return &RateSampler{rate: rate}, nil
 }
 
 func (s *RateSampler) ShouldSample(_ context.Context) bool {
@@ -84,27 +86,36 @@ func (s *RateSampler) Rate() float64 {
 //
 // 每 N 个事件采样 1 个。例如 n=100 表示每 100 个事件采样 1 个。
 // 第 1、n+1、2n+1... 个事件会被采样。
+//
+// 内部使用 atomic.Uint64 计数器，自然溢出后通过无符号取模保持正确的采样周期。
+//
+// 设计决策: 工厂函数返回具体类型而非 Sampler 接口，因为 N() 和 Reset() 方法
+// 提供了有用的自省和控制能力，这些无法通过 Sampler 接口获得。
 type CountSampler struct {
-	n       int64
-	counter atomic.Int64
+	n       int
+	counter atomic.Uint64
 }
 
 // NewCountSampler 创建计数采样器
 //
 // n 表示采样间隔，即每 n 个事件采样 1 个。
-// n < 1 时会被设为 1，等同于 Always()。
-func NewCountSampler(n int) *CountSampler {
+// n < 1 时返回 ErrInvalidCount。
+func NewCountSampler(n int) (*CountSampler, error) {
 	if n < 1 {
-		n = 1
+		return nil, ErrInvalidCount
 	}
-	return &CountSampler{n: int64(n)}
+	return &CountSampler{n: n}, nil
 }
 
 func (s *CountSampler) ShouldSample(_ context.Context) bool {
+	n := s.n
+	if n <= 0 {
+		// 零值安全：未经 NewCountSampler 构造的零值实例按全采样处理，避免除零 panic
+		return true
+	}
+	// 使用 uint64 避免 int64 溢出后取模产生负数的问题
 	count := s.counter.Add(1)
-	// 采样第 1、(n+1)、(2n+1)... 个事件
-	// 即 count-1 能被 n 整除时采样
-	return (count-1)%s.n == 0
+	return (count-1)%uint64(n) == 0
 }
 
 // Reset 重置计数器到初始状态
@@ -114,47 +125,7 @@ func (s *CountSampler) Reset() {
 
 // N 返回采样间隔
 func (s *CountSampler) N() int {
-	return int(s.n)
-}
-
-// ProbabilitySampler 概率采样策略
-//
-// 按照指定的概率进行随机采样，与 RateSampler 实现相同但语义不同。
-// ProbabilitySampler 强调"概率"语义，适用于统计采样场景。
-type ProbabilitySampler struct {
-	probability float64
-}
-
-// NewProbabilitySampler 创建概率采样器
-//
-// probability 表示采样概率，范围 [0.0, 1.0]：
-//   - probability=0.0: 不采样任何事件
-//   - probability=1.0: 采样所有事件
-//   - probability=0.5: 约 50% 的事件会被采样
-//
-// probability 超出范围时会被夹紧到 [0.0, 1.0]。
-func NewProbabilitySampler(probability float64) *ProbabilitySampler {
-	if probability < 0 {
-		probability = 0
-	} else if probability > 1 {
-		probability = 1
-	}
-	return &ProbabilitySampler{probability: probability}
-}
-
-func (s *ProbabilitySampler) ShouldSample(_ context.Context) bool {
-	if s.probability <= 0 {
-		return false
-	}
-	if s.probability >= 1 {
-		return true
-	}
-	return randomFloat64() < s.probability
-}
-
-// Probability 返回当前采样概率
-func (s *ProbabilitySampler) Probability() float64 {
-	return s.probability
+	return s.n
 }
 
 // 确保实现了接口
@@ -163,6 +134,5 @@ var (
 	_ Sampler           = (*neverSampler)(nil)
 	_ Sampler           = (*RateSampler)(nil)
 	_ Sampler           = (*CountSampler)(nil)
-	_ Sampler           = (*ProbabilitySampler)(nil)
 	_ ResettableSampler = (*CountSampler)(nil)
 )

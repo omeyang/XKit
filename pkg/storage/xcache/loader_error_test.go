@@ -45,10 +45,11 @@ func TestLoader_Load_WhenRedisConnectionError_FallsBackToBackend(t *testing.T) {
 	// Given - 测试 Redis 连接错误时回源加载
 	cache, mr := newTestRedisForError(t)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(false),
 	)
+	require.NoError(t, err)
 
 	// 关闭 miniredis 模拟连接错误
 	mr.Close()
@@ -69,10 +70,11 @@ func TestLoader_LoadHash_WhenRedisConnectionError_FallsBackToBackend(t *testing.
 	// Given - 测试 Hash 版本 Redis 连接错误时回源加载
 	cache, mr := newTestRedisForError(t)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(false),
 	)
+	require.NoError(t, err)
 
 	// 关闭 miniredis 模拟连接错误
 	mr.Close()
@@ -93,12 +95,14 @@ func TestLoader_Load_WithDistributedLock_WhenRedisError_FallsBackToBackend(t *te
 	// Given - 测试启用分布式锁时 Redis 错误回源
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(100*time.Millisecond),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	// 关闭 miniredis 模拟连接错误
 	mr.Close()
@@ -119,12 +123,14 @@ func TestLoader_LoadHash_WithDistributedLock_WhenRedisError_FallsBackToBackend(t
 	// Given - Hash 版本分布式锁 Redis 错误回源
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(100*time.Millisecond),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	mr.Close()
 
@@ -150,12 +156,14 @@ func TestLoader_Load_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing.T) 
 	mr.Set("lock:waitkey", "occupied")
 	mr.SetTTL("lock:waitkey", 50*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(200*time.Millisecond),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("wait_backend"), nil
@@ -184,12 +192,14 @@ func TestLoader_LoadHash_WhenWaitAndRetry_RedisError_LoadsFromBackend(t *testing
 	mr.Set(hashWaitLockKey, "occupied")
 	mr.SetTTL(hashWaitLockKey, 50*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(200*time.Millisecond),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("hash_wait_backend"), nil
@@ -214,10 +224,11 @@ func TestLoader_Load_WhenRedisError_AndContextCancelled_ReturnsContextError(t *t
 	// Given - Redis 错误 + context 取消，应该返回 context 错误
 	cache, mr := newTestRedisForError(t)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 	)
+	require.NoError(t, err)
 
 	// 关闭 Redis 模拟连接错误
 	mr.Close()
@@ -231,7 +242,7 @@ func TestLoader_Load_WhenRedisError_AndContextCancelled_ReturnsContextError(t *t
 	}
 
 	// When
-	_, err := loader.Load(ctx, "ctxkey", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "ctxkey", loadFn, time.Hour)
 
 	// Then - 应返回 context 错误
 	require.Error(t, err)
@@ -242,10 +253,11 @@ func TestLoader_LoadHash_WhenRedisError_AndContextCancelled_ReturnsContextError(
 	// Given - Hash 版本 Redis 错误 + context 取消
 	cache, mr := newTestRedisForError(t)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 	)
+	require.NoError(t, err)
 
 	mr.Close()
 
@@ -257,7 +269,7 @@ func TestLoader_LoadHash_WhenRedisError_AndContextCancelled_ReturnsContextError(
 	}
 
 	// When
-	_, err := loader.LoadHash(ctx, "ctxhash", "field", loadFn, time.Hour)
+	_, err = loader.LoadHash(ctx, "ctxhash", "field", loadFn, time.Hour)
 
 	// Then
 	require.Error(t, err)
@@ -269,11 +281,12 @@ func TestLoader_Load_WhenRedisErrorAfterLock_AndContextCancelled_ReturnsContextE
 	// 这是测试 loadWithDistLock 行 137-140 的路径
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("lock:"),
 	)
+	require.NoError(t, err)
 
 	// 使用会取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -293,7 +306,7 @@ func TestLoader_Load_WhenRedisErrorAfterLock_AndContextCancelled_ReturnsContextE
 	}()
 
 	// When
-	_, err := loader.Load(ctx, "lockctx", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "lockctx", loadFn, time.Hour)
 
 	// Then - 可能返回 context 错误或后端值
 	// 由于时序问题，这可能走不同的路径
@@ -309,11 +322,12 @@ func TestLoader_Load_WithDistLock_CacheHitAfterLockAcquired_ReturnsCachedValue(t
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("lock:"),
 	)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 
@@ -347,11 +361,12 @@ func TestLoader_LoadHash_WithDistLock_CacheHitAfterLockAcquired(t *testing.T) {
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("hlock:"),
 	)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 
@@ -387,19 +402,12 @@ func TestLoader_Load_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
 
-	loader := NewLoader(cache,
+	// When - NewLoader 本身应返回配置错误
+	_, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(0), // 无效配置！
 	)
-
-	loadFn := func(ctx context.Context) ([]byte, error) {
-		t.Fatal("loadFn should not be called when config error")
-		return nil, nil
-	}
-
-	// When
-	_, err := loader.Load(context.Background(), "testkey", loadFn, time.Hour)
 
 	// Then - 配置错误应该返回 ErrInvalidConfig
 	require.Error(t, err)
@@ -412,19 +420,12 @@ func TestLoader_LoadHash_WithInvalidLockTTL_ReturnsConfigError(t *testing.T) {
 	cache, mr := newTestRedisForError(t, WithLockKeyPrefix(""))
 	t.Cleanup(func() { mr.Close() })
 
-	loader := NewLoader(cache,
+	// When - NewLoader 本身应返回配置错误
+	_, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(-1*time.Second), // 无效配置！
 	)
-
-	loadFn := func(ctx context.Context) ([]byte, error) {
-		t.Fatal("loadFn should not be called when config error")
-		return nil, nil
-	}
-
-	// When
-	_, err := loader.LoadHash(context.Background(), "hashkey", "field", loadFn, time.Hour)
 
 	// Then - 配置错误应该返回 ErrInvalidConfig
 	require.Error(t, err)

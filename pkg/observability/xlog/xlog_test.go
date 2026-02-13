@@ -234,6 +234,8 @@ func TestBuilder_SetFormat(t *testing.T) {
 	}{
 		{"text", "msg="},  // text 格式包含 msg=
 		{"json", `"msg"`}, // JSON 格式包含 "msg"
+		{"", "msg="},      // 空字符串回退到 text 格式
+		{"  ", "msg="},    // 空白字符串回退到 text 格式
 	}
 
 	for _, tt := range tests {
@@ -255,6 +257,24 @@ func TestBuilder_SetFormat(t *testing.T) {
 					tt.format, tt.contains, buf.String())
 			}
 		})
+	}
+}
+
+func TestBuilder_SetFormat_Invalid(t *testing.T) {
+	_, _, err := xlog.New().
+		SetFormat("yaml").
+		Build()
+	if err == nil {
+		t.Error("Build() should return error for invalid format")
+	}
+}
+
+func TestBuilder_NilOutput(t *testing.T) {
+	_, _, err := xlog.New().
+		SetOutput(nil).
+		Build()
+	if err == nil {
+		t.Error("Build() should return error for nil output")
 	}
 }
 
@@ -730,12 +750,11 @@ func TestBuilder_SetDeploymentTypeFromEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 设置环境变量
+			// 使用 t.Setenv 自动在测试结束时恢复环境变量
 			if tt.envValue != "" {
-				os.Setenv("DEPLOYMENT_TYPE", tt.envValue)
-				defer os.Unsetenv("DEPLOYMENT_TYPE")
+				t.Setenv("DEPLOYMENT_TYPE", tt.envValue)
 			} else {
-				os.Unsetenv("DEPLOYMENT_TYPE")
+				t.Setenv("DEPLOYMENT_TYPE", "")
 			}
 
 			var buf bytes.Buffer

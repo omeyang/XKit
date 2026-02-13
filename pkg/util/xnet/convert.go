@@ -104,6 +104,10 @@ func UnmapToIPv4(addr netip.Addr) netip.Addr {
 //
 // 对于 IPv4 地址，使用 uint64 快速路径（零分配）。
 // 对于 IPv6 地址，使用 big.Int 运算。
+//
+// 注意：IPv4-mapped IPv6 地址（如 ::ffff:192.168.1.1）走 IPv4 快速路径，
+// 返回结果为纯 IPv4 地址（如 192.168.1.2），不再是 IPv4-mapped 形式。
+// 如需保留 IPv4-mapped 形式，请先调用 [UnmapToIPv4] 或对结果调用 [MapToIPv6]。
 func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 	if !addr.IsValid() {
 		return netip.Addr{}, ErrInvalidAddress
@@ -118,14 +122,14 @@ func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 			// 加法：检查上溢
 			d64 := uint64(delta)
 			if d64 > uint64(^uint32(0))-v64 {
-				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
+				return netip.Addr{}, fmt.Errorf("IPv4 address overflow (delta=%d): %w", delta, ErrOverflow)
 			}
 			result = v64 + d64
 		} else {
 			// 减法：检查下溢
 			absDelta := uint64(-delta)
 			if absDelta > v64 {
-				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
+				return netip.Addr{}, fmt.Errorf("IPv4 address underflow (delta=%d): %w", delta, ErrOverflow)
 			}
 			result = v64 - absDelta
 		}
@@ -139,7 +143,7 @@ func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 
 	result, err := AddrFromBigInt(bi, V6)
 	if err != nil {
-		return netip.Addr{}, fmt.Errorf("address overflow: %w", err)
+		return netip.Addr{}, fmt.Errorf("IPv6 address overflow (delta=%d): %w: %w", delta, ErrOverflow, err)
 	}
 	return result, nil
 }

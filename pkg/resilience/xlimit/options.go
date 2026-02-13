@@ -34,6 +34,17 @@ type options struct {
 	onFallback       func(key Key, strategy FallbackStrategy, err error)
 	customFallback   FallbackFunc
 	podCountProvider PodCountProvider
+	initErr          error // 配置加载阶段的错误，延迟到 New/NewLocal 时返回
+}
+
+// validate 验证选项并返回初始化阶段收集的错误
+// 设计决策: Option 函数签名不支持返回错误，因此将配置加载错误
+// 暂存在 initErr 中，在 New/NewLocal 构造时统一检查。
+func (o *options) validate() error {
+	if o.initErr != nil {
+		return o.initErr
+	}
+	return o.config.Validate()
 }
 
 // Option 配置选项函数
@@ -84,7 +95,11 @@ func WithMetrics(enabled bool) Option {
 	}
 }
 
-// WithHeaders 设置是否在响应中添加限流头
+// WithHeaders 设置 Config.EnableHeaders 字段（用于配置序列化/反序列化）。
+//
+// 设计决策: 此选项仅影响 Config 结构体，不直接控制 HTTP 中间件行为。
+// HTTP 中间件使用独立的 WithMiddlewareHeaders 选项，因为中间件可能
+// 由不同的团队/模块创建，需要独立于 limiter 配置控制响应头。
 func WithHeaders(enabled bool) Option {
 	return func(o *options) {
 		o.config.EnableHeaders = enabled

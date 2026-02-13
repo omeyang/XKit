@@ -56,7 +56,7 @@ func (b *redisBackend) Reset(ctx context.Context, key string) error {
 
 // Query 查询当前配额状态（不消耗配额）
 func (b *redisBackend) Query(ctx context.Context, key string, limit, burst int, window time.Duration) (
-	remaining int, resetAt time.Time, err error) {
+	effectiveLimit, remaining int, resetAt time.Time, err error) {
 
 	rateLimit := redis_rate.Limit{
 		Rate:   limit,
@@ -67,10 +67,10 @@ func (b *redisBackend) Query(ctx context.Context, key string, limit, burst int, 
 	// 使用 AllowN(0) 来查询当前状态而不消耗配额
 	res, err := b.limiter.AllowN(ctx, key, rateLimit, 0)
 	if err != nil {
-		return 0, time.Time{}, err
+		return 0, 0, time.Time{}, err
 	}
 
-	return res.Remaining, time.Now().Add(res.ResetAfter), nil
+	return limit, res.Remaining, time.Now().Add(res.ResetAfter), nil
 }
 
 // Close 关闭后端

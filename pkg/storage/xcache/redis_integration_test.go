@@ -400,7 +400,8 @@ func TestLoader_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Load 基本流程", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -422,7 +423,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Load TTL 过期后重新加载", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -446,7 +448,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Singleflight 并发加载", func(t *testing.T) {
-		loader := NewLoader(cache, WithSingleflight(true))
+		loader, err := NewLoader(cache, WithSingleflight(true))
+		require.NoError(t, err)
 
 		// 清理 key 确保测试干净
 		client.Del(ctx, "loader:singleflight")
@@ -484,7 +487,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Load 加载错误处理", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadErr := errors.New("load failed")
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -492,7 +496,7 @@ func TestLoader_Integration(t *testing.T) {
 		}
 
 		// 应该返回加载错误
-		_, err := loader.Load(ctx, "loader:error", loadFn, time.Minute)
+		_, err = loader.Load(ctx, "loader:error", loadFn, time.Minute)
 		assert.ErrorIs(t, err, loadErr)
 
 		// 缓存中不应该有值
@@ -502,7 +506,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("LoadHash 基本流程", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -530,10 +535,12 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("分布式锁保护加载", func(t *testing.T) {
-		loader := NewLoader(cache,
+		loader, err := NewLoader(cache,
 			WithDistributedLock(true),
 			WithDistributedLockTTL(5*time.Second),
+			WithLoadTimeout(0),
 		)
+		require.NoError(t, err)
 
 		// 清理 key
 		client.Del(ctx, "loader:distlock")

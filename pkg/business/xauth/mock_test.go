@@ -207,6 +207,10 @@ func (m *mockClient) Request(_ context.Context, _ *AuthRequest) error {
 	return m.requestErr
 }
 
+func (m *mockClient) InvalidateToken(_ context.Context, _ string) error {
+	return nil
+}
+
 func (m *mockClient) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -235,6 +239,7 @@ func testToken(accessToken string, expiresIn int64) *TokenInfo {
 func testConfig() *Config {
 	return &Config{
 		Host:                  "https://auth.test.com",
+		AllowInsecure:         true, // 测试使用 httptest（HTTP），需要允许非加密连接
 		ClientID:              "test-client",
 		ClientSecret:          "test-secret",
 		Timeout:               5 * time.Second,

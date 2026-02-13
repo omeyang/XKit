@@ -6,6 +6,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockBreakerRegistry 测试用的 mock 熔断器注册表。
@@ -549,28 +552,20 @@ func TestConfigCommand_NoProvider(t *testing.T) {
 }
 
 func TestXkitCommandsConditionalRegistration(t *testing.T) {
+	a := assert.New(t)
+
 	// 不配置任何 xkit 组件
 	srv1, err := New(
 		WithBackgroundMode(true),
 		WithAuditLogger(NewNoopAuditLogger()),
 	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	require.NoError(t, err, "New() without xkit components")
 
 	// 验证 xkit 命令未注册
-	if srv1.registry.Has("breaker") {
-		t.Error("breaker should not be registered")
-	}
-	if srv1.registry.Has("limit") {
-		t.Error("limit should not be registered")
-	}
-	if srv1.registry.Has("cache") {
-		t.Error("cache should not be registered")
-	}
-	if srv1.registry.Has("config") {
-		t.Error("config should not be registered")
-	}
+	a.False(srv1.registry.Has("breaker"), "breaker should not be registered")
+	a.False(srv1.registry.Has("limit"), "limit should not be registered")
+	a.False(srv1.registry.Has("cache"), "cache should not be registered")
+	a.False(srv1.registry.Has("config"), "config should not be registered")
 
 	// 配置所有 xkit 组件
 	srv2, err := New(
@@ -581,23 +576,13 @@ func TestXkitCommandsConditionalRegistration(t *testing.T) {
 		WithCacheRegistry(newMockCacheRegistry()),
 		WithConfigProvider(newMockConfigProvider()),
 	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	require.NoError(t, err, "New() with all xkit components")
 
 	// 验证 xkit 命令已注册
-	if !srv2.registry.Has("breaker") {
-		t.Error("breaker should be registered")
-	}
-	if !srv2.registry.Has("limit") {
-		t.Error("limit should be registered")
-	}
-	if !srv2.registry.Has("cache") {
-		t.Error("cache should be registered")
-	}
-	if !srv2.registry.Has("config") {
-		t.Error("config should be registered")
-	}
+	a.True(srv2.registry.Has("breaker"), "breaker should be registered")
+	a.True(srv2.registry.Has("limit"), "limit should be registered")
+	a.True(srv2.registry.Has("cache"), "cache should be registered")
+	a.True(srv2.registry.Has("config"), "config should be registered")
 }
 
 func TestBreakerCommand_EmptyList(t *testing.T) {
@@ -670,4 +655,80 @@ func TestCacheCommand_EmptyList(t *testing.T) {
 	if output != "没有注册的缓存" {
 		t.Errorf("output = %q, want %q", output, "没有注册的缓存")
 	}
+}
+
+func TestXkitCommand_HelpStrings(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+		WithBreakerRegistry(newMockBreakerRegistry()),
+		WithLimiterRegistry(newMockLimiterRegistry()),
+		WithCacheRegistry(newMockCacheRegistry()),
+		WithConfigProvider(newMockConfigProvider()),
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		wantHelp string
+	}{
+		{"breaker", "查看/重置熔断器状态"},
+		{"limit", "查看限流器状态"},
+		{"cache", "查看缓存统计"},
+		{"config", "查看运行时配置"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := srv.registry.Get(tt.name)
+			require.NotNil(t, cmd, "command %q should be registered", tt.name)
+			assert.Contains(t, cmd.Help(), tt.wantHelp)
+		})
+	}
+}
+
+func TestBreakerCommand_ResetNotFound(t *testing.T) {
+	registry := newMockBreakerRegistry()
+
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+		WithBreakerRegistry(registry),
+	)
+	require.NoError(t, err)
+
+	cmd := srv.registry.Get("breaker")
+	_, err = cmd.Execute(context.Background(), []string{"nonexistent", "reset"})
+	assert.Error(t, err, "reset on nonexistent breaker should fail")
+}
+
+func TestCacheCommand_ZeroHitsAndMisses(t *testing.T) {
+	registry := newMockCacheRegistry()
+	registry.addCache(&CacheStats{
+		Name:    "empty-cache",
+		Type:    "lru",
+		Hits:    0,
+		Misses:  0,
+		Size:    0,
+		MaxSize: 100,
+	})
+
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+		WithCacheRegistry(registry),
+	)
+	require.NoError(t, err)
+
+	cmd := srv.registry.Get("cache")
+
+	// List: zero hits/misses should show 0.0% hit rate
+	output, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, output, "0.0%")
+
+	// Show: zero hits/misses should show 0.0% hit rate
+	output, err = cmd.Execute(context.Background(), []string{"empty-cache"})
+	require.NoError(t, err)
+	assert.Contains(t, output, "0.0%")
 }

@@ -75,6 +75,14 @@ func TestScheduler_AddFunc(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotZero(t, id)
 	})
+
+	t.Run("nil cmd returns ErrNilJob", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", nil)
+		assert.ErrorIs(t, err, ErrNilJob)
+	})
 }
 
 func TestScheduler_AddJob(t *testing.T) {
@@ -88,6 +96,14 @@ func TestScheduler_AddJob(t *testing.T) {
 	id, err := s.AddJob("@every 1s", job, WithName("test-job"))
 	assert.NoError(t, err)
 	assert.NotZero(t, id)
+}
+
+func TestScheduler_AddJob_NilJob(t *testing.T) {
+	s := New()
+	defer s.Stop()
+
+	_, err := s.AddJob("@every 1s", nil)
+	assert.ErrorIs(t, err, ErrNilJob)
 }
 
 func TestScheduler_Remove(t *testing.T) {
@@ -229,6 +245,57 @@ func TestJobWrapper_Run(t *testing.T) {
 		wrapper.Run()
 
 		assert.True(t, executed)
+	})
+}
+
+func TestJobWrapper_PanicRecovery(t *testing.T) {
+	t.Run("recovers from panic", func(t *testing.T) {
+		job := JobFunc(func(ctx context.Context) error {
+			panic("test panic")
+		})
+
+		stats := newStats()
+		opts := defaultJobOptions()
+		opts.name = "panic-job"
+		wrapper := newJobWrapper(job, NoopLocker(), nil, stats, opts)
+
+		// 不应 panic
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// panic 应被记录为失败
+		assert.Equal(t, int64(1), stats.TotalExecutions())
+		assert.Equal(t, int64(1), stats.FailureCount())
+		assert.Contains(t, stats.LastError().Error(), "panicked")
+	})
+
+	t.Run("recovers from panic with hooks", func(t *testing.T) {
+		var afterCalled bool
+		var afterErr error
+		hook := HookFunc{
+			After: func(ctx context.Context, name string, d time.Duration, err error) {
+				afterCalled = true
+				afterErr = err
+			},
+		}
+
+		job := JobFunc(func(ctx context.Context) error {
+			panic("hook panic test")
+		})
+
+		opts := defaultJobOptions()
+		opts.name = "panic-hook-job"
+		opts.hooks = []Hook{hook}
+		wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// AfterJob 应被调用，且 err 应包含 panic 信息
+		assert.True(t, afterCalled)
+		assert.Contains(t, afterErr.Error(), "panicked")
 	})
 }
 

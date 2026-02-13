@@ -172,7 +172,8 @@ func FuzzLoader_Load(f *testing.F) {
 	require.NoError(f, err)
 	f.Cleanup(func() { _ = cache.Close() })
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(f, err)
 
 	// 使用计数器确保每次 fuzz 迭代使用唯一的 key
 	var counter int64
@@ -217,7 +218,8 @@ func FuzzLoader_LoadHash(f *testing.F) {
 	require.NoError(f, err)
 	f.Cleanup(func() { _ = cache.Close() })
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(f, err)
 
 	// 使用计数器确保每次 fuzz 迭代使用唯一的 key
 	var counter int64

@@ -116,7 +116,9 @@ func WithHTTPClient(client *http.Client) Option {
 // 如需禁用日志，可传入 slog.New(slog.NewTextHandler(io.Discard, nil))。
 func WithLogger(logger *slog.Logger) Option {
 	return func(o *Options) {
-		o.Logger = logger
+		if logger != nil {
+			o.Logger = logger
+		}
 	}
 }
 

@@ -28,11 +28,11 @@ func TestErrors(t *testing.T) {
 		{"ErrLockFailed", xdlock.ErrLockFailed, "xdlock: failed to acquire lock"},
 		{"ErrLockExpired", xdlock.ErrLockExpired, "xdlock: lock expired or stolen"},
 		{"ErrExtendFailed", xdlock.ErrExtendFailed, "xdlock: failed to extend lock"},
-		{"ErrExtendNotSupported", xdlock.ErrExtendNotSupported, "xdlock: extend not supported by backend"},
 		{"ErrNilClient", xdlock.ErrNilClient, "xdlock: client is nil"},
 		{"ErrSessionExpired", xdlock.ErrSessionExpired, "xdlock: session expired"},
 		{"ErrFactoryClosed", xdlock.ErrFactoryClosed, "xdlock: factory is closed"},
 		{"ErrNotLocked", xdlock.ErrNotLocked, "xdlock: not locked"},
+		{"ErrEmptyKey", xdlock.ErrEmptyKey, "xdlock: key must not be empty"},
 	}
 
 	for _, tt := range tests {
@@ -112,9 +112,9 @@ func TestWithSetNXOnExtend(t *testing.T) {
 
 // 确保接口定义正确（编译时检查）
 var (
-	_ xdlock.LockHandle  = (*mockLockHandle)(nil)
-	_ xdlock.Factory     = (*mockFactory)(nil)
-	_ xdlock.EtcdFactory = (*mockEtcdFactory)(nil)
+	_ xdlock.LockHandle   = (*mockLockHandle)(nil)
+	_ xdlock.Factory      = (*mockFactory)(nil)
+	_ xdlock.EtcdFactory  = (*mockEtcdFactory)(nil)
 	_ xdlock.RedisFactory = (*mockRedisFactory)(nil)
 )
 
@@ -484,9 +484,9 @@ func TestRedisLockHandle_UnlockNotHeld_WithMiniredis(t *testing.T) {
 	// 让锁过期
 	mr.FastForward(200 * time.Millisecond)
 
-	// Unlock 应该返回 ErrLockNotHeld
+	// Unlock 应该返回 ErrNotLocked
 	err = handle.Unlock(ctx)
-	assert.ErrorIs(t, err, xdlock.ErrLockNotHeld)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
 }
 
 func TestRedisFactory_TryLockAfterClose_WithMiniredis(t *testing.T) {
@@ -527,4 +527,379 @@ func TestRedisFactory_LockAfterClose_Handle_WithMiniredis(t *testing.T) {
 	handle, err := factory.Lock(ctx, "test-after-close", xdlock.WithTries(1))
 	assert.ErrorIs(t, err, xdlock.ErrFactoryClosed)
 	assert.Nil(t, handle)
+}
+
+// =============================================================================
+// Redis Extend 覆盖测试
+// =============================================================================
+
+func TestRedisLockHandle_ExtendAfterExpiry_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-extend-expired", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// Extend 过期的锁应返回错误（具体错误取决于 redsync 行为）
+	err = handle.Extend(ctx)
+	assert.Error(t, err)
+}
+
+func TestRedisLockHandle_ExtendAfterClose_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-extend-closed", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 关闭工厂后 Extend 仍可操作（Redis 连接由调用者管理）
+	_ = factory.Close()
+
+	err = handle.Extend(ctx)
+	assert.NoError(t, err)
+
+	// 清理
+	_ = handle.Unlock(ctx)
+}
+
+func TestRedisLockHandle_UnlockAfterClose_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-unlock-closed", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 关闭工厂后 Unlock 仍可操作，避免锁悬挂
+	_ = factory.Close()
+
+	err = handle.Unlock(ctx)
+	assert.NoError(t, err)
+}
+
+// =============================================================================
+// Redis createMutex 选项覆盖测试
+// =============================================================================
+
+func TestRedisFactory_CreateMutexWithAllOptions_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	// 使用所有可选选项来覆盖 createMutex 分支
+	handle, err := factory.TryLock(ctx, "test-all-opts",
+		xdlock.WithKeyPrefix("prefix:"),
+		xdlock.WithExpiry(5*time.Second),
+		xdlock.WithTries(1),
+		xdlock.WithRetryDelay(100*time.Millisecond),
+		xdlock.WithRetryDelayFunc(func(tries int) time.Duration {
+			return time.Duration(tries) * 50 * time.Millisecond
+		}),
+		xdlock.WithDriftFactor(0.02),
+		xdlock.WithTimeoutFactor(0.1),
+		xdlock.WithGenValueFunc(func() (string, error) {
+			return "custom-value", nil
+		}),
+		xdlock.WithFailFast(true),
+		xdlock.WithShufflePools(true),
+		xdlock.WithSetNXOnExtend(true),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
+
+	// 验证前缀
+	assert.Contains(t, handle.Key(), "prefix:")
+	assert.Contains(t, handle.Key(), "test-all-opts")
+}
+
+// =============================================================================
+// Redis Lock context 传播测试
+// =============================================================================
+
+func TestRedisFactory_Lock_ContextPropagation_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	// 第一个 handle 持有锁
+	ctx1 := context.Background()
+	handle1, err := factory.TryLock(ctx1, "test-lock-ctx")
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx1) }()
+
+	// Lock 使用已取消的 context 应传播 context 错误
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel2()
+	handle2, err := factory.Lock(ctx2, "test-lock-ctx",
+		xdlock.WithTries(100),
+		xdlock.WithRetryDelay(50*time.Millisecond),
+	)
+	assert.Error(t, err)
+	assert.Nil(t, handle2)
+}
+
+// =============================================================================
+// Key 验证测试
+// =============================================================================
+
+func TestRedisFactory_TryLock_EmptyKey_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{"empty", ""},
+		{"space", " "},
+		{"tabs", "\t\t"},
+		{"whitespace", "  \t\n  "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handle, err := factory.TryLock(ctx, tt.key)
+			assert.ErrorIs(t, err, xdlock.ErrEmptyKey)
+			assert.Nil(t, handle)
+		})
+	}
+}
+
+func TestRedisFactory_Lock_EmptyKey_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	handle, err := factory.Lock(ctx, "", xdlock.WithTries(1))
+	assert.ErrorIs(t, err, xdlock.ErrEmptyKey)
+	assert.Nil(t, handle)
+}
+
+// =============================================================================
+// Redis Lock 重试耗尽测试（覆盖 Lock 非 context 错误路径）
+// =============================================================================
+
+func TestRedisFactory_Lock_RetriesExhausted_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	// 第一个 handle 持有锁
+	handle1, err := factory.TryLock(ctx, "test-retries-exhausted")
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+	defer func() { _ = handle1.Unlock(ctx) }()
+
+	// 第二个 Lock 使用 Tries=1 使其立即失败（不是 context 取消）
+	handle2, err := factory.Lock(ctx, "test-retries-exhausted", xdlock.WithTries(1))
+	assert.Error(t, err)
+	assert.Nil(t, handle2)
+	// 应该是锁获取失败，不是 context 错误
+	assert.False(t, errors.Is(err, context.Canceled))
+	assert.False(t, errors.Is(err, context.DeadlineExceeded))
+}
+
+// =============================================================================
+// Redis Unlock 错误路径测试
+// =============================================================================
+
+func TestRedisLockHandle_Unlock_ServerError_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-unlock-server-error", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 关闭 miniredis 模拟 Redis 不可用
+	mr.Close()
+
+	// Unlock 应返回非 ErrLockExpired 的错误（覆盖 wrappedErr 返回路径）
+	err = handle.Unlock(ctx)
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// Redis Extend 错误路径测试
+// =============================================================================
+
+func TestRedisLockHandle_Extend_ServerError_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-extend-server-error", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 关闭 miniredis 模拟 Redis 不可用
+	mr.Close()
+
+	// Extend 应返回错误（覆盖非 ErrLockExpired 的错误路径）
+	err = handle.Extend(ctx)
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// Redis Extend ErrExtendFailed 保留测试
+// =============================================================================
+
+func TestRedisLockHandle_Unlock_StolenLock_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	// handle1 获取锁
+	handle1, err := factory.TryLock(ctx, "test-stolen", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// handle2 获取同一个锁（新的 value）
+	handle2, err := factory.TryLock(ctx, "test-stolen", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle2)
+	defer func() { _ = handle2.Unlock(ctx) }()
+
+	// handle1 尝试 Unlock — 锁已被 handle2 持有，值不匹配
+	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	err = handle1.Unlock(ctx)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, xdlock.ErrLockHeld)
+}
+
+func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	// handle1 获取锁
+	handle1, err := factory.TryLock(ctx, "test-extend-stolen", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// handle2 获取同一个锁
+	handle2, err := factory.TryLock(ctx, "test-extend-stolen", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle2)
+	defer func() { _ = handle2.Unlock(ctx) }()
+
+	// handle1 尝试 Extend — 锁已被 handle2 持有
+	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	err = handle1.Extend(ctx)
+	assert.Error(t, err)
+}
+
+func TestRedisLockHandle_Extend_PreservesErrExtendFailed_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+
+	ctx := context.Background()
+
+	handle, err := factory.TryLock(ctx, "test-extend-failed", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// Extend 过期锁应返回 ErrNotLocked（ErrLockExpired 转换）
+	// 或 ErrExtendFailed（如果 redsync 返回 extend failed）
+	err = handle.Extend(ctx)
+	assert.Error(t, err)
+	// 不应将 ErrExtendFailed 转换为 ErrNotLocked（FG-M1 修复验证）
+	if errors.Is(err, xdlock.ErrExtendFailed) {
+		assert.False(t, errors.Is(err, xdlock.ErrNotLocked),
+			"ErrExtendFailed should not be converted to ErrNotLocked")
+	}
 }

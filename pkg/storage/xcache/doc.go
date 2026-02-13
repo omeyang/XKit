@@ -27,6 +27,11 @@
 //   - 第一个 caller cancel 不影响其他 caller 获取结果
 //   - 默认超时 30 秒（可通过 WithLoadTimeout 配置）
 //
+// # Panic 安全
+//
+// loadFn（用户提供的回源函数）如果发生 panic，xcache 会将其捕获并转为
+// ErrLoadPanic 错误返回，避免在 singleflight DoChan 模式下导致进程崩溃。
+//
 // # Singleflight 去重说明
 //
 // singleflight 去重仅基于 key（对于 LoadHash 是 key+field），不包含 ttl。

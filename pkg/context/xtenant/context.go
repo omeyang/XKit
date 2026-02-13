@@ -39,6 +39,8 @@ func (t TenantInfo) Validate() error {
 
 // =============================================================================
 // Context 获取函数（请求级信息）
+// 设计决策: 这些函数是 xctx 同名函数的 1:1 便捷包装，使调用方只需
+// 导入 xtenant 即可完成所有租户操作，无需关心底层 xctx 包。
 // =============================================================================
 
 // TenantID 从 context 获取租户 ID
@@ -101,7 +103,8 @@ func WithTenantName(ctx context.Context, tenantName string) (context.Context, er
 
 // WithTenantInfo 将 TenantInfo 批量注入 context
 //
-// 只注入非空字段。
+// 只注入非空字段。如果 info 为零值（IsEmpty() == true），
+// 返回原始 ctx 且不做任何修改。
 // 如果 ctx 为 nil，返回错误。
 func WithTenantInfo(ctx context.Context, info TenantInfo) (context.Context, error) {
 	if ctx == nil {

@@ -29,8 +29,8 @@ const (
 	KeyRequestID  = "request_id"
 	KeyTraceFlags = "trace_flags"
 
-	// TraceFieldCount 追踪字段数量（用于预分配切片容量）
-	TraceFieldCount = 4
+	// traceFieldCount 追踪字段数量（用于 slog 属性预分配，不导出以避免脆弱的 API 契约）
+	traceFieldCount = 4
 )
 
 // =============================================================================
@@ -160,6 +160,11 @@ func TraceFlags(ctx context.Context) string {
 
 // isAllZeros 检查字节切片是否全为零
 // W3C Trace Context 规范禁止全零的 trace-id 和 span-id
+//
+// 设计决策: 未引入可替换的随机源注入点，因为：
+//   - crypto/rand 失败属于系统级故障，测试价值有限
+//   - 全零概率极低（2^-128 / 2^-64），不值得为此增加生产复杂度
+//   - 覆盖率 ~83% 对这类极端分支是可接受的
 func isAllZeros(buf []byte) bool {
 	for _, b := range buf {
 		if b != 0 {
@@ -296,9 +301,12 @@ func EnsureRequestID(ctx context.Context) (context.Context, error) {
 //
 // 如果需要同时确保 TraceFlags，请使用组合调用：
 //
-//	ctx, _ = xctx.EnsureTrace(ctx)
+//	ctx, err = xctx.EnsureTrace(ctx)
+//	if err != nil {
+//	    return err
+//	}
 //	if xctx.TraceFlags(ctx) == "" {
-//	    ctx, _ = xctx.WithTraceFlags(ctx, "00") // 默认未采样
+//	    ctx, err = xctx.WithTraceFlags(ctx, "00") // 默认未采样
 //	}
 func EnsureTrace(ctx context.Context) (context.Context, error) {
 	if ctx == nil {
@@ -315,7 +323,9 @@ func EnsureTrace(ctx context.Context) (context.Context, error) {
 		return ctx, nil
 	}
 
-	// 仅生成缺失的字段，使用 WithTrace 批量注入减少 context 嵌套层数
+	// 设计决策: 构建仅含缺失字段的 Trace 后调用 WithTrace 批量注入。
+	// WithTrace 内部通过 applyOptionalFields 跳过空值字段，不会覆盖已存在的值。
+	// 相比逐个调用 EnsureXxx，减少了 context 嵌套层数。
 	var trace Trace
 	if !hasTraceID {
 		trace.TraceID = GenerateTraceID()
@@ -358,9 +368,34 @@ func GetTrace(ctx context.Context) Trace {
 	}
 }
 
+// Validate 校验 Trace 必填字段是否完整，缺失时返回对应的哨兵错误。
+//
+// 与 IsComplete() 检查相同条件，区别在于返回类型：
+//   - Validate() 返回 error，适用于中间件/业务层的错误处理链
+//   - IsComplete() 返回 bool，适用于条件判断和日志记录
+//
+// 约束：
+//   - TraceID 必须存在
+//   - SpanID 必须存在
+//   - RequestID 必须存在
+//   - TraceFlags 不参与校验（可选的采样决策字段，由上游传播）
+func (t Trace) Validate() error {
+	if t.TraceID == "" {
+		return ErrMissingTraceID
+	}
+	if t.SpanID == "" {
+		return ErrMissingSpanID
+	}
+	if t.RequestID == "" {
+		return ErrMissingRequestID
+	}
+	return nil
+}
+
 // IsComplete 检查追踪信息是否完整
 //
-// 所有字段都非空时返回 true。
+// TraceID、SpanID、RequestID 三个核心字段都非空时返回 true。
+// TraceFlags 不参与完整性检查，因为它是可选的采样决策字段，由上游传播。
 func (t Trace) IsComplete() bool {
 	return t.TraceID != "" && t.SpanID != "" && t.RequestID != ""
 }

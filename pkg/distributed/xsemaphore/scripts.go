@@ -3,6 +3,7 @@ package xsemaphore
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -90,16 +91,16 @@ func WarmupScripts(ctx context.Context, client redis.UniversalClient) error {
 	// 使用 SCRIPT LOAD 预加载脚本
 	// redis.Script.Load 会执行 SCRIPT LOAD 并缓存 SHA
 	if err := s.acquire.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load acquire script: %w", err)
 	}
 	if err := s.release.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load release script: %w", err)
 	}
 	if err := s.extend.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load extend script: %w", err)
 	}
 	if err := s.query.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load query script: %w", err)
 	}
 
 	return nil

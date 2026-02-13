@@ -12,8 +12,8 @@ var (
 	// ErrNilConn 表示传入了 nil 连接。
 	ErrNilConn = errors.New("xclickhouse: nil connection")
 
-	// ErrClosed 表示连接已关闭。
-	ErrClosed = errors.New("xclickhouse: connection closed")
+	// ErrClosed 表示客户端已关闭。
+	ErrClosed = errors.New("xclickhouse: client closed")
 
 	// ErrInvalidPage 表示页码无效。
 	// 此错误包装了 storageopt.ErrInvalidPage，可以使用 errors.Is 检查任一错误。
@@ -22,6 +22,9 @@ var (
 	// ErrInvalidPageSize 表示页大小无效。
 	// 此错误包装了 storageopt.ErrInvalidPageSize，可以使用 errors.Is 检查任一错误。
 	ErrInvalidPageSize = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPageSize)
+
+	// ErrPageSizeTooLarge 表示页大小超过允许的最大值。
+	ErrPageSizeTooLarge = errors.New("xclickhouse: page size exceeds maximum allowed")
 
 	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。
 	// 此错误包装了 storageopt.ErrPageOverflow，可以使用 errors.Is 检查任一错误。

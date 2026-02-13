@@ -12,8 +12,8 @@ const (
 	KeyTenantID   = "tenant_id"
 	KeyTenantName = "tenant_name"
 
-	// IdentityFieldCount 身份字段数量（用于预分配切片容量）
-	IdentityFieldCount = 3
+	// identityFieldCount 身份字段数量（用于 slog 属性预分配，不导出以避免脆弱的 API 契约）
+	identityFieldCount = 3
 )
 
 // =============================================================================
@@ -166,7 +166,11 @@ type Identity struct {
 	TenantName string
 }
 
-// Validate 校验 Identity 必填字段是否完整
+// Validate 校验 Identity 必填字段是否完整，缺失时返回对应的哨兵错误。
+//
+// 与 IsComplete() 检查相同条件，区别在于返回类型：
+//   - Validate() 返回 error，适用于中间件/业务层的错误处理链
+//   - IsComplete() 返回 bool，适用于条件判断和日志记录
 //
 // 约束：
 //   - PlatformID 必须存在

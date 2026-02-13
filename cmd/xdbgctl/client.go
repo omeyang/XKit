@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/debug/xdbg"
@@ -27,8 +28,25 @@ func NewClient(socketPath string, timeout time.Duration) *Client {
 	}
 }
 
+// validateSocket 校验目标路径是否为 Unix Socket 文件。
+func (c *Client) validateSocket() error {
+	info, err := os.Lstat(c.socketPath)
+	if err != nil {
+		return fmt.Errorf("无法访问 Socket 路径 %s: %w", c.socketPath, err)
+	}
+	if info.Mode().Type()&os.ModeSocket == 0 {
+		return fmt.Errorf("路径 %s 不是 Unix Socket 文件（类型: %s）", c.socketPath, info.Mode().Type())
+	}
+	return nil
+}
+
 // Execute 执行命令。
 func (c *Client) Execute(ctx context.Context, command string, args []string) (*xdbg.Response, error) {
+	// 前置校验: 确认目标路径是 Unix Socket 文件
+	if err := c.validateSocket(); err != nil {
+		return nil, err
+	}
+
 	// 使用支持 context 的拨号器
 	dialer := net.Dialer{Timeout: c.timeout}
 	conn, err := dialer.DialContext(ctx, "unix", c.socketPath)

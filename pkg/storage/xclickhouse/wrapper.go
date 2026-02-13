@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/omeyang/xkit/internal/storageopt"
@@ -23,6 +25,9 @@ type clickhouseWrapper struct {
 	conn    driver.Conn
 	options *Options
 
+	// closed 标记客户端是否已关闭，防止重复关闭。
+	closed atomic.Bool
+
 	// 慢查询检测器
 	slowQueryDetector *storageopt.SlowQueryDetector[SlowQueryInfo]
 
@@ -32,7 +37,17 @@ type clickhouseWrapper struct {
 	slowQueryCounter storageopt.SlowQueryCounter
 }
 
-const clickhouseComponent = "xclickhouse"
+const (
+	clickhouseComponent = "xclickhouse"
+
+	// DefaultBatchSize 默认批量插入每批大小。
+	DefaultBatchSize = 10000
+
+	// MaxPageSize 分页查询允许的最大页大小。
+	// 限制单次查询返回的行数，防止超大 PageSize 导致内存暴涨或 ClickHouse 扫描压力过大。
+	// 如需更大的结果集，请使用 Conn() 直接执行查询或分多次请求。
+	MaxPageSize int64 = 10000
+)
 
 // Conn 返回底层 ClickHouse 连接。
 func (w *clickhouseWrapper) Conn() driver.Conn {
@@ -69,18 +84,31 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 
 // Stats 返回统计信息。
 func (w *clickhouseWrapper) Stats() Stats {
-	return Stats{
+	s := Stats{
 		PingCount:   w.healthCounter.PingCount(),
 		PingErrors:  w.healthCounter.PingErrors(),
 		QueryCount:  w.queryCounter.QueryCount(),
 		QueryErrors: w.queryCounter.QueryErrors(),
 		SlowQueries: w.slowQueryCounter.Count(),
-		Pool:        PoolStats{},
 	}
+	if w.conn != nil {
+		ds := w.conn.Stats()
+		s.Pool = PoolStats{
+			Open:  ds.Open,
+			Idle:  ds.Idle,
+			InUse: ds.Open - ds.Idle,
+		}
+	}
+	return s
 }
 
 // Close 关闭 ClickHouse 连接。
+// 多次调用 Close 是安全的，第二次及后续调用返回 ErrClosed。
 func (w *clickhouseWrapper) Close() error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
+
 	// 关闭慢查询检测器
 	if w.slowQueryDetector != nil {
 		w.slowQueryDetector.Close()
@@ -152,7 +180,7 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 		Total:      total,
 		Page:       opts.Page,
 		PageSize:   opts.PageSize,
-		TotalPages: calculateTotalPages(total, opts.PageSize),
+		TotalPages: storageopt.CalculateTotalPages(total, opts.PageSize),
 	}, nil
 }
 
@@ -169,16 +197,7 @@ var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
 func normalizeQuery(query string) string {
-	// 去除末尾空白
-	for len(query) > 0 {
-		last := query[len(query)-1]
-		if last == ' ' || last == '\t' || last == '\n' || last == '\r' || last == ';' {
-			query = query[:len(query)-1]
-		} else {
-			break
-		}
-	}
-	return query
+	return strings.TrimRight(query, " \t\n\r;")
 }
 
 // validateQuerySyntax 校验查询语法，检测不支持的子句。
@@ -193,10 +212,10 @@ func validateQuerySyntax(query string) (string, error) {
 	// 检测 FORMAT 和 SETTINGS 子句
 	matches := queryClausePattern.FindAllString(normalized, -1)
 	for _, match := range matches {
-		switch {
-		case len(match) >= 6 && (match[0] == 'F' || match[0] == 'f'):
+		if strings.EqualFold(match, "FORMAT") {
 			return "", ErrQueryContainsFormat
-		case len(match) >= 8 && (match[0] == 'S' || match[0] == 's'):
+		}
+		if strings.EqualFold(match, "SETTINGS") {
 			return "", ErrQueryContainsSettings
 		}
 	}
@@ -215,17 +234,20 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	// 使用通用分页验证，包含溢出检查
 	offset, validateErr := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if validateErr != nil {
-		// 转换为包级别错误
+		// 转换为包级别错误（storageopt 只返回这三种错误）
 		switch validateErr {
 		case storageopt.ErrInvalidPage:
 			return "", 0, ErrInvalidPage
 		case storageopt.ErrInvalidPageSize:
 			return "", 0, ErrInvalidPageSize
-		case storageopt.ErrPageOverflow:
-			return "", 0, ErrPageOverflow
 		default:
-			return "", 0, validateErr
+			return "", 0, ErrPageOverflow
 		}
+	}
+
+	// 限制页大小上限，防止超大 PageSize 导致 OOM
+	if opts.PageSize > MaxPageSize {
+		return "", 0, ErrPageSizeTooLarge
 	}
 
 	return normalized, offset, nil
@@ -245,41 +267,44 @@ func (w *clickhouseWrapper) executeCountQuery(ctx context.Context, query string,
 
 // executePageQuery 执行分页数据查询。
 // pageSize 和 offset 由调用方传入，避免重复计算。
-func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, pageSize, offset int64, args ...any) ([]string, [][]any, error) {
+func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, pageSize, offset int64, args ...any) (columns []string, data [][]any, err error) {
 	w.queryCounter.IncQuery()
 	pageQuery := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, pageSize, offset)
 
-	rows, err := w.conn.Query(ctx, pageQuery, args...)
-	if err != nil {
+	rows, queryErr := w.conn.Query(ctx, pageQuery, args...)
+	if queryErr != nil {
 		w.queryCounter.IncQueryError()
-		return nil, nil, fmt.Errorf("page query failed: %w", err)
+		return nil, nil, fmt.Errorf("page query failed: %w", queryErr)
 	}
+	defer func() {
+		closeErr := rows.Close()
+		if closeErr != nil {
+			w.queryCounter.IncQueryError()
+			err = errors.Join(err, fmt.Errorf("close rows failed: %w", closeErr))
+		}
+	}()
 
-	columns := rows.Columns()
-	data, scanErr := w.scanRows(rows)
-	closeErr := rows.Close()
-	var wrappedCloseErr error
-	if closeErr != nil {
-		w.queryCounter.IncQueryError()
-		wrappedCloseErr = fmt.Errorf("close rows failed: %w", closeErr)
-	}
-	if err := errors.Join(scanErr, wrappedCloseErr); err != nil {
-		return nil, nil, err
-	}
-
-	return columns, data, nil
+	columns = rows.Columns()
+	data, err = w.scanRows(rows)
+	return columns, data, err
 }
 
 // scanRows 扫描结果集中的所有行。
 func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 	columnTypes := rows.ColumnTypes()
+
+	// 缓存每列的 ScanType，避免每行重复调用 ScanType()
+	scanTypes := make([]reflect.Type, len(columnTypes))
+	for i, ct := range columnTypes {
+		scanTypes[i] = ct.ScanType()
+	}
+
 	var data [][]any
 
 	for rows.Next() {
 		// 为每列创建对应类型的值实例用于接收数据
-		scanDest := make([]any, len(columnTypes))
-		for i := range scanDest {
-			scanType := columnTypes[i].ScanType()
+		scanDest := make([]any, len(scanTypes))
+		for i, scanType := range scanTypes {
 			// 防护：某些特殊类型可能返回 nil ScanType，使用 *any 作为后备
 			if scanType == nil {
 				scanDest[i] = new(any)
@@ -295,7 +320,7 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 		}
 
 		// 提取实际值（解引用指针）
-		row := make([]any, len(columnTypes))
+		row := make([]any, len(scanTypes))
 		for i := range row {
 			row[i] = reflect.ValueOf(scanDest[i]).Elem().Interface()
 		}
@@ -310,15 +335,6 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 	return data, nil
 }
 
-// calculateTotalPages 计算总页数。
-func calculateTotalPages(total, pageSize int64) int64 {
-	totalPages := total / pageSize
-	if total%pageSize > 0 {
-		totalPages++
-	}
-	return totalPages
-}
-
 // =============================================================================
 // 批量插入实现
 // =============================================================================
@@ -326,7 +342,10 @@ func calculateTotalPages(total, pageSize int64) int64 {
 // tableNamePattern 用于校验表名的合法性。
 // 支持格式：table_name、database.table_name、`database`.`table_name`
 // 允许字母、数字、下划线、点号和反引号。
-var tableNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$|^` + "`[^`]+`" + `(\.` + "`[^`]+`" + `)?$`)
+//
+// 设计决策: 反引号内禁止控制字符（\x00-\x1f）以防止换行符注入风险。
+// 不支持混合引用风格（如 db.`table`），这是有意的安全限制。
+var tableNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$|^` + "`[^`\\x00-\\x1f]+`" + `(\.` + "`[^`\\x00-\\x1f]+`" + `)?$`)
 
 // validateTableName 校验表名是否合法，防止 SQL 注入。
 func validateTableName(table string) error {
@@ -350,7 +369,7 @@ func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows 
 
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
-		batchSize = 10000 // 默认批次大小
+		batchSize = DefaultBatchSize
 	}
 
 	start := time.Now()
@@ -407,10 +426,7 @@ func (w *clickhouseWrapper) insertBatches(ctx context.Context, table string, row
 			break
 		}
 
-		end := i + batchSize
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(i+batchSize, len(rows))
 
 		batch := rows[i:end]
 		count, batchErrs := w.insertBatch(ctx, table, batch)
@@ -434,6 +450,15 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 
 	// 如果没有成功追加任何行，中止批次
 	if appendedCount == 0 {
+		w.abortBatch(batchObj, &errs)
+		return 0, errs
+	}
+
+	// 设计决策: context 取消后中止批次而非发送部分数据。
+	// 在重试场景下，发送部分数据可能导致重复写入和语义不一致。
+	// 调用方应通过 InsertedCount 判断实际写入量并决定后续操作。
+	if ctx.Err() != nil {
+		errs = append(errs, fmt.Errorf("context canceled before send: %w", ctx.Err()))
 		w.abortBatch(batchObj, &errs)
 		return 0, errs
 	}

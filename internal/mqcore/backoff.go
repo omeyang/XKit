@@ -91,10 +91,12 @@ func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoo
 
 				// 应用退避延迟
 				delay := options.Backoff.NextDelay(attempt)
+				timer := time.NewTimer(delay)
 				select {
 				case <-ctx.Done():
+					timer.Stop()
 					return ctx.Err()
-				case <-time.After(delay):
+				case <-timer.C:
 				}
 			} else {
 				// 成功消费，重置退避

@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/omeyang/xkit/pkg/config/xconf"
@@ -73,18 +74,29 @@ func (p *XConfProvider) Watch(ctx context.Context) (<-chan ConfigChange, error) 
 		default:
 		}
 
+		var change ConfigChange
 		if watchErr != nil {
-			ch <- ConfigChange{Err: watchErr}
-			return
+			change = ConfigChange{Err: watchErr}
+		} else {
+			newConfig, loadErr := p.Load()
+			if loadErr != nil {
+				change = ConfigChange{Err: loadErr}
+			} else {
+				change = ConfigChange{NewConfig: newConfig}
+			}
 		}
 
-		newConfig, loadErr := p.Load()
-		if loadErr != nil {
-			ch <- ConfigChange{Err: loadErr}
-			return
+		// 设计决策: 非阻塞投递，丢弃旧事件保新事件。
+		// 配置变更是覆盖语义，只需最新配置。阻塞投递可能
+		// 卡住 xconf 回调线程，影响后续变更通知和停止流程。
+		select {
+		case <-ch:
+		default:
 		}
-
-		ch <- ConfigChange{NewConfig: newConfig}
+		select {
+		case ch <- change:
+		default:
+		}
 	})
 
 	if err != nil {
@@ -96,7 +108,13 @@ func (p *XConfProvider) Watch(ctx context.Context) (<-chan ConfigChange, error) 
 	go func() {
 		watcher.StartAsync()
 		<-ctx.Done()
-		watcher.Stop() //nolint:errcheck,gosec // 关闭时忽略错误
+		if stopErr := watcher.Stop(); stopErr != nil {
+			// 尽力发送停止错误，但不阻塞关闭流程
+			select {
+			case ch <- ConfigChange{Err: stopErr}:
+			default:
+			}
+		}
 		close(ch)
 	}()
 
@@ -104,7 +122,9 @@ func (p *XConfProvider) Watch(ctx context.Context) (<-chan ConfigChange, error) 
 }
 
 // WithConfigProvider 使用配置提供器加载配置
-// 此选项会在创建限流器时立即加载配置
+// 此选项会在创建限流器时立即加载配置。
+// 如果加载失败，错误将在 New/NewLocal 构造时返回，
+// 避免在无规则状态下静默放行所有请求。
 func WithConfigProvider(provider ConfigProvider) Option {
 	return func(o *options) {
 		if provider == nil {
@@ -113,7 +133,10 @@ func WithConfigProvider(provider ConfigProvider) Option {
 
 		config, err := provider.Load()
 		if err != nil {
-			// 配置加载失败，使用默认配置
+			// 设计决策: 将配置加载错误上抛到 New/NewLocal，而不是静默降级到
+			// 默认配置。默认配置无规则会导致所有请求被放行，在生产环境中
+			// 这比明确的创建失败更危险。
+			o.initErr = fmt.Errorf("config provider load failed: %w", err)
 			return
 		}
 

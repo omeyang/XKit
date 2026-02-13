@@ -12,9 +12,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// errUnexpectedScriptResult Lua 脚本返回结果不符合预期
-var errUnexpectedScriptResult = fmt.Errorf("xsemaphore: unexpected script result")
-
 // validateScriptResult 校验 Lua 脚本返回值长度
 func validateScriptResult(result []int64, minLen int) error {
 	if len(result) < minLen {
@@ -242,7 +239,7 @@ func (s *redisSemaphore) acquireWithRetry(ctx context.Context, resource, tenantI
 		// 致命 Redis 错误（非 TRYAGAIN），立即返回（可能触发降级）
 		// 当前 attempt 已执行，重试次数 = attempt（attempt=0 首次尝试不算重试）
 		if redisErr != nil && !isRetryableRedisError(redisErr) {
-			return nil, reason, attempt, fmt.Errorf("acquire failed: %w", redisErr)
+			return nil, reason, attempt, redisErr
 		}
 
 		if redisErr == nil && permit != nil {
@@ -338,12 +335,12 @@ func (s *redisSemaphore) doAcquire(
 
 	result, err := s.evalScriptInt64Slice(ctx, s.scripts.acquire, keys, args...)
 	if err != nil {
-		return nil, ReasonUnknown, err
+		return nil, ReasonUnknown, fmt.Errorf("acquire script failed: %w", err)
 	}
 
 	// 验证结果长度：acquire 返回 {status, globalCount, tenantCount}
 	if err := validateScriptResult(result, 3); err != nil {
-		return nil, ReasonUnknown, err
+		return nil, ReasonUnknown, fmt.Errorf("acquire script failed: %w", err)
 	}
 
 	return s.handleAcquireResult(ctx, result, permitID, resource, tenantID, expiresAt, cfg, hasTenantQuota)
@@ -573,6 +570,9 @@ func (s *redisSemaphore) Close(_ context.Context) error {
 
 // Health 健康检查
 func (s *redisSemaphore) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if s.closed.Load() {
 		return ErrSemaphoreClosed
 	}

@@ -81,32 +81,11 @@ func ExtractFromIncomingContext(ctx context.Context) TraceInfo {
 
 // GRPCUnaryServerInterceptor 返回 gRPC 一元服务端拦截器。
 // 自动从 gRPC Metadata 提取追踪信息并注入 context，缺失时自动生成。
-func GRPCUnaryServerInterceptor() grpc.UnaryServerInterceptor {
-	return GRPCUnaryServerInterceptorWithOptions()
-}
-
-// GRPCInterceptorOption gRPC 拦截器选项
-type GRPCInterceptorOption func(*grpcInterceptorConfig)
-
-type grpcInterceptorConfig struct {
-	autoGenerate bool
-}
-
-// WithGRPCAutoGenerate 设置是否自动生成缺失的追踪 ID
-func WithGRPCAutoGenerate(enabled bool) GRPCInterceptorOption {
-	return func(cfg *grpcInterceptorConfig) {
-		cfg.autoGenerate = enabled
-	}
-}
-
-// GRPCUnaryServerInterceptorWithOptions 返回带选项的 gRPC 一元服务端拦截器
-func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
-	cfg := &grpcInterceptorConfig{
-		autoGenerate: true,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+//
+// 设计决策: xtrace 只做传输层适配（提取/注入追踪标识），不创建 OTel Span。
+// Span 生命周期管理由 OTel SDK 的 otelgrpc 拦截器负责。
+func GRPCUnaryServerInterceptor(opts ...Option) grpc.UnaryServerInterceptor {
+	cfg := applyOptions(opts)
 
 	return func(
 		ctx context.Context,
@@ -126,18 +105,8 @@ func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.U
 
 // GRPCStreamServerInterceptor 返回 gRPC 流式服务端拦截器。
 // 自动从 gRPC Metadata 提取追踪信息并注入 context。
-func GRPCStreamServerInterceptor() grpc.StreamServerInterceptor {
-	return GRPCStreamServerInterceptorWithOptions()
-}
-
-// GRPCStreamServerInterceptorWithOptions 返回带选项的 gRPC 流式服务端拦截器
-func GRPCStreamServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
-	cfg := &grpcInterceptorConfig{
-		autoGenerate: true,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+func GRPCStreamServerInterceptor(opts ...Option) grpc.StreamServerInterceptor {
+	cfg := applyOptions(opts)
 
 	return func(
 		srv any,
@@ -268,10 +237,10 @@ func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 		md.Set(MetaRequestID, info.RequestID)
 	}
 
-	// 如果已有 Traceparent，验证后再透传，避免传播无效 traceparent
+	// 如果已有 Traceparent，验证后规范化为小写再透传，确保符合 W3C 规范
 	if info.Traceparent != "" {
 		if _, _, _, ok := parseTraceparent(info.Traceparent); ok {
-			md.Set(MetaTraceparent, info.Traceparent)
+			md.Set(MetaTraceparent, strings.ToLower(info.Traceparent))
 		}
 		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
 	}

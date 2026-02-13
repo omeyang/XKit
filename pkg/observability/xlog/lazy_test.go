@@ -406,6 +406,42 @@ func BenchmarkLazyDuration(b *testing.B) {
 	}
 }
 
+// TestLazy_NilFn 测试 nil 回调不会 panic（输出安全降级值）
+func TestLazy_NilFn(t *testing.T) {
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetLevel(xlog.LevelDebug).
+		SetFormat("json").
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	ctx := context.Background()
+
+	// 所有 nil fn 都不应 panic
+	logger.Debug(ctx, "nil test",
+		xlog.Lazy("any", nil),
+		xlog.LazyString("str", nil),
+		xlog.LazyInt("num", nil),
+		xlog.LazyError("err", nil),
+		xlog.LazyErr(nil),
+		xlog.LazyDuration("dur", nil),
+		xlog.LazyGroup("grp", nil),
+	)
+
+	output := buf.String()
+	if !strings.Contains(output, "nil test") {
+		t.Errorf("expected output to contain 'nil test', got: %s", output)
+	}
+	// 确认没有 "LogValue panicked" 出现
+	if strings.Contains(output, "panicked") {
+		t.Errorf("nil fn should not cause panic, got: %s", output)
+	}
+}
+
 // BenchmarkLazyGroup 测试 LazyGroup 性能
 func BenchmarkLazyGroup(b *testing.B) {
 	logger, cleanup, err := xlog.New().

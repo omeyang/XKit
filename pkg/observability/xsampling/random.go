@@ -20,11 +20,10 @@ const (
 // 性能说明：crypto/rand 在现代 CPU 上约 ~50-100ns/op，
 // 对于采样场景（通常每请求调用一次）完全可接受。
 //
-// 设计决策 - panic 行为说明：
-// crypto/rand.Read 失败表示操作系统熵源不可用（如 /dev/urandom 无法访问），
-// 这是极其罕见的系统级故障。此时继续运行会产生不安全/不可预测的采样行为，
-// 可能导致更难排查的问题。因此选择 panic 作为快速失败策略，便于问题定位。
-// 在实际生产环境中，此错误几乎不会发生。
+// 设计决策: panic 行为说明：
+// Go 1.22+ 保证 crypto/rand.Read 永远不返回错误（底层使用 getrandom 等系统调用），
+// 如果 OS 熵源不可用，Read 内部会直接崩溃进程。因此此处的 error 检查实际上是
+// 不可达的防御性代码，保留是为了与 Read 的 (int, error) 签名保持一致。
 func randomFloat64() float64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {

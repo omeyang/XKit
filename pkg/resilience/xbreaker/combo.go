@@ -32,6 +32,8 @@ type BreakerRetryer struct {
 
 // NewBreakerRetryer 创建熔断器+重试组合执行器
 //
+// 如果 breaker 或 retryer 为 nil，返回对应的错误。
+//
 // 示例:
 //
 //	breaker := xbreaker.NewBreaker("my-service",
@@ -42,19 +44,19 @@ type BreakerRetryer struct {
 //	    xretry.WithBackoffPolicy(xretry.NewExponentialBackoff()),
 //	)
 //
-//	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
-func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) *BreakerRetryer {
+//	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
+func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) (*BreakerRetryer, error) {
 	if breaker == nil {
-		panic("xbreaker: breaker cannot be nil")
+		return nil, ErrNilBreaker
 	}
 	if retryer == nil {
-		panic("xbreaker: retryer cannot be nil")
+		return nil, ErrNilRetryer
 	}
 
 	return &BreakerRetryer{
 		breaker: breaker,
 		retryer: retryer,
-	}
+	}, nil
 }
 
 // DoWithRetry 执行带熔断和重试的操作
@@ -67,6 +69,9 @@ func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) *BreakerRetrye
 //  5. 每次尝试的结果都被熔断器记录
 //  6. 如果在重试过程中触发熔断，后续重试将被阻断
 func (br *BreakerRetryer) DoWithRetry(ctx context.Context, fn func(ctx context.Context) error) error {
+	if fn == nil {
+		return ErrNilFunc
+	}
 	return br.retryer.Do(ctx, func(ctx context.Context) error {
 		// 每次重试尝试都经过熔断器
 		return br.breaker.Do(ctx, func() error {
@@ -90,14 +95,21 @@ func (br *BreakerRetryer) Retryer() *xretry.Retryer {
 // 这是 BreakerRetryer.DoWithRetry 的泛型版本，支持返回值。
 // 每次重试尝试都会经过熔断器检查和记录。
 //
+// 注意：fn 不接收 context，context 取消仅在重试间隔时检测。
+// 若需在操作内部响应取消，请在 fn 闭包中捕获 context 使用。
+//
 // 示例:
 //
-//	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
+//	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
 //
 //	result, err := xbreaker.ExecuteWithRetry(ctx, combo, func() (string, error) {
 //	    return callRemoteService()
 //	})
 func ExecuteWithRetry[T any](ctx context.Context, br *BreakerRetryer, fn func() (T, error)) (T, error) {
+	var zero T
+	if br == nil {
+		return zero, ErrNilBreaker
+	}
 	return xretry.DoWithResult(ctx, br.retryer, func(ctx context.Context) (T, error) {
 		// 每次重试尝试都经过熔断器
 		return Execute(ctx, br.breaker, fn)
@@ -147,12 +159,17 @@ type RetryThenBreak struct {
 //   - 内部会创建独立的 TwoStepCircuitBreaker，状态从 Closed 开始
 //   - 如果传入的 Breaker 已经处于 Open 状态，RetryThenBreak 仍会允许请求
 //   - 若需要独立的熔断器实例，建议使用 NewRetryThenBreakWithConfig
-func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) *RetryThenBreak {
+//
+// 设计决策: 此函数只复用 Breaker 的配置（TripPolicy、SuccessPolicy、Timeout 等），
+// 不复用其状态。Breaker() getter 返回的实例仅用于访问配置，
+// 其 State()/Counts() 与 RetryThenBreak 内部的熔断器状态不同步。
+// 如果需要更清晰的语义，建议使用 NewRetryThenBreakWithConfig。
+func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) (*RetryThenBreak, error) {
 	if retryer == nil {
-		panic("xbreaker: retryer cannot be nil")
+		return nil, ErrNilRetryer
 	}
 	if breaker == nil {
-		panic("xbreaker: breaker cannot be nil")
+		return nil, ErrNilBreaker
 	}
 
 	// 创建与 Breaker 配置相同的 TwoStep 熔断器
@@ -163,7 +180,7 @@ func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) *RetryThenBrea
 		retryer: retryer,
 		breaker: breaker,
 		tscb:    tscb,
-	}
+	}, nil
 }
 
 // NewRetryThenBreakWithConfig 使用配置选项创建先重试后熔断执行器
@@ -179,9 +196,9 @@ func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) *RetryThenBrea
 //	    xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(5)),
 //	    xbreaker.WithTimeout(30 * time.Second),
 //	)
-func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...BreakerOption) *RetryThenBreak {
+func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...BreakerOption) (*RetryThenBreak, error) {
 	if retryer == nil {
-		panic("xbreaker: retryer cannot be nil")
+		return nil, ErrNilRetryer
 	}
 
 	// 使用配置创建一个临时 Breaker（仅用于获取配置）
@@ -194,7 +211,7 @@ func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...B
 		retryer: retryer,
 		breaker: breaker,
 		tscb:    tscb,
-	}
+	}, nil
 }
 
 // Do 执行操作
@@ -281,14 +298,19 @@ func (rtb *RetryThenBreak) toResultError(err error) error {
 	}
 	// 极端情况：err 为 nil 但 SuccessPolicy 返回 false
 	// 这通常不应发生，但为安全起见返回一个占位错误
-	return fmt.Errorf("operation marked as failed by success policy")
+	return errFailedByPolicy
 }
 
 // ExecuteRetryThenBreak 执行先重试后熔断的操作（泛型版本）
 //
 // 注意：即使发生 panic，也会通过 defer 确保熔断器计数被正确更新（记为失败）。
+// rtb 不能为 nil，否则返回 ErrNilBreaker。
 func ExecuteRetryThenBreak[T any](ctx context.Context, rtb *RetryThenBreak, fn func() (T, error)) (T, error) {
 	var zero T
+
+	if rtb == nil {
+		return zero, ErrNilBreaker
+	}
 
 	// 检查 context
 	if err := ctx.Err(); err != nil {

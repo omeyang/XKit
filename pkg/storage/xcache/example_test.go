@@ -94,9 +94,12 @@ func ExampleNewLoader() {
 	defer cache.Close()
 
 	// 创建 Loader - 这是 xcache 的核心增值功能
-	loader := xcache.NewLoader(cache,
+	loader, err := xcache.NewLoader(cache,
 		xcache.WithSingleflight(true), // 防止缓存击穿
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx := context.Background()
 
@@ -219,10 +222,13 @@ func Example_loaderWithDistributedLock() {
 
 	// 创建带分布式锁的 Loader
 	// 适用于多实例部署场景，防止缓存击穿
-	loader := xcache.NewLoader(cache,
+	loader, err := xcache.NewLoader(cache,
 		xcache.WithSingleflight(true),
 		xcache.WithDistributedLock(true),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// 模拟从数据库加载数据
 	value, err := loader.Load(ctx, "config:global", func(ctx context.Context) ([]byte, error) {

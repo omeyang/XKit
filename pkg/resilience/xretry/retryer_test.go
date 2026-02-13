@@ -3,6 +3,7 @@ package xretry
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,6 +112,39 @@ func TestRetryer_Do(t *testing.T) {
 		assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || err.Error() == "error")
 	})
 
+	t.Run("InternalContextCanceledNoRetry", func(t *testing.T) {
+		// 函数返回内部 context 的取消错误时，不应重试
+		r := NewRetryer(
+			WithRetryPolicy(NewFixedRetry(5)),
+			WithBackoffPolicy(NewNoBackoff()),
+		)
+		var attempts int
+
+		err := r.Do(context.Background(), func(_ context.Context) error {
+			attempts++
+			return context.Canceled
+		})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, attempts)
+	})
+
+	t.Run("InternalDeadlineExceededNoRetry", func(t *testing.T) {
+		r := NewRetryer(
+			WithRetryPolicy(NewFixedRetry(5)),
+			WithBackoffPolicy(NewNoBackoff()),
+		)
+		var attempts int
+
+		err := r.Do(context.Background(), func(_ context.Context) error {
+			attempts++
+			return context.DeadlineExceeded
+		})
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, attempts)
+	})
+
 	t.Run("OnRetryCallback", func(t *testing.T) {
 		var callbacks []int
 		r := NewRetryer(
@@ -122,7 +156,7 @@ func TestRetryer_Do(t *testing.T) {
 		)
 		var attempts int
 
-		_ = r.Do(context.Background(), func(ctx context.Context) error { //nolint:errcheck // 测试回调执行，忽略返回值
+		err := r.Do(context.Background(), func(ctx context.Context) error {
 			attempts++
 			if attempts < 3 {
 				return errors.New("error")
@@ -130,6 +164,7 @@ func TestRetryer_Do(t *testing.T) {
 			return nil
 		})
 
+		assert.NoError(t, err)
 		assert.Equal(t, []int{1, 2}, callbacks)
 	})
 
@@ -141,7 +176,7 @@ func TestRetryer_Do(t *testing.T) {
 		var attempts int
 
 		start := time.Now()
-		_ = r.Do(context.Background(), func(ctx context.Context) error { //nolint:errcheck // 测试退避延迟，忽略返回值
+		err := r.Do(context.Background(), func(ctx context.Context) error {
 			attempts++
 			if attempts < 3 {
 				return errors.New("error")
@@ -150,6 +185,7 @@ func TestRetryer_Do(t *testing.T) {
 		})
 		elapsed := time.Since(start)
 
+		assert.NoError(t, err)
 		// 应该有 2 次退避等待，每次 50ms
 		assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
 		assert.LessOrEqual(t, elapsed, 200*time.Millisecond)
@@ -262,6 +298,22 @@ func TestZeroValueRetryer(t *testing.T) {
 	})
 }
 
+func TestSafeIntToUint(t *testing.T) {
+	assert.Equal(t, uint(0), safeIntToUint(0))
+	assert.Equal(t, uint(0), safeIntToUint(-1))
+	assert.Equal(t, uint(0), safeIntToUint(-100))
+	assert.Equal(t, uint(1), safeIntToUint(1))
+	assert.Equal(t, uint(100), safeIntToUint(100))
+}
+
+func TestSafeUintToInt(t *testing.T) {
+	assert.Equal(t, 0, safeUintToInt(0))
+	assert.Equal(t, 1, safeUintToInt(1))
+	assert.Equal(t, 100, safeUintToInt(100))
+	assert.Equal(t, math.MaxInt, safeUintToInt(math.MaxUint))
+	assert.Equal(t, math.MaxInt, safeUintToInt(uint(math.MaxInt)+1))
+}
+
 // TestBackoffDelayCorrectness 验证 BackoffPolicy.NextDelay 参数正确传递
 // 此测试验证退避延迟参数正确传递，防止 off-by-one 回归
 func TestBackoffDelayCorrectness(t *testing.T) {
@@ -279,13 +331,14 @@ func TestBackoffDelayCorrectness(t *testing.T) {
 	)
 
 	var attempts int
-	_ = r.Do(context.Background(), func(_ context.Context) error { //nolint:errcheck // 测试延迟参数
+	err := r.Do(context.Background(), func(_ context.Context) error {
 		attempts++
 		if attempts < 4 {
 			return errors.New("fail")
 		}
 		return nil
 	})
+	assert.NoError(t, err)
 
 	// 验证 NextDelay 被调用时传入的 attempt 参数正确
 	// 应该是 [1, 2, 3]（3 次重试，attempt 从 1 开始）
@@ -317,10 +370,11 @@ func TestRetryer_NegativeMaxAttempts(t *testing.T) {
 	defer cancel()
 
 	// 应该作为无限重试处理（直到超时）
-	_ = retryer.Do(ctx, func(_ context.Context) error { //nolint:errcheck // 测试负值保护，预期超时退出
+	err := retryer.Do(ctx, func(_ context.Context) error {
 		count++
 		return errors.New("always fail")
 	})
+	assert.Error(t, err)
 
 	// 验证确实执行了多次而非 uint 溢出后的巨大次数
 	// 如果是 uint(-1) = 18446744073709551615 次，测试会超时或卡死
@@ -328,6 +382,93 @@ func TestRetryer_NegativeMaxAttempts(t *testing.T) {
 	// 这里验证的关键是：执行次数远小于 uint 溢出值（~1.8e19）
 	assert.Greater(t, count, 1, "should retry multiple times")
 	assert.Less(t, count, 1000000, "should not overflow to huge uint value")
+}
+
+// TestRetryer_CustomShouldRetry 验证自定义 ShouldRetry 在 Retryer 路径下真正生效
+func TestRetryer_CustomShouldRetry(t *testing.T) {
+	t.Run("ShouldRetryReceivesCorrectAttempt", func(t *testing.T) {
+		// 自定义策略：记录 ShouldRetry 收到的 attempt 值
+		var shouldRetryAttempts []int
+		policy := &trackingShouldRetryPolicy{
+			maxAttempts: 5,
+			attempts:    &shouldRetryAttempts,
+		}
+
+		r := NewRetryer(
+			WithRetryPolicy(policy),
+			WithBackoffPolicy(NewNoBackoff()),
+		)
+
+		var execAttempts int
+		err := r.Do(context.Background(), func(_ context.Context) error {
+			execAttempts++
+			if execAttempts < 3 {
+				return errors.New("fail")
+			}
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 3, execAttempts)
+		// ShouldRetry 应该被调用 2 次（第 1 次和第 2 次失败后）
+		assert.Equal(t, []int{1, 2}, shouldRetryAttempts)
+	})
+
+	t.Run("ShouldRetryCanStopEarly", func(t *testing.T) {
+		// 自定义策略：只允许重试特定错误
+		policy := &customFilterPolicy{
+			maxAttempts:    10,
+			retryableError: "retryable",
+		}
+
+		r := NewRetryer(
+			WithRetryPolicy(policy),
+			WithBackoffPolicy(NewNoBackoff()),
+		)
+
+		var attempts int
+		err := r.Do(context.Background(), func(_ context.Context) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("retryable")
+			}
+			return errors.New("fatal")
+		})
+
+		assert.Error(t, err)
+		assert.Equal(t, 2, attempts) // 第 2 次返回 "fatal"，ShouldRetry 拒绝重试
+	})
+}
+
+// trackingShouldRetryPolicy 记录 ShouldRetry 调用的策略
+type trackingShouldRetryPolicy struct {
+	maxAttempts int
+	attempts    *[]int
+}
+
+func (p *trackingShouldRetryPolicy) MaxAttempts() int { return p.maxAttempts }
+
+func (p *trackingShouldRetryPolicy) ShouldRetry(_ context.Context, attempt int, err error) bool {
+	*p.attempts = append(*p.attempts, attempt)
+	if attempt >= p.maxAttempts {
+		return false
+	}
+	return IsRetryable(err)
+}
+
+// customFilterPolicy 只重试特定错误消息的策略
+type customFilterPolicy struct {
+	maxAttempts    int
+	retryableError string
+}
+
+func (p *customFilterPolicy) MaxAttempts() int { return p.maxAttempts }
+
+func (p *customFilterPolicy) ShouldRetry(_ context.Context, attempt int, err error) bool {
+	if attempt >= p.maxAttempts {
+		return false
+	}
+	return err != nil && err.Error() == p.retryableError
 }
 
 // negativeMaxAttemptsPolicy 是返回负数 MaxAttempts 的测试策略
@@ -339,4 +480,35 @@ func (p *negativeMaxAttemptsPolicy) MaxAttempts() int {
 
 func (p *negativeMaxAttemptsPolicy) ShouldRetry(_ context.Context, _ int, _ error) bool {
 	return true
+}
+
+func TestNilRetryer(t *testing.T) {
+	t.Run("Do", func(t *testing.T) {
+		var r *Retryer // nil
+		err := r.Do(context.Background(), func(_ context.Context) error {
+			t.Fatal("should not be called")
+			return nil
+		})
+		assert.ErrorIs(t, err, ErrNilRetryer)
+	})
+
+	t.Run("DoWithResult", func(t *testing.T) {
+		result, err := DoWithResult(context.Background(), nil, func(_ context.Context) (int, error) {
+			t.Fatal("should not be called")
+			return 0, nil
+		})
+		assert.ErrorIs(t, err, ErrNilRetryer)
+		assert.Equal(t, 0, result)
+	})
+
+	t.Run("Retrier", func(t *testing.T) {
+		var r *Retryer // nil
+		retrier := r.Retrier(context.Background())
+		assert.NotNil(t, retrier, "nil Retryer should return usable default Retrier")
+	})
+
+	t.Run("RetrierWithData", func(t *testing.T) {
+		retrier := RetrierWithData[string](context.Background(), nil)
+		assert.NotNil(t, retrier, "nil Retryer should return usable default RetrierWithData")
+	})
 }

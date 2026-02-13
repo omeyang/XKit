@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-redsync/redsync/v4"
 	"github.com/omeyang/xkit/pkg/storage/xetcd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 // testContextKey 用于测试的 context key 类型
@@ -241,28 +243,281 @@ func TestErrorDefinitions(t *testing.T) {
 }
 
 // =============================================================================
-// Client 类型别名测试
-// =============================================================================
-
-func TestClientTypeAlias(t *testing.T) {
-	// 测试 Client 类型别名可以正确使用
-	// 这是一个编译时测试，确保类型别名正确定义
-	var _ Client = nil // 可以赋值 nil
-}
-
-// =============================================================================
 // convertXetcdError 测试
 // =============================================================================
 
 func TestConvertXetcdError(t *testing.T) {
-	// 测试 nil 错误
-	assert.Nil(t, convertXetcdError(nil))
+	tests := []struct {
+		name    string
+		err     error
+		wantErr error
+		wantNil bool
+	}{
+		{"nil error", nil, nil, true},
+		{"ErrNilConfig", xetcd.ErrNilConfig, ErrNilConfig, false},
+		{"ErrNoEndpoints", xetcd.ErrNoEndpoints, ErrNoEndpoints, false},
+		{"other error", errors.New("some error"), nil, false},
+	}
 
-	// 测试其他错误包装
-	someErr := errors.New("some error")
-	wrapped := convertXetcdError(someErr)
-	assert.Contains(t, wrapped.Error(), "xdlock:")
-	assert.ErrorIs(t, wrapped, someErr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertXetcdError(tt.err)
+			if tt.wantNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			if tt.wantErr != nil {
+				assert.Equal(t, tt.wantErr, result)
+			} else {
+				assert.Contains(t, result.Error(), "xdlock:")
+				assert.ErrorIs(t, result, tt.err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// wrapEtcdError 测试
+// =============================================================================
+
+func TestWrapEtcdError(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		wantErr      error
+		wantOriginal error // 验证原始错误也在链中
+		wantNil      bool
+	}{
+		{"nil", nil, nil, nil, true},
+		{"ErrLocked", concurrency.ErrLocked, ErrLockHeld, concurrency.ErrLocked, false},
+		{"ErrSessionExpired", concurrency.ErrSessionExpired, ErrSessionExpired, concurrency.ErrSessionExpired, false},
+		{"ErrLockReleased", concurrency.ErrLockReleased, ErrNotLocked, concurrency.ErrLockReleased, false},
+		{"context.Canceled", context.Canceled, context.Canceled, nil, false},
+		{"context.DeadlineExceeded", context.DeadlineExceeded, context.DeadlineExceeded, nil, false},
+		{"other error", errors.New("other"), nil, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapEtcdError(tt.err)
+			if tt.wantNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, result, tt.wantErr)
+			}
+			// 验证原始错误保留在链中
+			if tt.wantOriginal != nil {
+				assert.ErrorIs(t, result, tt.wantOriginal)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// etcd 工厂选项测试
+// =============================================================================
+
+func TestDefaultEtcdFactoryOptions(t *testing.T) {
+	opts := defaultEtcdFactoryOptions()
+	assert.Equal(t, 60, opts.TTL)
+	assert.NotNil(t, opts.Context)
+}
+
+func TestWithEtcdTTL_Internal(t *testing.T) {
+	tests := []struct {
+		name    string
+		ttl     int
+		wantTTL int
+	}{
+		{"positive", 30, 30},
+		{"zero keeps default", 0, 60},
+		{"negative keeps default", -1, 60},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := defaultEtcdFactoryOptions()
+			WithEtcdTTL(tt.ttl)(opts)
+			assert.Equal(t, tt.wantTTL, opts.TTL)
+		})
+	}
+}
+
+func TestWithEtcdContext_Internal(t *testing.T) {
+	t.Run("valid context", func(t *testing.T) {
+		opts := defaultEtcdFactoryOptions()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		WithEtcdContext(ctx)(opts)
+		assert.Equal(t, ctx, opts.Context)
+	})
+
+	t.Run("nil context keeps default", func(t *testing.T) {
+		opts := defaultEtcdFactoryOptions()
+		original := opts.Context
+		WithEtcdContext(nil)(opts)
+		assert.Equal(t, original, opts.Context)
+	})
+}
+
+// =============================================================================
+// Mutex 选项内部测试
+// =============================================================================
+
+func TestMutexOptions_Internal(t *testing.T) {
+	t.Run("WithRetryDelayFunc sets func", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		fn := func(_ int) time.Duration { return time.Second }
+		WithRetryDelayFunc(fn)(opts)
+		assert.NotNil(t, opts.RetryDelayFunc)
+	})
+
+	t.Run("WithRetryDelayFunc nil keeps nil", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithRetryDelayFunc(nil)(opts)
+		assert.Nil(t, opts.RetryDelayFunc)
+	})
+
+	t.Run("WithGenValueFunc sets func", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		fn := func() (string, error) { return "v", nil }
+		WithGenValueFunc(fn)(opts)
+		assert.NotNil(t, opts.GenValueFunc)
+	})
+
+	t.Run("WithGenValueFunc nil keeps nil", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithGenValueFunc(nil)(opts)
+		assert.Nil(t, opts.GenValueFunc)
+	})
+
+	t.Run("WithSetNXOnExtend true", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithSetNXOnExtend(true)(opts)
+		assert.True(t, opts.SetNXOnExtend)
+	})
+
+	t.Run("WithSetNXOnExtend false", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		opts.SetNXOnExtend = true
+		WithSetNXOnExtend(false)(opts)
+		assert.False(t, opts.SetNXOnExtend)
+	})
+
+	t.Run("WithDriftFactor zero keeps default", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithDriftFactor(0.0)(opts)
+		assert.Equal(t, 0.01, opts.DriftFactor)
+	})
+
+	t.Run("WithDriftFactor positive sets value", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithDriftFactor(0.05)(opts)
+		assert.Equal(t, 0.05, opts.DriftFactor)
+	})
+
+	t.Run("WithDriftFactor negative keeps default", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithDriftFactor(-0.01)(opts)
+		assert.Equal(t, 0.01, opts.DriftFactor)
+	})
+
+	t.Run("WithTimeoutFactor zero keeps default", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithTimeoutFactor(0.0)(opts)
+		assert.Equal(t, 0.05, opts.TimeoutFactor)
+	})
+
+	t.Run("WithTimeoutFactor positive sets value", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithTimeoutFactor(0.1)(opts)
+		assert.Equal(t, 0.1, opts.TimeoutFactor)
+	})
+
+	t.Run("WithTimeoutFactor negative keeps default", func(t *testing.T) {
+		opts := defaultMutexOptions()
+		WithTimeoutFactor(-0.05)(opts)
+		assert.Equal(t, 0.05, opts.TimeoutFactor)
+	})
+}
+
+// =============================================================================
+// Key 验证内部测试
+// =============================================================================
+
+func TestValidateKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"valid key", "my-lock", false},
+		{"valid with dots", "resource.lock", false},
+		{"valid unicode", "中文锁名", false},
+		{"empty string", "", true},
+		{"space only", " ", true},
+		{"tabs only", "\t\t", true},
+		{"mixed whitespace", " \t\n ", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateKey(tt.key)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrEmptyKey)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// wrapRedisError 测试
+// =============================================================================
+
+func TestWrapRedisError(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		wantErr      error
+		wantOriginal error // 验证原始错误也在链中
+		wantNil      bool
+	}{
+		{"nil", nil, nil, nil, true},
+		{"context.Canceled", context.Canceled, context.Canceled, nil, false},
+		{"context.DeadlineExceeded", context.DeadlineExceeded, context.DeadlineExceeded, nil, false},
+		{"ErrTaken", &redsync.ErrTaken{}, ErrLockHeld, nil, false},
+		{"ErrFailed", redsync.ErrFailed, ErrLockFailed, redsync.ErrFailed, false},
+		{"ErrExtendFailed", redsync.ErrExtendFailed, ErrExtendFailed, redsync.ErrExtendFailed, false},
+		{"ErrLockAlreadyExpired", redsync.ErrLockAlreadyExpired, ErrLockExpired, redsync.ErrLockAlreadyExpired, false},
+		{"other error", errors.New("other"), nil, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapRedisError(tt.err)
+			if tt.wantNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, result, tt.wantErr)
+			} else {
+				// 未知错误应原样返回
+				assert.Equal(t, tt.err, result)
+			}
+			// 验证原始错误保留在链中
+			if tt.wantOriginal != nil {
+				assert.ErrorIs(t, result, tt.wantOriginal)
+			}
+		})
+	}
 }
 
 // =============================================================================

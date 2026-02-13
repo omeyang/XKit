@@ -10,6 +10,12 @@
 // 服务级别的平台信息（PlatformID、HasParent 等）由 xplatform 包管理，
 // xtenant 在跨服务传播时会自动包含这些信息。
 //
+// # 包命名说明
+//
+// 虽然本包也传播平台和追踪信息，但核心职责是租户信息的提取和传播，
+// 平台信息来自 xplatform（进程级），追踪信息来自 xctx（底层存储），
+// 它们只是在传播时一并携带。因此包名以核心职责 tenant 命名。
+//
 // # 快速开始
 //
 // HTTP 服务使用 HTTPMiddleware() 中间件，gRPC 服务使用 GRPCUnaryServerInterceptor() 拦截器。
@@ -22,8 +28,8 @@
 //
 // 租户和平台信息：
 //   - X-Platform-ID: 平台 ID（来自 xplatform）
-//   - X-Tenant-ID: 租户 ID
-//   - X-Tenant-Name: 租户名称
+//   - X-Tenant-ID: 租户 ID（单值字段，多值时取第一个）
+//   - X-Tenant-Name: 租户名称（单值字段，多值时取第一个）
 //   - X-Has-Parent: 是否有上级平台（来自 xplatform）
 //   - X-Unclass-Region-ID: 未分类区域 ID（来自 xplatform）
 //
@@ -53,6 +59,35 @@
 // HTTP 客户端使用 InjectToRequest()，gRPC 客户端使用 InjectToOutgoingContext()
 // 或客户端拦截器 GRPCUnaryClientInterceptor()。
 //
+// 出站传播使用"以 context 为准"的语义：有值则 Set，无值则删除已有的键。
+// 这防止了请求对象或 metadata 复用时旧租户信息泄漏到下游。
+//
+// 平台信息的传播是单向的：出站时从 xplatform 注入到请求/metadata，
+// 入站时不从请求/metadata 提取平台信息到 context。
+// 这是因为平台信息是进程级配置（由 xplatform.Init 设置），
+// 不应被上游传入的值覆盖。
+//
+// # 信任边界与中间件链顺序
+//
+// 中间件默认信任传输层（Header/Metadata）携带的租户信息。
+// 推荐的中间件/拦截器链顺序：
+//
+//  1. 认证/鉴权中间件（验证请求来源、校验 Token）
+//  2. xtenant 中间件（从已认证的请求中提取租户信息）
+//  3. 业务 Handler
+//
+// 如果认证层需要设置可信租户，应在 xtenant 中间件之后通过
+// WithTenantID/WithTenantName 覆盖传输层的值。
+//
+// 本包不内置"冲突拒绝"机制，租户来源的校验由认证层负责。
+//
+// 路由级跳过（如健康检查端点）可通过在中间件外层包装判断逻辑实现：
+//
+//	tenantMw := xtenant.HTTPMiddlewareWithOptions(xtenant.WithRequireTenantID())
+//	handler := tenantMw(bizHandler)
+//	mux.Handle("/api/", handler)          // 需要租户校验
+//	mux.Handle("/healthz", bizHandler)    // 跳过租户校验
+//
 // # 与 xplatform、xctx 的关系
 //
 //   - xplatform: 管理进程级别的平台信息（PlatformID、HasParent、UnclassRegionID）
@@ -60,6 +95,23 @@
 //   - xtenant: 提供租户信息的提取和传播（本包）
 //
 // xtenant 在内部使用 xctx 进行 context 操作，在传播时从 xplatform 获取平台信息。
+// 本包提供的 TenantID()、WithTenantID() 等函数是 xctx 同名函数的便捷包装，
+// 使用方只需导入 xtenant 即可完成所有租户相关操作。
+//
+// # gRPC-Gateway 集成
+//
+// 使用 gRPC-Gateway 时，需配置自定义 HeaderMatcher 以转发租户相关的 X-* 头：
+//
+//	gwmux := runtime.NewServeMux(
+//	    runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+//	        if strings.HasPrefix(key, "X-Tenant-") || strings.HasPrefix(key, "X-Trace-") ||
+//	            strings.HasPrefix(key, "X-Platform-") || key == "X-Has-Parent" ||
+//	            key == "X-Unclass-Region-ID" || key == "X-Request-ID" {
+//	            return key, true
+//	        }
+//	        return runtime.DefaultHeaderMatcher(key)
+//	    }),
+//	)
 //
 // # 中间件选项
 //

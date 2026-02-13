@@ -20,6 +20,7 @@ type Client struct {
 	rawClient *clientv3.Client
 	config    *Config
 	closed    atomic.Bool
+	closeCh   chan struct{} // 关闭信号通道，用于通知 Watch goroutine 退出
 }
 
 // NewClient 创建 etcd 客户端。
@@ -101,21 +102,26 @@ func NewClient(config *Config, opts ...Option) (*Client, error) {
 		client:    rawClient,
 		rawClient: rawClient,
 		config:    cfg,
+		closeCh:   make(chan struct{}),
 	}, nil
 }
 
 // RawClient 返回原生 etcd 客户端。
-// 用于需要直接操作原生 API 的场景，如事务、租约等高级操作。
+// 设计决策: 暴露原生客户端用于事务（Txn）、租约续约（KeepAlive）等高级操作，
+// 这些功能不在 xetcd 的简化封装范围内。参见 doc.go 中的"设计边界"说明。
+// 设计决策: 不检查 closed 状态，因为返回 (*clientv3.Client, error) 会破坏 API 兼容性，
+// 且底层 etcd 客户端在 Close() 后操作自然会返回错误，无需额外保护。
 func (c *Client) RawClient() *clientv3.Client {
 	return c.rawClient
 }
 
-// Close 关闭客户端连接。
+// Close 关闭客户端连接并通知所有 Watch goroutine 退出。
 // 关闭后客户端不可再使用。
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil // 已经关闭
 	}
+	close(c.closeCh)
 	return c.client.Close()
 }
 

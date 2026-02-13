@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -33,6 +34,8 @@ type Loader interface {
 	// 流程：缓存查询 → 未命中时回源 → 写入缓存 → 返回数据。
 	// 内置 singleflight，同一 key 并发请求只回源一次。
 	//
+	// 空 key 会返回 ErrEmptyKey（fail-fast），空字符串在 Redis 中合法但几乎总是使用错误。
+	//
 	// 注意：singleflight 去重仅基于 key，不包含 ttl。
 	// 同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
 	// 最终缓存的 TTL 取决于首个请求的配置。
@@ -42,6 +45,8 @@ type Loader interface {
 	// 适用于租户隔离场景，key 为 Hash 名称，field 为具体字段。
 	// ttl 用于设置整个 Hash key 的过期时间。
 	// 默认行为是每次写入时刷新 TTL，可通过 WithHashTTLRefresh(false) 改为仅首次写入时设置。
+	//
+	// 空 key 或空 field 会返回 ErrEmptyKey（fail-fast）。
 	//
 	// 注意：singleflight 去重基于 key+field 组合，不包含 ttl。
 	// 同一 key+field 的并发请求（即使 ttl 不同）只会触发一次回源。
@@ -143,6 +148,24 @@ type LoaderOptions struct {
 
 // LoaderOption 定义配置 Loader 的函数类型。
 type LoaderOption func(*LoaderOptions)
+
+// validate 校验配置一致性，在 NewLoader 构造期调用实现 fail-fast。
+func (o *LoaderOptions) validate() error {
+	if o.ExternalLock != nil && !o.EnableDistributedLock {
+		return fmt.Errorf("%w: ExternalLock is set but EnableDistributedLock is false", ErrInvalidConfig)
+	}
+	if o.EnableDistributedLock && o.DistributedLockTTL <= 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidConfig, ErrInvalidLockTTL)
+	}
+	// 设计决策: 当 LoadTimeout > 0 且启用分布式锁时，强制 DistributedLockTTL > LoadTimeout。
+	// 如果锁 TTL ≤ LoadTimeout，慢回源可能导致锁过期并引发并发回源，降低防击穿效果。
+	// 当 LoadTimeout == 0（禁用超时）时跳过此检查，由用户自行保证 loadFn 不会无限阻塞。
+	if o.EnableDistributedLock && o.LoadTimeout > 0 && o.DistributedLockTTL <= o.LoadTimeout {
+		return fmt.Errorf("%w: DistributedLockTTL (%v) must be greater than LoadTimeout (%v)",
+			ErrInvalidConfig, o.DistributedLockTTL, o.LoadTimeout)
+	}
+	return nil
+}
 
 // defaultLoaderOptions 返回默认的 Loader 配置。
 func defaultLoaderOptions() *LoaderOptions {

@@ -10,16 +10,25 @@ import (
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
 // WrapProducer Tests
 // =============================================================================
 
-func TestWrapProducer_NilObserver(t *testing.T) {
-	// 使用 nil producer 仅测试包装逻辑
-	wrapper := WrapProducer(nil, "test-topic", NoopTracer{}, nil)
+func TestWrapProducer_NilProducer(t *testing.T) {
+	wrapper, err := WrapProducer(nil, "test-topic", NoopTracer{}, nil)
 
+	assert.Nil(t, wrapper)
+	assert.ErrorIs(t, err, ErrNilProducer)
+}
+
+func TestWrapProducer_NilObserver(t *testing.T) {
+	mp := &mockProducer{}
+	wrapper, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.Equal(t, "test-topic", wrapper.topic)
 	assert.NotNil(t, wrapper.observer)
@@ -27,40 +36,63 @@ func TestWrapProducer_NilObserver(t *testing.T) {
 }
 
 func TestWrapProducer_NilTracer(t *testing.T) {
-	wrapper := WrapProducer(nil, "test-topic", nil, xmetrics.NoopObserver{})
+	mp := &mockProducer{}
+	wrapper, err := WrapProducer(mp, "test-topic", nil, xmetrics.NoopObserver{})
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.NotNil(t, wrapper.tracer)
 	assert.IsType(t, NoopTracer{}, wrapper.tracer)
 }
 
-func TestWrapProducer_AllNil(t *testing.T) {
-	wrapper := WrapProducer(nil, "test-topic", nil, nil)
+func TestWrapProducer_AllNilOptional(t *testing.T) {
+	mp := &mockProducer{}
+	wrapper, err := WrapProducer(mp, "test-topic", nil, nil)
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.NotNil(t, wrapper.tracer)
 	assert.NotNil(t, wrapper.observer)
 }
 
 func TestWrapProducer_WithValues(t *testing.T) {
+	mp := &mockProducer{}
 	tracer := NewOTelTracer()
 	observer := xmetrics.NoopObserver{}
 
-	wrapper := WrapProducer(nil, "my-topic", tracer, observer)
+	wrapper, err := WrapProducer(mp, "my-topic", tracer, observer)
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.Equal(t, "my-topic", wrapper.topic)
 	assert.NotNil(t, wrapper.tracer)
 	assert.Equal(t, observer, wrapper.observer)
 }
 
+func TestWrapProducer_EmptyTopicFallback(t *testing.T) {
+	mp := &mockProducer{} // Topic() returns "test-topic"
+	wrapper, err := WrapProducer(mp, "", NoopTracer{}, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-topic", wrapper.topic)
+}
+
 // =============================================================================
 // WrapConsumer Tests
 // =============================================================================
 
-func TestWrapConsumer_NilObserver(t *testing.T) {
-	wrapper := WrapConsumer(nil, "test-topic", NoopTracer{}, nil)
+func TestWrapConsumer_NilConsumer(t *testing.T) {
+	wrapper, err := WrapConsumer(nil, "test-topic", NoopTracer{}, nil)
 
+	assert.Nil(t, wrapper)
+	assert.ErrorIs(t, err, ErrNilConsumer)
+}
+
+func TestWrapConsumer_NilObserver(t *testing.T) {
+	mc := &mockConsumer{}
+	wrapper, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.Equal(t, "test-topic", wrapper.topic)
 	assert.NotNil(t, wrapper.observer)
@@ -68,27 +100,33 @@ func TestWrapConsumer_NilObserver(t *testing.T) {
 }
 
 func TestWrapConsumer_NilTracer(t *testing.T) {
-	wrapper := WrapConsumer(nil, "test-topic", nil, xmetrics.NoopObserver{})
+	mc := &mockConsumer{}
+	wrapper, err := WrapConsumer(mc, "test-topic", nil, xmetrics.NoopObserver{})
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.NotNil(t, wrapper.tracer)
 	assert.IsType(t, NoopTracer{}, wrapper.tracer)
 }
 
-func TestWrapConsumer_AllNil(t *testing.T) {
-	wrapper := WrapConsumer(nil, "test-topic", nil, nil)
+func TestWrapConsumer_AllNilOptional(t *testing.T) {
+	mc := &mockConsumer{}
+	wrapper, err := WrapConsumer(mc, "test-topic", nil, nil)
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.NotNil(t, wrapper.tracer)
 	assert.NotNil(t, wrapper.observer)
 }
 
 func TestWrapConsumer_WithValues(t *testing.T) {
+	mc := &mockConsumer{}
 	tracer := NewOTelTracer()
 	observer := xmetrics.NoopObserver{}
 
-	wrapper := WrapConsumer(nil, "my-topic", tracer, observer)
+	wrapper, err := WrapConsumer(mc, "my-topic", tracer, observer)
 
+	require.NoError(t, err)
 	assert.NotNil(t, wrapper)
 	assert.Equal(t, "my-topic", wrapper.topic)
 	assert.NotNil(t, wrapper.tracer)
@@ -135,14 +173,14 @@ func TestTracingTypes(t *testing.T) {
 // =============================================================================
 
 func TestTracingProducer_Send_NilMessage(t *testing.T) {
-	// 使用 WrapProducer 创建一个带有 nil producer 的 TracingProducer
-	// 这测试消息验证在调用实际 producer 之前进行
-	producer := WrapProducer(nil, "test-topic", NoopTracer{}, nil)
+	mp := &mockProducer{}
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	id, err := producer.Send(context.Background(), nil)
+	id, sendErr := producer.Send(context.Background(), nil)
 
 	assert.Nil(t, id)
-	assert.ErrorIs(t, err, ErrNilMessage)
+	assert.ErrorIs(t, sendErr, ErrNilMessage)
 }
 
 // =============================================================================
@@ -150,7 +188,9 @@ func TestTracingProducer_Send_NilMessage(t *testing.T) {
 // =============================================================================
 
 func TestTracingProducer_SendAsync_NilMessage(t *testing.T) {
-	producer := WrapProducer(nil, "test-topic", NoopTracer{}, nil)
+	mp := &mockProducer{}
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	var callbackCalled bool
 	var callbackErr error
@@ -165,7 +205,9 @@ func TestTracingProducer_SendAsync_NilMessage(t *testing.T) {
 }
 
 func TestTracingProducer_SendAsync_NilMessage_NilCallback(t *testing.T) {
-	producer := WrapProducer(nil, "test-topic", NoopTracer{}, nil)
+	mp := &mockProducer{}
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	// 不应 panic
 	assert.NotPanics(t, func() {
@@ -178,11 +220,13 @@ func TestTracingProducer_SendAsync_NilMessage_NilCallback(t *testing.T) {
 // =============================================================================
 
 func TestTracingConsumer_Consume_NilHandler(t *testing.T) {
-	consumer := WrapConsumer(nil, "test-topic", NoopTracer{}, nil)
+	mc := &mockConsumer{}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	err := consumer.Consume(context.Background(), nil)
+	consumeErr := consumer.Consume(context.Background(), nil)
 
-	assert.ErrorIs(t, err, ErrNilHandler)
+	assert.ErrorIs(t, consumeErr, ErrNilHandler)
 }
 
 // =============================================================================
@@ -200,13 +244,13 @@ func (m *mockClient) CreateProducer(options pulsar.ProducerOptions) (pulsar.Prod
 	if m.createProducerErr != nil {
 		return nil, m.createProducerErr
 	}
-	return nil, nil
+	return &mockProducer{}, nil
 }
 func (m *mockClient) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consumer, error) {
 	if m.subscribeErr != nil {
 		return nil, m.subscribeErr
 	}
-	return nil, nil
+	return &mockConsumer{}, nil
 }
 func (m *mockClient) Stats() Stats { return Stats{} }
 func (m *mockClient) Close() error { return nil }
@@ -329,38 +373,41 @@ func (m *mockConsumer) Name() string                      { return "mock-consume
 
 func TestTracingProducer_Send_Success(t *testing.T) {
 	mp := &mockProducer{}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
-	id, err := producer.Send(context.Background(), msg)
+	id, sendErr := producer.Send(context.Background(), msg)
 
-	assert.NoError(t, err)
+	assert.NoError(t, sendErr)
 	assert.Nil(t, id) // mockProducer 返回 nil ID
 }
 
 func TestTracingProducer_Send_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	mp := &mockProducer{}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	// 传入 nil context，应该内部替换为 context.Background()
-	id, err := producer.Send(nilCtx, msg)
+	id, sendErr := producer.Send(nilCtx, msg)
 
-	assert.NoError(t, err)
+	assert.NoError(t, sendErr)
 	assert.Nil(t, id)
 }
 
 func TestTracingProducer_Send_Error(t *testing.T) {
 	expectedErr := errors.New("send failed")
 	mp := &mockProducer{sendErr: expectedErr}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
-	id, err := producer.Send(context.Background(), msg)
+	id, sendErr := producer.Send(context.Background(), msg)
 
 	assert.Nil(t, id)
-	assert.ErrorIs(t, err, expectedErr)
+	assert.ErrorIs(t, sendErr, expectedErr)
 }
 
 // =============================================================================
@@ -369,7 +416,8 @@ func TestTracingProducer_Send_Error(t *testing.T) {
 
 func TestTracingProducer_SendAsync_Success(t *testing.T) {
 	mp := &mockProducer{}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	var called bool
@@ -386,7 +434,8 @@ func TestTracingProducer_SendAsync_Success(t *testing.T) {
 func TestTracingProducer_SendAsync_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	mp := &mockProducer{}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	var called bool
@@ -400,7 +449,8 @@ func TestTracingProducer_SendAsync_NilContext(t *testing.T) {
 func TestTracingProducer_SendAsync_Error(t *testing.T) {
 	expectedErr := errors.New("async send failed")
 	mp := &mockProducer{asyncErr: expectedErr}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	var resultErr error
@@ -413,7 +463,8 @@ func TestTracingProducer_SendAsync_Error(t *testing.T) {
 
 func TestTracingProducer_SendAsync_NilCallback(t *testing.T) {
 	mp := &mockProducer{}
-	producer := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
 
 	// 不应 panic
@@ -427,26 +478,28 @@ func TestTracingProducer_SendAsync_NilCallback(t *testing.T) {
 // =============================================================================
 
 func TestTracingConsumer_ReceiveWithContext_Success(t *testing.T) {
-	msg := &mockTracingMessage{properties: map[string]string{"key": "value"}}
+	msg := &mockMessage{properties: map[string]string{"key": "value"}}
 	mc := &mockConsumer{receiveMsg: msg}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	ctx, receivedMsg, err := consumer.ReceiveWithContext(context.Background())
+	ctx, receivedMsg, recvErr := consumer.ReceiveWithContext(context.Background())
 
-	assert.NoError(t, err)
+	assert.NoError(t, recvErr)
 	assert.NotNil(t, ctx)
 	assert.Equal(t, msg, receivedMsg)
 }
 
 func TestTracingConsumer_ReceiveWithContext_NilContext(t *testing.T) {
 	var nilCtx context.Context
-	msg := &mockTracingMessage{properties: map[string]string{}}
+	msg := &mockMessage{properties: map[string]string{}}
 	mc := &mockConsumer{receiveMsg: msg}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	ctx, receivedMsg, err := consumer.ReceiveWithContext(nilCtx)
+	ctx, receivedMsg, recvErr := consumer.ReceiveWithContext(nilCtx)
 
-	assert.NoError(t, err)
+	assert.NoError(t, recvErr)
 	assert.NotNil(t, ctx)
 	assert.Equal(t, msg, receivedMsg)
 }
@@ -454,13 +507,14 @@ func TestTracingConsumer_ReceiveWithContext_NilContext(t *testing.T) {
 func TestTracingConsumer_ReceiveWithContext_Error(t *testing.T) {
 	expectedErr := errors.New("receive failed")
 	mc := &mockConsumer{receiveErr: expectedErr}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	ctx, msg, err := consumer.ReceiveWithContext(context.Background())
+	ctx, msg, recvErr := consumer.ReceiveWithContext(context.Background())
 
 	assert.NotNil(t, ctx)
 	assert.Nil(t, msg)
-	assert.ErrorIs(t, err, expectedErr)
+	assert.ErrorIs(t, recvErr, expectedErr)
 }
 
 // =============================================================================
@@ -468,57 +522,93 @@ func TestTracingConsumer_ReceiveWithContext_Error(t *testing.T) {
 // =============================================================================
 
 func TestTracingConsumer_Consume_Success(t *testing.T) {
-	msg := &mockTracingMessage{properties: map[string]string{}}
+	msg := &mockMessage{properties: map[string]string{}}
 	mc := &mockConsumer{receiveMsg: msg}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	var handlerCalled bool
-	err := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
 		handlerCalled = true
 		return nil
 	})
 
-	assert.NoError(t, err)
+	assert.NoError(t, consumeErr)
 	assert.True(t, handlerCalled)
 }
 
 func TestTracingConsumer_Consume_ReceiveError(t *testing.T) {
 	expectedErr := errors.New("receive failed")
 	mc := &mockConsumer{receiveErr: expectedErr}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-	err := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
 		return nil
 	})
 
-	assert.ErrorIs(t, err, expectedErr)
+	assert.ErrorIs(t, consumeErr, expectedErr)
 }
 
 func TestTracingConsumer_Consume_HandlerError(t *testing.T) {
-	msg := &mockTracingMessage{properties: map[string]string{}}
+	msg := &mockMessage{properties: map[string]string{}}
 	mc := &mockConsumer{receiveMsg: msg}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	expectedErr := errors.New("handler failed")
-	err := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
 		return expectedErr
 	})
 
-	assert.ErrorIs(t, err, expectedErr)
+	assert.ErrorIs(t, consumeErr, expectedErr)
 }
 
 func TestTracingConsumer_Consume_NilMessage(t *testing.T) {
 	mc := &mockConsumer{receiveMsg: nil}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	var handlerCalled bool
-	err := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
 		handlerCalled = true
 		return nil
 	})
 
-	assert.NoError(t, err)
+	assert.NoError(t, consumeErr)
 	assert.False(t, handlerCalled)
+}
+
+func TestTracingConsumer_Consume_AckError(t *testing.T) {
+	// 验证 Ack 失败时：handler 返回 nil（处理成功），Ack 错误通过 span 属性记录
+	msg := &mockMessage{properties: map[string]string{}}
+	mc := &mockConsumer{receiveMsg: msg, ackErr: errors.New("ack failed")}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	var handlerCalled bool
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		handlerCalled = true
+		return nil
+	})
+
+	assert.NoError(t, consumeErr, "Ack 错误不应影响返回值")
+	assert.True(t, handlerCalled)
+}
+
+func TestTracingConsumer_Consume_HandlerError_Nack(t *testing.T) {
+	msg := &mockMessage{properties: map[string]string{}}
+	mc := &mockConsumer{receiveMsg: msg}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	expectedErr := errors.New("handler failed")
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		return expectedErr
+	})
+
+	assert.ErrorIs(t, consumeErr, expectedErr)
+	assert.True(t, mc.nackCalled, "handler 失败时应调用 Nack")
 }
 
 // =============================================================================
@@ -527,40 +617,33 @@ func TestTracingConsumer_Consume_NilMessage(t *testing.T) {
 
 func TestTracingConsumer_ConsumeLoop_ContextCanceled(t *testing.T) {
 	mc := &mockConsumer{}
-	consumer := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消
 
-	err := consumer.ConsumeLoop(ctx, func(ctx context.Context, m pulsar.Message) error {
+	loopErr := consumer.ConsumeLoop(ctx, func(ctx context.Context, m pulsar.Message) error {
 		return nil
 	})
 
-	assert.ErrorIs(t, err, context.Canceled)
+	assert.ErrorIs(t, loopErr, context.Canceled)
 }
 
 // =============================================================================
-// mockTracingMessage - 用于 Consume 测试的 pulsar.Message 实现
+// TracingConsumer.Consume subscription attribute test
 // =============================================================================
 
-type mockTracingMessage struct {
-	properties map[string]string
-}
+func TestTracingConsumer_Consume_IncludesSubscription(t *testing.T) {
+	// 验证 Consume 方法正常工作（subscription 属性通过 span 记录，此处验证不 panic）
+	msg := &mockMessage{properties: map[string]string{}}
+	mc := &mockConsumer{receiveMsg: msg}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
 
-func (m *mockTracingMessage) Topic() string                                   { return "test-topic" }
-func (m *mockTracingMessage) Properties() map[string]string                   { return m.properties }
-func (m *mockTracingMessage) Payload() []byte                                 { return nil }
-func (m *mockTracingMessage) ID() pulsar.MessageID                            { return nil }
-func (m *mockTracingMessage) PublishTime() time.Time                          { return time.Time{} }
-func (m *mockTracingMessage) EventTime() time.Time                            { return time.Time{} }
-func (m *mockTracingMessage) Key() string                                     { return "" }
-func (m *mockTracingMessage) OrderingKey() string                             { return "" }
-func (m *mockTracingMessage) RedeliveryCount() uint32                         { return 0 }
-func (m *mockTracingMessage) IsReplicated() bool                              { return false }
-func (m *mockTracingMessage) GetReplicatedFrom() string                       { return "" }
-func (m *mockTracingMessage) GetSchemaValue(v interface{}) error              { return nil }
-func (m *mockTracingMessage) ProducerName() string                            { return "" }
-func (m *mockTracingMessage) SchemaVersion() []byte                           { return nil }
-func (m *mockTracingMessage) GetEncryptionContext() *pulsar.EncryptionContext { return nil }
-func (m *mockTracingMessage) Index() *uint64                                  { return nil }
-func (m *mockTracingMessage) BrokerPublishTime() *time.Time                   { return nil }
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		return nil
+	})
+
+	assert.NoError(t, consumeErr)
+}

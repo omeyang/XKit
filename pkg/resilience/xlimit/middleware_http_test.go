@@ -1,6 +1,7 @@
 package xlimit
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -287,6 +288,115 @@ func TestHTTPMiddleware_DifferentTenants(t *testing.T) {
 		t.Errorf("tenant-b should pass, got %d", rr.Code)
 	}
 }
+
+func TestHTTPMiddleware_FallbackCloseRejectsDeny(t *testing.T) {
+	// FG-S1: FallbackClose 返回 Allowed=false + error 时，中间件应拒绝而非放行
+	mockLimiter := &mockFallbackCloseLimiter{}
+	middleware := HTTPMiddleware(mockLimiter)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "close-tenant")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("FallbackClose should result in 429, got %d", rr.Code)
+	}
+}
+
+func TestHTTPMiddleware_ErrorWithNilResultFailsOpen(t *testing.T) {
+	// 当 result 为 nil 且有 error 时，应该 fail-open
+	mockLimiter := &mockNilResultErrorLimiter{}
+	middleware := HTTPMiddleware(mockLimiter)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "error-tenant")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("nil result + error should fail-open with 200, got %d", rr.Code)
+	}
+}
+
+func TestHTTPMiddleware_NilKeyExtractorFallback(t *testing.T) {
+	// FG-M4: 传入 nil KeyExtractor 应回退到默认值而非 panic
+	limiter := setupTestLimiter(t, 10)
+	middleware := HTTPMiddleware(limiter, WithMiddlewareKeyExtractor(nil))
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "nil-extractor-tenant")
+	rr := httptest.NewRecorder()
+
+	// Should not panic
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestHTTPMiddleware_NilDenyHandlerFallback(t *testing.T) {
+	limiter := setupTestLimiter(t, 1)
+	middleware := HTTPMiddleware(limiter, WithDenyHandler(nil))
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// First request passes
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "nil-deny-tenant")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Second request should be denied with default handler (not panic)
+	req = httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "nil-deny-tenant")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429, got %d", rr.Code)
+	}
+}
+
+// mockFallbackCloseLimiter 模拟 FallbackClose 行为：返回 Allowed=false + error
+type mockFallbackCloseLimiter struct{}
+
+func (m *mockFallbackCloseLimiter) Allow(_ context.Context, _ Key) (*Result, error) {
+	return &Result{Allowed: false, Rule: "fallback-close"}, ErrRedisUnavailable
+}
+
+func (m *mockFallbackCloseLimiter) AllowN(_ context.Context, _ Key, _ int) (*Result, error) {
+	return &Result{Allowed: false, Rule: "fallback-close"}, ErrRedisUnavailable
+}
+
+func (m *mockFallbackCloseLimiter) Close() error { return nil }
+
+// mockNilResultErrorLimiter 模拟普通错误：返回 nil result + error
+type mockNilResultErrorLimiter struct{}
+
+func (m *mockNilResultErrorLimiter) Allow(_ context.Context, _ Key) (*Result, error) {
+	return nil, ErrRedisUnavailable
+}
+
+func (m *mockNilResultErrorLimiter) AllowN(_ context.Context, _ Key, _ int) (*Result, error) {
+	return nil, ErrRedisUnavailable
+}
+
+func (m *mockNilResultErrorLimiter) Close() error { return nil }
 
 func BenchmarkHTTPMiddleware(b *testing.B) {
 	mr, err := miniredis.Run()

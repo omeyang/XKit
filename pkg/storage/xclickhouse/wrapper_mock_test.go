@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -520,16 +521,16 @@ func TestStats_AfterOperations(t *testing.T) {
 	}
 
 	// 执行一些操作来增加统计计数
-	//nolint:errcheck // 故意忽略错误，测试统计计数
-	w.Health(context.Background())
-	//nolint:errcheck // 故意忽略错误，测试统计计数
-	w.Health(context.Background())
+	err := w.Health(context.Background())
+	assert.NoError(t, err)
+	err = w.Health(context.Background())
+	assert.NoError(t, err)
 	conn.pingErr = assert.AnError
-	//nolint:errcheck // 故意忽略错误，测试统计计数
-	w.Health(context.Background())
+	err = w.Health(context.Background())
+	assert.Error(t, err)
 
-	//nolint:errcheck // 故意忽略错误，测试统计计数
-	w.QueryPage(context.Background(), "SELECT * FROM t", PageOptions{Page: 1, PageSize: 10})
+	_, err = w.QueryPage(context.Background(), "SELECT * FROM t", PageOptions{Page: 1, PageSize: 10})
+	assert.NoError(t, err)
 
 	stats := w.Stats()
 
@@ -541,6 +542,7 @@ func TestStats_AfterOperations(t *testing.T) {
 
 func TestStats_Pool_WithConn(t *testing.T) {
 	conn := newMockConn()
+	conn.stats = driver.Stats{Open: 10, Idle: 3}
 	w := &clickhouseWrapper{
 		conn:    conn,
 		options: defaultOptions(),
@@ -548,8 +550,218 @@ func TestStats_Pool_WithConn(t *testing.T) {
 
 	stats := w.Stats().Pool
 
-	// ClickHouse driver 不暴露连接池统计，返回空值
-	assert.Equal(t, 0, stats.Open)
-	assert.Equal(t, 0, stats.Idle)
-	assert.Equal(t, 0, stats.InUse)
+	assert.Equal(t, 10, stats.Open)
+	assert.Equal(t, 3, stats.Idle)
+	assert.Equal(t, 7, stats.InUse) // Open - Idle
+}
+
+func TestBatchInsert_ContextCanceled(t *testing.T) {
+	conn := newMockConn()
+	batchCount := 0
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		batchCount++
+		return &mockBatch{}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 创建 10 条记录，每批 2 条
+	rows := make([]any, 10)
+	for i := range rows {
+		rows[i] = struct{ ID int }{ID: i}
+	}
+
+	// 使用已取消的 context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := w.BatchInsert(ctx, "users", rows, BatchOptions{BatchSize: 2})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	assert.Contains(t, err.Error(), "context canceled")
+	// 第一批就应该因 context 取消而中止
+	assert.Equal(t, 0, batchCount)
+}
+
+func TestBatchInsert_AbortBatchError(t *testing.T) {
+	conn := newMockConn()
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &mockBatch{
+			appendErr: assert.AnError,
+			abortErr:  assert.AnError,
+		}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	rows := []any{struct{ ID int }{ID: 1}}
+
+	result, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+	// 应包含 append 错误和 abort 错误
+	assert.GreaterOrEqual(t, len(result.Errors), 2)
+}
+
+func TestQueryPage_RowsCloseError(t *testing.T) {
+	conn := newMockConn()
+	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
+		return &mockRow{
+			scanFunc: func(dest ...any) error {
+				if ptr, ok := dest[0].(*int64); ok {
+					*ptr = 10
+				}
+				return nil
+			},
+		}
+	}
+	conn.queryFunc = func(_ context.Context, _ string, _ ...any) (Rows, error) {
+		rows := newMockRows([]string{"id"}, [][]any{})
+		rows.closeErr = assert.AnError
+		return rows, nil
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: 10,
+	})
+
+	assert.Nil(t, result)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "close rows failed")
+}
+
+func TestClose_WithSlowQueryDetector(t *testing.T) {
+	conn := newMockConn()
+	opts := defaultOptions()
+	opts.SlowQueryThreshold = 100 * time.Millisecond
+	opts.SlowQueryHook = func(_ context.Context, _ SlowQueryInfo) {}
+
+	w := &clickhouseWrapper{
+		conn:              conn,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	err := w.Close()
+
+	assert.NoError(t, err)
+	assert.True(t, conn.closed)
+}
+
+func TestQueryPage_PageOverflow(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1<<62 + 1,
+		PageSize: 1<<62 + 1,
+	})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrPageOverflow)
+}
+
+func TestClose_Idempotent_WithConn(t *testing.T) {
+	conn := newMockConn()
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 第一次关闭成功
+	err := w.Close()
+	assert.NoError(t, err)
+	assert.True(t, conn.closed)
+
+	// 第二次关闭返回 ErrClosed
+	err = w.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestBatchInsert_ContextCanceledDuringAppend(t *testing.T) {
+	// 测试: context 取消后应该 abort 而非 send
+	conn := newMockConn()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &mockBatch{}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 创建 200 条记录（足够触发 ctx 检查）
+	rows := make([]any, 200)
+	for i := range rows {
+		rows[i] = struct{ ID int }{ID: i}
+	}
+
+	cancel()
+
+	result, err := w.BatchInsert(ctx, "users", rows, BatchOptions{BatchSize: 200})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	assert.Contains(t, err.Error(), "context canceled")
+}
+
+func TestBatchInsert_ContextCanceledBeforeSend(t *testing.T) {
+	// 测试: append 成功后、send 前 context 取消，应该 abort 而非 send
+	conn := newMockConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	appendCallCount := 0
+
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &mockBatch{
+			// 自定义 appendStruct 来在第 101 次 append 后取消 context
+		}
+	}
+
+	// 使用自定义 batch 来在 append 过程中取消 context
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &cancelOnAppendBatch{
+			cancel:          cancel,
+			cancelAfterRows: 100,
+			appendCount:     &appendCallCount,
+		}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 创建 200 条记录
+	rows := make([]any, 200)
+	for i := range rows {
+		rows[i] = struct{ ID int }{ID: i}
+	}
+
+	result, err := w.BatchInsert(ctx, "users", rows, BatchOptions{BatchSize: 200})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	// 应包含 "context canceled before send" 或 "context canceled during append"
+	assert.Contains(t, err.Error(), "context canceled")
+	// InsertedCount 应该为 0（因为 abort 了）
+	assert.Equal(t, int64(0), result.InsertedCount)
 }

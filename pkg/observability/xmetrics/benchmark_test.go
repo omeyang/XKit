@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+// sinkAttr 防止编译器死代码消除（DCE）优化掉基准测试中的函数调用。
+var sinkAttr Attr
+
+// sinkOpts 防止 SpanOptions 创建被 DCE 消除。
+var sinkOpts SpanOptions
+
+// sinkResult 防止 Result 创建被 DCE 消除。
+var sinkResult Result
+
 // ============================================================================
 // Attr 创建基准测试
 // ============================================================================
@@ -14,49 +23,49 @@ import (
 func BenchmarkString(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = String("key", "value")
+		sinkAttr = String("key", "value")
 	}
 }
 
 func BenchmarkInt(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Int("key", 42)
+		sinkAttr = Int("key", 42)
 	}
 }
 
 func BenchmarkInt64(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Int64("key", 42)
+		sinkAttr = Int64("key", 42)
 	}
 }
 
 func BenchmarkUint64(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Uint64("key", 42)
+		sinkAttr = Uint64("key", 42)
 	}
 }
 
 func BenchmarkFloat64(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Float64("key", 3.14)
+		sinkAttr = Float64("key", 3.14)
 	}
 }
 
 func BenchmarkBool(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Bool("key", true)
+		sinkAttr = Bool("key", true)
 	}
 }
 
 func BenchmarkDuration(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = Duration("key", 100*time.Millisecond)
+		sinkAttr = Duration("key", 100*time.Millisecond)
 	}
 }
 
@@ -67,7 +76,7 @@ func BenchmarkAny(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = Any("key", val)
+		sinkAttr = Any("key", val)
 	}
 }
 
@@ -245,7 +254,7 @@ func BenchmarkSpanOptions_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = SpanOptions{
+		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
 			Kind:      KindServer,
@@ -257,7 +266,7 @@ func BenchmarkSpanOptions_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = SpanOptions{
+		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
 			Kind:      KindServer,
@@ -274,7 +283,7 @@ func BenchmarkResult_Create(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = Result{Status: StatusOK}
+		sinkResult = Result{Status: StatusOK}
 	}
 }
 
@@ -282,7 +291,7 @@ func BenchmarkResult_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = Result{
+		sinkResult = Result{
 			Status: StatusOK,
 			Attrs: []Attr{
 				{Key: "key1", Value: "value1"},

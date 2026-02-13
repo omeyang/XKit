@@ -3,7 +3,7 @@ package xdlock
 import (
 	"context"
 	"errors"
-	"sync"
+	"fmt"
 	"sync/atomic"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -20,7 +20,6 @@ type etcdFactory struct {
 	session *concurrency.Session
 	options *etcdFactoryOptions
 	closed  atomic.Bool
-	mu      sync.RWMutex
 }
 
 // NewEtcdFactory 创建 etcd 锁工厂。
@@ -42,7 +41,7 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 		concurrency.WithContext(options.Context),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xdlock: create etcd session: %w", err)
 	}
 
 	return &etcdFactory{
@@ -53,8 +52,14 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 }
 
 // TryLock 非阻塞式获取锁，返回 LockHandle。
+//
+// 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项（Expiry、Tries 等）
+// 被忽略，因为 etcd 的锁生命周期由 Session TTL 控制。
 func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if err := f.checkSession(); err != nil {
+		return nil, err
+	}
+	if err := validateKey(key); err != nil {
 		return nil, err
 	}
 
@@ -77,13 +82,18 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 	return &etcdLockHandle{
 		factory: f,
 		mutex:   mutex,
-		key:     key,
+		key:     fullKey,
 	}, nil
 }
 
 // Lock 阻塞式获取锁，返回 LockHandle。
+//
+// 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项被忽略。
 func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if err := f.checkSession(); err != nil {
+		return nil, err
+	}
+	if err := validateKey(key); err != nil {
 		return nil, err
 	}
 
@@ -102,7 +112,7 @@ func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption)
 	return &etcdLockHandle{
 		factory: f,
 		mutex:   mutex,
-		key:     key,
+		key:     fullKey,
 	}, nil
 }
 
@@ -130,9 +140,6 @@ func (f *etcdFactory) Close() error {
 // Health 健康检查。
 // 检查 Session 是否仍然有效。
 func (f *etcdFactory) Health(ctx context.Context) error {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
 	if f.closed.Load() {
 		return ErrFactoryClosed
 	}
@@ -144,9 +151,13 @@ func (f *etcdFactory) Health(ctx context.Context) error {
 	default:
 	}
 
-	// 尝试执行一个简单的 Get 操作验证连接
-	_, err := f.client.Get(ctx, "health-check-key", clientv3.WithLimit(1))
-	return err
+	// 使用 Status API 验证连接，不依赖特定 key 的 RBAC 权限
+	for _, ep := range f.client.Endpoints() {
+		if _, err := f.client.Status(ctx, ep); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Session 返回底层 concurrency.Session。
@@ -167,11 +178,10 @@ type etcdLockHandle struct {
 }
 
 // Unlock 释放锁。
+//
+// 设计决策: 允许在 factory 关闭后尝试解锁。factory.Close() 会关闭 Session
+// 并撤销 Lease，锁已自动释放。即使解锁失败（Session 已关闭），也不会造成锁悬挂。
 func (h *etcdLockHandle) Unlock(ctx context.Context) error {
-	if err := h.factory.checkSession(); err != nil {
-		return err
-	}
-
 	if err := h.mutex.Unlock(ctx); err != nil {
 		return wrapEtcdError(err)
 	}
@@ -202,26 +212,26 @@ func (h *etcdLockHandle) Key() string {
 // 错误转换
 // =============================================================================
 
-// wrapEtcdError 将 etcd 错误转换为 xdlock 错误。
+// wrapEtcdError 将 etcd 错误转换为 xdlock 错误，保留原始错误链。
 func wrapEtcdError(err error) error {
 	if err == nil {
 		return nil
 	}
 
-	// etcd concurrency 包的错误
-	if errors.Is(err, concurrency.ErrLocked) {
-		return ErrLockHeld
-	}
-	if errors.Is(err, concurrency.ErrSessionExpired) {
-		return ErrSessionExpired
-	}
-	if errors.Is(err, concurrency.ErrLockReleased) {
-		return ErrNotLocked
-	}
-
 	// context 错误保持原样
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+
+	// etcd concurrency 包的错误，使用双 %w 保留原始错误链
+	if errors.Is(err, concurrency.ErrLocked) {
+		return fmt.Errorf("%w: %w", ErrLockHeld, err)
+	}
+	if errors.Is(err, concurrency.ErrSessionExpired) {
+		return fmt.Errorf("%w: %w", ErrSessionExpired, err)
+	}
+	if errors.Is(err, concurrency.ErrLockReleased) {
+		return fmt.Errorf("%w: %w", ErrNotLocked, err)
 	}
 
 	return err

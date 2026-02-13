@@ -349,44 +349,46 @@ func (l *K8sLocker) leaseName(key string) string {
 
 // sanitizeK8sName 将字符串转换为合法的 K8S 资源名
 // K8S 资源名要求：小写字母、数字、'-'，长度不超过 63
-// 对于超长名称，使用 hash 后缀确保唯一性，避免简单截断导致的碰撞
+//
+// 当清理步骤改变了名称（字符替换/折叠/修剪）或长度超限时，
+// 添加基于原始名称的 hash 后缀确保唯一性。
+// 防止不同原始名称（如 "my.job" 和 "my/job"）清理后碰撞为 "my-job"。
 func sanitizeK8sName(name string) string {
+	if name == "" {
+		return ""
+	}
+
 	original := name
 
 	// 转小写
-	name = strings.ToLower(name)
+	lowered := strings.ToLower(name)
 	// 替换非法字符为 '-'（使用预编译的正则）
-	name = k8sNameReplaceRegex.ReplaceAllString(name, "-")
+	sanitized := k8sNameReplaceRegex.ReplaceAllString(lowered, "-")
 	// 去除连续的 '-'（使用预编译的正则）
-	name = k8sNameCollapseRegex.ReplaceAllString(name, "-")
+	sanitized = k8sNameCollapseRegex.ReplaceAllString(sanitized, "-")
 	// 去除首尾的 '-'
-	name = strings.Trim(name, "-")
+	sanitized = strings.Trim(sanitized, "-")
 
-	// 如果长度超过 63，使用 hash 后缀确保唯一性
-	// 格式：{prefix}-{hash}，其中 hash 取 8 字符
 	const maxLen = 63
 	const hashLen = 8
 	const separator = "-"
 
-	if len(name) > maxLen {
-		// 计算原始名称的 hash（使用原始值而非处理后的值，保证唯一性）
+	// 当清理步骤改变了名称或长度超限时，添加 hash 后缀确保唯一性
+	if sanitized != lowered || len(sanitized) > maxLen {
 		hash := sha256.Sum256([]byte(original))
 		hashSuffix := hex.EncodeToString(hash[:])[:hashLen]
 
-		// 计算可用于前缀的最大长度
-		prefixMaxLen := maxLen - len(separator) - hashLen
-		if prefixMaxLen < 1 {
-			prefixMaxLen = 1
+		maxPrefixLen := max(maxLen-len(separator)-hashLen, 1)
+
+		if len(sanitized) > maxPrefixLen {
+			sanitized = sanitized[:maxPrefixLen]
+			sanitized = strings.TrimRight(sanitized, "-")
 		}
 
-		// 截取前缀并添加 hash 后缀
-		prefix := name[:prefixMaxLen]
-		// 去除前缀末尾的 '-'
-		prefix = strings.TrimRight(prefix, "-")
-		name = prefix + separator + hashSuffix
+		return sanitized + separator + hashSuffix
 	}
 
-	return name
+	return sanitized
 }
 
 // getEnvOrDefault 获取环境变量，如果不存在则返回默认值

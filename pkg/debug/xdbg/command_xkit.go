@@ -2,9 +2,10 @@ package xdbg
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/omeyang/xkit/pkg/util/xjson"
 )
 
 // 注册 xkit 集成命令。
@@ -283,6 +284,10 @@ func (c *configCommand) Help() string {
 	return "查看运行时配置"
 }
 
+// 设计决策: 框架层不添加自动脱敏兜底。框架无法预知哪些配置键是敏感的（密码/Token/DSN
+// 的命名因业务而异），强行匹配关键字会产生大量误报或漏报。脱敏责任由 ConfigProvider.Dump()
+// 实现方承担（见 interfaces.go 安全警告），这与 Go 标准库 database/sql.DB.Stats() 等
+// "返回者负责脱敏"的惯例一致。如需禁用 config 命令，可使用 WithCommandWhitelist 排除。
 func (c *configCommand) Execute(_ context.Context, _ []string) (string, error) {
 	provider := c.server.opts.ConfigProvider
 	if provider == nil {
@@ -294,11 +299,10 @@ func (c *configCommand) Execute(_ context.Context, _ []string) (string, error) {
 		return "配置为空", nil
 	}
 
-	// 格式化输出 JSON
-	data, err := json.MarshalIndent(config, "", "  ")
+	s, err := xjson.PrettyE(config)
 	if err != nil {
 		return "", fmt.Errorf("序列化配置失败: %w", err)
 	}
 
-	return string(data), nil
+	return s, nil
 }

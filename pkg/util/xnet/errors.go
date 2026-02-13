@@ -14,4 +14,7 @@ var (
 
 	// ErrInvalidBigInt 表示 big.Int 值超出 IP 地址范围。
 	ErrInvalidBigInt = errors.New("xnet: big.Int value out of range for IP address")
+
+	// ErrOverflow 表示 IP 地址算术运算溢出。
+	ErrOverflow = errors.New("xnet: address arithmetic overflow")
 )

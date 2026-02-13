@@ -72,7 +72,7 @@ func ExampleClient_GetPlatformID() {
 func ExampleWithCache() {
 	// 使用 Redis 缓存（需要提供 redis.UniversalClient）
 	// redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	// cache := xauth.NewRedisCacheStore(redisClient)
+	// cache, err := xauth.NewRedisCacheStore(redisClient)
 	//
 	// client, err := xauth.NewClient(&xauth.Config{
 	//     Host: "https://auth.example.com",
@@ -126,7 +126,7 @@ func ExampleIsRetryable() {
 func ExampleNewRedisCacheStore() {
 	// 创建 Redis 缓存存储
 	// redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	// cache := xauth.NewRedisCacheStore(redisClient,
+	// cache, err := xauth.NewRedisCacheStore(redisClient,
 	//     xauth.WithKeyPrefix("myapp:xauth:"),
 	// )
 	//

@@ -48,6 +48,8 @@ func TestWithSlowQueryThreshold(t *testing.T) {
 		{"设置 100ms 阈值", 100 * time.Millisecond, 100 * time.Millisecond},
 		{"设置 1s 阈值", 1 * time.Second, 1 * time.Second},
 		{"设置零值禁用慢查询", 0, 0},
+		{"负值被忽略保持默认", -1 * time.Second, 0},
+		{"负毫秒值被忽略保持默认", -100 * time.Millisecond, 0},
 	}
 
 	for _, tt := range tests {
@@ -125,6 +127,55 @@ func TestOptionsChaining(t *testing.T) {
 	// 验证 hook 可被调用
 	opts.SlowQueryHook(context.Background(), SlowQueryInfo{})
 	assert.True(t, hookCalled)
+}
+
+func TestWithAsyncSlowQueryHook(t *testing.T) {
+	opts := defaultOptions()
+	hook := func(_ SlowQueryInfo) {}
+
+	WithAsyncSlowQueryHook(hook)(opts)
+
+	assert.NotNil(t, opts.AsyncSlowQueryHook)
+}
+
+func TestWithAsyncSlowQueryWorkers(t *testing.T) {
+	tests := []struct {
+		name     string
+		n        int
+		expected int
+	}{
+		{"设置 5 个 worker", 5, 5},
+		{"设置零值应保持原值", 0, DefaultAsyncSlowQueryWorkers},
+		{"设置负值应保持原值", -1, DefaultAsyncSlowQueryWorkers},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := defaultOptions()
+			WithAsyncSlowQueryWorkers(tt.n)(opts)
+			assert.Equal(t, tt.expected, opts.AsyncSlowQueryWorkers)
+		})
+	}
+}
+
+func TestWithAsyncSlowQueryQueueSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		n        int
+		expected int
+	}{
+		{"设置 500 队列", 500, 500},
+		{"设置零值应保持原值", 0, DefaultAsyncSlowQueryQueueSize},
+		{"设置负值应保持原值", -1, DefaultAsyncSlowQueryQueueSize},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := defaultOptions()
+			WithAsyncSlowQueryQueueSize(tt.n)(opts)
+			assert.Equal(t, tt.expected, opts.AsyncSlowQueryQueueSize)
+		})
+	}
 }
 
 func TestWithObserver(t *testing.T) {

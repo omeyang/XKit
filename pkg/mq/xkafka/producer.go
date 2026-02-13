@@ -19,7 +19,8 @@ type producerWrapper struct {
 	// mu 保护 GetMetadata、Flush、Close 等管理操作的并发访问。
 	// 注意：Producer.Produce() 本身是线程安全的，不需要加锁。
 	// 锁仅用于确保管理操作（如健康检查、关闭）的原子性。
-	mu sync.Mutex
+	mu     sync.Mutex
+	closed atomic.Bool // 防止重复关闭
 
 	// 统计信息
 	messagesProduced atomic.Int64
@@ -34,6 +35,11 @@ func (w *producerWrapper) Producer() *kafka.Producer {
 
 // Health 执行健康检查。
 // 通过获取 Broker 元数据验证连接状态。
+//
+// 设计决策: Health 内部启动 goroutine 获取元数据，当外部 ctx 取消时会立即返回，
+// 但后台 goroutine 仍持有 mu 锁直到 GetMetadata 超时（受 HealthTimeout 限制）。
+// 在此期间 Close() 会被短暂阻塞。这是可接受的权衡：HealthTimeout 默认 5s，
+// 且 GetMetadata 通常在毫秒级完成。
 func (w *producerWrapper) Health(ctx context.Context) (err error) {
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: componentName,
@@ -87,8 +93,12 @@ func (w *producerWrapper) Stats() ProducerStats {
 
 // Close 优雅关闭生产者。
 // 会等待所有消息发送完成（受 FlushTimeout 限制）。
+// 重复调用 Close 安全返回 ErrClosed。
 func (w *producerWrapper) Close() error {
-	// 加锁保护对底层 producer 的访问
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

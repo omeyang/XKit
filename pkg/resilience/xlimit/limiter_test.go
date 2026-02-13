@@ -14,6 +14,20 @@ func testContext() context.Context {
 	return context.Background()
 }
 
+func TestNew_NilRedisClient(t *testing.T) {
+	_, err := New(nil, WithRules(TenantRule("test", 100, time.Minute)))
+	if err != ErrNilClient {
+		t.Fatalf("expected ErrNilClient, got %v", err)
+	}
+}
+
+func TestNewWithFallback_NilRedisClient(t *testing.T) {
+	_, err := NewWithFallback(nil, WithRules(TenantRule("test", 100, time.Minute)))
+	if err != ErrNilClient {
+		t.Fatalf("expected ErrNilClient, got %v", err)
+	}
+}
+
 func TestNew_Validation(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {

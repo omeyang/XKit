@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -36,17 +39,21 @@ func runAttrTests(
 				if tt.values[i] != "" {
 					var err error
 					ctx, err = setter(ctx, tt.values[i])
-					if err != nil {
-						t.Fatalf("setter[%d]() error = %v", i, err)
-					}
+					require.NoErrorf(t, err, "setter[%d]()", i)
 				}
 			}
 			attrs := getAttrs(ctx)
-			if len(attrs) != tt.wantCount {
-				t.Errorf("%s() len = %d, want %d", attrName, len(attrs), tt.wantCount)
-			}
+			assert.Lenf(t, attrs, tt.wantCount, "%s() len", attrName)
 		})
 	}
+}
+
+// assertSingleAttr 断言属性切片恰好包含一个元素，且 key 和 value 匹配
+func assertSingleAttr(t *testing.T, attrs []slog.Attr, wantKey, wantValue string) {
+	t.Helper()
+	require.Len(t, attrs, 1, "PlatformAttrs() should return exactly 1 attr")
+	assert.Equal(t, wantKey, attrs[0].Key, "attr key")
+	assert.Equal(t, wantValue, attrs[0].Value.String(), "attr value")
 }
 
 func TestIdentityAttrs(t *testing.T) {
@@ -73,6 +80,27 @@ func TestIdentityAttrs(t *testing.T) {
 	runAttrTests(t, "IdentityAttrs", cases, setters, getAttrs)
 }
 
+func TestAppendIdentityAttrs_NilContext(t *testing.T) {
+	var nilCtx context.Context
+	attrs := make([]slog.Attr, 0, 3)
+	result := xctx.AppendIdentityAttrs(attrs, nilCtx)
+	assert.Empty(t, result, "AppendIdentityAttrs(nil) should return unchanged slice")
+}
+
+func TestAppendTraceAttrs_NilContext(t *testing.T) {
+	var nilCtx context.Context
+	attrs := make([]slog.Attr, 0, 4)
+	result := xctx.AppendTraceAttrs(attrs, nilCtx)
+	assert.Empty(t, result, "AppendTraceAttrs(nil) should return unchanged slice")
+}
+
+func TestAppendPlatformAttrs_NilContext(t *testing.T) {
+	var nilCtx context.Context
+	attrs := make([]slog.Attr, 0, 2)
+	result := xctx.AppendPlatformAttrs(attrs, nilCtx)
+	assert.Empty(t, result, "AppendPlatformAttrs(nil) should return unchanged slice")
+}
+
 func TestTraceAttrs(t *testing.T) {
 	cases := []testAttrCase{
 		{"全部为空", []string{"", "", ""}, 0},
@@ -94,6 +122,22 @@ func TestTraceAttrs(t *testing.T) {
 		return result
 	}
 	runAttrTests(t, "TraceAttrs", cases, setters, getAttrs)
+
+	t.Run("包含TraceFlags", func(t *testing.T) {
+		ctx, _ := xctx.WithTraceID(context.Background(), "t1")
+		ctx, _ = xctx.WithTraceFlags(ctx, "01")
+		attrs := xctx.TraceAttrs(ctx)
+		assert.Len(t, attrs, 2, "TraceAttrs() with TraceFlags len")
+		// 验证 TraceFlags 属性存在
+		found := false
+		for _, a := range attrs {
+			if a.Key == xctx.KeyTraceFlags {
+				assert.Equal(t, "01", a.Value.String(), "TraceFlags value")
+				found = true
+			}
+		}
+		assert.True(t, found, "TraceFlags attr should be present")
+	})
 }
 
 func TestDeploymentAttrs(t *testing.T) {
@@ -135,83 +179,36 @@ func TestDeploymentAttrs(t *testing.T) {
 
 func TestPlatformAttrs(t *testing.T) {
 	t.Run("空context返回nil", func(t *testing.T) {
-		if got := xctx.PlatformAttrs(context.Background()); got != nil {
-			t.Errorf("PlatformAttrs(empty) = %v, want nil", got)
-		}
+		assert.Nil(t, xctx.PlatformAttrs(context.Background()), "PlatformAttrs(empty)")
 	})
 
 	t.Run("HasParent=true", func(t *testing.T) {
 		ctx, err := xctx.WithHasParent(context.Background(), true)
-		if err != nil {
-			t.Fatalf("WithHasParent() error = %v", err)
-		}
-		attrs := xctx.PlatformAttrs(ctx)
-		if len(attrs) != 1 {
-			t.Fatalf("PlatformAttrs() len = %d, want 1", len(attrs))
-		}
-		if attrs[0].Key != xctx.KeyHasParent {
-			t.Fatalf("attr key = %q, want %q", attrs[0].Key, xctx.KeyHasParent)
-		}
-		if attrs[0].Value.String() != "true" {
-			t.Fatalf("attr value = %q, want %q", attrs[0].Value.String(), "true")
-		}
+		require.NoError(t, err, "WithHasParent()")
+		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyHasParent, "true")
 	})
 
 	t.Run("HasParent=false仍输出字段", func(t *testing.T) {
 		ctx, err := xctx.WithHasParent(context.Background(), false)
-		if err != nil {
-			t.Fatalf("WithHasParent() error = %v", err)
-		}
-		attrs := xctx.PlatformAttrs(ctx)
-		if len(attrs) != 1 {
-			t.Fatalf("PlatformAttrs() len = %d, want 1", len(attrs))
-		}
-		if attrs[0].Key != xctx.KeyHasParent {
-			t.Fatalf("attr key = %q, want %q", attrs[0].Key, xctx.KeyHasParent)
-		}
-		if attrs[0].Value.String() != "false" {
-			t.Fatalf("attr value = %q, want %q", attrs[0].Value.String(), "false")
-		}
+		require.NoError(t, err, "WithHasParent()")
+		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyHasParent, "false")
 	})
 
 	t.Run("UnclassRegionID", func(t *testing.T) {
 		ctx, err := xctx.WithUnclassRegionID(context.Background(), "region-001")
-		if err != nil {
-			t.Fatalf("WithUnclassRegionID() error = %v", err)
-		}
-		attrs := xctx.PlatformAttrs(ctx)
-		if len(attrs) != 1 {
-			t.Fatalf("PlatformAttrs() len = %d, want 1", len(attrs))
-		}
-		if attrs[0].Key != xctx.KeyUnclassRegionID {
-			t.Fatalf("attr key = %q, want %q", attrs[0].Key, xctx.KeyUnclassRegionID)
-		}
-		if attrs[0].Value.String() != "region-001" {
-			t.Fatalf("attr value = %q, want %q", attrs[0].Value.String(), "region-001")
-		}
+		require.NoError(t, err, "WithUnclassRegionID()")
+		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyUnclassRegionID, "region-001")
 	})
 
 	t.Run("组合字段", func(t *testing.T) {
-		ctx := context.Background()
-		var err error
-		ctx, err = xctx.WithHasParent(ctx, true)
-		if err != nil {
-			t.Fatalf("WithHasParent() error = %v", err)
-		}
+		ctx, err := xctx.WithHasParent(context.Background(), true)
+		require.NoError(t, err, "WithHasParent()")
 		ctx, err = xctx.WithUnclassRegionID(ctx, "region-002")
-		if err != nil {
-			t.Fatalf("WithUnclassRegionID() error = %v", err)
-		}
+		require.NoError(t, err, "WithUnclassRegionID()")
 		attrs := xctx.PlatformAttrs(ctx)
-		if len(attrs) != 2 {
-			t.Fatalf("PlatformAttrs() len = %d, want 2", len(attrs))
-		}
-		if attrs[0].Key != xctx.KeyHasParent {
-			t.Fatalf("attr[0].key = %q, want %q", attrs[0].Key, xctx.KeyHasParent)
-		}
-		if attrs[1].Key != xctx.KeyUnclassRegionID {
-			t.Fatalf("attr[1].key = %q, want %q", attrs[1].Key, xctx.KeyUnclassRegionID)
-		}
+		require.Len(t, attrs, 2, "PlatformAttrs() len")
+		assert.Equal(t, xctx.KeyHasParent, attrs[0].Key, "attr[0].key")
+		assert.Equal(t, xctx.KeyUnclassRegionID, attrs[1].Key, "attr[1].key")
 	})
 }
 
@@ -236,41 +233,42 @@ func TestLogAttrs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			if tt.identity {
-				ctx, _ = xctx.WithPlatformID(ctx, "p1")
-				ctx, _ = xctx.WithTenantID(ctx, "t1")
-				ctx, _ = xctx.WithTenantName(ctx, "n1")
-			}
-			if tt.trace {
-				ctx, _ = xctx.WithTraceID(ctx, "trace1")
-				ctx, _ = xctx.WithSpanID(ctx, "span1")
-				ctx, _ = xctx.WithRequestID(ctx, "req1")
-			}
-			if tt.platform {
-				ctx, _ = xctx.WithHasParent(ctx, true)
-				ctx, _ = xctx.WithUnclassRegionID(ctx, "region-1")
-			}
-			if tt.deployment {
-				var err error
-				ctx, err = xctx.WithDeploymentType(ctx, xctx.DeploymentSaaS)
-				if err != nil {
-					t.Fatalf("WithDeploymentType() error = %v", err)
-				}
-			}
+			ctx := buildLogAttrsContext(t, tt.identity, tt.trace, tt.deployment, tt.platform)
 			attrs, err := xctx.LogAttrs(ctx)
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("LogAttrs() error = %v, want %v", err, tt.wantErr)
-				}
-			} else if err != nil {
-				t.Fatalf("LogAttrs() error = %v", err)
+				assert.ErrorIs(t, err, tt.wantErr, "LogAttrs() error")
+			} else {
+				require.NoError(t, err, "LogAttrs()")
 			}
-			if len(attrs) != tt.wantCount {
-				t.Errorf("LogAttrs() len = %d, want %d", len(attrs), tt.wantCount)
-			}
+			assert.Len(t, attrs, tt.wantCount, "LogAttrs() len")
 		})
 	}
+}
+
+// buildLogAttrsContext 根据标志位构建包含不同字段组合的 context
+func buildLogAttrsContext(t *testing.T, identity, trace, deployment, platform bool) context.Context {
+	t.Helper()
+	ctx := context.Background()
+	if identity {
+		ctx, _ = xctx.WithPlatformID(ctx, "p1")
+		ctx, _ = xctx.WithTenantID(ctx, "t1")
+		ctx, _ = xctx.WithTenantName(ctx, "n1")
+	}
+	if trace {
+		ctx, _ = xctx.WithTraceID(ctx, "trace1")
+		ctx, _ = xctx.WithSpanID(ctx, "span1")
+		ctx, _ = xctx.WithRequestID(ctx, "req1")
+	}
+	if platform {
+		ctx, _ = xctx.WithHasParent(ctx, true)
+		ctx, _ = xctx.WithUnclassRegionID(ctx, "region-1")
+	}
+	if deployment {
+		var err error
+		ctx, err = xctx.WithDeploymentType(ctx, xctx.DeploymentSaaS)
+		require.NoError(t, err, "WithDeploymentType()")
+	}
+	return ctx
 }
 
 func TestLogAttrs_Values(t *testing.T) {
@@ -359,6 +357,9 @@ func TestKeyConstants(t *testing.T) {
 	}
 	if xctx.KeyRequestID != "request_id" {
 		t.Errorf("KeyRequestID = %q, want %q", xctx.KeyRequestID, "request_id")
+	}
+	if xctx.KeyTraceFlags != "trace_flags" {
+		t.Errorf("KeyTraceFlags = %q, want %q", xctx.KeyTraceFlags, "trace_flags")
 	}
 
 	// Platform keys

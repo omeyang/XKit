@@ -464,22 +464,29 @@ func TestK8sLocker_leaseName(t *testing.T) {
 		Prefix:    "xcron-",
 	})
 
-	tests := []struct {
-		key      string
-		expected string
-	}{
-		{"simple-job", "xcron-simple-job"},
-		{"job.with.dots", "xcron-job-with-dots"},
-		{"JOB_WITH_UPPER", "xcron-job-with-upper"},
-		{"job/with/slashes", "xcron-job-with-slashes"},
-	}
+	t.Run("clean key unchanged", func(t *testing.T) {
+		result := locker.leaseName("simple-job")
+		assert.Equal(t, "xcron-simple-job", result)
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			result := locker.leaseName(tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	t.Run("sanitized keys get hash suffix", func(t *testing.T) {
+		// 需要字符替换的 key 添加 hash 后缀确保唯一性
+		keys := []string{"job.with.dots", "JOB_WITH_UPPER", "job/with/slashes"}
+		for _, key := range keys {
+			t.Run(key, func(t *testing.T) {
+				result := locker.leaseName(key)
+				assert.True(t, len(result) <= 63, "lease name exceeds 63 chars")
+				assert.Regexp(t, `^xcron-[a-z0-9-]+-[a-f0-9]{8}$`, result)
+			})
+		}
+	})
+
+	t.Run("different keys produce different lease names", func(t *testing.T) {
+		// 确保不同 key 不会碰撞
+		r1 := locker.leaseName("my.job")
+		r2 := locker.leaseName("my/job")
+		assert.NotEqual(t, r1, r2, "different keys should produce different lease names")
+	})
 }
 
 // ============================================================================

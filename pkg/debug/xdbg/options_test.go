@@ -51,13 +51,13 @@ func TestWithOptions(t *testing.T) {
 	tests := []struct {
 		name   string
 		opt    Option
-		check  func(*Options) bool
+		check  func(*options) bool
 		errMsg string
 	}{
 		{
 			name: "WithSocketPath",
 			opt:  WithSocketPath("/tmp/test.sock"),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.SocketPath == "/tmp/test.sock"
 			},
 			errMsg: "SocketPath not set correctly",
@@ -65,7 +65,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithSocketPerm",
 			opt:  WithSocketPerm(0700),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.SocketPerm == 0700
 			},
 			errMsg: "SocketPerm not set correctly",
@@ -73,7 +73,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithAutoShutdown",
 			opt:  WithAutoShutdown(10 * time.Minute),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.AutoShutdown == 10*time.Minute
 			},
 			errMsg: "AutoShutdown not set correctly",
@@ -81,7 +81,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithMaxSessions",
 			opt:  WithMaxSessions(5),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.MaxSessions == 5
 			},
 			errMsg: "MaxSessions not set correctly",
@@ -89,7 +89,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithMaxConcurrentCommands",
 			opt:  WithMaxConcurrentCommands(10),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.MaxConcurrentCommands == 10
 			},
 			errMsg: "MaxConcurrentCommands not set correctly",
@@ -97,7 +97,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithCommandTimeout",
 			opt:  WithCommandTimeout(1 * time.Minute),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.CommandTimeout == 1*time.Minute
 			},
 			errMsg: "CommandTimeout not set correctly",
@@ -105,7 +105,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithShutdownTimeout",
 			opt:  WithShutdownTimeout(30 * time.Second),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.ShutdownTimeout == 30*time.Second
 			},
 			errMsg: "ShutdownTimeout not set correctly",
@@ -113,7 +113,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithMaxOutputSize",
 			opt:  WithMaxOutputSize(2 * 1024 * 1024),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.MaxOutputSize == 2*1024*1024
 			},
 			errMsg: "MaxOutputSize not set correctly",
@@ -121,7 +121,7 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithCommandWhitelist",
 			opt:  WithCommandWhitelist([]string{"help", "exit"}),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return len(o.CommandWhitelist) == 2
 			},
 			errMsg: "CommandWhitelist not set correctly",
@@ -129,15 +129,23 @@ func TestWithOptions(t *testing.T) {
 		{
 			name: "WithBackgroundMode",
 			opt:  WithBackgroundMode(true),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.BackgroundMode == true
 			},
 			errMsg: "BackgroundMode not set correctly",
 		},
 		{
+			name: "WithSessionReadTimeout",
+			opt:  WithSessionReadTimeout(90 * time.Second),
+			check: func(o *options) bool {
+				return o.SessionReadTimeout == 90*time.Second
+			},
+			errMsg: "SessionReadTimeout not set correctly",
+		},
+		{
 			name: "WithSessionWriteTimeout",
 			opt:  WithSessionWriteTimeout(45 * time.Second),
-			check: func(o *Options) bool {
+			check: func(o *options) bool {
 				return o.SessionWriteTimeout == 45*time.Second
 			},
 			errMsg: "SessionWriteTimeout not set correctly",
@@ -222,18 +230,18 @@ func (m *testMockTransport) Addr() string { return "/tmp/mock.sock" }
 func TestValidateOptions(t *testing.T) {
 	tests := []struct {
 		name    string
-		modify  func(*Options)
+		modify  func(*options)
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name:    "valid default options",
-			modify:  func(_ *Options) {},
+			modify:  func(_ *options) {},
 			wantErr: false,
 		},
 		{
 			name: "zero MaxSessions",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.MaxSessions = 0
 			},
 			wantErr: true,
@@ -241,7 +249,7 @@ func TestValidateOptions(t *testing.T) {
 		},
 		{
 			name: "negative MaxSessions",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.MaxSessions = -1
 			},
 			wantErr: true,
@@ -249,7 +257,7 @@ func TestValidateOptions(t *testing.T) {
 		},
 		{
 			name: "zero MaxConcurrentCommands",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.MaxConcurrentCommands = 0
 			},
 			wantErr: true,
@@ -257,7 +265,7 @@ func TestValidateOptions(t *testing.T) {
 		},
 		{
 			name: "zero MaxOutputSize",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.MaxOutputSize = 0
 			},
 			wantErr: true,
@@ -265,7 +273,7 @@ func TestValidateOptions(t *testing.T) {
 		},
 		{
 			name: "zero CommandTimeout",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.CommandTimeout = 0
 			},
 			wantErr: true,
@@ -273,11 +281,144 @@ func TestValidateOptions(t *testing.T) {
 		},
 		{
 			name: "zero ShutdownTimeout",
-			modify: func(o *Options) {
+			modify: func(o *options) {
 				o.ShutdownTimeout = 0
 			},
 			wantErr: true,
 			errMsg:  "ShutdownTimeout must be positive",
+		},
+		{
+			name: "negative SessionReadTimeout",
+			modify: func(o *options) {
+				o.SessionReadTimeout = -1 * time.Second
+			},
+			wantErr: true,
+			errMsg:  "SessionReadTimeout must be non-negative",
+		},
+		{
+			name: "negative SessionWriteTimeout",
+			modify: func(o *options) {
+				o.SessionWriteTimeout = -1 * time.Second
+			},
+			wantErr: true,
+			errMsg:  "SessionWriteTimeout must be non-negative",
+		},
+		{
+			name: "MaxOutputSize exceeds MaxPayloadSize",
+			modify: func(o *options) {
+				o.MaxOutputSize = MaxPayloadSize + 1
+			},
+			wantErr: true,
+			errMsg:  "MaxOutputSize",
+		},
+		{
+			name: "empty socket path",
+			modify: func(o *options) {
+				o.SocketPath = ""
+			},
+			wantErr: true,
+			errMsg:  "invalid socket path",
+		},
+		{
+			name: "relative socket path",
+			modify: func(o *options) {
+				o.SocketPath = "relative/path.sock"
+			},
+			wantErr: true,
+			errMsg:  "invalid socket path",
+		},
+		{
+			name: "socket path in sensitive directory",
+			modify: func(o *options) {
+				o.SocketPath = "/etc/xdbg.sock"
+			},
+			wantErr: true,
+			errMsg:  "invalid socket path",
+		},
+		{
+			name: "socket path with traversal",
+			modify: func(o *options) {
+				o.SocketPath = "/tmp/../etc/xdbg.sock"
+			},
+			wantErr: true,
+			errMsg:  "invalid socket path",
+		},
+		{
+			name: "MaxSessions exceeds upper bound",
+			modify: func(o *options) {
+				o.MaxSessions = maxSessions + 1
+			},
+			wantErr: true,
+			errMsg:  "MaxSessions exceeds upper bound",
+		},
+		{
+			name: "MaxConcurrentCommands exceeds upper bound",
+			modify: func(o *options) {
+				o.MaxConcurrentCommands = maxConcurrentCommands + 1
+			},
+			wantErr: true,
+			errMsg:  "MaxConcurrentCommands exceeds upper bound",
+		},
+		{
+			name: "socket perm zero",
+			modify: func(o *options) {
+				o.SocketPerm = 0
+			},
+			wantErr: true,
+			errMsg:  "SocketPerm must be non-zero",
+		},
+		{
+			name: "socket perm other readable",
+			modify: func(o *options) {
+				o.SocketPerm = 0o604
+			},
+			wantErr: true,
+			errMsg:  "SocketPerm must not grant",
+		},
+		{
+			name: "socket perm other writable",
+			modify: func(o *options) {
+				o.SocketPerm = 0o602
+			},
+			wantErr: true,
+			errMsg:  "SocketPerm must not grant",
+		},
+		{
+			name: "socket perm world accessible",
+			modify: func(o *options) {
+				o.SocketPerm = 0o666
+			},
+			wantErr: true,
+			errMsg:  "SocketPerm must not grant",
+		},
+		{
+			name: "socket perm 0777",
+			modify: func(o *options) {
+				o.SocketPerm = 0o777
+			},
+			wantErr: true,
+			errMsg:  "SocketPerm must not grant",
+		},
+		{
+			name: "socket perm 0600 valid",
+			modify: func(o *options) {
+				o.SocketPerm = 0o600
+			},
+			wantErr: false,
+		},
+		{
+			name: "socket perm 0660 valid (group access allowed)",
+			modify: func(o *options) {
+				o.SocketPerm = 0o660
+			},
+			wantErr: false,
+		},
+		{
+			name: "socket perm 0700 valid",
+			modify: func(o *options) {
+				o.SocketPerm = 0o700
+			},
+			wantErr: false,
 		},
 	}
 

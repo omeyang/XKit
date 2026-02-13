@@ -410,6 +410,76 @@ func TestLocalLimiter_Callback(t *testing.T) {
 	}
 }
 
+func TestLocalBackend_UpdateParamsOnPodCountChange(t *testing.T) {
+	// FG-S3: 动态 Pod 数量变化时，存量桶参数应同步更新
+	podCount := 2
+	provider := &mockPodCountProvider{count: podCount}
+
+	backend := newLocalBackend(1, provider)
+
+	ctx := context.Background()
+
+	// 初始 limit=100, podCount=2 → localLimit=50
+	res, err := backend.CheckRule(ctx, "key1", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Limit != 50 {
+		t.Errorf("expected localLimit 50, got %d", res.Limit)
+	}
+
+	// 更新 podCount 到 4 → localLimit=25
+	provider.count = 4
+
+	res, err = backend.CheckRule(ctx, "key1", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Limit != 25 {
+		t.Errorf("expected localLimit 25 after pod scale-up, got %d", res.Limit)
+	}
+}
+
+type mockPodCountProvider struct {
+	count int
+}
+
+func (m *mockPodCountProvider) GetPodCount(_ context.Context) (int, error) {
+	return m.count, nil
+}
+
+func TestTokenBucket_UpdateParams(t *testing.T) {
+	tb := &tokenBucket{
+		tokens:     100,
+		limit:      100,
+		window:     time.Minute,
+		lastUpdate: time.Now(),
+	}
+
+	// 缩小 limit，tokens 应该被截断
+	tb.updateParams(50, time.Minute)
+
+	tb.mu.Lock()
+	if tb.limit != 50 {
+		t.Errorf("expected limit 50, got %d", tb.limit)
+	}
+	if tb.tokens != 50 {
+		t.Errorf("expected tokens truncated to 50, got %f", tb.tokens)
+	}
+	tb.mu.Unlock()
+
+	// 扩大 limit，tokens 不变
+	tb.updateParams(200, time.Minute)
+	tb.mu.Lock()
+	if tb.limit != 200 {
+		t.Errorf("expected limit 200, got %d", tb.limit)
+	}
+	if tb.tokens != 50 {
+		t.Errorf("expected tokens unchanged at 50, got %f", tb.tokens)
+	}
+	tb.mu.Unlock()
+}
+
 func BenchmarkLocalLimiter_Allow(b *testing.B) {
 	limiter, err := NewLocal(
 		WithRules(TenantRule("tenant-limit", 1000000, time.Minute)),

@@ -55,14 +55,21 @@ func WithXdlockKeyPrefix(prefix string) XdlockAdapterOption {
 	}
 }
 
+// ErrNilFactory 表示 xdlock.Factory 为 nil。
+var ErrNilFactory = errors.New("xcron: xdlock factory cannot be nil")
+
 // NewXdlockAdapter 创建 xdlock 适配器。
 //
 // factory 是 xdlock 的工厂实例，可以是：
 //   - xdlock.NewEtcdFactory() 创建的 etcd 工厂
 //   - xdlock.NewRedisFactory() 创建的 Redis 工厂
 //
+// 如果 factory 为 nil，返回 [ErrNilFactory]。
 // 调用者负责在不需要时关闭 factory。
-func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) *XdlockAdapter {
+func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) (*XdlockAdapter, error) {
+	if factory == nil {
+		return nil, ErrNilFactory
+	}
 	a := &XdlockAdapter{
 		factory:   factory,
 		keyPrefix: "xcron:",
@@ -70,7 +77,7 @@ func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) *Xdlo
 	for _, opt := range opts {
 		opt(a)
 	}
-	return a
+	return a, nil
 }
 
 // TryLock 尝试获取锁（非阻塞）。
@@ -122,7 +129,7 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 	err := h.handle.Unlock(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) {
+		if errors.Is(err, xdlock.ErrNotLocked) {
 			return ErrLockNotHeld
 		}
 		return err
@@ -138,7 +145,7 @@ func (h *xdlockHandle) Renew(ctx context.Context, _ time.Duration) error {
 	err := h.handle.Extend(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) || errors.Is(err, xdlock.ErrExtendFailed) {
+		if errors.Is(err, xdlock.ErrNotLocked) || errors.Is(err, xdlock.ErrExtendFailed) {
 			return ErrLockNotHeld
 		}
 		return err

@@ -4,11 +4,29 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/observability/xtrace"
 
 	"google.golang.org/grpc/metadata"
 )
+
+// assertMetaValue 断言 metadata 中指定 key 的第一个值等于 expected。
+func assertMetaValue(t *testing.T, md metadata.MD, key, expected string) {
+	t.Helper()
+	vals := md.Get(key)
+	require.NotEmpty(t, vals, "metadata key %q should have a value", key)
+	assert.Equal(t, expected, vals[0], "metadata key %q", key)
+}
+
+// assertMetaEmpty 断言 metadata 中指定 key 没有值。
+func assertMetaEmpty(t *testing.T, md metadata.MD, key string) {
+	t.Helper()
+	vals := md.Get(key)
+	assert.Empty(t, vals, "metadata key %q should be empty", key)
+}
 
 // =============================================================================
 // gRPC Metadata 提取测试
@@ -72,6 +90,7 @@ func TestExtractFromMetadata(t *testing.T) {
 				Traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 				TraceID:     "0af7651916cd43dd8448eb211c80319c",
 				SpanID:      "b7ad6b7169203331",
+				TraceFlags:  "01",
 			},
 		},
 		{
@@ -83,6 +102,7 @@ func TestExtractFromMetadata(t *testing.T) {
 			want: xtrace.TraceInfo{
 				TraceID:     "0af7651916cd43dd8448eb211c80319c", // W3C traceparent 覆盖自定义值
 				SpanID:      "b7ad6b7169203331",
+				TraceFlags:  "01",
 				Traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 			},
 		},
@@ -108,6 +128,9 @@ func TestExtractFromMetadata(t *testing.T) {
 			}
 			if got.RequestID != tt.want.RequestID {
 				t.Errorf("RequestID = %q, want %q", got.RequestID, tt.want.RequestID)
+			}
+			if got.TraceFlags != tt.want.TraceFlags {
+				t.Errorf("TraceFlags = %q, want %q", got.TraceFlags, tt.want.TraceFlags)
 			}
 			if got.Traceparent != tt.want.Traceparent {
 				t.Errorf("Traceparent = %q, want %q", got.Traceparent, tt.want.Traceparent)
@@ -160,25 +183,15 @@ func TestInjectToOutgoingContext(t *testing.T) {
 		ctx = xtrace.InjectToOutgoingContext(ctx)
 
 		md, ok := metadata.FromOutgoingContext(ctx)
-		if !ok {
-			t.Fatal("metadata not found in outgoing context")
-		}
+		require.True(t, ok, "metadata not found in outgoing context")
 
-		if got := md.Get(xtrace.MetaTraceID); len(got) == 0 || got[0] != "0af7651916cd43dd8448eb211c80319c" {
-			t.Errorf("x-trace-id = %v, want [0af7651916cd43dd8448eb211c80319c]", got)
-		}
-		if got := md.Get(xtrace.MetaSpanID); len(got) == 0 || got[0] != "b7ad6b7169203331" {
-			t.Errorf("x-span-id = %v, want [b7ad6b7169203331]", got)
-		}
-		if got := md.Get(xtrace.MetaRequestID); len(got) == 0 || got[0] != "req-123" {
-			t.Errorf("x-request-id = %v, want [req-123]", got)
-		}
+		assertMetaValue(t, md, xtrace.MetaTraceID, "0af7651916cd43dd8448eb211c80319c")
+		assertMetaValue(t, md, xtrace.MetaSpanID, "b7ad6b7169203331")
+		assertMetaValue(t, md, xtrace.MetaRequestID, "req-123")
 
 		// 验证 traceparent（-00 表示未采样，因为无法确定实际采样决策）
-		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
-		if got := md.Get(xtrace.MetaTraceparent); len(got) == 0 || got[0] != expected {
-			t.Errorf("traceparent = %v, want [%s]", got, expected)
-		}
+		assertMetaValue(t, md, xtrace.MetaTraceparent,
+			"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00")
 	})
 
 	t.Run("空 context 不添加 metadata", func(t *testing.T) {
@@ -186,10 +199,46 @@ func TestInjectToOutgoingContext(t *testing.T) {
 		ctx = xtrace.InjectToOutgoingContext(ctx)
 
 		md, ok := metadata.FromOutgoingContext(ctx)
-		if ok && len(md) > 0 {
-			t.Errorf("should not add metadata when no trace info, got %v", md)
-		}
+		assert.False(t, ok && len(md) > 0,
+			"should not add metadata when no trace info, got %v", md)
 	})
+}
+
+func TestInjectToOutgoingContext_WithExistingMetadata(t *testing.T) {
+	// 覆盖 InjectToOutgoingContext: 已有 outgoing metadata 时复制并追加
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+
+	// 预设 outgoing metadata
+	existing := metadata.Pairs("custom-key", "custom-value")
+	ctx = metadata.NewOutgoingContext(ctx, existing)
+
+	ctx = xtrace.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+
+	// 原有 metadata 保留
+	assertMetaValue(t, md, "custom-key", "custom-value")
+	// 新追踪信息也注入了
+	assertMetaValue(t, md, xtrace.MetaTraceID, "0af7651916cd43dd8448eb211c80319c")
+}
+
+func TestInjectToOutgoingContext_TraceFlagsPropagation(t *testing.T) {
+	// 覆盖 InjectToOutgoingContext: trace-flags 传播到 traceparent
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "01")
+
+	ctx = xtrace.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+
+	expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	assertMetaValue(t, md, xtrace.MetaTraceparent, expected)
 }
 
 func TestInjectTraceToMetadata(t *testing.T) {
@@ -211,21 +260,11 @@ func TestInjectTraceToMetadata(t *testing.T) {
 		}
 		xtrace.InjectTraceToMetadata(md, info)
 
-		if got := md.Get(xtrace.MetaTraceID); len(got) == 0 || got[0] != "0af7651916cd43dd8448eb211c80319c" {
-			t.Errorf("x-trace-id = %v, want [0af7651916cd43dd8448eb211c80319c]", got)
-		}
-		if got := md.Get(xtrace.MetaSpanID); len(got) == 0 || got[0] != "b7ad6b7169203331" {
-			t.Errorf("x-span-id = %v, want [b7ad6b7169203331]", got)
-		}
-		if got := md.Get(xtrace.MetaRequestID); len(got) == 0 || got[0] != "r1" {
-			t.Errorf("x-request-id = %v, want [r1]", got)
-		}
-		if got := md.Get(xtrace.MetaTraceparent); len(got) == 0 || got[0] != validTraceparent {
-			t.Errorf("traceparent = %v, want [%s]", got, validTraceparent)
-		}
-		if got := md.Get(xtrace.MetaTracestate); len(got) == 0 || got[0] != "vendor=value" {
-			t.Errorf("tracestate = %v, want [vendor=value]", got)
-		}
+		assertMetaValue(t, md, xtrace.MetaTraceID, "0af7651916cd43dd8448eb211c80319c")
+		assertMetaValue(t, md, xtrace.MetaSpanID, "b7ad6b7169203331")
+		assertMetaValue(t, md, xtrace.MetaRequestID, "r1")
+		assertMetaValue(t, md, xtrace.MetaTraceparent, validTraceparent)
+		assertMetaValue(t, md, xtrace.MetaTracestate, "vendor=value")
 	})
 
 	t.Run("空字段不注入", func(t *testing.T) {
@@ -233,9 +272,7 @@ func TestInjectTraceToMetadata(t *testing.T) {
 		info := xtrace.TraceInfo{TraceID: "t1"} // 只有 TraceID
 		xtrace.InjectTraceToMetadata(md, info)
 
-		if got := md.Get(xtrace.MetaSpanID); len(got) != 0 {
-			t.Errorf("x-span-id should be empty, got %v", got)
-		}
+		assertMetaEmpty(t, md, xtrace.MetaSpanID)
 	})
 
 	t.Run("无效 traceparent 被拒绝，回退生成", func(t *testing.T) {
@@ -249,17 +286,8 @@ func TestInjectTraceToMetadata(t *testing.T) {
 		xtrace.InjectTraceToMetadata(md, info)
 
 		// 无效 traceparent 应该被拒绝，从 TraceID/SpanID 回退生成
-		gotTraceparent := md.Get(xtrace.MetaTraceparent)
-		if len(gotTraceparent) == 0 {
-			t.Error("traceparent should be generated from TraceID/SpanID")
-		} else if gotTraceparent[0] == "invalid-format" {
-			t.Error("invalid traceparent should not be injected")
-		}
-		// 生成的 traceparent 应该包含原始 TraceID 和 SpanID
 		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
-		if gotTraceparent[0] != expected {
-			t.Errorf("traceparent = %v, want [%s]", gotTraceparent, expected)
-		}
+		assertMetaValue(t, md, xtrace.MetaTraceparent, expected)
 	})
 
 	t.Run("version 00 带额外字段的 traceparent 被拒绝", func(t *testing.T) {
@@ -274,9 +302,9 @@ func TestInjectTraceToMetadata(t *testing.T) {
 
 		// 带额外字段的 version 00 应该被拒绝
 		gotTraceparent := md.Get(xtrace.MetaTraceparent)
-		if len(gotTraceparent) > 0 && gotTraceparent[0] == info.Traceparent {
-			t.Error("version 00 traceparent with extra fields should be rejected")
-		}
+		assert.NotEmpty(t, gotTraceparent, "traceparent should exist")
+		assert.NotEqual(t, info.Traceparent, gotTraceparent[0],
+			"version 00 traceparent with extra fields should be rejected")
 	})
 }
 
@@ -316,6 +344,7 @@ func TestContextHelpers(t *testing.T) {
 	ctx, _ = xctx.WithTraceID(ctx, "trace123")
 	ctx, _ = xctx.WithSpanID(ctx, "span456")
 	ctx, _ = xctx.WithRequestID(ctx, "req789")
+	ctx, _ = xctx.WithTraceFlags(ctx, "01")
 
 	if got := xtrace.TraceID(ctx); got != "trace123" {
 		t.Errorf("TraceID() = %q, want %q", got, "trace123")
@@ -325,5 +354,8 @@ func TestContextHelpers(t *testing.T) {
 	}
 	if got := xtrace.RequestID(ctx); got != "req789" {
 		t.Errorf("RequestID() = %q, want %q", got, "req789")
+	}
+	if got := xtrace.TraceFlags(ctx); got != "01" {
+		t.Errorf("TraceFlags() = %q, want %q", got, "01")
 	}
 }

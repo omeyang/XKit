@@ -5,6 +5,10 @@
 // xtrace 包负责 HTTP/gRPC 通信中链路追踪信息的提取和注入。
 // 底层存储使用 xctx 包，xtrace 只做传输层适配，不维护状态。
 //
+// 设计决策: xtrace 不创建/管理 OTel Span（无 tracer.Start/span.End），
+// Span 生命周期管理由 OTel SDK 的 otelhttp/otelgrpc 中间件负责。
+// xtrace 与 OTel 中间件可组合使用：xtrace 负责自定义头透传，OTel 负责 Span。
+//
 // 支持以下追踪标识：
 //   - TraceID: 链路追踪 ID（16字节，符合 W3C Trace Context）
 //   - SpanID: 跨度 ID（8字节，符合 W3C Trace Context）
@@ -29,9 +33,10 @@
 //
 // # 使用方式
 //
-// HTTP：使用 HTTPMiddleware() 服务端中间件，InjectToRequest() 客户端注入。
-// gRPC：使用 GRPCUnaryServerInterceptor() 服务端拦截器，
+// HTTP：使用 HTTPMiddleware(...Option) 服务端中间件，InjectToRequest() 客户端注入。
+// gRPC：使用 GRPCUnaryServerInterceptor(...Option) 服务端拦截器，
 // GRPCUnaryClientInterceptor() 客户端拦截器。
+// HTTP 和 gRPC 共用同一套 Option 类型（如 WithAutoGenerate）。
 //
 // # W3C Trace Context
 //
@@ -41,7 +46,7 @@
 //
 // 版本兼容性：
 //   - 支持 W3C 前向兼容规则：未知版本（> "00"）按 version-00 格式解析
-//   - 版本 "ff" 保留，始终视为无效
+//   - 版本 "ff" 保留，始终视为无效（大小写不敏感，"FF"/"Ff" 同样无效）
 //   - 未来版本可能包含额外字段，解析时自动忽略
 //
 // 解析优先级：
@@ -78,7 +83,7 @@
 // # W3C traceparent 大小写处理
 //
 // W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
-// 本包在生成 traceparent（InjectToRequest/InjectToOutgoingContext）时会自动转换为小写，
+// 本包在生成或透传 traceparent 时会自动规范化为小写，
 // 确保输出符合 W3C 规范，避免被严格实现拒绝。
 //
 // 解析时（ExtractFromHTTPHeader/ExtractFromMetadata）同时接受大写和小写输入，

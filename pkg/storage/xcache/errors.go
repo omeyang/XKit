@@ -9,15 +9,6 @@ import "errors"
 var (
 	// ErrNilClient 表示传入的客户端为 nil。
 	ErrNilClient = errors.New("xcache: nil client")
-
-	// ErrClosed 表示缓存已关闭。
-	ErrClosed = errors.New("xcache: cache closed")
-
-	// ErrKeyNotFound 表示 key 不存在。
-	ErrKeyNotFound = errors.New("xcache: key not found")
-
-	// ErrFieldNotFound 表示 Hash field 不存在。
-	ErrFieldNotFound = errors.New("xcache: field not found")
 )
 
 // =============================================================================
@@ -40,12 +31,6 @@ var (
 // =============================================================================
 
 var (
-	// ErrMemoryFull 表示内存缓存已满，无法写入。
-	ErrMemoryFull = errors.New("xcache: memory cache full")
-
-	// ErrInvalidCost 表示 cost 参数非法。
-	ErrInvalidCost = errors.New("xcache: invalid cost")
-
 	// ErrMetricsDisabled 表示未启用缓存统计信息。
 	ErrMetricsDisabled = errors.New("xcache: metrics disabled")
 )
@@ -55,6 +40,10 @@ var (
 // =============================================================================
 
 var (
+	// ErrEmptyKey 表示传入的 key 为空字符串。
+	// 空字符串 key 在 Redis 中合法但几乎总是使用错误，应在入口处 fail-fast。
+	ErrEmptyKey = errors.New("xcache: empty key")
+
 	// ErrNilLoader 表示 loader 函数为 nil。
 	ErrNilLoader = errors.New("xcache: nil loader function")
 
@@ -62,4 +51,10 @@ var (
 	// 这是一个配置错误，应该在开发阶段修复，不应被静默忽略。
 	// 当分布式锁返回此类错误时，会直接传递给调用方而非降级处理。
 	ErrInvalidConfig = errors.New("xcache: invalid configuration")
+
+	// ErrLoadPanic 表示 loadFn（用户提供的回源函数）发生了 panic。
+	// 设计决策: 在 singleflight DoChan 模式下，loadFn 的 panic 会被
+	// singleflight 捕获后在新 goroutine 中 re-panic，导致进程级崩溃。
+	// xcache 通过 recover 将 panic 转为此错误，保护进程不被用户代码拖垮。
+	ErrLoadPanic = errors.New("xcache: load function panicked")
 )

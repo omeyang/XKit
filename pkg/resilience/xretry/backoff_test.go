@@ -97,9 +97,48 @@ func TestExponentialBackoff(t *testing.T) {
 		assert.Equal(t, 100*time.Millisecond, b.NextDelay(-1))
 	})
 
+	t.Run("ExtremeAttemptNaNSafety", func(t *testing.T) {
+		// 极大 attempt 触发 math.Pow 溢出为 +Inf
+		// 无论 jitter 状态如何，都应返回 maxDelay 而非 NaN 或负数
+		b := NewExponentialBackoff(
+			WithInitialDelay(100*time.Millisecond),
+			WithMaxDelay(30*time.Second),
+			WithMultiplier(2.0),
+			WithJitter(1.0), // 最大抖动
+		)
+
+		delay := b.NextDelay(10000)
+		assert.GreaterOrEqual(t, delay, time.Duration(0), "delay should never be negative")
+		assert.LessOrEqual(t, delay, 30*time.Second, "delay should not exceed maxDelay")
+	})
+
+	t.Run("ExtremeAttemptNoJitter", func(t *testing.T) {
+		b := NewExponentialBackoff(
+			WithInitialDelay(100*time.Millisecond),
+			WithMaxDelay(30*time.Second),
+			WithJitter(0),
+		)
+
+		delay := b.NextDelay(10000)
+		assert.Equal(t, 30*time.Second, delay, "should return maxDelay for overflow")
+	})
+
 	t.Run("Reset", func(t *testing.T) {
 		b := NewExponentialBackoff()
 		b.Reset() // 不应该 panic
+	})
+
+	t.Run("MultiplierOne", func(t *testing.T) {
+		// multiplier=1.0 应表示固定延迟（无指数增长）
+		b := NewExponentialBackoff(
+			WithInitialDelay(100*time.Millisecond),
+			WithMultiplier(1.0),
+			WithJitter(0),
+		)
+
+		assert.Equal(t, 100*time.Millisecond, b.NextDelay(1))
+		assert.Equal(t, 100*time.Millisecond, b.NextDelay(2))
+		assert.Equal(t, 100*time.Millisecond, b.NextDelay(10))
 	})
 
 	t.Run("InvalidJitterClamped", func(t *testing.T) {

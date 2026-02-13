@@ -3,7 +3,7 @@
 // xmac 基于 Go 标准库 [net] 构建，提供类型安全的 MAC 地址操作：
 //
 //   - 多格式解析（冒号、短线、点、无分隔符）
-//   - 多格式输出（FormatColon, FormatDash, FormatDot, FormatBare）
+//   - 多格式输出（FormatColon, FormatDash, FormatDot, FormatBare 及对应 Upper 变体）
 //   - 地址属性判断（单播/多播、本地/全局管理）
 //   - JSON/Text/SQL 序列化支持
 //   - 地址运算（Next/Prev）
@@ -14,7 +14,7 @@
 //
 //	addr, err := xmac.Parse("AA:BB:CC:DD:EE:FF")
 //	fmt.Println(addr.String())                 // aa:bb:cc:dd:ee:ff
-//	fmt.Println(addr.Format(xmac.FormatDash))  // aa-bb-cc-dd-ee-ff
+//	fmt.Println(addr.FormatString(xmac.FormatDash))  // aa-bb-cc-dd-ee-ff
 //
 // 验证地址类型：
 //
@@ -38,6 +38,8 @@
 //   - 仅支持 EUI-48 (6字节)，不支持 EUI-64 (8字节)
 //   - 内部统一小写存储，输出格式可选
 //   - 零值表示无效地址，与 [net/netip.Addr] 设计一致
+//   - JSON 序列化：无效地址输出 ""（空字符串），保证 JSON 往返一致性；
+//     SQL 序列化：无效地址输出 nil（SQL NULL）。如需 JSON null，使用指针类型 *Addr
 //
 // # 零值与有效性语义
 //
@@ -78,7 +80,7 @@
 //	    fmt.Println(addr)  // 输出: 03, 02, 01
 //	}
 //
-//	// RangeCount 同理
+//	// [RangeCount] 同理
 //	xmac.RangeCount(xmac.Addr{}, xmac.Addr{})  // 返回 1
 //
 // # 错误处理

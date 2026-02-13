@@ -1,42 +1,16 @@
 //go:build windows
 
+// 设计决策: xdbgctl 不支持 Windows 平台。
+// xdbgctl 依赖 Unix Domain Socket（进程间通信）和 POSIX 信号（SIGUSR1 toggle），
+// 这些是 Unix/Linux 特性，在 Windows 上没有直接等价实现。
 package main
 
 import (
-	"context"
 	"fmt"
-	"time"
+	"os"
 )
 
-// Response 响应消息。
-type Response struct {
-	Success      bool   `json:"success"`
-	Output       string `json:"output,omitempty"`
-	Error        string `json:"error,omitempty"`
-	Truncated    bool   `json:"truncated,omitempty"`
-	OriginalSize int    `json:"original_size,omitempty"`
-}
-
-// Client xdbg 客户端。
-type Client struct {
-	socketPath string
-	timeout    time.Duration
-}
-
-// NewClient 创建客户端。
-func NewClient(socketPath string, timeout time.Duration) *Client {
-	return &Client{
-		socketPath: socketPath,
-		timeout:    timeout,
-	}
-}
-
-// Execute 执行命令（Windows 不支持）。
-func (c *Client) Execute(_ context.Context, _ string, _ []string) (*Response, error) {
-	return nil, fmt.Errorf("xdbgctl: Windows 平台不支持")
-}
-
-// Ping 测试连接（Windows 不支持）。
-func (c *Client) Ping(_ context.Context) error {
-	return fmt.Errorf("xdbgctl: Windows 平台不支持")
+func main() {
+	fmt.Fprintln(os.Stderr, "xdbgctl: 不支持 Windows 平台（依赖 Unix Domain Socket 和 POSIX 信号）")
+	os.Exit(1)
 }

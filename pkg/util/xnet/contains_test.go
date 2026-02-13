@@ -414,8 +414,8 @@ func TestRangeToPrefixes(t *testing.T) {
 		name         string
 		from         string
 		to           string
-		wantExact    int  // -1 表示不检查精确数量
-		wantMinCount int  // 最小数量
+		wantExact    int // -1 表示不检查精确数量
+		wantMinCount int // 最小数量
 	}{
 		{
 			name:      "exact /24 → 1 prefix",

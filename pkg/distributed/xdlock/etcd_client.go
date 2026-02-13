@@ -160,10 +160,10 @@ func convertXetcdError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch err {
-	case xetcd.ErrNilConfig:
+	switch {
+	case errors.Is(err, xetcd.ErrNilConfig):
 		return ErrNilConfig
-	case xetcd.ErrNoEndpoints:
+	case errors.Is(err, xetcd.ErrNoEndpoints):
 		return ErrNoEndpoints
 	default:
 		return fmt.Errorf("xdlock: %w", err)

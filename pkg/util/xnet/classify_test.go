@@ -35,6 +35,13 @@ func TestIsPrivate(t *testing.T) {
 		{"2001:db8::1", false}, // 文档地址，不是私有
 		{"::1", false},         // 环回地址
 
+		// IPv4-mapped IPv6 地址（FG-L1: 回归用例）
+		{"::ffff:10.0.0.1", true},        // 映射的私网地址
+		{"::ffff:192.168.1.1", true},     // 映射的私网地址
+		{"::ffff:172.16.0.1", true},      // 映射的私网地址
+		{"::ffff:8.8.8.8", false},        // 映射的公网地址
+		{"::ffff:172.15.255.255", false}, // 映射的非私网边界
+
 		// 无效地址
 		{"", false},
 	}
@@ -144,17 +151,17 @@ func TestIsGlobalUnicast(t *testing.T) {
 		{"8.8.8.8", true},
 		{"1.1.1.1", true},
 		{"2001:4860:4860::8888", true},
-		{"192.168.1.1", true},   // 私有但也是全局单播
-		{"10.0.0.1", true},      // 私有但也是全局单播
-		{"fc00::1", true},       // ULA 但也是全局单播
+		{"192.168.1.1", true}, // 私有但也是全局单播
+		{"10.0.0.1", true},    // 私有但也是全局单播
+		{"fc00::1", true},     // ULA 但也是全局单播
 
 		// 非全局单播
-		{"224.0.0.1", false},     // 多播
-		{"::1", false},           // 环回
-		{"0.0.0.0", false},       // 未指定
-		{"169.254.0.1", false},   // 链路本地
-		{"fe80::1", false},       // 链路本地
-		{"127.0.0.1", false},     // 环回
+		{"224.0.0.1", false},   // 多播
+		{"::1", false},         // 环回
+		{"0.0.0.0", false},     // 未指定
+		{"169.254.0.1", false}, // 链路本地
+		{"fe80::1", false},     // 链路本地
+		{"127.0.0.1", false},   // 环回
 	}
 
 	for _, tt := range tests {
@@ -242,20 +249,26 @@ func TestIsInterfaceLocalMulticast(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	tests := []struct {
-		addr           string
-		wantVersion    Version
-		wantString     string
-		wantPrivate    bool
-		wantLoopback   bool
-		wantMulticast  bool
-		wantGlobal     bool
+		addr          string
+		wantVersion   Version
+		wantString    string
+		wantPrivate   bool
+		wantLoopback  bool
+		wantMulticast bool
+		wantGlobal    bool
+		wantRoutable  bool
+		wantDoc       bool
+		wantShared    bool
+		wantBenchmark bool
+		wantReserved  bool
 	}{
 		{
-			addr:        "192.168.1.1",
-			wantVersion: V4,
-			wantString:  "private",
-			wantPrivate: true,
-			wantGlobal:  true, // 私有地址也是全局单播
+			addr:         "192.168.1.1",
+			wantVersion:  V4,
+			wantString:   "private",
+			wantPrivate:  true,
+			wantGlobal:   true, // 私有地址也是全局单播
+			wantRoutable: true,
 		},
 		{
 			addr:         "127.0.0.1",
@@ -270,16 +283,18 @@ func TestClassify(t *testing.T) {
 			wantMulticast: true,
 		},
 		{
-			addr:        "8.8.8.8",
-			wantVersion: V4,
-			wantString:  "global-unicast",
-			wantGlobal:  true,
+			addr:         "8.8.8.8",
+			wantVersion:  V4,
+			wantString:   "global-unicast",
+			wantGlobal:   true,
+			wantRoutable: true,
 		},
 		{
-			addr:        "2001:4860:4860::8888",
-			wantVersion: V6,
-			wantString:  "global-unicast",
-			wantGlobal:  true,
+			addr:         "2001:4860:4860::8888",
+			wantVersion:  V6,
+			wantString:   "global-unicast",
+			wantGlobal:   true,
+			wantRoutable: true,
 		},
 		{
 			addr:         "::1",
@@ -310,6 +325,39 @@ func TestClassify(t *testing.T) {
 			wantString:    "multicast",
 			wantMulticast: true,
 		},
+		// 新增分类字段覆盖
+		{
+			addr:         "192.0.2.1",
+			wantVersion:  V4,
+			wantString:   "documentation",
+			wantGlobal:   true,
+			wantRoutable: true,
+			wantDoc:      true,
+		},
+		{
+			addr:         "100.64.0.1",
+			wantVersion:  V4,
+			wantString:   "shared-address",
+			wantGlobal:   true,
+			wantRoutable: true,
+			wantShared:   true,
+		},
+		{
+			addr:          "198.18.0.1",
+			wantVersion:   V4,
+			wantString:    "benchmark",
+			wantGlobal:    true,
+			wantRoutable:  true,
+			wantBenchmark: true,
+		},
+		{
+			addr:         "240.0.0.1",
+			wantVersion:  V4,
+			wantString:   "reserved",
+			wantGlobal:   true,
+			wantRoutable: true,
+			wantReserved: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -324,6 +372,11 @@ func TestClassify(t *testing.T) {
 			assert.Equal(t, tt.wantLoopback, c.IsLoopback)
 			assert.Equal(t, tt.wantMulticast, c.IsMulticast)
 			assert.Equal(t, tt.wantGlobal, c.IsGlobalUnicast)
+			assert.Equal(t, tt.wantRoutable, c.IsRoutable)
+			assert.Equal(t, tt.wantDoc, c.IsDocumentation)
+			assert.Equal(t, tt.wantShared, c.IsSharedAddress)
+			assert.Equal(t, tt.wantBenchmark, c.IsBenchmark)
+			assert.Equal(t, tt.wantReserved, c.IsReserved)
 		})
 	}
 
@@ -332,6 +385,12 @@ func TestClassify(t *testing.T) {
 		c := Classify(netip.Addr{})
 		assert.False(t, c.IsValid)
 		assert.Equal(t, "invalid", c.String())
+	})
+
+	// 测试 "unknown" 防御性分支：手工构造无标志位的 Classification
+	t.Run("unknown branch", func(t *testing.T) {
+		c := Classification{IsValid: true}
+		assert.Equal(t, "unknown", c.String())
 	})
 }
 
@@ -347,12 +406,17 @@ func TestIsRoutable(t *testing.T) {
 		{"2001:db8::1", true},
 
 		// 不可路由
-		{"127.0.0.1", false},     // 环回
-		{"::1", false},           // 环回
-		{"169.254.0.1", false},   // 链路本地
-		{"fe80::1", false},       // 链路本地
-		{"0.0.0.0", false},       // 未指定
-		{"::", false},            // 未指定
+		{"127.0.0.1", false},              // 环回
+		{"::1", false},                    // 环回
+		{"169.254.0.1", false},            // 链路本地
+		{"fe80::1", false},                // 链路本地
+		{"0.0.0.0", false},                // 未指定
+		{"::", false},                     // 未指定
+		{"224.0.0.1", false},              // 链路本地多播
+		{"ff02::1", false},                // IPv6 链路本地多播
+		{"239.255.255.250", false},        // IPv4 多播
+		{"255.255.255.255", false},        // IPv4 有限广播
+		{"::ffff:255.255.255.255", false}, // IPv4-mapped 广播
 	}
 
 	for _, tt := range tests {
@@ -373,11 +437,11 @@ func TestIsDocumentation(t *testing.T) {
 		want bool
 	}{
 		// IPv4 文档地址
-		{"192.0.2.1", true},     // TEST-NET-1
+		{"192.0.2.1", true}, // TEST-NET-1
 		{"192.0.2.255", true},
-		{"198.51.100.1", true},  // TEST-NET-2
+		{"198.51.100.1", true}, // TEST-NET-2
 		{"198.51.100.255", true},
-		{"203.0.113.1", true},   // TEST-NET-3
+		{"203.0.113.1", true}, // TEST-NET-3
 		{"203.0.113.255", true},
 
 		// IPv6 文档地址
@@ -473,6 +537,41 @@ func TestIsBenchmark(t *testing.T) {
 	assert.False(t, IsBenchmark(netip.Addr{}))
 }
 
+func TestIsReserved(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		// 保留地址 (240.0.0.0/4)
+		{"240.0.0.0", true},
+		{"240.0.0.1", true},
+		{"255.255.255.254", true},
+		{"255.255.255.255", true}, // 广播地址也在 240.0.0.0/4 范围内
+
+		// 非保留地址
+		{"239.255.255.255", false}, // 刚好在范围外（多播最高地址）
+		{"192.168.1.1", false},
+		{"10.0.0.1", false},
+
+		// IPv6 不适用
+		{"2001:db8::1", false},
+
+		// IPv4-mapped IPv6 (保留地址)
+		{"::ffff:240.0.0.1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			addr := netip.MustParseAddr(tt.addr)
+			got := IsReserved(addr)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// 无效地址
+	assert.False(t, IsReserved(netip.Addr{}))
+}
+
 // =============================================================================
 // Benchmark
 // =============================================================================
@@ -533,30 +632,70 @@ func FuzzClassify(f *testing.F) {
 			t.Errorf("IsValid mismatch: addr=%v, c.IsValid=%v", addr.IsValid(), c.IsValid)
 		}
 
-		// 分类结果应该与直接调用函数一致
 		if c.IsValid {
-			if c.IsPrivate != addr.IsPrivate() {
-				t.Errorf("IsPrivate mismatch")
-			}
-			if c.IsLoopback != addr.IsLoopback() {
-				t.Errorf("IsLoopback mismatch")
-			}
-			if c.IsMulticast != addr.IsMulticast() {
-				t.Errorf("IsMulticast mismatch")
-			}
+			assertClassifyFields(t, addr, c)
 		}
 	})
 }
 
+// assertClassifyFields 验证分类结果与直接调用函数的一致性。
+func assertClassifyFields(t *testing.T, addr netip.Addr, c Classification) {
+	t.Helper()
+
+	if c.IsPrivate != addr.IsPrivate() {
+		t.Errorf("IsPrivate mismatch")
+	}
+	if c.IsLoopback != addr.IsLoopback() {
+		t.Errorf("IsLoopback mismatch")
+	}
+	if c.IsMulticast != addr.IsMulticast() {
+		t.Errorf("IsMulticast mismatch")
+	}
+	if c.IsRoutable != IsRoutable(addr) {
+		t.Errorf("IsRoutable mismatch")
+	}
+	if c.IsDocumentation != IsDocumentation(addr) {
+		t.Errorf("IsDocumentation mismatch")
+	}
+	if c.IsSharedAddress != IsSharedAddress(addr) {
+		t.Errorf("IsSharedAddress mismatch")
+	}
+	if c.IsBenchmark != IsBenchmark(addr) {
+		t.Errorf("IsBenchmark mismatch")
+	}
+	if c.IsReserved != IsReserved(addr) {
+		t.Errorf("IsReserved mismatch")
+	}
+}
+
+// expectedDocumentation 根据 IPv4 uint32 范围判断地址是否为文档地址。
+// 仅适用于 IPv4/IPv4-mapped 地址，返回 (expected, applicable)。
+func expectedDocumentation(addr netip.Addr) (bool, bool) {
+	if !addr.Is4() && !addr.Is4In6() {
+		return false, false
+	}
+
+	v, ok := AddrToUint32(addr)
+	if !ok {
+		return false, false
+	}
+
+	inTestNet1 := v >= 0xC0000200 && v <= 0xC00002FF
+	inTestNet2 := v >= 0xC6336400 && v <= 0xC63364FF
+	inTestNet3 := v >= 0xCB007100 && v <= 0xCB0071FF
+
+	return inTestNet1 || inTestNet2 || inTestNet3, true
+}
+
 func FuzzIsDocumentation(f *testing.F) {
 	// 添加边界值种子
-	f.Add("192.0.2.0")     // TEST-NET-1 起始
-	f.Add("192.0.2.255")   // TEST-NET-1 结束
-	f.Add("192.0.1.255")   // TEST-NET-1 之前
-	f.Add("192.0.3.0")     // TEST-NET-1 之后
-	f.Add("198.51.100.0")  // TEST-NET-2 起始
-	f.Add("203.0.113.0")   // TEST-NET-3 起始
-	f.Add("2001:db8::1")   // IPv6 文档地址
+	f.Add("192.0.2.0")    // TEST-NET-1 起始
+	f.Add("192.0.2.255")  // TEST-NET-1 结束
+	f.Add("192.0.1.255")  // TEST-NET-1 之前
+	f.Add("192.0.3.0")    // TEST-NET-1 之后
+	f.Add("198.51.100.0") // TEST-NET-2 起始
+	f.Add("203.0.113.0")  // TEST-NET-3 起始
+	f.Add("2001:db8::1")  // IPv6 文档地址
 
 	f.Fuzz(func(t *testing.T, s string) {
 		addr, err := netip.ParseAddr(s)
@@ -567,16 +706,9 @@ func FuzzIsDocumentation(f *testing.F) {
 		got := IsDocumentation(addr)
 
 		// 验证 IPv4 TEST-NET 范围
-		if addr.Is4() || addr.Is4In6() {
-			v, ok := AddrToUint32(addr)
-			if ok {
-				inTestNet1 := v >= 0xC0000200 && v <= 0xC00002FF
-				inTestNet2 := v >= 0xC6336400 && v <= 0xC63364FF
-				inTestNet3 := v >= 0xCB007100 && v <= 0xCB0071FF
-				expected := inTestNet1 || inTestNet2 || inTestNet3
-				if got != expected {
-					t.Errorf("IsDocumentation(%s) = %v, expected %v", addr, got, expected)
-				}
+		if expected, ok := expectedDocumentation(addr); ok {
+			if got != expected {
+				t.Errorf("IsDocumentation(%s) = %v, expected %v", addr, got, expected)
 			}
 		}
 	})

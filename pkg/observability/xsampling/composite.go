@@ -19,6 +19,18 @@ const (
 	ModeOR
 )
 
+// String 返回组合模式的字符串表示
+func (m CompositeMode) String() string {
+	switch m {
+	case ModeAND:
+		return "AND"
+	case ModeOR:
+		return "OR"
+	default:
+		return "Unknown"
+	}
+}
+
 // CompositeSampler 组合采样策略
 //
 // 将多个采样器组合在一起，支持 AND/OR 逻辑：
@@ -36,24 +48,35 @@ type CompositeSampler struct {
 // mode 指定组合逻辑（ModeAND 或 ModeOR）。
 // samplers 是要组合的子采样器列表。
 //
+// 非法 mode 返回 ErrInvalidMode，nil 子采样器返回 ErrNilSampler。
+//
 // 示例：
 //
+//	rateSampler, _ := NewRateSampler(0.1)
+//	countSampler, _ := NewCountSampler(10)
+//
 //	// 同时满足比率采样和计数采样
-//	sampler := NewCompositeSampler(ModeAND,
-//	    NewRateSampler(0.1),
-//	    NewCountSampler(10),
+//	sampler, err := NewCompositeSampler(ModeAND,
+//	    rateSampler,
+//	    countSampler,
 //	)
 //
+//	lowRateSampler, _ := NewRateSampler(0.01)
+//
 //	// 满足任一条件即采样
-//	sampler := NewCompositeSampler(ModeOR,
-//	    NewRateSampler(0.01),  // 1% 随机采样
+//	sampler, err = NewCompositeSampler(ModeOR,
+//	    lowRateSampler,        // 1% 随机采样
 //	    debugSampler,          // 或者调试模式采样
 //	)
-func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) *CompositeSampler {
-	// 校验 mode，只接受 ModeAND 和 ModeOR
-	// 非法值属于编程错误，立即 panic 以便快速发现
+func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSampler, error) {
 	if mode != ModeAND && mode != ModeOR {
-		panic("xsampling: invalid CompositeMode, must be ModeAND or ModeOR")
+		return nil, ErrInvalidMode
+	}
+
+	for _, s := range samplers {
+		if s == nil {
+			return nil, ErrNilSampler
+		}
 	}
 
 	// 复制切片以防止外部修改
@@ -62,7 +85,7 @@ func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) *CompositeSamp
 	return &CompositeSampler{
 		samplers: copied,
 		mode:     mode,
-	}
+	}, nil
 }
 
 func (s *CompositeSampler) ShouldSample(ctx context.Context) bool {
@@ -110,28 +133,27 @@ func (s *CompositeSampler) Samplers() []Sampler {
 // All 创建 AND 组合采样器（便捷函数）
 //
 // 等同于 NewCompositeSampler(ModeAND, samplers...)
+// nil 子采样器返回 ErrNilSampler。
 //
 // 示例：
 //
-//	sampler := All(
-//	    NewRateSampler(0.1),
-//	    NewCountSampler(10),
-//	)
-func All(samplers ...Sampler) *CompositeSampler {
+//	rateSampler, _ := NewRateSampler(0.1)
+//	countSampler, _ := NewCountSampler(10)
+//	sampler, err := All(rateSampler, countSampler)
+func All(samplers ...Sampler) (*CompositeSampler, error) {
 	return NewCompositeSampler(ModeAND, samplers...)
 }
 
 // Any 创建 OR 组合采样器（便捷函数）
 //
 // 等同于 NewCompositeSampler(ModeOR, samplers...)
+// nil 子采样器返回 ErrNilSampler。
 //
 // 示例：
 //
-//	sampler := Any(
-//	    NewRateSampler(0.01),
-//	    debugSampler,
-//	)
-func Any(samplers ...Sampler) *CompositeSampler {
+//	lowRateSampler, _ := NewRateSampler(0.01)
+//	sampler, err := Any(lowRateSampler, debugSampler)
+func Any(samplers ...Sampler) (*CompositeSampler, error) {
 	return NewCompositeSampler(ModeOR, samplers...)
 }
 

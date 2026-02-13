@@ -12,6 +12,7 @@ import (
 func Example_quickStart() {
 	// 清理之前的状态（测试用）
 	xplatform.Reset()
+	defer xplatform.Reset()
 
 	// 服务启动时初始化（信息来自 AUTH 服务或配置）
 	cfg := xplatform.Config{
@@ -41,6 +42,7 @@ func Example_quickStart() {
 func Example_mustInit() {
 	// 清理之前的状态
 	xplatform.Reset()
+	defer xplatform.Reset()
 
 	// 使用 MustInit（失败时 panic）
 	defer func() {
@@ -53,7 +55,7 @@ func Example_mustInit() {
 	xplatform.MustInit(xplatform.Config{})
 
 	// Output:
-	// 初始化失败: xplatform.MustInit: xplatform: missing platform_id
+	// 初始化失败: xplatform: missing platform_id
 }
 
 // ExampleConfig_Validate 演示配置验证。
@@ -77,10 +79,14 @@ func ExampleConfig_Validate() {
 func Example_checkInitialized() {
 	// 清理之前的状态
 	xplatform.Reset()
+	defer xplatform.Reset()
 
 	fmt.Printf("初始化前: %v\n", xplatform.IsInitialized())
 
-	xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
+	if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+		fmt.Println("初始化失败:", err)
+		return
+	}
 	fmt.Printf("初始化后: %v\n", xplatform.IsInitialized())
 
 	// Output:

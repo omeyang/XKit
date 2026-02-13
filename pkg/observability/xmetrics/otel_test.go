@@ -8,11 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -356,6 +359,16 @@ func TestResolveStatus(t *testing.T) {
 			result:   Result{Status: StatusOK, Err: errors.New("ignored")},
 			expected: StatusOK, // 显式状态优先
 		},
+		{
+			name:     "unknown_status_no_err_falls_back_to_ok",
+			result:   Result{Status: Status("timeout")},
+			expected: StatusOK, // 未知状态回退到 Err 推导
+		},
+		{
+			name:     "unknown_status_with_err_falls_back_to_error",
+			result:   Result{Status: Status("partial"), Err: errors.New("partial failure")},
+			expected: StatusError, // 未知状态 + 有 Err → error
+		},
 	}
 
 	for _, tt := range tests {
@@ -693,4 +706,352 @@ func TestWithMeterProvider_Nil(t *testing.T) {
 	opt(cfg)
 
 	assert.Equal(t, originalMP, cfg.meterProvider) // 不应该被覆盖
+}
+
+func TestWithHistogramBuckets(t *testing.T) {
+	cfg := &otelConfig{}
+	buckets := []float64{0.01, 0.1, 1, 10}
+
+	opt := WithHistogramBuckets(buckets)
+	opt(cfg)
+
+	assert.Equal(t, buckets, cfg.histogramBuckets)
+}
+
+func TestWithHistogramBuckets_Empty(t *testing.T) {
+	original := []float64{0.01, 0.1, 1}
+	cfg := &otelConfig{histogramBuckets: original}
+
+	opt := WithHistogramBuckets(nil)
+	opt(cfg)
+
+	assert.Equal(t, original, cfg.histogramBuckets) // 空切片不应覆盖
+}
+
+func TestValidateBuckets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		buckets []float64
+		wantErr bool
+	}{
+		{"valid_default", defaultDurationBuckets, false},
+		{"valid_custom", []float64{0.01, 0.1, 1, 10}, false},
+		{"valid_single", []float64{1.0}, false},
+		{"nan", []float64{0.1, math.NaN(), 1.0}, true},
+		{"positive_inf", []float64{0.1, math.Inf(1)}, true},
+		{"negative_inf", []float64{math.Inf(-1), 0.1}, true},
+		{"not_increasing", []float64{0.1, 0.5, 0.3}, true},
+		{"duplicate", []float64{0.1, 0.5, 0.5}, true},
+		{"descending", []float64{10, 5, 1}, true},
+		{"negative_valid", []float64{-1, 0, 1}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBuckets(tt.buckets)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidBuckets)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewOTelObserver_InvalidBuckets(t *testing.T) {
+	tests := []struct {
+		name    string
+		buckets []float64
+	}{
+		{"nan", []float64{0.1, math.NaN(), 1.0}},
+		{"inf", []float64{0.1, math.Inf(1)}},
+		{"not_increasing", []float64{0.5, 0.3, 0.1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs, err := NewOTelObserver(WithHistogramBuckets(tt.buckets))
+			assert.Nil(t, obs)
+			assert.ErrorIs(t, err, ErrInvalidBuckets)
+		})
+	}
+}
+
+func TestWithHistogramBuckets_Integration(t *testing.T) {
+	mp, _ := newTestMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	customBuckets := []float64{0.005, 0.01, 0.05, 0.1, 0.5, 1}
+	obs, err := NewOTelObserver(
+		WithMeterProvider(mp),
+		WithHistogramBuckets(customBuckets),
+	)
+	require.NoError(t, err)
+
+	_, span := obs.Start(context.Background(), SpanOptions{
+		Component: "test",
+		Operation: "buckets-test",
+	})
+	span.End(Result{})
+}
+
+// ============================================================================
+// 属性键常量测试
+// ============================================================================
+
+func TestAttrKeyConstants(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "component", AttrKeyComponent)
+	assert.Equal(t, "operation", AttrKeyOperation)
+	assert.Equal(t, "status", AttrKeyStatus)
+}
+
+// ============================================================================
+// ensureParentSpan 测试
+// ============================================================================
+
+func TestEnsureParentSpan_WithValidOTelSpan(t *testing.T) {
+	// 已有有效 OTel span 的 context 应直接返回
+	tp, _ := newTestTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	tracer := tp.Tracer("test")
+	ctx, span := tracer.Start(context.Background(), "existing")
+	defer span.End()
+
+	result := ensureParentSpan(ctx)
+	assert.Equal(t, ctx, result)
+}
+
+func TestEnsureParentSpan_WithXctxTraceInfo(t *testing.T) {
+	// 无 OTel span，但 xctx 中有 trace/span ID 时应构建 remote parent
+	ctx := context.Background()
+	var err error
+
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsRemote())
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", sc.TraceID().String())
+	assert.Equal(t, "b7ad6b7169203331", sc.SpanID().String())
+}
+
+func TestEnsureParentSpan_WithXctxTraceFlags(t *testing.T) {
+	ctx := context.Background()
+	var err error
+
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	require.NoError(t, err)
+	ctx, err = xctx.WithTraceFlags(ctx, "01")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+
+	assert.True(t, sc.IsValid())
+	assert.Equal(t, trace.TraceFlags(1), sc.TraceFlags())
+}
+
+func TestEnsureParentSpan_WithInvalidTraceFlags(t *testing.T) {
+	ctx := context.Background()
+	var err error
+
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	require.NoError(t, err)
+	ctx, err = xctx.WithTraceFlags(ctx, "zz") // 无效十六进制
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+
+	assert.True(t, sc.IsValid())
+	assert.Equal(t, trace.TraceFlags(0), sc.TraceFlags()) // 应回退为默认值 0
+}
+
+func TestEnsureParentSpan_NoTraceInfo(t *testing.T) {
+	// 无 OTel span，xctx 也无 trace ID 时应直接返回原 context
+	ctx := context.Background()
+	result := ensureParentSpan(ctx)
+	assert.Equal(t, ctx, result)
+}
+
+func TestEnsureParentSpan_PartialXctxInfo(t *testing.T) {
+	// 只有 traceID 没有 spanID 时应直接返回
+	ctx := context.Background()
+	var err error
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+	assert.False(t, sc.IsValid())
+}
+
+func TestEnsureParentSpan_InvalidTraceID(t *testing.T) {
+	ctx := context.Background()
+	var err error
+	ctx, err = xctx.WithTraceID(ctx, "not-a-valid-trace-id")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+	assert.False(t, sc.IsValid()) // 无效 traceID 应返回原 context
+}
+
+func TestEnsureParentSpan_InvalidSpanID(t *testing.T) {
+	ctx := context.Background()
+	var err error
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "invalid-span-id")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+	assert.False(t, sc.IsValid()) // 无效 spanID 应返回原 context
+}
+
+// ============================================================================
+// traceFlagsToHex 测试
+// ============================================================================
+
+func TestTraceFlagsToHex(t *testing.T) {
+	tests := []struct {
+		flags    trace.TraceFlags
+		expected string
+	}{
+		{0, "00"},
+		{1, "01"},
+		{15, "0f"},
+		{16, "10"},
+		{255, "ff"},
+		{170, "aa"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			got := traceFlagsToHex(tt.flags)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// ============================================================================
+// otelSpan.End 错误路径测试
+// ============================================================================
+
+func TestOTelSpan_End_StatusErrorWithoutErr(t *testing.T) {
+	tp, exporter := newTestTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(WithTracerProvider(tp))
+	require.NoError(t, err)
+
+	_, span := obs.Start(context.Background(), SpanOptions{
+		Component: "test",
+		Operation: "error-no-err",
+	})
+
+	// 显式设置 StatusError 但不提供 Err
+	span.End(Result{Status: StatusError})
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	// 应该设置了 error 状态
+	assert.Equal(t, codes.Error, spans[0].Status.Code)
+	assert.Equal(t, "operation failed", spans[0].Status.Description)
+}
+
+func TestOTelSpan_End_StatusOKWithErr(t *testing.T) {
+	tp, exporter := newTestTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(WithTracerProvider(tp))
+	require.NoError(t, err)
+
+	_, span := obs.Start(context.Background(), SpanOptions{
+		Component: "test",
+		Operation: "ok-with-err",
+	})
+
+	// 显式设置 StatusOK 但仍提供 Err（错误被记录但不影响状态）
+	span.End(Result{Status: StatusOK, Err: errors.New("logged but ok")})
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Ok, spans[0].Status.Code)
+	assert.NotEmpty(t, spans[0].Events) // 错误事件仍被记录
+}
+
+// ============================================================================
+// NewOTelObserver 错误路径测试
+// ============================================================================
+
+// failingMeterProvider 用于测试 meter 创建失败场景。
+type failingMeterProvider struct {
+	metric.MeterProvider
+}
+
+func (failingMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return &failingMeter{}
+}
+
+type failingMeter struct {
+	metric.Meter
+}
+
+func (failingMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	return nil, errors.New("counter creation failed")
+}
+
+// failingHistogramMeter 仅 histogram 创建失败。
+type failingHistogramMeter struct {
+	metric.Meter
+}
+
+func (failingHistogramMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	mp, _ := newTestMeterProvider()
+	m := mp.Meter("test")
+	return m.Int64Counter("test")
+}
+
+func (failingHistogramMeter) Float64Histogram(string, ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	return nil, errors.New("histogram creation failed")
+}
+
+type failingHistogramMeterProvider struct {
+	metric.MeterProvider
+}
+
+func (failingHistogramMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return &failingHistogramMeter{}
+}
+
+func TestNewOTelObserver_CounterCreationFails(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(failingMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrCreateCounter)
+}
+
+func TestNewOTelObserver_HistogramCreationFails(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(failingHistogramMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrCreateHistogram)
 }

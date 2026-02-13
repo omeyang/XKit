@@ -5,6 +5,7 @@ package xetcd
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,7 @@ import (
 // 运行方式: go test -tags=integration -v ./pkg/storage/xetcd/...
 //
 // 环境变量:
-//   - ETCD_ENDPOINTS: etcd 端点，默认 "localhost:2379"
+//   - ETCD_ENDPOINTS: etcd 端点（逗号分隔），默认 "localhost:2379"
 //   - ETCD_USERNAME: etcd 用户名（可选）
 //   - ETCD_PASSWORD: etcd 密码（可选）
 
@@ -22,7 +23,7 @@ func getTestEndpoints() []string {
 	if endpoints == "" {
 		return []string{"localhost:2379"}
 	}
-	return []string{endpoints}
+	return strings.Split(endpoints, ",")
 }
 
 func getTestConfig() *Config {

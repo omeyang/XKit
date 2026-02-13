@@ -99,12 +99,16 @@ type QuotaInfo struct {
 // 使用 Redis 作为后端存储，支持多 Pod 共享配额。
 // 如果配置了 Fallback，会自动包装为降级限流器。
 func New(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
+	if rdb == nil {
+		return nil, ErrNilClient
+	}
+
 	cfg := defaultOptions()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	if err := cfg.config.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
@@ -141,7 +145,7 @@ func NewLocal(opts ...Option) (Limiter, error) {
 		opt(cfg)
 	}
 
-	if err := cfg.config.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 

@@ -12,6 +12,32 @@ import (
 	"github.com/omeyang/xkit/pkg/distributed/xsemaphore"
 )
 
+// setupMiniredisAndSemaphore 创建 miniredis 实例和信号量，返回信号量和清理函数。
+// 用于简化示例测试中的重复初始化代码。
+func setupMiniredisAndSemaphore(semOpts ...xsemaphore.Option) (xsemaphore.Semaphore, func()) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	sem, err := xsemaphore.New(client, semOpts...)
+	if err != nil {
+		client.Close()
+		mr.Close()
+		log.Fatal(err)
+	}
+
+	cleanup := func() {
+		_ = sem.Close(context.Background())
+		_ = client.Close()
+		mr.Close()
+	}
+
+	return sem, cleanup
+}
+
 // Example_basic 演示分布式信号量的基本用法。
 func Example_basic() {
 	// 使用 miniredis 模拟 Redis（实际使用时换成真实 Redis）
@@ -130,32 +156,20 @@ func Example_tenantQuota() {
 	// Tenant A acquired 2 permits
 }
 
+// releasePermits 释放多个许可（用于示例测试清理）。
+func releasePermits(ctx context.Context, permits []xsemaphore.Permit) {
+	for _, p := range permits {
+		if err := p.Release(ctx); err != nil {
+			// example test: log release error
+			_ = err
+		}
+	}
+}
+
 // Example_capacityLimit 演示容量满时的行为。
 func Example_capacityLimit() {
-	mr, err := miniredis.Run()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() {
-		if err := client.Close(); err != nil {
-			// example test: log close error
-			_ = err
-		}
-	}()
-
-	sem, err := xsemaphore.New(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() {
-		if err := sem.Close(context.Background()); err != nil {
-			// example test: log close error
-			_ = err
-		}
-	}()
+	sem, cleanup := setupMiniredisAndSemaphore()
+	defer cleanup()
 
 	ctx := context.Background()
 
@@ -197,12 +211,7 @@ func Example_capacityLimit() {
 	}
 
 	// 清理
-	for _, p := range permits {
-		if err := p.Release(ctx); err != nil {
-			// example test: log release error
-			_ = err
-		}
-	}
+	releasePermits(ctx, permits)
 
 	// Output:
 	// Acquired 3 permits (capacity is 3)
@@ -324,30 +333,8 @@ func Example_extend() {
 
 // Example_query 演示查询资源状态。
 func Example_query() {
-	mr, err := miniredis.Run()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() {
-		if err := client.Close(); err != nil {
-			// example test: log close error
-			_ = err
-		}
-	}()
-
-	sem, err := xsemaphore.New(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() {
-		if err := sem.Close(context.Background()); err != nil {
-			// example test: log close error
-			_ = err
-		}
-	}()
+	sem, cleanup := setupMiniredisAndSemaphore()
+	defer cleanup()
 
 	ctx := context.Background()
 
@@ -381,12 +368,7 @@ func Example_query() {
 	fmt.Printf("Tenant: %d/%d used\n", info.TenantUsed, info.TenantQuota)
 
 	// 清理
-	for _, p := range permits {
-		if err := p.Release(ctx); err != nil {
-			// example test: log release error
-			_ = err
-		}
-	}
+	releasePermits(ctx, permits)
 
 	// Output:
 	// Global: 3/10 used

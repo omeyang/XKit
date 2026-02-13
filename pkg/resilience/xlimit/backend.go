@@ -34,8 +34,9 @@ type Backend interface {
 	Reset(ctx context.Context, key string) error
 
 	// Query 查询当前配额状态（不消耗配额）
+	// effectiveLimit 为后端实际生效的 limit（本地后端会按 podCount 调整）
 	Query(ctx context.Context, key string, limit, burst int, window time.Duration) (
-		remaining int, resetAt time.Time, err error)
+		effectiveLimit, remaining int, resetAt time.Time, err error)
 
 	// Close 关闭后端连接
 	Close() error

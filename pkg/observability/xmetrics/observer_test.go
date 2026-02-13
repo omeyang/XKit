@@ -9,37 +9,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Kind 和 Status 常量测试已在外部测试文件 xmetrics_test.go 中覆盖，
+// 此处不重复（常量属于公开 API，由外部测试验证更合适）。
+
 // ============================================================================
-// Kind 和 Status 常量测试
+// Kind.String() 测试
 // ============================================================================
 
-func TestKindConstants(t *testing.T) {
+func TestKind_String(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
 		kind Kind
-		want int
+		want string
 	}{
-		{"KindInternal", KindInternal, 0},
-		{"KindServer", KindServer, 1},
-		{"KindClient", KindClient, 2},
-		{"KindProducer", KindProducer, 3},
-		{"KindConsumer", KindConsumer, 4},
+		{KindInternal, "Internal"},
+		{KindServer, "Server"},
+		{KindClient, "Client"},
+		{KindProducer, "Producer"},
+		{KindConsumer, "Consumer"},
+		{Kind(99), "Kind(99)"},
+		{Kind(-1), "Kind(-1)"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, int(tt.kind))
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.kind.String())
 		})
 	}
-}
-
-func TestStatusConstants(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, Status("ok"), StatusOK)
-	assert.Equal(t, Status("error"), StatusError)
 }
 
 // ============================================================================
@@ -163,10 +160,10 @@ func TestNoopObserver_Start_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	observer := NoopObserver{}
 
-	// NoopObserver 对 nil ctx 也应该安全
+	// NoopObserver 对 nil ctx 也应该安全，返回 context.Background()
 	newCtx, span := observer.Start(nilCtx, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 
@@ -291,10 +288,31 @@ func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
 	var nilCtx context.Context
-	// nil context + nil observer
+	// nil context + nil observer → ctx 归一化为 context.Background()
 	newCtx, span := Start(nilCtx, nil, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
+	assert.NotNil(t, span)
+}
+
+// nilCtxObserver 是返回 nil context 的测试用 Observer，用于验证 Start 的兜底逻辑。
+type nilCtxObserver struct{}
+
+func (nilCtxObserver) Start(_ context.Context, _ SpanOptions) (context.Context, Span) {
+	return nil, NoopSpan{} //nolint:staticcheck // 故意返回 nil context 以测试兜底逻辑
+}
+
+func TestStart_ObserverReturnsNilContext(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 nil context，Start 应该兜底为原始 ctx
+	ctx := context.Background()
+	newCtx, span := Start(ctx, nilCtxObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "nil-ctx-observer",
+	})
+
+	assert.NotNil(t, newCtx) // 兜底返回传入的 ctx
 	assert.NotNil(t, span)
 }
 

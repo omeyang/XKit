@@ -85,7 +85,11 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 //   - 若仍失败，返回 ErrLockFailed
 func WithLockRetry(interval time.Duration, count int) RedisOption {
 	return func(o *RedisOptions) {
-		o.LockRetryInterval = interval
-		o.LockRetryCount = count
+		if interval > 0 {
+			o.LockRetryInterval = interval
+		}
+		if count > 0 {
+			o.LockRetryCount = count
+		}
 	}
 }

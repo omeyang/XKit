@@ -1,131 +1,207 @@
 package xpool
 
 import (
-	"log/slog"
+	"context"
+	"fmt"
+	"io"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 )
 
-// WorkerPool 是一个泛型 worker pool 实现。
+const (
+	maxWorkers   = 1 << 16 // 65536
+	maxQueueSize = 1 << 24 // 16777216
+)
+
+// closedCh 是一个预关闭的 channel，用于零值 Pool 的 Done() 返回值。
+var closedCh = func() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
+// Pool 是一个泛型 worker pool 实现。
 // 用于异步执行任务，支持优雅关闭和 panic 恢复。
-type WorkerPool[T any] struct {
-	workers   int
-	queueSize int
-	handler   func(T)
-	queue     chan T
-	wg        sync.WaitGroup
-	stopOnce  sync.Once
-	stopped   chan struct{}
-	started   bool       // 是否已启动
-	startMu   sync.Mutex // 保护 started 字段
+type Pool[T any] struct {
+	workers     int
+	queueSize   int
+	handler     func(T)
+	queue       chan T
+	wg          sync.WaitGroup
+	submitMu    sync.RWMutex // 保护 queue 发送操作，防止 send-on-closed-channel
+	closed      atomic.Bool
+	workersDone chan struct{} // 所有 worker 退出后关闭
+	opts        options
 }
 
-// NewWorkerPool 创建 worker pool。
+// New 创建并启动 worker pool。
 //
 // 参数：
-//   - workers: worker 数量，最小为 1
-//   - queueSize: 任务队列大小，最小为 1（默认 100）
-//   - handler: 任务处理函数，不能为 nil
-//
-// 如果 handler 为 nil，会 panic。
-func NewWorkerPool[T any](workers, queueSize int, handler func(T)) *WorkerPool[T] {
+//   - workers: worker 数量，必须在 [1, 65536] 范围内，否则返回 [ErrInvalidWorkers]
+//   - queueSize: 任务队列大小，必须在 [1, 16777216] 范围内，否则返回 [ErrInvalidQueueSize]
+//   - handler: 任务处理函数，不能为 nil，否则返回 [ErrNilHandler]
+func New[T any](workers, queueSize int, handler func(T), opts ...Option) (*Pool[T], error) {
 	if handler == nil {
-		panic("xpool: handler cannot be nil")
+		return nil, ErrNilHandler
 	}
-	if workers < 1 {
-		workers = 1
+	if workers < 1 || workers > maxWorkers {
+		return nil, fmt.Errorf("%w: got %d, must be in [1, %d]", ErrInvalidWorkers, workers, maxWorkers)
 	}
-	if queueSize < 1 {
-		queueSize = 100
+	if queueSize < 1 || queueSize > maxQueueSize {
+		return nil, fmt.Errorf("%w: got %d, must be in [1, %d]", ErrInvalidQueueSize, queueSize, maxQueueSize)
 	}
-	return &WorkerPool[T]{
-		workers:   workers,
-		queueSize: queueSize,
-		handler:   handler,
-		queue:     make(chan T, queueSize),
-		stopped:   make(chan struct{}),
-	}
-}
 
-// Start 启动 worker pool。
-// 该方法是幂等的：多次调用只会启动一次 worker。
-func (p *WorkerPool[T]) Start() {
-	p.startMu.Lock()
-	defer p.startMu.Unlock()
-
-	if p.started {
-		return // 幂等：已启动则直接返回
+	o := defaultOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
 	}
-	p.started = true
 
-	for i := 0; i < p.workers; i++ {
+	p := &Pool[T]{
+		workers:     workers,
+		queueSize:   queueSize,
+		handler:     handler,
+		queue:       make(chan T, queueSize),
+		workersDone: make(chan struct{}),
+		opts:        o,
+	}
+
+	for range p.workers {
 		p.wg.Add(1)
 		go p.worker()
 	}
+
+	return p, nil
 }
 
 // worker 是工作协程。
-// 只从 queue 中读取任务，不检查 stopped 信号。
-// 这确保在 Stop() 时能处理完队列中的剩余任务（优雅关闭）。
-func (p *WorkerPool[T]) worker() {
+// 从 queue 中读取任务直到 channel 关闭（优雅关闭）。
+func (p *Pool[T]) worker() {
 	defer p.wg.Done()
-	// 从 queue 读取直到 channel 关闭
 	for task := range p.queue {
-		// 安全执行 handler，捕获 panic
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("xpool: worker panic recovered", "panic", r)
-				}
-			}()
-			p.handler(task)
-		}()
+		p.safeHandle(task)
 	}
+}
+
+// safeHandle 安全执行 handler，捕获 panic 并记录堆栈。
+//
+// 设计决策: panic 恢复日志包含完整 task 值以便调试。
+// 若 task 包含敏感信息，调用方应通过 WithLogger 注入带脱敏的 logger，
+// 或在 handler 内部自行 recover 以控制日志内容。
+func (p *Pool[T]) safeHandle(task T) {
+	defer func() {
+		if r := recover(); r != nil {
+			attrs := []any{
+				"panic", r,
+				"task", task,
+				"stack", string(debug.Stack()),
+			}
+			if p.opts.name != "" {
+				attrs = append(attrs, "pool", p.opts.name)
+			}
+			p.opts.logger.Error("xpool: worker panic recovered", attrs...)
+		}
+	}()
+	p.handler(task)
 }
 
 // Submit 提交任务到 worker pool。
-// 如果队列满，任务将被丢弃并记录日志。
-// 如果 pool 已停止，返回 false。
-func (p *WorkerPool[T]) Submit(task T) (ok bool) {
-	// 使用 recover 捕获 Stop() 和 Submit() 并发时可能的 send on closed channel panic。
-	// 这种情况发生在 Stop() 关闭 p.stopped 后、关闭 p.queue 前的极短时间窗口内，
-	// Submit 的 select 恰好选中了 p.queue <- task 分支。
-	defer func() {
-		if r := recover(); r != nil {
-			ok = false
-		}
-	}()
+// 如果队列满，返回 [ErrQueueFull]（非阻塞，不记录日志——由调用方决定处理方式）。
+// 如果 pool 已关闭或未初始化，返回 [ErrPoolStopped]。
+func (p *Pool[T]) Submit(task T) error {
+	p.submitMu.RLock()
+	defer p.submitMu.RUnlock()
+
+	if p.closed.Load() || p.queue == nil {
+		return ErrPoolStopped
+	}
 
 	select {
-	case <-p.stopped:
-		return false
 	case p.queue <- task:
-		return true
+		return nil
 	default:
-		// 队列满，丢弃任务
-		slog.Warn("xpool: async queue full, task dropped")
-		return false
+		return ErrQueueFull
 	}
 }
 
-// Stop 停止 worker pool。
-// 会等待队列中所有剩余任务处理完成后再退出（优雅关闭）。
-func (p *WorkerPool[T]) Stop() {
-	p.stopOnce.Do(func() {
-		// 1. 先标记为已停止，拒绝新任务提交
-		close(p.stopped)
-		// 2. 关闭队列，让 worker 退出循环
-		close(p.queue)
-		// 3. 等待所有 worker 处理完剩余任务后退出
+// Shutdown 优雅关闭 worker pool，支持 context 超时/取消控制。
+// 会等待队列中所有剩余任务处理完成，或 ctx 到期后返回对应错误。
+// 首次调用返回 nil（或 ctx 错误），后续调用返回 [ErrPoolStopped]。
+// ctx 不得为 nil，否则返回 [ErrNilContext]。
+//
+// 注意事项：
+//   - 不可在 handler 内调用，否则会死锁
+//   - ctx 超时返回后，残留的 worker goroutine 仍在后台运行，
+//     会继续处理队列中的剩余任务直到耗尽后自行退出；
+//     可通过 [Pool.Done] 等待所有 worker 最终完成
+func (p *Pool[T]) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if !p.closed.CompareAndSwap(false, true) {
+		return ErrPoolStopped
+	}
+	// 零值 Pool（未通过 New 创建）无 queue、无 worker，直接返回。
+	if p.queue == nil {
+		return nil
+	}
+	// 写锁等待所有进行中的 Submit（持有读锁）完成后才能获取，
+	// 确保 close(p.queue) 时不会出现 send-on-closed-channel。
+	p.submitMu.Lock()
+	close(p.queue)
+	p.submitMu.Unlock()
+
+	go func() {
 		p.wg.Wait()
-	})
+		close(p.workersDone)
+	}()
+
+	select {
+	case <-p.workersDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close 关闭 worker pool 并等待所有排队任务完成。
+// 等价于 Shutdown(context.Background())。
+// 首次调用返回 nil，后续调用返回 [ErrPoolStopped]。
+//
+// 注意：不可在 handler 内调用 Close，否则会死锁。
+func (p *Pool[T]) Close() error {
+	return p.Shutdown(context.Background())
+}
+
+// Done 返回一个 channel，在所有 worker goroutine 退出后关闭。
+// 用于在 Shutdown 超时返回后等待残留 worker 最终完成。
+// 必须先调用 Shutdown 或 Close，否则返回的 channel 永远不会关闭。
+// 未通过 New 创建的零值 Pool 返回一个已关闭的 channel（无 worker 需等待）。
+func (p *Pool[T]) Done() <-chan struct{} {
+	if p.workersDone == nil {
+		return closedCh
+	}
+	return p.workersDone
 }
 
 // Workers 返回 worker 数量。
-func (p *WorkerPool[T]) Workers() int {
+func (p *Pool[T]) Workers() int {
 	return p.workers
 }
 
 // QueueSize 返回队列大小。
-func (p *WorkerPool[T]) QueueSize() int {
+func (p *Pool[T]) QueueSize() int {
 	return p.queueSize
 }
+
+// QueueLen 返回当前队列中等待处理的任务数量。
+// 适用于运行时监控和指标采集。
+// 零值 Pool 返回 0（Go 规范保证 len(nil channel) == 0）。
+func (p *Pool[T]) QueueLen() int {
+	return len(p.queue)
+}
+
+// 编译期接口检查。
+var _ io.Closer = (*Pool[int])(nil)

@@ -325,6 +325,32 @@ func TestWithTimeout_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestWithLockTimeout(t *testing.T) {
+	t.Run("sets positive lock timeout", func(t *testing.T) {
+		opts := defaultJobOptions()
+
+		WithLockTimeout(5 * time.Second)(opts)
+
+		assert.Equal(t, 5*time.Second, opts.lockTimeout)
+	})
+
+	t.Run("ignores zero lock timeout", func(t *testing.T) {
+		opts := defaultJobOptions()
+
+		WithLockTimeout(0)(opts)
+
+		assert.Equal(t, 5*time.Second, opts.lockTimeout) // 保持默认值
+	})
+
+	t.Run("ignores negative lock timeout", func(t *testing.T) {
+		opts := defaultJobOptions()
+
+		WithLockTimeout(-1 * time.Second)(opts)
+
+		assert.Equal(t, 5*time.Second, opts.lockTimeout) // 保持默认值
+	})
+}
+
 // ============================================================================
 // Default Options Tests
 // ============================================================================
@@ -344,6 +370,7 @@ func TestDefaultJobOptions(t *testing.T) {
 	assert.Empty(t, opts.name)
 	assert.Nil(t, opts.locker)
 	assert.Equal(t, 5*time.Minute, opts.lockTTL)
+	assert.Equal(t, 5*time.Second, opts.lockTimeout) // 默认锁获取超时
 	assert.Equal(t, time.Duration(0), opts.timeout)
 	assert.Nil(t, opts.retry)
 	assert.Nil(t, opts.backoff)
@@ -693,12 +720,48 @@ func TestJobWrapper_TryAcquireLock_EdgeCases(t *testing.T) {
 		opts.name = "test-job"
 
 		wrapper := newJobWrapper(JobFunc(func(ctx context.Context) error { return nil }), locker, logger, nil, opts)
-		rh := wrapper.tryAcquireLock(context.Background(), nil)
+		rh, lockErr := wrapper.tryAcquireLock(context.Background(), nil)
 
-		assert.Nil(t, rh) // 获取锁失败返回 nil
+		assert.Nil(t, rh)        // 获取锁失败返回 nil
+		assert.Error(t, lockErr) // 锁服务异常返回 error
 		assert.Equal(t, 1, logger.getWarnCount())
 	})
+
+	t.Run("with lock timeout applies context deadline", func(t *testing.T) {
+		// 使用一个会检查 ctx deadline 的 locker
+		var receivedCtx context.Context
+		locker := &ctxCapturingLocker{onTryLock: func(ctx context.Context) {
+			receivedCtx = ctx
+		}}
+		opts := defaultJobOptions()
+		opts.name = "test-job"
+		opts.lockTimeout = 2 * time.Second
+
+		wrapper := newJobWrapper(JobFunc(func(ctx context.Context) error { return nil }), locker, nil, nil, opts)
+		rh, lockErr := wrapper.tryAcquireLock(context.Background(), nil)
+
+		assert.NotNil(t, rh) // ctxCapturingLocker 返回成功
+		assert.NoError(t, lockErr)
+		require.NotNil(t, receivedCtx)
+		deadline, ok := receivedCtx.Deadline()
+		assert.True(t, ok, "lock context should have a deadline")
+		assert.WithinDuration(t, time.Now().Add(2*time.Second), deadline, time.Second)
+	})
 }
+
+// ctxCapturingLocker 捕获 TryLock 收到的 context
+type ctxCapturingLocker struct {
+	onTryLock func(ctx context.Context)
+}
+
+func (l *ctxCapturingLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
+	if l.onTryLock != nil {
+		l.onTryLock(ctx)
+	}
+	return &noopLockHandle{key: key}, nil
+}
+
+var _ Locker = (*ctxCapturingLocker)(nil)
 
 // errorLocker 返回锁获取错误的 mock locker
 type errorLocker struct {

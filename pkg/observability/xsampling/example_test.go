@@ -3,6 +3,7 @@ package xsampling_test
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/omeyang/xkit/pkg/observability/xsampling"
 )
@@ -14,7 +15,10 @@ const traceIDKey exampleContextKey = "trace_id"
 
 func ExampleNewRateSampler() {
 	// 创建 10% 采样率的采样器
-	sampler := xsampling.NewRateSampler(0.1)
+	sampler, err := xsampling.NewRateSampler(0.1)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// 获取采样率
 	fmt.Printf("Sampling rate: %.1f\n", sampler.Rate())
@@ -23,26 +27,20 @@ func ExampleNewRateSampler() {
 
 func ExampleNewCountSampler() {
 	// 创建每 5 个采样 1 个的采样器
-	sampler := xsampling.NewCountSampler(5)
+	sampler, err := xsampling.NewCountSampler(5)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// 记录哪些被采样
 	results := make([]bool, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		results[i] = sampler.ShouldSample(ctx)
 	}
 
 	fmt.Println(results)
 	// Output: [true false false false false true false false false false]
-}
-
-func ExampleNewProbabilitySampler() {
-	// 创建 50% 概率采样器
-	sampler := xsampling.NewProbabilitySampler(0.5)
-
-	// 获取概率值
-	fmt.Printf("Sampling probability: %.1f\n", sampler.Probability())
-	// Output: Sampling probability: 0.5
 }
 
 func ExampleAlways() {
@@ -51,7 +49,7 @@ func ExampleAlways() {
 
 	// 全采样，总是返回 true
 	allTrue := true
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !sampler.ShouldSample(ctx) {
 			allTrue = false
 			break
@@ -68,7 +66,7 @@ func ExampleNever() {
 
 	// 不采样，总是返回 false
 	allFalse := true
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if sampler.ShouldSample(ctx) {
 			allFalse = false
 			break
@@ -81,15 +79,22 @@ func ExampleNever() {
 
 func ExampleNewCompositeSampler() {
 	// 创建组合采样器：需要同时满足两个条件
-	sampler := xsampling.NewCompositeSampler(
+	counter, err := xsampling.NewCountSampler(2)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sampler, err := xsampling.NewCompositeSampler(
 		xsampling.ModeAND,
-		xsampling.Always(),           // 条件1：全采样
-		xsampling.NewCountSampler(2), // 条件2：每 2 个采样 1 个
+		xsampling.Always(), // 条件1：全采样
+		counter,            // 条件2：每 2 个采样 1 个
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	results := make([]bool, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		results[i] = sampler.ShouldSample(ctx)
 	}
 
@@ -99,10 +104,13 @@ func ExampleNewCompositeSampler() {
 
 func ExampleAll() {
 	// All 是 NewCompositeSampler(ModeAND, ...) 的便捷写法
-	sampler := xsampling.All(
+	sampler, err := xsampling.All(
 		xsampling.Always(),
 		xsampling.Always(),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	fmt.Println(sampler.ShouldSample(ctx))
@@ -111,10 +119,13 @@ func ExampleAll() {
 
 func ExampleAny() {
 	// Any 是 NewCompositeSampler(ModeOR, ...) 的便捷写法
-	sampler := xsampling.Any(
+	sampler, err := xsampling.Any(
 		xsampling.Never(),
 		xsampling.Always(),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	fmt.Println(sampler.ShouldSample(ctx))
@@ -123,12 +134,15 @@ func ExampleAny() {
 
 func ExampleNewKeyBasedSampler() {
 	// 创建基于 key 的一致性采样器
-	sampler := xsampling.NewKeyBasedSampler(0.5, func(ctx context.Context) string {
+	sampler, err := xsampling.NewKeyBasedSampler(0.5, func(ctx context.Context) string {
 		if v, ok := ctx.Value(traceIDKey).(string); ok {
 			return v
 		}
 		return ""
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// 相同的 key 总是产生相同的结果
 	ctx1 := context.WithValue(context.Background(), traceIDKey, "abc123")
@@ -146,11 +160,14 @@ func ExampleNewKeyBasedSampler() {
 }
 
 func ExampleCountSampler_Reset() {
-	sampler := xsampling.NewCountSampler(3)
+	sampler, err := xsampling.NewCountSampler(3)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// 前 3 次调用
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		sampler.ShouldSample(ctx)
 	}
 
@@ -165,14 +182,15 @@ func ExampleCountSampler_Reset() {
 // 演示日志采样场景
 func Example_logSampling() {
 	// 高 QPS 服务使用 1% 采样率
-	sampler := xsampling.NewRateSampler(0.01)
+	sampler, err := xsampling.NewRateSampler(0.01)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 
 	logCount := 0
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		if sampler.ShouldSample(ctx) {
-			// 这里是实际的日志输出
-			// log.Info("Request processed", "id", i)
 			logCount++
 		}
 	}
@@ -184,12 +202,15 @@ func Example_logSampling() {
 // 演示链路追踪采样场景
 func Example_traceSampling() {
 	// 按 trace_id 采样，确保同一条链路一致
-	sampler := xsampling.NewKeyBasedSampler(0.1, func(ctx context.Context) string {
+	sampler, err := xsampling.NewKeyBasedSampler(0.1, func(ctx context.Context) string {
 		if v, ok := ctx.Value(traceIDKey).(string); ok {
 			return v
 		}
 		return ""
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// 同一个 trace 的多个 span 应该被一致处理
 	traceID := "trace-abc-123"
@@ -197,7 +218,7 @@ func Example_traceSampling() {
 
 	// 模拟同一 trace 的多个 span
 	results := make([]bool, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		results[i] = sampler.ShouldSample(ctx)
 	}
 

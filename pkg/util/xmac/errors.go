@@ -18,4 +18,7 @@ var (
 
 	// ErrUnderflow 表示地址运算下溢（低于 00:00:00:00:00:00）。
 	ErrUnderflow = errors.New("xmac: address underflow")
+
+	// ErrNilReceiver 表示在 nil *Addr 接收者上调用了需要写入的方法。
+	ErrNilReceiver = errors.New("xmac: nil Addr receiver")
 )

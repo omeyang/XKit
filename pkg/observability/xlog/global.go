@@ -2,7 +2,9 @@ package xlog
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -17,24 +19,37 @@ import (
 // globalLogger 全局 Logger 实例（并发安全）
 var globalLogger atomic.Pointer[LoggerWithLevel]
 
-// globalMu 保护 globalOnce 的重置操作（仅用于测试）
+// globalMu 保护 globalOnce 及其 Do 执行（也用于 ResetDefault）
 var globalMu sync.Mutex
 
 // globalOnce 确保默认 Logger 只初始化一次
 var globalOnce sync.Once
 
 // defaultLogger 创建默认 Logger（惰性初始化）
+//
+// 设计决策: 在持锁状态下执行 once.Do，确保 ResetDefault（重置 globalOnce）
+// 与 once.Do 之间不会发生并发竞争（覆盖 sync.Once 内部状态会导致 fatal）。
+// 性能影响可忽略：初始化后 Default() 走 atomic.Load 快速路径，不进入此函数。
 func defaultLogger() LoggerWithLevel {
 	globalMu.Lock()
-	once := &globalOnce
-	globalMu.Unlock()
+	defer globalMu.Unlock()
 
-	once.Do(func() {
+	globalOnce.Do(func() {
 		// 默认配置：输出到 stderr，Info 级别，text 格式，启用 enrich
-		// 注：Build() 使用默认参数不应失败，如果失败说明系统状态异常
 		logger, _, err := New().Build()
 		if err != nil {
-			panic("xlog: failed to build default logger: " + err.Error())
+			// 设计决策: 默认参数不应失败；如果失败则降级为最小可用 logger，
+			// 避免库代码 panic 终止宿主进程（项目约定：构造不 panic）。
+			fmt.Fprintf(os.Stderr, "xlog: failed to build default logger: %v, using fallback\n", err)
+			fallbackHandler := slog.NewTextHandler(os.Stderr, nil)
+			var fallback LoggerWithLevel = &xlogger{
+				handler:        fallbackHandler,
+				levelVar:       new(slog.LevelVar),
+				errorCount:     new(atomic.Uint64),
+				inErrorHandler: new(atomic.Bool),
+			}
+			globalLogger.Store(&fallback)
+			return
 		}
 		globalLogger.Store(&logger)
 	})
@@ -102,7 +117,8 @@ func globalLog(l LoggerWithLevel, ctx context.Context, level slog.Level, msg str
 		l.Info(ctx, msg, attrs...)
 	case slog.LevelWarn:
 		l.Warn(ctx, msg, attrs...)
-	case slog.LevelError:
+	default:
+		// 包括 LevelError 和自定义级别，确保不丢失日志
 		l.Error(ctx, msg, attrs...)
 	}
 }
@@ -129,5 +145,12 @@ func Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 
 // Stack 使用全局 Logger 记录带堆栈的错误日志
 func Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
-	Default().Stack(ctx, msg, attrs...)
+	l := Default()
+	if xl, ok := l.(*xlogger); ok {
+		// 使用内部方法，正确跳过栈帧（与 globalLog 一致）
+		xl.stackWithSkip(ctx, msg, attrs, 1)
+		return
+	}
+	// fallback：非 xlogger 实现
+	l.Stack(ctx, msg, attrs...)
 }

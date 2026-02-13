@@ -2,8 +2,15 @@
 //
 // # 功能概览
 //
-//   - [SetFileLimit]: 设置进程最大打开文件数（Unix 平台生效，非 Unix 返回 [ErrUnsupportedPlatform]）
+//   - [SetFileLimit]: 设置进程最大打开文件数（Unix 平台生效）。
+//     非法参数优先返回 [ErrInvalidFileLimit]；合法参数在非 Unix 平台返回 [ErrUnsupportedPlatform]。
+//     当请求值超过当前 hard limit 时需要 CAP_SYS_RESOURCE（或 root 权限），否则返回 EPERM。
 //   - [GetFileLimit]: 查询进程当前最大打开文件数（Unix 平台生效，非 Unix 返回 [ErrUnsupportedPlatform]）
+//
+// # 错误哨兵
+//
+//   - [ErrInvalidFileLimit]: 文件限制值无效（如零值）
+//   - [ErrUnsupportedPlatform]: 当前平台不支持此操作
 //
 // # 平台支持
 //

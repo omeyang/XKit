@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTokenCache_Get(t *testing.T) {
@@ -17,9 +20,7 @@ func TestTokenCache_Get(t *testing.T) {
 		})
 
 		_, _, err := cache.Get(ctx, "tenant-1")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err)
 	})
 
 	t.Run("local cache hit", func(t *testing.T) {
@@ -31,21 +32,13 @@ func TestTokenCache_Get(t *testing.T) {
 		// Set token
 		token := testToken("test-token", 3600)
 		err := cache.Set(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		// Get token
 		got, needsRefresh, err := cache.Get(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("Get failed: %v", err)
-		}
-		if got.AccessToken != token.AccessToken {
-			t.Errorf("AccessToken = %q, expected %q", got.AccessToken, token.AccessToken)
-		}
-		if needsRefresh {
-			t.Error("needsRefresh should be false for fresh token")
-		}
+		require.NoError(t, err, "Get failed")
+		assert.Equal(t, token.AccessToken, got.AccessToken)
+		assert.False(t, needsRefresh, "needsRefresh should be false for fresh token")
 	})
 
 	t.Run("remote cache hit", func(t *testing.T) {
@@ -59,12 +52,8 @@ func TestTokenCache_Get(t *testing.T) {
 		})
 
 		got, _, err := cache.Get(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("Get failed: %v", err)
-		}
-		if got.AccessToken != token.AccessToken {
-			t.Errorf("AccessToken = %q, expected %q", got.AccessToken, token.AccessToken)
-		}
+		require.NoError(t, err, "Get failed")
+		assert.Equal(t, token.AccessToken, got.AccessToken)
 	})
 
 	t.Run("expired local cache", func(t *testing.T) {
@@ -80,9 +69,7 @@ func TestTokenCache_Get(t *testing.T) {
 		cache.setLocal("tenant-1", token)
 
 		_, _, err := cache.Get(ctx, "tenant-1")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss for expired token, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err, "expected ErrCacheMiss for expired token")
 	})
 
 	t.Run("needs refresh", func(t *testing.T) {
@@ -94,17 +81,11 @@ func TestTokenCache_Get(t *testing.T) {
 		// Set token that expires in 30 minutes
 		token := testToken("expiring-token", 1800) // 30 minutes
 		err := cache.Set(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		_, needsRefresh, err := cache.Get(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("Get failed: %v", err)
-		}
-		if !needsRefresh {
-			t.Error("needsRefresh should be true for expiring token")
-		}
+		require.NoError(t, err, "Get failed")
+		assert.True(t, needsRefresh, "needsRefresh should be true for expiring token")
 	})
 
 	t.Run("remote returns nil nil treated as cache miss", func(t *testing.T) {
@@ -117,9 +98,7 @@ func TestTokenCache_Get(t *testing.T) {
 		})
 
 		_, _, err := cache.Get(ctx, "tenant-1")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss when remote returns (nil, nil), got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err, "expected ErrCacheMiss when remote returns (nil, nil)")
 	})
 }
 
@@ -153,9 +132,7 @@ func TestTokenCache_Set(t *testing.T) {
 	t.Run("set nil token", func(t *testing.T) {
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 		err := cache.Set(ctx, "tenant-1", nil, time.Hour)
-		if err != nil {
-			t.Errorf("Set(nil) should not error: %v", err)
-		}
+		assert.NoError(t, err, "Set(nil) should not error")
 	})
 
 	t.Run("set token", func(t *testing.T) {
@@ -163,14 +140,10 @@ func TestTokenCache_Set(t *testing.T) {
 		token := testToken("test-token", 3600)
 
 		err := cache.Set(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		// Verify local size
-		if cache.LocalSize() != 1 {
-			t.Errorf("LocalSize = %d, expected 1", cache.LocalSize())
-		}
+		assert.Equal(t, 1, cache.LocalSize())
 	})
 
 	t.Run("set with remote cache", func(t *testing.T) {
@@ -182,14 +155,10 @@ func TestTokenCache_Set(t *testing.T) {
 
 		token := testToken("test-token", 3600)
 		err := cache.Set(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		// Verify remote cache
-		if remote.setTokenCalls != 1 {
-			t.Errorf("setTokenCalls = %d, expected 1", remote.setTokenCalls)
-		}
+		assert.Equal(t, 1, remote.setTokenCalls)
 	})
 
 	t.Run("compute expires at", func(t *testing.T) {
@@ -200,15 +169,11 @@ func TestTokenCache_Set(t *testing.T) {
 		}
 
 		err := cache.Set(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		// Verify ExpiresAt was computed
 		got, _, _ := cache.Get(ctx, "tenant-1")
-		if got.ExpiresAt.IsZero() {
-			t.Error("ExpiresAt should be computed")
-		}
+		assert.False(t, got.ExpiresAt.IsZero(), "ExpiresAt should be computed")
 	})
 
 	t.Run("TTL calculated from token ExpiresIn", func(t *testing.T) {
@@ -231,9 +196,7 @@ func TestTokenCache_Set(t *testing.T) {
 		// Default TTL is 6 hours (much longer than token's actual expiry)
 		defaultTTL := 6 * time.Hour
 		err := cache.Set(ctx, "tenant-1", token, defaultTTL)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
+		require.NoError(t, err, "Set failed")
 
 		// The actual TTL used should be based on token's ExpiresIn minus refreshThreshold
 		// Expected: 30 minutes - 5 minutes = 25 minutes
@@ -242,10 +205,9 @@ func TestTokenCache_Set(t *testing.T) {
 
 		// Allow some tolerance for timing
 		diff := actualTTL - expectedTTL
-		if diff < -time.Second || diff > time.Second {
-			t.Errorf("TTL = %v, expected approximately %v (based on token ExpiresIn, not default %v)",
-				actualTTL, expectedTTL, defaultTTL)
-		}
+		assert.InDelta(t, 0, diff.Seconds(), 1,
+			"TTL should be approximately %v (based on token ExpiresIn, not default %v), got %v",
+			expectedTTL, defaultTTL, actualTTL)
 	})
 }
 
@@ -362,15 +324,9 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 			return testToken("loaded-token", 3600), nil
 		}, time.Hour)
 
-		if err != nil {
-			t.Fatalf("GetOrLoad failed: %v", err)
-		}
-		if token.AccessToken != "loaded-token" {
-			t.Errorf("AccessToken = %q, expected 'loaded-token'", token.AccessToken)
-		}
-		if loadCalls != 1 {
-			t.Errorf("loadCalls = %d, expected 1", loadCalls)
-		}
+		require.NoError(t, err, "GetOrLoad failed")
+		assert.Equal(t, "loaded-token", token.AccessToken)
+		assert.Equal(t, 1, loadCalls)
 	})
 
 	t.Run("use cache on hit", func(t *testing.T) {
@@ -385,15 +341,9 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 			return testToken("loaded-token", 3600), nil
 		}, time.Hour)
 
-		if err != nil {
-			t.Fatalf("GetOrLoad failed: %v", err)
-		}
-		if token.AccessToken != "cached-token" {
-			t.Errorf("AccessToken = %q, expected 'cached-token'", token.AccessToken)
-		}
-		if loadCalls != 0 {
-			t.Errorf("loadCalls = %d, expected 0 (should use cache)", loadCalls)
-		}
+		require.NoError(t, err, "GetOrLoad failed")
+		assert.Equal(t, "cached-token", token.AccessToken)
+		assert.Equal(t, 0, loadCalls, "should use cache")
 	})
 
 	t.Run("singleflight prevents concurrent loads", func(t *testing.T) {
@@ -421,9 +371,7 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 		wg.Wait()
 
 		// With singleflight, only one load should happen
-		if loadCalls.Load() != 1 {
-			t.Errorf("loadCalls = %d, expected 1 (singleflight should deduplicate)", loadCalls.Load())
-		}
+		assert.Equal(t, int32(1), loadCalls.Load(), "singleflight should deduplicate")
 	})
 
 	t.Run("without singleflight allows concurrent loads", func(t *testing.T) {
@@ -466,9 +414,7 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 			return nil, ErrTokenNotFound
 		}, time.Hour)
 
-		if err != ErrTokenNotFound {
-			t.Errorf("expected ErrTokenNotFound, got %v", err)
-		}
+		assert.Equal(t, ErrTokenNotFound, err)
 	})
 
 	t.Run("token needs refresh but not expired", func(t *testing.T) {
@@ -493,17 +439,11 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 			return testToken("loaded-token", 3600), nil
 		}, time.Hour)
 
-		if err != nil {
-			t.Fatalf("GetOrLoad failed: %v", err)
-		}
+		require.NoError(t, err, "GetOrLoad failed")
 		// Should return cached token (not expired yet)
-		if token.AccessToken != "expiring-token" {
-			t.Errorf("AccessToken = %q, expected 'expiring-token'", token.AccessToken)
-		}
+		assert.Equal(t, "expiring-token", token.AccessToken)
 		// Should not call loader since token is not expired
-		if loadCalls != 0 {
-			t.Errorf("loadCalls = %d, expected 0", loadCalls)
-		}
+		assert.Equal(t, 0, loadCalls)
 	})
 }
 
@@ -546,5 +486,33 @@ func TestTokenCache_Eviction(t *testing.T) {
 	// Size should be controlled by eviction
 	if cache.LocalSize() > 15 { // Some slack for timing
 		t.Errorf("LocalSize = %d, expected <= 15 after eviction", cache.LocalSize())
+	}
+}
+
+func TestTokenCache_LocalSize_WithLocal(t *testing.T) {
+	cache := NewTokenCache(TokenCacheConfig{
+		EnableLocal: true,
+	})
+
+	// 空缓存
+	if cache.LocalSize() != 0 {
+		t.Errorf("LocalSize = %d, expected 0", cache.LocalSize())
+	}
+
+	// 添加一个
+	ctx := context.Background()
+	_ = cache.Set(ctx, "t1", testToken("tok1", 3600), time.Hour)
+	if cache.LocalSize() != 1 {
+		t.Errorf("LocalSize = %d, expected 1", cache.LocalSize())
+	}
+}
+
+func TestTokenCache_LocalSize_WithoutLocal(t *testing.T) {
+	cache := NewTokenCache(TokenCacheConfig{
+		EnableLocal: false,
+	})
+
+	if cache.LocalSize() != 0 {
+		t.Errorf("LocalSize = %d, expected 0", cache.LocalSize())
 	}
 }

@@ -3,6 +3,7 @@ package xdbg
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -35,8 +36,8 @@ func TestDefaultAuditLogger_Log(t *testing.T) {
 		"[XDBG]",
 		"[COMMAND]",
 		"testuser",
-		"command=setlog",
-		"args=[debug]",
+		`command="setlog"`,
+		`args=["debug"]`,
 		"duration=100ms",
 	}
 
@@ -81,7 +82,7 @@ func TestDefaultAuditLogger_LogWithExtra(t *testing.T) {
 	logger.Log(record)
 
 	output := buf.String()
-	if !strings.Contains(output, `socket="/var/run/xdbg.sock"`) {
+	if !strings.Contains(output, `"socket"="/var/run/xdbg.sock"`) {
 		t.Errorf("output should contain extra info, got: %s", output)
 	}
 }
@@ -153,15 +154,6 @@ func TestAuditEvent_Values(t *testing.T) {
 		if event == "" {
 			t.Error("event should not be empty")
 		}
-	}
-}
-
-func TestAuditFormat_Values(t *testing.T) {
-	if AuditFormatText != "text" {
-		t.Errorf("AuditFormatText = %q, want %q", AuditFormatText, "text")
-	}
-	if AuditFormatJSON != "json" {
-		t.Errorf("AuditFormatJSON = %q, want %q", AuditFormatJSON, "json")
 	}
 }
 
@@ -291,6 +283,39 @@ func TestJSONAuditLogger_Close(t *testing.T) {
 	if err != nil {
 		t.Errorf("Close() error = %v", err)
 	}
+}
+
+// errWriter 用于测试写入失败。
+type errWriter struct{}
+
+func (w *errWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("mock write error")
+}
+
+func TestDefaultAuditLogger_WriteError(t *testing.T) {
+	logger := NewAuditLogger(&errWriter{})
+
+	record := &AuditRecord{
+		Timestamp: time.Now(),
+		Event:     AuditEventCommand,
+		Command:   "test",
+	}
+
+	// Should not panic on write error
+	logger.Log(record)
+}
+
+func TestJSONAuditLogger_WriteError(t *testing.T) {
+	logger := NewJSONAuditLogger(&errWriter{})
+
+	record := &AuditRecord{
+		Timestamp: time.Now(),
+		Event:     AuditEventCommand,
+		Command:   "test",
+	}
+
+	// Should not panic on write error
+	logger.Log(record)
 }
 
 func TestDefaultAuditSanitizer(t *testing.T) {

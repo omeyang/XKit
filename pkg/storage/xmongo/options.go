@@ -118,18 +118,23 @@ func defaultOptions() *Options {
 }
 
 // WithHealthTimeout 设置健康检查超时时间。
+// 非正值被忽略（保持默认值），与 storageopt.WithHealthTimeout 行为一致。
 func WithHealthTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		o.HealthTimeout = timeout
+		if timeout > 0 {
+			o.HealthTimeout = timeout
+		}
 	}
 }
 
 // WithSlowQueryThreshold 设置慢查询阈值。
 // 当操作耗时超过此阈值时，如果设置了 SlowQueryHook，将触发回调。
-// 设置为 0 禁用慢查询检测。
+// 设置为 0 禁用慢查询检测。负值被忽略（保持默认值）。
 func WithSlowQueryThreshold(threshold time.Duration) Option {
 	return func(o *Options) {
-		o.SlowQueryThreshold = threshold
+		if threshold >= 0 {
+			o.SlowQueryThreshold = threshold
+		}
 	}
 }
 

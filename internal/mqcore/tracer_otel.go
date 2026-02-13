@@ -86,10 +86,12 @@ func ensureSpanContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
+	// 设计决策: 默认设置 FlagsSampled，因为显式注入追踪上下文意味着调用方期望该链路被采样。
+	// TraceFlags(0) 会导致下游服务可能丢弃该链路。
 	parent := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    parsedTraceID,
 		SpanID:     parsedSpanID,
-		TraceFlags: trace.TraceFlags(0),
+		TraceFlags: trace.FlagsSampled,
 		Remote:     true,
 	})
 

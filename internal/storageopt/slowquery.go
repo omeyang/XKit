@@ -44,7 +44,7 @@ type SlowQueryOptions[T any] struct {
 
 	// AsyncQueueSize 异步任务队列大小。
 	// 仅当设置 AsyncHook 时生效。
-	// 默认为 1000。当队列满时，新任务将被丢弃并记录日志。
+	// 默认为 1000。当队列满时，新任务将被静默丢弃。
 	AsyncQueueSize int
 }
 
@@ -58,7 +58,7 @@ const (
 // 封装了同步/异步钩子的调用逻辑。
 type SlowQueryDetector[T any] struct {
 	options SlowQueryOptions[T]
-	pool    *xpool.WorkerPool[T]
+	pool    *xpool.Pool[T]
 	mu      sync.RWMutex
 	closed  bool
 }
@@ -106,7 +106,7 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 		d.ensurePoolStarted()
 		d.mu.RLock()
 		if !d.closed && d.pool != nil {
-			d.pool.Submit(info)
+			d.pool.Submit(info) //nolint:errcheck,gosec // 队列满时丢弃慢查询通知，可接受的降级行为
 		}
 		d.mu.RUnlock()
 	}
@@ -134,13 +134,19 @@ func (d *SlowQueryDetector[T]) ensurePoolStarted() {
 		return
 	}
 
+	// 设计决策: 惰性创建 pool 而非在构造函数中创建，因为 Threshold 为 0 时 pool 不会被使用。
+	// 此处 error 路径在正常使用中不可达：AsyncHook 已 nil 检查，默认值（10 workers、1000 queue）
+	// 在 xpool 有效范围内。若因极端参数失败，后续 MaybeSlowQuery 的 d.pool != nil 检查会优雅降级。
 	if d.options.AsyncHook != nil {
-		d.pool = xpool.NewWorkerPool(
+		pool, err := xpool.New(
 			d.options.AsyncWorkerPoolSize,
 			d.options.AsyncQueueSize,
 			d.options.AsyncHook,
 		)
-		d.pool.Start()
+		if err != nil {
+			return
+		}
+		d.pool = pool
 	}
 }
 
@@ -155,7 +161,7 @@ func (d *SlowQueryDetector[T]) Close() {
 	d.closed = true
 
 	if d.pool != nil {
-		d.pool.Stop()
+		d.pool.Close() //nolint:errcheck,gosec // 内部清理，忽略重复关闭错误
 		d.pool = nil
 	}
 }

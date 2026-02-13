@@ -136,6 +136,12 @@ func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
 
 // rejectConnection 拒绝连接（会话数超限）。
 func (s *Server) rejectConnection(conn net.Conn) {
+	// 设置写超时，防止慢客户端阻塞 accept 循环
+	if s.opts.SessionWriteTimeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(s.opts.SessionWriteTimeout)); err != nil {
+			s.audit(AuditEventCommandFailed, nil, "reject:deadline", nil, 0, err)
+		}
+	}
 	codec := NewCodec()
 	errResp := NewErrorResponse(ErrTooManySessions)
 	if data, err := codec.EncodeResponse(errResp); err == nil {

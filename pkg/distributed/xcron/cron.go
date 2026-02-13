@@ -2,11 +2,16 @@ package xcron
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/robfig/cron/v3"
 )
+
+// ErrNilJob 表示任务为 nil。
+var ErrNilJob = errors.New("xcron: job cannot be nil")
 
 // cronScheduler 基于 robfig/cron/v3 的调度器实现
 type cronScheduler struct {
@@ -16,7 +21,9 @@ type cronScheduler struct {
 	logger Logger
 	stats  *Stats // 执行统计
 
-	immediateWg sync.WaitGroup // 追踪 WithImmediate 启动的立即执行任务
+	immediateWg     sync.WaitGroup     // 追踪 WithImmediate 启动的立即执行任务
+	immediateCtx    context.Context    // 立即执行任务的可取消上下文
+	immediateCancel context.CancelFunc // 取消立即执行任务
 }
 
 // New 创建新的调度器。
@@ -51,22 +58,33 @@ func New(opts ...SchedulerOption) Scheduler {
 
 	c := cron.New(cronOpts...)
 
+	immediateCtx, immediateCancel := context.WithCancel(context.Background())
+
 	return &cronScheduler{
-		cron:   c,
-		opts:   options,
-		locker: options.locker,
-		logger: options.logger,
-		stats:  newStats(),
+		cron:            c,
+		opts:            options,
+		locker:          options.locker,
+		logger:          options.logger,
+		stats:           newStats(),
+		immediateCtx:    immediateCtx,
+		immediateCancel: immediateCancel,
 	}
 }
 
 // AddFunc 添加函数任务
 func (s *cronScheduler) AddFunc(spec string, cmd func(ctx context.Context) error, opts ...JobOption) (JobID, error) {
+	if cmd == nil {
+		return 0, ErrNilJob
+	}
 	return s.AddJob(spec, JobFunc(cmd), opts...)
 }
 
 // AddJob 添加 Job 接口任务
 func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, error) {
+	if job == nil {
+		return 0, ErrNilJob
+	}
+
 	// 合并任务选项
 	jobOpts := defaultJobOptions()
 	for _, opt := range opts {
@@ -77,6 +95,19 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	locker := jobOpts.locker
 	if locker == nil {
 		locker = s.locker
+	}
+
+	// 警告：配置了分布式锁但未设置任务名，锁将被跳过
+	if jobOpts.name == "" {
+		if _, isNoop := locker.(*noopLocker); !isNoop {
+			if s.logger != nil {
+				s.logger.Warn(context.Background(),
+					"job has distributed locker but no name; lock will be skipped, use WithName() to enable locking",
+					"spec", spec)
+			} else {
+				log.Printf("[WARN] xcron: job has distributed locker but no name; lock will be skipped, use WithName()")
+			}
+		}
 	}
 
 	// 创建包装器
@@ -90,11 +121,14 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 
 	// 立即执行一次（如果配置了 WithImmediate）
 	// 使用 WaitGroup 追踪，确保 Stop() 时能等待完成
+	// 创建独立的包装器副本，使用可取消的上下文，以便 Stop() 时能中止
 	if jobOpts.immediate {
 		s.immediateWg.Add(1)
 		go func() {
 			defer s.immediateWg.Done()
-			wrapper.Run()
+			w := *wrapper
+			w.baseCtx = s.immediateCtx
+			w.Run()
 		}()
 	}
 
@@ -113,7 +147,10 @@ func (s *cronScheduler) Start() {
 
 // Stop 优雅停止。
 // 会等待所有正在执行的任务完成，包括 WithImmediate 启动的立即执行任务。
+// 立即执行任务的上下文会被取消，使其能尽快结束。
 func (s *cronScheduler) Stop() context.Context {
+	// 取消所有立即执行任务的上下文
+	s.immediateCancel()
 	ctx := s.cron.Stop()
 	// 等待 WithImmediate 启动的立即执行任务完成
 	s.immediateWg.Wait()

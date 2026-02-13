@@ -28,10 +28,11 @@
 // 通过 ContextClient 扩展接口从 context 获取租户信息。
 // 预加载平台信息到 context。
 //
-// # Token 刷新与 401 重试
+// # Token 生命周期管理
 //
 // 依赖 Token 过期时间和后台刷新管理生命周期，不在每次请求前验证有效性。
-// 如果服务端可能主动吊销 Token，启用 AutoRetryOn401。
+//   - 如果服务端可能主动吊销 Token，启用 AutoRetryOn401
+//   - 如果需要主动失效缓存（如权限变更后），调用 Client.InvalidateToken
 //
 // # URL 处理
 //
@@ -39,22 +40,27 @@
 //   - 相对路径（"/api/users"）：与 baseURL 拼接
 //   - 完整 URL（"https://other-host.com/api/users"）：直接使用
 //
-// # TLS 安全配置
+// # 传输安全
 //
-// 默认跳过证书验证（InsecureSkipVerify: true），生产环境建议显式配置。
+// Config.Host 必须使用 https://，否则 Validate() 返回 ErrInsecureHost。
+// 开发/测试环境可设置 Config.AllowInsecure = true 放行 http://。
+//
+// TLS 默认启用证书验证。开发/测试环境如需跳过验证，
+// 可通过 Config.TLS 设置 InsecureSkipVerify: true，
+// 或使用 NewSkipVerifyHTTPClient。
 //
 // # 默认行为
 //
-//   - TLS：Config.TLS 为 nil 时跳过证书验证，生产环境请显式配置
+//   - TLS：Config.TLS 为 nil 时启用证书验证（MinVersion: TLS 1.2）
 //   - Logger：WithLogger(nil) 使用 slog.Default()，禁用日志请用 slog.New(slog.NewTextHandler(io.Discard, nil))
 //
 // # 扩展点
 //
 //   - CacheStore 接口：自定义远程缓存实现（默认提供 NoopCacheStore 和 RedisCacheStore）
-//   - MetricsRecorder 接口：自定义细粒度指标收集
 //   - WithHTTPClient：注入自定义 HTTP 客户端
+//   - WithObserver：注入 xmetrics.Observer 实现自定义可观测性
 //
 // # Graceful Shutdown
 //
-// client.Close() 取消后台刷新任务并清理本地缓存。
+// client.Close() 取消后台刷新任务、等待所有刷新 goroutine 完成，然后清理本地缓存。
 package xauth

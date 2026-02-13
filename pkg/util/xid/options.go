@@ -6,8 +6,8 @@ import "time"
 // 配置
 // =============================================================================
 
-// config 内部配置结构
-type config struct {
+// options 内部配置结构
+type options struct {
 	machineID       func() (uint16, error)
 	checkMachineID  func(uint16) bool
 	maxWaitDuration time.Duration
@@ -15,7 +15,7 @@ type config struct {
 }
 
 // Option 配置选项函数
-type Option func(*config)
+type Option func(*options)
 
 // WithMachineID 设置自定义机器 ID 生成函数。
 //
@@ -27,7 +27,7 @@ type Option func(*config)
 //
 // 函数返回的 ID 必须在 0-65535 范围内。
 func WithMachineID(fn func() (uint16, error)) Option {
-	return func(c *config) {
+	return func(c *options) {
 		c.machineID = fn
 	}
 }
@@ -41,7 +41,7 @@ func WithMachineID(fn func() (uint16, error)) Option {
 //   - 检查机器 ID 是否在预期范围内
 //   - 通过外部服务验证机器 ID 未被占用
 func WithCheckMachineID(fn func(uint16) bool) Option {
-	return func(c *config) {
+	return func(c *options) {
 		c.checkMachineID = fn
 	}
 }
@@ -54,9 +54,9 @@ func WithCheckMachineID(fn func(uint16) bool) Option {
 //
 // 默认值为 500ms，适合大多数 NTP 同步场景。
 // 如果你的环境时钟漂移较大，可以适当增加。
-// 传入非正值会在 NewGenerator 中返回错误（fail-fast）。
+// 传入负值会在 NewGenerator 中返回错误（fail-fast）。零值使用默认值。
 func WithMaxWaitDuration(d time.Duration) Option {
-	return func(c *config) {
+	return func(c *options) {
 		c.maxWaitDuration = d
 	}
 }
@@ -65,9 +65,9 @@ func WithMaxWaitDuration(d time.Duration) Option {
 //
 // 当检测到时钟回拨时，每隔此间隔尝试一次生成 ID。
 // 默认值为 10ms（sonyflake 时间精度是 10ms）。
-// 传入非正值会在 NewGenerator 中返回错误（fail-fast）。
+// 传入负值会在 NewGenerator 中返回错误（fail-fast）。零值使用默认值。
 func WithRetryInterval(d time.Duration) Option {
-	return func(c *config) {
+	return func(c *options) {
 		c.retryInterval = d
 	}
 }

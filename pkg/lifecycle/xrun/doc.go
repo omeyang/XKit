@@ -34,44 +34,61 @@
 //
 // # 设计决策
 //
-// 1. 基于 context 的协调：所有服务通过 context 感知取消信号，
-//    符合 Go 的惯用并发模式。使用 context.WithCancelCause 保留取消原因。
+//  1. 基于 context 的协调：所有服务通过 context 感知取消信号，
+//     符合 Go 的惯用并发模式。使用 context.WithCancelCause 保留取消原因。
 //
-// 2. errgroup 单错误语义：errgroup.Wait() 仅返回第一个非 nil 错误。
-//    这是有意为之——当第一个服务失败时，其他服务会通过 context 取消收到通知。
-//    如果需要收集所有错误，应在服务内部使用日志记录。
+//  2. errgroup 单错误语义：errgroup.Wait() 仅返回第一个非 nil 错误。
+//     这是有意为之——当第一个服务失败时，其他服务会通过 context 取消收到通知。
+//     如果需要收集所有错误，应在服务内部使用日志记录。
 //
-// 3. 无全局关闭钩子：xrun 不提供 OnShutdown 等全局回调注册机制。
-//    关闭逻辑应内聚在各服务的 ctx.Done() 处理中，而非分散在外部回调。
-//    这避免了回调排序、错误传播等复杂性，保持架构清晰。
+//  3. 无全局关闭钩子：xrun 不提供 OnShutdown 等全局回调注册机制。
+//     关闭逻辑应内聚在各服务的 ctx.Done() 处理中，而非分散在外部回调。
+//     这避免了回调排序、错误传播等复杂性，保持架构清晰。
 //
-// 4. 信号处理：Run/RunServices/RunWithOptions/RunServicesWithOptions 自动注册信号监听
-//    （默认 SIGHUP、SIGINT、SIGTERM、SIGQUIT），收到信号时通过
-//    Cancel(&SignalError{Signal: sig}) 传播退出原因。
-//    可通过 WithSignals 自定义监听的信号列表，
-//    或通过 WithoutSignalHandler 完全禁用自动信号处理。
-//    直接使用 NewGroup 时不包含信号处理，需要自行管理。
+//  4. 信号处理：Run/RunServices/RunWithOptions/RunServicesWithOptions 自动注册信号监听
+//     （默认 SIGHUP、SIGINT、SIGTERM、SIGQUIT），收到信号时通过
+//     Cancel(&SignalError{Signal: sig}) 传播退出原因。
+//     可通过 WithSignals 自定义监听的信号列表，
+//     或通过 WithoutSignalHandler 完全禁用自动信号处理。
+//     直接使用 NewGroup 时不包含信号处理，需要自行管理。
 //
-// 5. DefaultSignals 为函数：DefaultSignals() 返回新切片而非暴露全局变量，
-//    防止外部代码意外修改默认信号列表。
+//  5. DefaultSignals 为函数：DefaultSignals() 返回新切片而非暴露全局变量，
+//     防止外部代码意外修改默认信号列表。
 //
-// 6. YAGNI 原则：不预定义未使用的错误类型（如 ShutdownTimeoutError）。
-//    关闭超时由调用方通过 context.WithTimeout 自行管理。
+//  6. YAGNI 原则：不预定义未使用的错误类型（如 ShutdownTimeoutError）。
+//     关闭超时由调用方通过 context.WithTimeout 自行管理。
 //
-// 7. context.Canceled 过滤策略：Wait() 使用 causeCtx（独立于 errgroup context）
-//    判断 context.Canceled 的来源。当 causeCtx 未被取消时，说明
-//    context.Canceled 来自服务内部逻辑（如 gRPC 调用），不应被过滤。
-//    当 causeCtx 被取消时（通过 Cancel() 或父 context），按原逻辑过滤。
+//  7. context.Canceled 过滤策略：Wait() 使用 causeCtx（独立于 errgroup context）
+//     判断 context.Canceled 的来源。当 causeCtx 未被取消时，说明
+//     context.Canceled 来自服务内部逻辑（如 gRPC 调用），不应被过滤。
+//     当 causeCtx 被取消时（通过 Cancel() 或父 context），按原逻辑过滤。
 //
-// 8. HTTPServer 关闭错误传播：HTTPServer 辅助函数通过 buffered channel
-//    传递 Shutdown() 的返回值。当 ListenAndServe 返回 http.ErrServerClosed
-//    （正常关闭）时，等待 Shutdown 完成并返回其错误（如有）。
-//    这确保关闭超时等错误不会被静默吞掉。
+//  8. HTTPServer 关闭错误传播：HTTPServer 辅助函数通过 buffered channel
+//     传递 Shutdown() 的返回值。当 ListenAndServe 返回 http.ErrServerClosed
+//     （正常关闭）时，通过 select 同时监听 shutdownErrCh 和 ctx.Done()，
+//     防止在外部直接调用 server.Shutdown/Close 的场景下永久阻塞。
+//     这确保关闭超时等错误不会被静默吞掉，同时保证函数始终能返回。
 //
-// 9. Ticker 慢执行监控：当前版本的 Ticker 不包含慢执行告警机制。
-//    如需监控 tick 函数的执行时长，建议在 fn 内部使用
-//    xmetrics.Timer 或类似工具自行记录。这符合 YAGNI 原则——
-//    监控策略因业务而异，不宜内置通用方案。
+//  9. Ticker 输入校验：Ticker 的 interval 参数必须为正数，
+//     否则返回的服务函数会返回 ErrInvalidInterval（fail-fast）。
+//     这防止 time.NewTicker 在运行时 panic。
+//
+//  10. Ticker 慢执行监控：当前版本的 Ticker 不包含慢执行告警机制。
+//     如需监控 tick 函数的执行时长，建议在 fn 内部使用
+//     xmetrics.Timer 或类似工具自行记录。这符合 YAGNI 原则——
+//     监控策略因业务而异，不宜内置通用方案。
+//
+//  11. Timer 输入校验：Timer 的 delay 参数不能为负数，
+//     否则返回 ErrInvalidDelay（与 Ticker 的 ErrInvalidInterval 对齐）。
+//     delay == 0 是有效用例（立即执行），而 Ticker 的 interval == 0
+//     会导致 time.NewTicker panic，因此边界值不同。
+//
+//  12. 空信号列表回退：WithSignals([]os.Signal{}) 等同于 nil，
+//     使用默认信号列表。这避免 signal.Notify(ch) 无参调用订阅所有信号的语义陷阱。
+//     如需禁用信号处理，应使用 WithoutSignalHandler()。
+//
+//  13. WithSignals 防御性拷贝：WithSignals 在创建时拷贝输入切片，
+//     避免调用方后续修改切片导致配置漂移或并发数据竞争。
 //
 // [errgroup]: https://pkg.go.dev/golang.org/x/sync/errgroup
 package xrun

@@ -1,9 +1,19 @@
 package xauth
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -36,6 +46,16 @@ func TestConfig_Validate(t *testing.T) {
 			name:    "negative refresh threshold",
 			config:  &Config{Host: "https://auth.test.com", TokenRefreshThreshold: -1},
 			wantErr: ErrInvalidRefreshThreshold,
+		},
+		{
+			name:    "http host rejected by default",
+			config:  &Config{Host: "http://auth.test.com"},
+			wantErr: ErrInsecureHost,
+		},
+		{
+			name:    "http host allowed with AllowInsecure",
+			config:  &Config{Host: "http://auth.test.com", AllowInsecure: true},
+			wantErr: nil,
 		},
 		{
 			name:    "valid config",
@@ -72,23 +92,13 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 		cfg := &Config{Host: "https://auth.test.com"}
 		cfg.ApplyDefaults()
 
-		if cfg.Timeout != DefaultTimeout {
-			t.Errorf("Timeout = %v, expected %v", cfg.Timeout, DefaultTimeout)
-		}
-		if cfg.TokenRefreshThreshold != DefaultTokenRefreshThreshold {
-			t.Errorf("TokenRefreshThreshold = %v, expected %v", cfg.TokenRefreshThreshold, DefaultTokenRefreshThreshold)
-		}
-		if cfg.PlatformDataCacheTTL != DefaultPlatformDataCacheTTL {
-			t.Errorf("PlatformDataCacheTTL = %v, expected %v", cfg.PlatformDataCacheTTL, DefaultPlatformDataCacheTTL)
-		}
+		assert.Equal(t, DefaultTimeout, cfg.Timeout)
+		assert.Equal(t, DefaultTokenRefreshThreshold, cfg.TokenRefreshThreshold)
+		assert.Equal(t, DefaultPlatformDataCacheTTL, cfg.PlatformDataCacheTTL)
 		// ClientID should be set based on environment
-		if cfg.ClientID == "" {
-			t.Error("ClientID should not be empty")
-		}
+		assert.NotEmpty(t, cfg.ClientID, "ClientID should not be empty")
 		// ClientSecret defaults to ClientID
-		if cfg.ClientSecret != cfg.ClientID {
-			t.Errorf("ClientSecret = %v, expected %v", cfg.ClientSecret, cfg.ClientID)
-		}
+		assert.Equal(t, cfg.ClientID, cfg.ClientSecret)
 	})
 
 	t.Run("preserve existing values", func(t *testing.T) {
@@ -102,21 +112,11 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 		}
 		cfg.ApplyDefaults()
 
-		if cfg.Timeout != 30*time.Second {
-			t.Errorf("Timeout was overwritten")
-		}
-		if cfg.TokenRefreshThreshold != 10*time.Minute {
-			t.Errorf("TokenRefreshThreshold was overwritten")
-		}
-		if cfg.PlatformDataCacheTTL != 1*time.Hour {
-			t.Errorf("PlatformDataCacheTTL was overwritten")
-		}
-		if cfg.ClientID != "custom-client" {
-			t.Errorf("ClientID was overwritten")
-		}
-		if cfg.ClientSecret != "custom-secret" {
-			t.Errorf("ClientSecret was overwritten")
-		}
+		assert.Equal(t, 30*time.Second, cfg.Timeout, "Timeout was overwritten")
+		assert.Equal(t, 10*time.Minute, cfg.TokenRefreshThreshold, "TokenRefreshThreshold was overwritten")
+		assert.Equal(t, 1*time.Hour, cfg.PlatformDataCacheTTL, "PlatformDataCacheTTL was overwritten")
+		assert.Equal(t, "custom-client", cfg.ClientID, "ClientID was overwritten")
+		assert.Equal(t, "custom-secret", cfg.ClientSecret, "ClientSecret was overwritten")
 	})
 }
 
@@ -216,6 +216,93 @@ func TestTLSConfig_BuildTLSConfig(t *testing.T) {
 		_, err := cfg.BuildTLSConfig()
 		if err == nil {
 			t.Error("expected error for nonexistent cert file")
+		}
+	})
+
+	t.Run("invalid CA PEM content", func(t *testing.T) {
+		caFile := filepath.Join(t.TempDir(), "bad-ca.pem")
+		if err := os.WriteFile(caFile, []byte("not-a-pem"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg := &TLSConfig{RootCAFile: caFile}
+		_, err := cfg.BuildTLSConfig()
+		if err == nil {
+			t.Error("expected error for invalid CA PEM content")
+		}
+	})
+
+	t.Run("valid CA cert", func(t *testing.T) {
+		// 使用自签名 CA 证书测试成功路径
+		caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		caTemplate := &x509.Certificate{
+			SerialNumber:          big.NewInt(1),
+			Subject:               pkix.Name{CommonName: "Test CA"},
+			NotBefore:             time.Now(),
+			NotAfter:              time.Now().Add(time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+		}
+		caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		caFile := filepath.Join(t.TempDir(), "ca.pem")
+		if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := &TLSConfig{RootCAFile: caFile}
+		tlsCfg, err := cfg.BuildTLSConfig()
+		if err != nil {
+			t.Fatalf("BuildTLSConfig failed: %v", err)
+		}
+		if tlsCfg.RootCAs == nil {
+			t.Error("RootCAs should not be nil")
+		}
+	})
+
+	t.Run("valid client cert", func(t *testing.T) {
+		// 使用自签名证书测试客户端证书加载
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: "Test Client"},
+			NotBefore:    time.Now(),
+			NotAfter:     time.Now().Add(time.Hour),
+		}
+		certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dir := t.TempDir()
+		certFile := filepath.Join(dir, "cert.pem")
+		keyFile := filepath.Join(dir, "key.pem")
+
+		if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		keyDER, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg := &TLSConfig{CertFile: certFile, KeyFile: keyFile}
+		tlsCfg, err := cfg.BuildTLSConfig()
+		if err != nil {
+			t.Fatalf("BuildTLSConfig failed: %v", err)
+		}
+		if len(tlsCfg.Certificates) != 1 {
+			t.Errorf("Certificates count = %d, expected 1", len(tlsCfg.Certificates))
 		}
 	})
 }

@@ -1,7 +1,6 @@
 package xid
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,50 +8,40 @@ import (
 )
 
 func TestDefaultMachineID_EnvVar(t *testing.T) {
-	// 保存原始环境变量
-	origMachineID := os.Getenv(EnvMachineID)
-	origPodName := os.Getenv(EnvPodName)
-	origHostname := os.Getenv(EnvHostname)
-	defer func() {
-		os.Setenv(EnvMachineID, origMachineID)
-		os.Setenv(EnvPodName, origPodName)
-		os.Setenv(EnvHostname, origHostname)
-	}()
-
 	// 清除其他环境变量，确保只测试 XID_MACHINE_ID
-	os.Setenv(EnvPodName, "")
-	os.Setenv(EnvHostname, "")
+	t.Setenv(EnvPodName, "")
+	t.Setenv(EnvHostname, "")
 
 	t.Run("valid value", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "12345")
+		t.Setenv(EnvMachineID, "12345")
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
 		assert.Equal(t, uint16(12345), id)
 	})
 
 	t.Run("max value", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "65535")
+		t.Setenv(EnvMachineID, "65535")
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
 		assert.Equal(t, uint16(65535), id)
 	})
 
 	t.Run("zero value", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "0")
+		t.Setenv(EnvMachineID, "0")
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
 		assert.Equal(t, uint16(0), id)
 	})
 
 	t.Run("empty falls through to next strategy", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "")
+		t.Setenv(EnvMachineID, "")
 		// 不再测试 (_, false)，而是验证 fallback 能正常工作
 		_, err := DefaultMachineID()
 		assert.NoError(t, err)
 	})
 
 	t.Run("invalid - not a number returns error", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "abc")
+		t.Setenv(EnvMachineID, "abc")
 		_, err := DefaultMachineID()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid")
@@ -60,14 +49,14 @@ func TestDefaultMachineID_EnvVar(t *testing.T) {
 	})
 
 	t.Run("invalid - out of range returns error", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "65536")
+		t.Setenv(EnvMachineID, "65536")
 		_, err := DefaultMachineID()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid")
 	})
 
 	t.Run("invalid - negative returns error", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "-1")
+		t.Setenv(EnvMachineID, "-1")
 		_, err := DefaultMachineID()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid")
@@ -75,27 +64,24 @@ func TestDefaultMachineID_EnvVar(t *testing.T) {
 }
 
 func TestMachineIDFromPodName(t *testing.T) {
-	original := os.Getenv(EnvPodName)
-	defer os.Setenv(EnvPodName, original)
-
 	t.Run("with pod name", func(t *testing.T) {
-		os.Setenv(EnvPodName, "my-app-deployment-abc123-xyz")
+		t.Setenv(EnvPodName, "my-app-deployment-abc123-xyz")
 		id, ok := machineIDFromPodName()
 		assert.True(t, ok)
 		assert.NotZero(t, id)
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		os.Setenv(EnvPodName, "")
+		t.Setenv(EnvPodName, "")
 		_, ok := machineIDFromPodName()
 		assert.False(t, ok)
 	})
 
 	t.Run("different pod names produce different IDs", func(t *testing.T) {
-		os.Setenv(EnvPodName, "pod-a")
+		t.Setenv(EnvPodName, "pod-a")
 		idA, _ := machineIDFromPodName()
 
-		os.Setenv(EnvPodName, "pod-b")
+		t.Setenv(EnvPodName, "pod-b")
 		idB, _ := machineIDFromPodName()
 
 		assert.NotEqual(t, idA, idB)
@@ -103,29 +89,28 @@ func TestMachineIDFromPodName(t *testing.T) {
 }
 
 func TestMachineIDFromHostnameEnv(t *testing.T) {
-	original := os.Getenv(EnvHostname)
-	defer os.Setenv(EnvHostname, original)
-
 	t.Run("with hostname", func(t *testing.T) {
-		os.Setenv(EnvHostname, "worker-node-1")
+		t.Setenv(EnvHostname, "worker-node-1")
 		id, ok := machineIDFromHostnameEnv()
 		assert.True(t, ok)
 		assert.NotZero(t, id)
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		os.Setenv(EnvHostname, "")
+		t.Setenv(EnvHostname, "")
 		_, ok := machineIDFromHostnameEnv()
 		assert.False(t, ok)
 	})
 }
 
 func TestMachineIDFromOSHostname(t *testing.T) {
-	// os.Hostname() 在大多数系统上都能成功
+	// os.Hostname() 在大多数系统上都能成功。
+	// 此测试依赖运行环境：有 hostname 时走成功路径，无 hostname 时验证返回 false。
 	id, ok := machineIDFromOSHostname()
-	// 只有在系统没有 hostname 时才会失败
 	if ok {
 		assert.NotZero(t, id)
+	} else {
+		assert.Zero(t, id, "failed machineIDFromOSHostname should return zero ID")
 	}
 }
 
@@ -150,20 +135,10 @@ func TestHashToMachineID(t *testing.T) {
 }
 
 func TestDefaultMachineID(t *testing.T) {
-	// 保存原始环境变量
-	origMachineID := os.Getenv(EnvMachineID)
-	origPodName := os.Getenv(EnvPodName)
-	origHostname := os.Getenv(EnvHostname)
-	defer func() {
-		os.Setenv(EnvMachineID, origMachineID)
-		os.Setenv(EnvPodName, origPodName)
-		os.Setenv(EnvHostname, origHostname)
-	}()
-
 	t.Run("priority - env var first", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "100")
-		os.Setenv(EnvPodName, "my-pod")
-		os.Setenv(EnvHostname, "my-host")
+		t.Setenv(EnvMachineID, "100")
+		t.Setenv(EnvPodName, "my-pod")
+		t.Setenv(EnvHostname, "my-host")
 
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
@@ -171,9 +146,9 @@ func TestDefaultMachineID(t *testing.T) {
 	})
 
 	t.Run("priority - pod name second", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "")
-		os.Setenv(EnvPodName, "my-pod")
-		os.Setenv(EnvHostname, "my-host")
+		t.Setenv(EnvMachineID, "")
+		t.Setenv(EnvPodName, "my-pod")
+		t.Setenv(EnvHostname, "my-host")
 
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
@@ -183,9 +158,9 @@ func TestDefaultMachineID(t *testing.T) {
 	})
 
 	t.Run("priority - hostname env third", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "")
-		os.Setenv(EnvPodName, "")
-		os.Setenv(EnvHostname, "my-host")
+		t.Setenv(EnvMachineID, "")
+		t.Setenv(EnvPodName, "")
+		t.Setenv(EnvHostname, "my-host")
 
 		id, err := DefaultMachineID()
 		require.NoError(t, err)
@@ -195,9 +170,9 @@ func TestDefaultMachineID(t *testing.T) {
 	})
 
 	t.Run("fallback to hostname or IP", func(t *testing.T) {
-		os.Setenv(EnvMachineID, "")
-		os.Setenv(EnvPodName, "")
-		os.Setenv(EnvHostname, "")
+		t.Setenv(EnvMachineID, "")
+		t.Setenv(EnvPodName, "")
+		t.Setenv(EnvHostname, "")
 
 		id, err := DefaultMachineID()
 		// 应该能通过 os.Hostname() 或私有 IP 获取到
@@ -238,11 +213,7 @@ func TestIsPrivateIPv4(t *testing.T) {
 func TestDefaultMachineIDWithInit(t *testing.T) {
 	resetGlobal()
 
-	// 设置环境变量
-	original := os.Getenv(EnvMachineID)
-	defer os.Setenv(EnvMachineID, original)
-
-	os.Setenv(EnvMachineID, "42")
+	t.Setenv(EnvMachineID, "42")
 
 	// 初始化（不传入自定义 MachineID，应该使用 DefaultMachineID）
 	err := Init()

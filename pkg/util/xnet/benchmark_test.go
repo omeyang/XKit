@@ -277,18 +277,18 @@ func BenchmarkParseRanges(b *testing.B) {
 // WireRange 序列化基准测试
 // =============================================================================
 
-func BenchmarkWireRangeFrom(b *testing.B) {
+func BenchmarkWireRangeFromUnchecked(b *testing.B) {
 	r := netipx.IPRangeFrom(
 		netip.MustParseAddr("192.168.1.1"),
 		netip.MustParseAddr("192.168.1.100"),
 	)
 	for b.Loop() {
-		_ = WireRangeFrom(r)
+		_ = WireRangeFromUnchecked(r)
 	}
 }
 
 func BenchmarkWireRangeToIPRange(b *testing.B) {
-	w := WireRange{S: "192.168.1.1", E: "192.168.1.100"}
+	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
 	for b.Loop() {
 		_, _ = w.ToIPRange()
 	}

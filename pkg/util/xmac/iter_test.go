@@ -95,7 +95,7 @@ func TestRange_EarlyBreak(t *testing.T) {
 func TestRange_Overflow(t *testing.T) {
 	// 从广播地址前一个开始
 	from := MustParse("ff:ff:ff:ff:ff:fe")
-	to := Broadcast
+	to := Broadcast()
 
 	collected := slices.Collect(Range(from, to))
 
@@ -147,7 +147,7 @@ func TestRangeN(t *testing.T) {
 			n:         10,
 			wantCount: 2, // 只能迭代 fe, ff
 			wantFirst: MustParse("ff:ff:ff:ff:ff:fe"),
-			wantLast:  Broadcast,
+			wantLast:  Broadcast(),
 		},
 	}
 
@@ -171,6 +171,22 @@ func TestRangeN(t *testing.T) {
 	}
 }
 
+func TestRangeN_EarlyBreak(t *testing.T) {
+	start := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeN(start, 100) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
+	}
+}
+
 func TestRangeWithIndex(t *testing.T) {
 	from := MustParse("00:00:00:00:00:01")
 	to := MustParse("00:00:00:00:00:05")
@@ -189,20 +205,32 @@ func TestRangeWithIndex(t *testing.T) {
 	}
 }
 
-func TestCollect(t *testing.T) {
+func TestCollectN(t *testing.T) {
 	from := MustParse("00:00:00:00:00:01")
 	to := MustParse("00:00:00:00:00:0a")
 
 	// 收集全部
-	all := Collect(Range(from, to), 0)
+	all := CollectN(Range(from, to), 0)
 	if len(all) != 10 {
-		t.Errorf("Collect(0) = %d, want 10", len(all))
+		t.Errorf("CollectN(0) = %d, want 10", len(all))
 	}
 
 	// 限制数量
-	limited := Collect(Range(from, to), 5)
+	limited := CollectN(Range(from, to), 5)
 	if len(limited) != 5 {
-		t.Errorf("Collect(5) = %d, want 5", len(limited))
+		t.Errorf("CollectN(5) = %d, want 5", len(limited))
+	}
+}
+
+func TestCollectN_LargeMaxCount(t *testing.T) {
+	// 验证极大 maxCount 不会导致 OOM（预分配被限制为 1<<20）
+	from := MustParse("00:00:00:00:00:01")
+	to := MustParse("00:00:00:00:00:05")
+
+	// maxCount 远大于实际范围，不应 panic
+	result := CollectN(Range(from, to), 1<<30)
+	if len(result) != 5 {
+		t.Errorf("CollectN(1<<30) = %d, want 5", len(result))
 	}
 }
 
@@ -322,13 +350,13 @@ func BenchmarkRangeCount(b *testing.B) {
 	}
 }
 
-func BenchmarkCollect(b *testing.B) {
+func BenchmarkCollectN(b *testing.B) {
 	from := MustParse("00:00:00:00:00:01")
 	to := MustParse("00:00:00:00:00:64")
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = Collect(Range(from, to), 0)
+		_ = CollectN(Range(from, to), 0)
 	}
 }
 
@@ -482,6 +510,68 @@ func TestRangeReverseWithIndex(t *testing.T) {
 	// 验证索引 4 对应 from
 	if indexToAddr[4] != from {
 		t.Errorf("index 4 should be %v, got %v", from, indexToAddr[4])
+	}
+}
+
+func TestRangeWithIndex_EarlyBreak(t *testing.T) {
+	from := MustParse("00:00:00:00:00:01")
+	to := MustParse("00:00:00:00:00:ff")
+
+	count := 0
+	for range RangeWithIndex(from, to) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
+	}
+}
+
+func TestRangeWithIndex_EmptyRange(t *testing.T) {
+	from := MustParse("00:00:00:00:00:05")
+	to := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeWithIndex(from, to) {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("empty range: got %d iterations, want 0", count)
+	}
+}
+
+func TestRangeReverseWithIndex_EarlyBreak(t *testing.T) {
+	from := MustParse("00:00:00:00:00:01")
+	to := MustParse("00:00:00:00:00:ff")
+
+	count := 0
+	for range RangeReverseWithIndex(from, to) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
+	}
+}
+
+func TestRangeReverseWithIndex_EmptyRange(t *testing.T) {
+	from := MustParse("00:00:00:00:00:05")
+	to := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeReverseWithIndex(from, to) {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("empty range: got %d iterations, want 0", count)
 	}
 }
 

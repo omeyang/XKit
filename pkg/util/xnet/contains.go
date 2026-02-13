@@ -59,14 +59,11 @@ func MergeRanges(ranges []netipx.IPRange) ([]netipx.IPRange, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
-	// 显式校验每个范围的有效性
+	var b netipx.IPSetBuilder
 	for i, r := range ranges {
 		if !r.IsValid() {
 			return nil, fmt.Errorf("%w: range [%d] %s-%s is invalid", ErrInvalidRange, i, r.From(), r.To())
 		}
-	}
-	var b netipx.IPSetBuilder
-	for _, r := range ranges {
 		b.AddRange(r)
 	}
 	set, err := b.IPSet()
@@ -126,7 +123,8 @@ func RangeToPrefix(r netipx.IPRange) (netip.Prefix, bool) {
 	if !ok {
 		return netip.Prefix{}, false
 	}
-	// 验证 Prefix 的范围与原范围完全一致
+	// 设计决策: 以下验证在理论上是冗余的（netipx.IPRange.Prefix() 在 ok=true 时
+	// 保证前缀与范围完全一致），但作为防御性检查保留，以应对未来 netipx 库行为变更。
 	prefixRange := netipx.RangeOfPrefix(prefix)
 	if prefixRange.From().Compare(r.From()) != 0 || prefixRange.To().Compare(r.To()) != 0 {
 		return netip.Prefix{}, false

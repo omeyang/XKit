@@ -99,12 +99,10 @@ const (
 )
 
 // defaultOptions 返回默认选项。
+// SlowQueryThreshold 零值表示禁用慢查询检测。
 func defaultOptions() *Options {
 	return &Options{
 		HealthTimeout:           storageopt.DefaultHealthTimeout,
-		SlowQueryThreshold:      0, // 默认禁用慢查询检测
-		SlowQueryHook:           nil,
-		AsyncSlowQueryHook:      nil,
 		AsyncSlowQueryWorkers:   DefaultAsyncSlowQueryWorkers,
 		AsyncSlowQueryQueueSize: DefaultAsyncSlowQueryQueueSize,
 		Observer:                xmetrics.NoopObserver{},
@@ -121,10 +119,12 @@ func WithHealthTimeout(timeout time.Duration) Option {
 }
 
 // WithSlowQueryThreshold 设置慢查询阈值。
-// 如果为 0，则禁用慢查询检测。
+// 设置为 0 禁用慢查询检测。负值被忽略（保持默认值）。
 func WithSlowQueryThreshold(threshold time.Duration) Option {
 	return func(o *Options) {
-		o.SlowQueryThreshold = threshold
+		if threshold >= 0 {
+			o.SlowQueryThreshold = threshold
+		}
 	}
 }
 

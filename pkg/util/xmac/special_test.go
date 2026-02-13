@@ -5,27 +5,27 @@ import "testing"
 func TestSpecialAddresses(t *testing.T) {
 	// 验证预定义的特殊地址
 	t.Run("Zero", func(t *testing.T) {
-		if Zero != (Addr{}) {
-			t.Errorf("Zero != Addr{}")
+		if Zero() != (Addr{}) {
+			t.Errorf("Zero() != Addr{}")
 		}
-		if Zero.String() != "" {
-			t.Errorf("Zero.String() = %q, want empty", Zero.String())
+		if Zero().String() != "" {
+			t.Errorf("Zero().String() = %q, want empty", Zero().String())
 		}
-		if Zero.IsValid() {
-			t.Errorf("Zero.IsValid() = true, want false")
+		if Zero().IsValid() {
+			t.Errorf("Zero().IsValid() = true, want false")
 		}
 	})
 
 	t.Run("Broadcast", func(t *testing.T) {
 		want := Addr{bytes: [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}
-		if Broadcast != want {
-			t.Errorf("Broadcast = %v, want %v", Broadcast, want)
+		if Broadcast() != want {
+			t.Errorf("Broadcast() = %v, want %v", Broadcast(), want)
 		}
-		if Broadcast.String() != "ff:ff:ff:ff:ff:ff" {
-			t.Errorf("Broadcast.String() = %q, want ff:ff:ff:ff:ff:ff", Broadcast.String())
+		if Broadcast().String() != "ff:ff:ff:ff:ff:ff" {
+			t.Errorf("Broadcast().String() = %q, want ff:ff:ff:ff:ff:ff", Broadcast().String())
 		}
-		if !Broadcast.IsValid() {
-			t.Errorf("Broadcast.IsValid() = false, want true")
+		if !Broadcast().IsValid() {
+			t.Errorf("Broadcast().IsValid() = false, want true")
 		}
 	})
 }
@@ -36,8 +36,8 @@ func TestAddr_IsSpecial(t *testing.T) {
 		addr Addr
 		want bool
 	}{
-		{"zero", Zero, true},
-		{"broadcast", Broadcast, true},
+		{"zero", Zero(), true},
+		{"broadcast", Broadcast(), true},
 		{"normal", MustParse("aa:bb:cc:dd:ee:ff"), false},
 		{"almost_zero", MustParse("00:00:00:00:00:01"), false},
 		{"almost_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), false},
@@ -67,8 +67,8 @@ func TestAddr_IsUsable(t *testing.T) {
 		{"laa", MustParse("02:11:22:33:44:55"), true},
 
 		// 不可用地址
-		{"zero", Zero, false},
-		{"broadcast", Broadcast, false},
+		{"zero", Zero(), false},
+		{"broadcast", Broadcast(), false},
 		{"invalid", Addr{}, false},
 	}
 

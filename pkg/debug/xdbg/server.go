@@ -13,7 +13,7 @@ import (
 
 // Server 调试服务器。
 type Server struct {
-	opts     *Options
+	opts     *options
 	registry *CommandRegistry
 
 	state           atomic.Int32
@@ -36,6 +36,10 @@ type Server struct {
 }
 
 // New 创建调试服务器。
+//
+// 设计决策: 返回具体类型 *Server 而非接口。xdbg 通过构建标签（!windows/windows）
+// 在编译期选择平台实现，不需要运行时多态。测试可通过 WithTransport 注入自定义传输层。
+// 这与 xpool、xbreaker、xlru 等包的构造函数签名一致。
 func New(opts ...Option) (*Server, error) {
 	options := defaultOptions()
 	for _, opt := range opts {
@@ -101,12 +105,18 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop 停止服务器。
 func (s *Server) Stop() error {
-	state := ServerState(s.state.Load())
-	if state == ServerStateStopped {
-		return nil
+	// 设计决策: 使用 CAS 循环确保并发 Stop() 仅一个执行清理逻辑。
+	// Load+Store 模式有竞态窗口（两个 goroutine 同时通过检查），
+	// 可能导致 transport/auditLogger 的 double-close。
+	for {
+		state := ServerState(s.state.Load())
+		if state == ServerStateStopped {
+			return nil
+		}
+		if s.state.CompareAndSwap(int32(state), int32(ServerStateStopped)) {
+			break
+		}
 	}
-
-	s.state.Store(int32(ServerStateStopped))
 
 	// 取消上下文
 	if s.cancel != nil {

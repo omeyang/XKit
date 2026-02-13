@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,6 +16,14 @@ import (
 
 	"github.com/urfave/cli/v3"
 )
+
+// exitError 表示需要非零退出码但已完成输出的场景。
+// 命令内部已完成所有输出，main 只需设置退出码。
+type exitError struct {
+	code int
+}
+
+func (e *exitError) Error() string { return "" }
 
 // 创建所有子命令。
 func createCommands() []*cli.Command {
@@ -142,7 +151,11 @@ func createInteractiveCommand() *cli.Command {
 
 // cmdToggle 切换调试服务状态（发送 SIGUSR1 信号触发 toggle）。
 // 进程发现优先级：--pid > --name > socket 发现
-func cmdToggle(_ context.Context, socketPath string, pidFlag int, nameFlag string) error {
+func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	var pid int
 
 	// 进程发现逻辑，按优先级选择策略
@@ -195,7 +208,7 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 	}
 
 	if !resp.Success {
-		return fmt.Errorf("%s", resp.Error)
+		return errors.New(resp.Error)
 	}
 
 	fmt.Println(resp.Output)
@@ -219,7 +232,7 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 	}
 
 	if !resp.Success {
-		return fmt.Errorf("%s", resp.Error)
+		return errors.New(resp.Error)
 	}
 
 	if resp.Output != "" {
@@ -234,6 +247,8 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 }
 
 // cmdStatus 查看服务状态。
+// 设计决策: 离线时返回非零退出码（通过 exitError），
+// 使脚本和探针能正确检测服务状态。
 func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) error {
 	client := NewClient(socketPath, timeout)
 
@@ -241,8 +256,8 @@ func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) er
 	if err != nil {
 		fmt.Printf("状态: 离线\n")
 		fmt.Printf("Socket: %s\n", socketPath)
-		fmt.Printf("错误: %v\n", err)
-		return nil
+		fmt.Printf("详情: %v\n", err)
+		return &exitError{code: 1}
 	}
 
 	fmt.Printf("状态: 在线\n")
@@ -252,11 +267,14 @@ func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) er
 
 // findProcessByName 通过进程名查找进程 PID。
 // 扫描 /proc/*/comm 文件匹配进程名。
+// 当匹配多个进程时返回错误，要求使用 --pid 明确指定。
 func findProcessByName(name string) (int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return 0, fmt.Errorf("无法读取 /proc: %w", err)
 	}
+
+	var matches []int
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -277,39 +295,43 @@ func findProcessByName(name string) (int, error) {
 
 		// comm 文件以换行符结尾，需要 trim
 		if strings.TrimSpace(string(comm)) == name {
-			return pid, nil
+			matches = append(matches, pid)
 		}
 	}
 
-	return 0, fmt.Errorf("未找到名为 %q 的进程", name)
+	switch len(matches) {
+	case 0:
+		return 0, fmt.Errorf("未找到名为 %q 的进程", name)
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, fmt.Errorf("找到多个名为 %q 的进程 (PID: %v)，请使用 --pid 指定具体进程", name, matches)
+	}
 }
 
 // findProcessBySocket 通过 Socket 文件查找进程 PID。
+// 设计决策: 使用 /proc/net/unix 获取 socket inode，而非 os.Stat。
+// 文件系统 inode（os.Stat 返回）和内核 socket inode（/proc/PID/fd 显示）
+// 位于不同的编号空间，直接用 os.Stat inode 匹配永远不会成功。
 func findProcessBySocket(socketPath string) (int, error) {
-	// 获取 Socket 文件的 inode
-	absPath, err := absPath(socketPath)
+	absSocketPath, err := absPath(socketPath)
 	if err != nil {
 		return 0, fmt.Errorf("获取绝对路径失败: %w", err)
 	}
 
-	info, err := os.Stat(absPath)
+	// 从 /proc/net/unix 查找 socket 的内核 inode
+	socketIno, err := findSocketInode(absSocketPath)
 	if err != nil {
-		return 0, fmt.Errorf("无法访问 Socket 文件 %s: %w", absPath, err)
+		return 0, err
 	}
 
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, fmt.Errorf("无法获取文件系统信息")
-	}
-	targetIno := stat.Ino
-
-	// 扫描 /proc 下的进程
+	// 在 /proc 中查找持有该 socket 的进程
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return 0, fmt.Errorf("无法读取 /proc: %w", err)
 	}
 
-	expectedLink := fmt.Sprintf("socket:[%d]", targetIno)
+	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -327,6 +349,29 @@ func findProcessBySocket(socketPath string) (int, error) {
 	}
 
 	return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+}
+
+// findSocketInode 从 /proc/net/unix 查找 Unix domain socket 的内核 inode。
+func findSocketInode(absSocketPath string) (uint64, error) {
+	data, err := os.ReadFile("/proc/net/unix")
+	if err != nil {
+		return 0, fmt.Errorf("无法读取 /proc/net/unix: %w", err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines[1:] { // 跳过表头
+		fields := strings.Fields(line)
+		// /proc/net/unix 格式: Num RefCount Protocol Flags Type St Inode [Path]
+		if len(fields) >= 8 && fields[7] == absSocketPath {
+			ino, parseErr := strconv.ParseUint(fields[6], 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			return ino, nil
+		}
+	}
+
+	return 0, fmt.Errorf("socket %s 未在 /proc/net/unix 中找到（服务可能未启动）", absSocketPath)
 }
 
 // processHasSocket 检查进程是否拥有指定的 socket fd。
@@ -355,22 +400,30 @@ func processHasSocket(pid int, expectedLink string) bool {
 // absPath 获取绝对路径。
 func absPath(path string) (string, error) {
 	if path == "" {
-		return "", fmt.Errorf("path cannot be empty")
+		return "", fmt.Errorf("路径不能为空")
 	}
 	return filepath.Abs(path)
 }
 
 // setupSignalHandler 设置信号处理。
+// 设计决策: 第一次信号优雅取消，第二次信号强制退出（退出码 130 = 128 + SIGINT）。
+// 当命令阻塞时，用户可通过再次 Ctrl+C 强制退出。
 func setupSignalHandler(cancel context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		cancel()
+		cancel() // 第一次信号: 优雅取消
+
+		<-sigCh
+		signal.Stop(sigCh) // 回收订阅
+		os.Exit(130)       // 第二次信号: 强制退出
 	}()
 }
 
 // isContainerEnvironment 检测是否运行在容器/K8s 环境中。
+// 设计决策: 使用多种检测策略（环境变量、文件标志、cgroup），
+// 容器标识符同时兼容 cgroup v1 和 v2（如 "kubepods" 在两种格式中均出现）。
 func isContainerEnvironment() bool {
 	// 检查 /.dockerenv 文件（Docker 容器标志）
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -382,14 +435,14 @@ func isContainerEnvironment() bool {
 		return true
 	}
 
-	// 检查 /proc/1/cgroup 是否包含容器相关信息
-	data, err := os.ReadFile("/proc/1/cgroup")
-	if err == nil {
+	// 检查 /proc/1/cgroup 是否包含容器相关信息（兼容 cgroup v1 和 v2）
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		content := string(data)
-		// 检查是否包含 docker, kubepods, containerd 等标识
-		if strings.Contains(content, "docker") || strings.Contains(content, "kubepods") ||
-			strings.Contains(content, "containerd") || strings.Contains(content, "crio") {
-			return true
+		containerMarkers := []string{"docker", "kubepods", "containerd", "crio", "buildkit"}
+		for _, marker := range containerMarkers {
+			if strings.Contains(content, marker) {
+				return true
+			}
 		}
 	}
 

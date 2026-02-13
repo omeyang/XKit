@@ -13,6 +13,138 @@ import (
 )
 
 // =============================================================================
+// Fuzz 测试辅助函数
+// =============================================================================
+
+// setupMultipleMiniredis 创建 n 个 miniredis 实例和对应的客户端。
+// skipIndices 中指定的索引位置将保持 nil（用于测试 nil 客户端）。
+// 返回 false 表示资源不足，调用方应跳过。
+func setupMultipleMiniredis(
+	n int,
+	skipIndices map[int]struct{},
+) ([]redis.UniversalClient, []*miniredis.Miniredis, bool) {
+	clients := make([]redis.UniversalClient, n)
+	mrs := make([]*miniredis.Miniredis, n)
+
+	for i := 0; i < n; i++ {
+		if _, skip := skipIndices[i]; skip {
+			continue
+		}
+
+		mr, err := miniredis.Run()
+		if err != nil {
+			cleanupMiniredisInstances(clients[:i], mrs[:i])
+			return nil, nil, false
+		}
+		mrs[i] = mr
+		clients[i] = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	}
+
+	return clients, mrs, true
+}
+
+// cleanupMiniredisInstances 关闭所有客户端和 miniredis 实例。
+func cleanupMiniredisInstances(clients []redis.UniversalClient, mrs []*miniredis.Miniredis) {
+	for i := range clients {
+		if clients[i] != nil {
+			_ = clients[i].Close()
+		}
+		if mrs[i] != nil {
+			mrs[i].Close()
+		}
+	}
+}
+
+// setupFuzzRedis 创建单个 miniredis + 客户端 + 工厂。
+// 返回 false 表示资源不足，调用方应跳过。
+func setupFuzzRedis() (
+	*miniredis.Miniredis, redis.UniversalClient, xdlock.RedisFactory, bool,
+) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		return nil, nil, nil, false
+	}
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	factory, err := xdlock.NewRedisFactory(client)
+	if err != nil {
+		_ = client.Close()
+		mr.Close()
+		return nil, nil, nil, false
+	}
+
+	return mr, client, factory, true
+}
+
+// executeLockOps 执行操作序列（0=TryLock, 1=Lock, 2=Unlock, 3=Extend）。
+// 返回最终持有的 LockHandle（可能为 nil）。
+func executeLockOps(
+	ctx context.Context,
+	factory xdlock.RedisFactory,
+	key string,
+	ops []byte,
+	lockOpts []xdlock.MutexOption,
+) xdlock.LockHandle {
+	var current xdlock.LockHandle
+
+	for _, op := range ops {
+		current = executeSingleLockOp(ctx, factory, key, op%4, current, lockOpts)
+	}
+
+	return current
+}
+
+// executeSingleLockOp 执行单个锁操作，返回更新后的当前 handle。
+func executeSingleLockOp(
+	ctx context.Context,
+	factory xdlock.RedisFactory,
+	key string,
+	op byte,
+	current xdlock.LockHandle,
+	lockOpts []xdlock.MutexOption,
+) xdlock.LockHandle {
+	switch op {
+	case 0: // TryLock
+		return tryAcquireLock(ctx, key, current, lockOpts, factory.TryLock)
+	case 1: // Lock
+		return tryAcquireLock(ctx, key, current, lockOpts, factory.Lock)
+	case 2: // Unlock
+		if current != nil {
+			_ = current.Unlock(ctx)
+			return nil
+		}
+	case 3: // Extend
+		if current != nil {
+			_ = current.Extend(ctx)
+		}
+	}
+
+	return current
+}
+
+// lockFunc 是 TryLock/Lock 的统一签名。
+type lockFunc func(context.Context, string, ...xdlock.MutexOption) (xdlock.LockHandle, error)
+
+// tryAcquireLock 尝试获取锁，如果成功则释放旧 handle。
+func tryAcquireLock(
+	ctx context.Context,
+	key string,
+	current xdlock.LockHandle,
+	lockOpts []xdlock.MutexOption,
+	acquire lockFunc,
+) xdlock.LockHandle {
+	handle, err := acquire(ctx, key, lockOpts...)
+	if err != nil || handle == nil {
+		return current
+	}
+	if current != nil {
+		_ = current.Unlock(ctx)
+	}
+	return handle
+}
+
+// =============================================================================
 // 工厂创建 Fuzz 测试
 // =============================================================================
 
@@ -24,13 +156,11 @@ func FuzzNewRedisFactory(f *testing.F) {
 	f.Add(3) // 多客户端（Redlock）
 
 	f.Fuzz(func(t *testing.T, numClients int) {
-		// 限制客户端数量，避免资源耗尽
 		if numClients < 0 || numClients > 10 {
 			return
 		}
 
 		if numClients == 0 {
-			// 测试无客户端的情况
 			_, err := xdlock.NewRedisFactory()
 			if err == nil {
 				t.Error("expected error for no clients")
@@ -38,33 +168,11 @@ func FuzzNewRedisFactory(f *testing.F) {
 			return
 		}
 
-		// 创建 miniredis 实例
-		clients := make([]redis.UniversalClient, numClients)
-		mrs := make([]*miniredis.Miniredis, numClients)
-
-		for i := 0; i < numClients; i++ {
-			mr, err := miniredis.Run()
-			if err != nil {
-				// 资源不足时跳过
-				for j := 0; j < i; j++ {
-					mrs[j].Close()
-				}
-				return
-			}
-			mrs[i] = mr
-			clients[i] = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		clients, mrs, ok := setupMultipleMiniredis(numClients, nil)
+		if !ok {
+			return
 		}
-
-		defer func() {
-			for i := 0; i < numClients; i++ {
-				if clients[i] != nil {
-					_ = clients[i].Close()
-				}
-				if mrs[i] != nil {
-					mrs[i].Close()
-				}
-			}
-		}()
+		defer cleanupMiniredisInstances(clients, mrs)
 
 		factory, err := xdlock.NewRedisFactory(clients...)
 		if err != nil {
@@ -73,7 +181,6 @@ func FuzzNewRedisFactory(f *testing.F) {
 		}
 		defer func() { _ = factory.Close() }()
 
-		// 验证工厂功能正常
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
@@ -96,39 +203,12 @@ func FuzzNewRedisFactory_NilClients(f *testing.F) {
 			return
 		}
 
-		clients := make([]redis.UniversalClient, total)
-		mrs := make([]*miniredis.Miniredis, total)
-
-		for i := 0; i < total; i++ {
-			if nilIndex == -1 || i == nilIndex%total {
-				// 保持为 nil
-				continue
-			}
-
-			mr, err := miniredis.Run()
-			if err != nil {
-				// 清理已创建的
-				for j := 0; j < i; j++ {
-					if mrs[j] != nil {
-						mrs[j].Close()
-					}
-				}
-				return
-			}
-			mrs[i] = mr
-			clients[i] = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		skipIndices := buildNilIndices(nilIndex, total)
+		clients, mrs, ok := setupMultipleMiniredis(total, skipIndices)
+		if !ok {
+			return
 		}
-
-		defer func() {
-			for i := 0; i < total; i++ {
-				if clients[i] != nil {
-					_ = clients[i].Close()
-				}
-				if mrs[i] != nil {
-					mrs[i].Close()
-				}
-			}
-		}()
+		defer cleanupMiniredisInstances(clients, mrs)
 
 		// 包含 nil 客户端应该返回错误
 		_, err := xdlock.NewRedisFactory(clients...)
@@ -136,6 +216,20 @@ func FuzzNewRedisFactory_NilClients(f *testing.F) {
 			t.Error("expected error for nil client")
 		}
 	})
+}
+
+// buildNilIndices 根据 nilIndex 和 total 构建需要跳过的索引集合。
+// nilIndex == -1 表示全部跳过，否则跳过 nilIndex%total 位置。
+func buildNilIndices(nilIndex, total int) map[int]struct{} {
+	skip := make(map[int]struct{})
+	if nilIndex == -1 {
+		for i := 0; i < total; i++ {
+			skip[i] = struct{}{}
+		}
+	} else {
+		skip[nilIndex%total] = struct{}{}
+	}
+	return skip
 }
 
 // =============================================================================
@@ -457,19 +551,12 @@ func FuzzLockHandle_Operations(f *testing.F) {
 			return
 		}
 
-		mr, err := miniredis.Run()
-		if err != nil {
+		mr, client, factory, ok := setupFuzzRedis()
+		if !ok {
 			return
 		}
 		defer mr.Close()
-
-		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 		defer func() { _ = client.Close() }()
-
-		factory, err := xdlock.NewRedisFactory(client)
-		if err != nil {
-			return
-		}
 		defer func() { _ = factory.Close() }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -480,40 +567,8 @@ func FuzzLockHandle_Operations(f *testing.F) {
 			xdlock.WithTries(1),
 		}
 
-		// 追踪当前持有的 handle
-		var currentHandle xdlock.LockHandle
-
 		// 执行操作序列，不应该 panic
-		for _, op := range ops {
-			switch op % 4 {
-			case 0: // TryLock
-				handle, err := factory.TryLock(ctx, key, lockOpts...)
-				if err == nil && handle != nil {
-					// 如果有旧 handle，先释放
-					if currentHandle != nil {
-						_ = currentHandle.Unlock(ctx)
-					}
-					currentHandle = handle
-				}
-			case 1: // Lock
-				handle, err := factory.Lock(ctx, key, lockOpts...)
-				if err == nil && handle != nil {
-					if currentHandle != nil {
-						_ = currentHandle.Unlock(ctx)
-					}
-					currentHandle = handle
-				}
-			case 2: // Unlock
-				if currentHandle != nil {
-					_ = currentHandle.Unlock(ctx)
-					currentHandle = nil
-				}
-			case 3: // Extend
-				if currentHandle != nil {
-					_ = currentHandle.Extend(ctx)
-				}
-			}
-		}
+		currentHandle := executeLockOps(ctx, factory, key, ops, lockOpts)
 
 		// 清理
 		if currentHandle != nil {

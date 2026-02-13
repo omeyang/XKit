@@ -44,6 +44,7 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 
 func BenchmarkPlatformID(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-benchmark",
 	}); err != nil {
@@ -54,13 +55,11 @@ func BenchmarkPlatformID(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = xplatform.PlatformID()
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkHasParent(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-benchmark",
 		HasParent:  true,
@@ -72,13 +71,11 @@ func BenchmarkHasParent(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = xplatform.HasParent()
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkUnclassRegionID(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID:      "platform-benchmark",
 		UnclassRegionID: "region-benchmark",
@@ -90,13 +87,11 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = xplatform.UnclassRegionID()
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkIsInitialized(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-benchmark",
 	}); err != nil {
@@ -107,13 +102,11 @@ func BenchmarkIsInitialized(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = xplatform.IsInitialized()
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkRequirePlatformID(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-benchmark",
 	}); err != nil {
@@ -126,13 +119,11 @@ func BenchmarkRequirePlatformID(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkGetConfig(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID:      "platform-benchmark",
 		HasParent:       true,
@@ -147,9 +138,6 @@ func BenchmarkGetConfig(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 // =============================================================================
@@ -158,6 +146,7 @@ func BenchmarkGetConfig(b *testing.B) {
 
 func BenchmarkPlatformID_Parallel(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-parallel",
 	}); err != nil {
@@ -170,13 +159,11 @@ func BenchmarkPlatformID_Parallel(b *testing.B) {
 			_ = xplatform.PlatformID()
 		}
 	})
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkHasParent_Parallel(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-parallel",
 		HasParent:  true,
@@ -190,13 +177,11 @@ func BenchmarkHasParent_Parallel(b *testing.B) {
 			_ = xplatform.HasParent()
 		}
 	})
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID: "platform-parallel",
 	}); err != nil {
@@ -209,13 +194,11 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 			_ = xplatform.IsInitialized()
 		}
 	})
-
-	b.StopTimer()
-	xplatform.Reset()
 }
 
 func BenchmarkGetConfig_Parallel(b *testing.B) {
 	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
 	if err := xplatform.Init(xplatform.Config{
 		PlatformID:      "platform-parallel",
 		HasParent:       true,
@@ -232,7 +215,4 @@ func BenchmarkGetConfig_Parallel(b *testing.B) {
 			}
 		}
 	})
-
-	b.StopTimer()
-	xplatform.Reset()
 }

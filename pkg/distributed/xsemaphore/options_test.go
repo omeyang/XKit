@@ -131,6 +131,48 @@ func TestWithOnFallback(t *testing.T) {
 	assert.True(t, called)
 }
 
+func TestWithIDGenerator(t *testing.T) {
+	t.Run("custom generator", func(t *testing.T) {
+		called := false
+		gen := IDGeneratorFunc(func(_ context.Context) (string, error) {
+			called = true
+			return "custom-id", nil
+		})
+
+		opts := defaultOptions()
+		WithIDGenerator(gen)(opts)
+		assert.NotNil(t, opts.idGenerator)
+
+		id, err := opts.effectiveIDGenerator()(context.Background())
+		assert.NoError(t, err)
+		assert.Equal(t, "custom-id", id)
+		assert.True(t, called)
+	})
+
+	t.Run("nil generator keeps default", func(t *testing.T) {
+		opts := defaultOptions()
+		WithIDGenerator(nil)(opts)
+		assert.Nil(t, opts.idGenerator)
+
+		// effectiveIDGenerator 应返回 xid.NewStringWithRetry
+		id, err := opts.effectiveIDGenerator()(context.Background())
+		assert.NoError(t, err)
+		assert.NotEmpty(t, id)
+	})
+
+	t.Run("error propagation", func(t *testing.T) {
+		gen := IDGeneratorFunc(func(_ context.Context) (string, error) {
+			return "", io.ErrUnexpectedEOF
+		})
+
+		opts := defaultOptions()
+		WithIDGenerator(gen)(opts)
+
+		_, err := opts.effectiveIDGenerator()(context.Background())
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	})
+}
+
 func TestEffectivePodCount(t *testing.T) {
 	t.Run("valid count", func(t *testing.T) {
 		opts := &options{podCount: 5}

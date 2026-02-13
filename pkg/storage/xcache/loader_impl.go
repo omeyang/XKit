@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,9 +23,15 @@ const (
 	// 用于防止 Redis 挂起时 goroutine 永久阻塞。
 	defaultOperationTimeout = 30 * time.Second
 
-	// 浮点数转换常量
-	floatBits  = 53
-	floatScale = 1.0 / (1 << floatBits)
+	// unlockTimeout 解锁操作的独立超时时间。
+	// 解锁只需一次 Redis DEL/Lua 操作，5 秒足够覆盖极端网络延迟。
+	// 设计决策: 与 DistributedLockTTL 解耦，确保即使加载耗时接近 TTL，
+	// 解锁仍有充足时间执行。
+	unlockTimeout = 5 * time.Second
+
+	// IEEE 754 双精度浮点数尾数位数及对应缩放系数，用于 randomFloat64。
+	float64MantissaBits  = 53
+	float64MantissaScale = 1.0 / (1 << float64MantissaBits)
 )
 
 // randomFloat64 返回 [0.0, 1.0) 范围内的随机浮点数。
@@ -32,10 +39,26 @@ const (
 func randomFloat64() float64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败表示系统随机数源不可用，返回 0 作为安全默认值
-		return 0
+		// crypto/rand 失败表示系统随机数源不可用，返回 0.5（中间值）
+		// 确保 backoffWithJitter 中 (randomFloat64() - 0.5) 为 0，不产生偏移抖动
+		return 0.5
 	}
-	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
+	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * float64MantissaScale
+}
+
+// safeLoadFn 安全地执行回源函数，将 panic 转为 error 返回。
+//
+// 设计决策: 作为基础库，xcache 必须保护自身不被用户代码的 panic 拖垮。
+// 在 singleflight DoChan 模式下，loadFn 的 panic 会被 singleflight 捕获后
+// 在新 goroutine 中 re-panic（因为 len(c.chans) > 0），导致进程级崩溃。
+// 通过 recover 将 panic 转为 ErrLoadPanic 错误，所有等待方都能收到错误而非进程崩溃。
+func safeLoadFn(ctx context.Context, loadFn LoadFunc) (value []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrLoadPanic, r)
+		}
+	}()
+	return loadFn(ctx)
 }
 
 // detachedCtx 是一个脱离原始 context 取消链的 context。
@@ -51,10 +74,8 @@ func (c detachedCtx) Err() error                  { return nil }
 
 // contextDetached 创建一个脱离原始取消链的 context。
 // 返回的 context 保留原始 context 的 Value，但不继承其取消信号。
+// 调用方必须保证 ctx 不为 nil。
 func contextDetached(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
 	return detachedCtx{Context: ctx}
 }
 
@@ -108,7 +129,7 @@ func applyLoadTimeout(ctx context.Context, timeout time.Duration) (context.Conte
 //
 // 这样即使 key 或 field 中包含 ":"，也不会产生歧义。
 func hashFieldKey(key, field string) string {
-	return fmt.Sprintf("%d:%s:%s", len(key), key, field)
+	return strconv.Itoa(len(key)) + ":" + key + ":" + field
 }
 
 // =============================================================================
@@ -135,6 +156,9 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 	if l.cache == nil {
 		return nil, ErrNilClient
 	}
+	if key == "" {
+		return nil, ErrEmptyKey
+	}
 	if loadFn == nil {
 		return nil, ErrNilLoader
 	}
@@ -145,15 +169,15 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 		return value, nil
 	}
 
-	// 如果不是 key 不存在的错误，回源兜底
+	// 设计决策: Redis 错误（非 redis.Nil）也经过 singleflight 去重路径，
+	// 避免 Redis 短时异常时高并发请求全部直打后端导致回源风暴。
 	if !errors.Is(err, redis.Nil) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return l.loadAndCache(ctx, key, loadFn, ttl)
 	}
 
-	// 2. 缓存未命中，使用 singleflight 或直接回源
+	// 2. 缓存未命中或 Redis 错误，使用 singleflight 或直接回源
 	if l.options.EnableSingleflight {
 		return l.loadWithSingleflight(ctx, key, loadFn, ttl)
 	}
@@ -166,6 +190,9 @@ func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFun
 	if l.cache == nil {
 		return nil, ErrNilClient
 	}
+	if key == "" || field == "" {
+		return nil, ErrEmptyKey
+	}
 	if loadFn == nil {
 		return nil, ErrNilLoader
 	}
@@ -176,15 +203,15 @@ func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFun
 		return value, nil
 	}
 
-	// 如果不是 field 不存在的错误，回源兜底
+	// 设计决策: Redis 错误（非 redis.Nil）也经过 singleflight 去重路径，
+	// 避免 Redis 短时异常时高并发请求全部直打后端导致回源风暴。
 	if !errors.Is(err, redis.Nil) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return l.loadHashAndCache(ctx, key, field, loadFn, ttl)
 	}
 
-	// 2. 缓存未命中，使用 singleflight 或直接回源
+	// 2. 缓存未命中或 Redis 错误，使用 singleflight 或直接回源
 	// 使用长度前缀格式生成唯一 key，避免 key/field 中包含 ":" 导致碰撞
 	sfKey := hashFieldKey(key, field)
 	if l.options.EnableSingleflight {
@@ -201,12 +228,12 @@ func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFun
 // loadWithSingleflight 使用 singleflight 加载。
 // 使用 DoChan 支持每个调用者独立的 context 取消，同时不影响其他等待者。
 func (l *loader) loadWithSingleflight(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
-	// 使用独立的 ctx，避免首个调用者取消或超时影响实际加载操作
-	// 同时设置独立超时，防止 Redis 挂起时永久阻塞
-	sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
-	defer sfCancel()
-
+	// 设计决策: sfCtx 生命周期绑定到 singleflight 执行体（DoChan 闭包内），
+	// 而非绑定到任一调用方的返回路径。确保首个 caller cancel 不会通过
+	// defer sfCancel() 取消共享加载，避免级联取消导致缓存未命中放大。
 	ch := l.group.DoChan(key, func() (any, error) {
+		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
+		defer sfCancel()
 		return l.loadWithDistLock(sfCtx, key, loadFn, ttl)
 	})
 
@@ -252,9 +279,10 @@ func (l *loader) loadWithLock(ctx context.Context, key string, loadFn LoadFunc, 
 		})
 	}
 
-	// 解锁使用独立 ctx，不受调用方取消影响，但有超时保护
-	unlockCtx, unlockCancel := contextWithIndependentTimeout(ctx, l.options.DistributedLockTTL)
+	// 设计决策: 解锁使用独立短超时（在 defer 内创建），不受加载耗时消耗。
+	// 之前在进入临界区前创建 unlockCtx，长任务会消耗掉超时余量导致解锁失败。
 	defer func() {
+		unlockCtx, unlockCancel := context.WithTimeout(contextDetached(ctx), unlockTimeout)
 		defer unlockCancel()
 		if unlockErr := unlock(unlockCtx); unlockErr != nil {
 			l.logUnlockError(lockKey, unlockErr)
@@ -312,8 +340,8 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 	loadCtx, cancel := applyLoadTimeout(ctx, l.options.LoadTimeout)
 	defer cancel()
 
-	// 回源加载
-	value, err := loadFn(loadCtx)
+	// 回源加载（panic 安全，防止 singleflight DoChan 模式下进程崩溃）
+	value, err := safeLoadFn(loadCtx, loadFn)
 	if err != nil {
 		return nil, err
 	}
@@ -330,12 +358,12 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 // loadHashWithSingleflight 使用 singleflight 加载 Hash。
 // 使用 DoChan 支持每个调用者独立的 context 取消，同时不影响其他等待者。
 func (l *loader) loadHashWithSingleflight(ctx context.Context, key, field, sfKey string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
-	// 使用独立的 ctx，避免首个调用者取消或超时影响实际加载操作
-	// 同时设置独立超时，防止 Redis 挂起时永久阻塞
-	sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
-	defer sfCancel()
-
+	// 设计决策: sfCtx 生命周期绑定到 singleflight 执行体（DoChan 闭包内），
+	// 而非绑定到任一调用方的返回路径。确保首个 caller cancel 不会通过
+	// defer sfCancel() 取消共享加载，避免级联取消导致缓存未命中放大。
 	ch := l.group.DoChan(sfKey, func() (any, error) {
+		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
+		defer sfCancel()
 		return l.loadHashWithDistLock(sfCtx, key, field, loadFn, ttl)
 	})
 
@@ -382,9 +410,9 @@ func (l *loader) loadHashWithLock(ctx context.Context, key, field string, loadFn
 		})
 	}
 
-	// 解锁使用独立 ctx，不受调用方取消影响，但有超时保护
-	unlockCtx, unlockCancel := contextWithIndependentTimeout(ctx, l.options.DistributedLockTTL)
+	// 设计决策: 解锁使用独立短超时（在 defer 内创建），不受加载耗时消耗。
 	defer func() {
+		unlockCtx, unlockCancel := context.WithTimeout(contextDetached(ctx), unlockTimeout)
 		defer unlockCancel()
 		if unlockErr := unlock(unlockCtx); unlockErr != nil {
 			l.logUnlockError(lockKey, unlockErr)
@@ -422,30 +450,39 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 	loadCtx, cancel := applyLoadTimeout(ctx, l.options.LoadTimeout)
 	defer cancel()
 
-	// 回源加载
-	value, err := loadFn(loadCtx)
+	// 回源加载（panic 安全，防止 singleflight DoChan 模式下进程崩溃）
+	value, err := safeLoadFn(loadCtx, loadFn)
 	if err != nil {
 		return nil, err
 	}
 
 	// 写入缓存（best-effort，失败不影响业务返回）
 	hashKey := hashFieldKey(key, field)
-	if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
+	if ttl > 0 && l.options.HashTTLRefresh {
+		// 设计决策: 使用 Pipeline 合并 HSet+Expire 为一次 roundtrip，
+		// 减少进程崩溃时 hash key 无 TTL 的风险窗口。
+		pipe := l.cache.Client().Pipeline()
+		pipe.HSet(ctx, key, field, value)
+		pipe.Expire(ctx, key, ttl)
+		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil {
+			l.logWarn("xcache: hash set/expire pipeline failed", "key", key, "field", field, "error", pipeErr)
+			l.onCacheSetError(ctx, hashKey, pipeErr)
+		}
+	} else if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
 		l.logWarn("xcache: hash set failed", "key", key, "field", field, "error", setErr)
 		l.onCacheSetError(ctx, hashKey, setErr)
 	} else if ttl > 0 {
-		if l.options.HashTTLRefresh {
+		// HashTTLRefresh=false: 仅首次设置 TTL
+		// 设计决策: 此路径使用 HSet → TTL → Expire 三次 roundtrip（非 Pipeline），
+		// 因为需要先检查 TTL 再决定是否 Expire。虽然 HSet 和 Expire 之间存在
+		// TOCTOU 窗口（进程崩溃可能导致 Hash 无 TTL），但该路径仅在 HashTTLRefresh=false
+		// 时使用，且仅影响首次写入，风险极低。优化为 Lua 脚本可消除窗口但增加复杂度。
+		currentTTL, ttlErr := l.cache.Client().TTL(ctx, key).Result()
+		if ttlErr != nil {
+			l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
+		} else if currentTTL < 0 {
 			if expireErr := l.cache.Client().Expire(ctx, key, ttl).Err(); expireErr != nil {
 				l.logWarn("xcache: hash expire failed", "key", key, "ttl", ttl, "error", expireErr)
-			}
-		} else {
-			currentTTL, ttlErr := l.cache.Client().TTL(ctx, key).Result()
-			if ttlErr != nil {
-				l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
-			} else if currentTTL < 0 {
-				if expireErr := l.cache.Client().Expire(ctx, key, ttl).Err(); expireErr != nil {
-					l.logWarn("xcache: hash expire failed", "key", key, "ttl", ttl, "error", expireErr)
-				}
 			}
 		}
 	}
@@ -453,10 +490,17 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 	return value, nil
 }
 
-// waitAndRetryGet 等待后重试获取缓存。
+// cacheCheckFunc 从缓存查询并返回结果。
+// 返回 (value, error)：value 非 nil 表示命中；error 为 redis.Nil 表示未命中，其他表示故障。
+type cacheCheckFunc func(ctx context.Context) ([]byte, error)
+
+// fallbackLoadFunc 回源加载并写入缓存。
+type fallbackLoadFunc func(ctx context.Context) ([]byte, error)
+
+// waitAndRetry 等待后重试获取缓存（通用实现）。
 // 使用指数退避 + 抖动策略，避免惊群效应。
 // 等待时间受 MaxRetryAttempts 和 DistributedLockTTL 双重约束，取较小值。
-func (l *loader) waitAndRetryGet(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+func (l *loader) waitAndRetry(ctx context.Context, check cacheCheckFunc, fallback fallbackLoadFunc) ([]byte, error) {
 	maxAttempts := l.options.MaxRetryAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 10 // 兜底默认值
@@ -478,12 +522,12 @@ func (l *loader) waitAndRetryGet(ctx context.Context, key string, loadFn LoadFun
 			return nil, ctxErr
 		}
 
-		value, err := l.cache.Client().Get(ctx, key).Bytes()
+		value, err := check(ctx)
 		if err == nil {
 			return value, nil
 		}
 		if !errors.Is(err, redis.Nil) {
-			return l.loadAndCache(ctx, key, loadFn, ttl)
+			return fallback(ctx)
 		}
 
 		// 计算指数退避时间 + 抖动
@@ -505,62 +549,31 @@ func (l *loader) waitAndRetryGet(ctx context.Context, key string, loadFn LoadFun
 	}
 
 	// 超过最大重试次数或等待时间上限，直接回源
-	return l.loadAndCache(ctx, key, loadFn, ttl)
+	return fallback(ctx)
+}
+
+// waitAndRetryGet 等待后重试获取缓存。
+func (l *loader) waitAndRetryGet(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+	return l.waitAndRetry(ctx,
+		func(ctx context.Context) ([]byte, error) {
+			return l.cache.Client().Get(ctx, key).Bytes()
+		},
+		func(ctx context.Context) ([]byte, error) {
+			return l.loadAndCache(ctx, key, loadFn, ttl)
+		},
+	)
 }
 
 // waitAndRetryHGet 等待后重试获取 Hash field。
-// 使用指数退避 + 抖动策略，避免惊群效应。
-// 等待时间受 MaxRetryAttempts 和 DistributedLockTTL 双重约束，取较小值。
 func (l *loader) waitAndRetryHGet(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
-	maxAttempts := l.options.MaxRetryAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 10 // 兜底默认值
-	}
-
-	// 累计等待时间上限：取 DistributedLockTTL 作为约束（锁释放后应能获取缓存）
-	maxWaitTime := l.options.DistributedLockTTL
-	if maxWaitTime <= 0 {
-		maxWaitTime = 10 * time.Second // 兜底默认值
-	}
-
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	<-timer.C // 消费初始触发
-
-	var elapsed time.Duration
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-
-		value, err := l.cache.Client().HGet(ctx, key, field).Bytes()
-		if err == nil {
-			return value, nil
-		}
-		if !errors.Is(err, redis.Nil) {
+	return l.waitAndRetry(ctx,
+		func(ctx context.Context) ([]byte, error) {
+			return l.cache.Client().HGet(ctx, key, field).Bytes()
+		},
+		func(ctx context.Context) ([]byte, error) {
 			return l.loadHashAndCache(ctx, key, field, loadFn, ttl)
-		}
-
-		// 计算指数退避时间 + 抖动
-		wait := backoffWithJitter(attempt)
-
-		// 检查是否超过 DistributedLockTTL 约束
-		if elapsed+wait > maxWaitTime {
-			// 剩余时间不足以完成本次等待，直接回源
-			break
-		}
-
-		timer.Reset(wait)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-			elapsed += wait
-		}
-	}
-
-	// 超过最大重试次数或等待时间上限，直接回源
-	return l.loadHashAndCache(ctx, key, field, loadFn, ttl)
+		},
+	)
 }
 
 // backoffWithJitter 计算带抖动的指数退避时间。

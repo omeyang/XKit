@@ -63,7 +63,13 @@ func New() *Builder {
 }
 
 // SetOutput 设置日志输出目标
+//
+// nil 会立即报错（fail-fast，与 SetDeploymentType 行为一致）。
 func (b *Builder) SetOutput(w io.Writer) *Builder {
+	if w == nil {
+		b.err = fmt.Errorf("xlog: output writer is nil")
+		return b
+	}
 	b.output = w
 	return b
 }
@@ -116,6 +122,10 @@ func (b *Builder) SetEnrich(enable bool) *Builder {
 }
 
 // SetRotation 设置日志轮转
+//
+// 注意：会同时设置 output 为 rotator，覆盖之前的 SetOutput 设置。
+// 同理，SetRotation 之后再调用 SetOutput 会覆盖 rotator 的输出。
+// Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
 func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption) *Builder {
 	rotator, err := xrotate.NewLumberjack(filename, opts...)
 	if err != nil {
@@ -136,6 +146,7 @@ func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption)
 // 注意事项：
 //   - 回调在热路径同步执行，应保持轻量，复杂逻辑建议使用 channel 异步处理
 //   - 内置递归保护：如果回调内部触发日志错误，不会导致无限递归
+//   - 内置 panic 隔离：回调 panic 会被捕获并计入错误计数，不会扩散到业务调用链
 //   - 回调失败不会影响日志写入的返回值
 //
 // 示例：

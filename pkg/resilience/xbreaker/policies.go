@@ -36,13 +36,50 @@ func (p *ConsecutiveFailuresPolicy) Threshold() uint32 {
 	return p.threshold
 }
 
+// ratioPolicy 比率策略的共享实现
+//
+// 设计决策: FailureRatioPolicy 和 SlowCallRatioPolicy 共享此嵌入结构，
+// 避免代码重复（字段、构造逻辑、ReadyToTrip 算法完全一致）。
+// 两个类型在语义上有区别（失败率 vs 慢调用率），保持为独立类型便于文档和类型安全。
+type ratioPolicy struct {
+	ratio       float64 // 比率阈值 (0.0 - 1.0)
+	minRequests uint32  // 最小请求数
+}
+
+func newRatioPolicy(ratio float64, minRequests uint32) ratioPolicy {
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	return ratioPolicy{ratio: ratio, minRequests: minRequests}
+}
+
+func (p *ratioPolicy) readyToTrip(counts Counts) bool {
+	if counts.Requests == 0 || counts.Requests < p.minRequests {
+		return false
+	}
+	failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+	return failureRatio >= p.ratio
+}
+
+// Ratio 返回比率阈值
+func (p *ratioPolicy) Ratio() float64 {
+	return p.ratio
+}
+
+// MinRequests 返回最小请求数
+func (p *ratioPolicy) MinRequests() uint32 {
+	return p.minRequests
+}
+
 // FailureRatioPolicy 失败率熔断策略
 //
 // 当失败率超过阈值时触发熔断。
 // 只有当请求数达到最小请求数时才会计算失败率。
 type FailureRatioPolicy struct {
-	ratio       float64 // 失败率阈值 (0.0 - 1.0)
-	minRequests uint32  // 最小请求数
+	ratioPolicy
 }
 
 // NewFailureRatio 创建失败率熔断策略
@@ -55,39 +92,12 @@ type FailureRatioPolicy struct {
 //	policy := xbreaker.NewFailureRatio(0.5, 10)
 //	// 失败率超过 50% 且请求数 >= 10 时触发熔断
 func NewFailureRatio(ratio float64, minRequests uint32) *FailureRatioPolicy {
-	// 确保 ratio 在有效范围内
-	if ratio < 0 {
-		ratio = 0
-	}
-	if ratio > 1 {
-		ratio = 1
-	}
-	return &FailureRatioPolicy{
-		ratio:       ratio,
-		minRequests: minRequests,
-	}
+	return &FailureRatioPolicy{ratioPolicy: newRatioPolicy(ratio, minRequests)}
 }
 
 // ReadyToTrip 判断是否应该触发熔断
 func (p *FailureRatioPolicy) ReadyToTrip(counts Counts) bool {
-	// 请求数不足或为零，不触发熔断（避免除零）
-	if counts.Requests == 0 || counts.Requests < p.minRequests {
-		return false
-	}
-
-	// 计算失败率
-	failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-	return failureRatio >= p.ratio
-}
-
-// Ratio 返回失败率阈值
-func (p *FailureRatioPolicy) Ratio() float64 {
-	return p.ratio
-}
-
-// MinRequests 返回最小请求数
-func (p *FailureRatioPolicy) MinRequests() uint32 {
-	return p.minRequests
+	return p.readyToTrip(counts)
 }
 
 // FailureCountPolicy 失败次数熔断策略
@@ -249,8 +259,7 @@ func (p *AlwaysTripPolicy) ReadyToTrip(counts Counts) bool {
 //
 // 如果不需要慢调用检测，建议直接使用 FailureRatioPolicy，语义更清晰。
 type SlowCallRatioPolicy struct {
-	ratio       float64
-	minRequests uint32
+	ratioPolicy
 }
 
 // NewSlowCallRatio 创建慢调用熔断策略
@@ -261,34 +270,10 @@ type SlowCallRatioPolicy struct {
 // 重要：此策略统计的是"失败率"，需要配合 IsSuccessful 将慢调用标记为失败。
 // 详见 SlowCallRatioPolicy 类型文档。
 func NewSlowCallRatio(ratio float64, minRequests uint32) *SlowCallRatioPolicy {
-	if ratio < 0 {
-		ratio = 0
-	}
-	if ratio > 1 {
-		ratio = 1
-	}
-	return &SlowCallRatioPolicy{
-		ratio:       ratio,
-		minRequests: minRequests,
-	}
+	return &SlowCallRatioPolicy{ratioPolicy: newRatioPolicy(ratio, minRequests)}
 }
 
 // ReadyToTrip 判断是否应该触发熔断
 func (p *SlowCallRatioPolicy) ReadyToTrip(counts Counts) bool {
-	// 请求数不足或为零，不触发熔断（避免除零）
-	if counts.Requests == 0 || counts.Requests < p.minRequests {
-		return false
-	}
-	failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-	return failureRatio >= p.ratio
-}
-
-// Ratio 返回慢调用率阈值
-func (p *SlowCallRatioPolicy) Ratio() float64 {
-	return p.ratio
-}
-
-// MinRequests 返回最小请求数
-func (p *SlowCallRatioPolicy) MinRequests() uint32 {
-	return p.minRequests
+	return p.readyToTrip(counts)
 }

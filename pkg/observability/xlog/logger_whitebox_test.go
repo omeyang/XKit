@@ -120,6 +120,28 @@ func TestXlogger_Stack_HandleError(t *testing.T) {
 	}
 }
 
+// TestXlogger_OnErrorPanic 测试 onError 回调 panic 不扩散到业务代码
+func TestXlogger_OnErrorPanic(t *testing.T) {
+	levelVar := new(slog.LevelVar)
+	l := &xlogger{
+		handler:  &errorHandler{err: errors.New("trigger panic")},
+		levelVar: levelVar,
+		onError: func(_ error) {
+			panic("callback panic")
+		},
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
+	}
+
+	// 不应 panic，panic 应被 safeOnError 捕获
+	l.log(context.Background(), slog.LevelInfo, "test", nil)
+
+	// errorCount: 1 (Handle 错误) + 1 (回调 panic) = 2
+	if l.errorCount.Load() != 2 {
+		t.Errorf("errorCount = %d, want 2 (handle error + callback panic)", l.errorCount.Load())
+	}
+}
+
 // TestXlogger_NoCallback 测试 onError 为 nil 时不 panic
 func TestXlogger_NoCallback(t *testing.T) {
 	levelVar := new(slog.LevelVar)

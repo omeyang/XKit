@@ -10,7 +10,7 @@ func TestAddr_String(t *testing.T) {
 	}{
 		{"valid", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}, "aa:bb:cc:dd:ee:ff"},
 		{"zero", Addr{}, ""},
-		{"broadcast", Broadcast, "ff:ff:ff:ff:ff:ff"},
+		{"broadcast", Broadcast(), "ff:ff:ff:ff:ff:ff"},
 		{"leading_zeros", Addr{bytes: [6]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}}, "01:02:03:04:05:06"},
 	}
 
@@ -37,6 +37,8 @@ func TestAddr_FormatString(t *testing.T) {
 		{"bare", FormatBare, "aabbccddeeff"},
 		{"colon_upper", FormatColonUpper, "AA:BB:CC:DD:EE:FF"},
 		{"dash_upper", FormatDashUpper, "AA-BB-CC-DD-EE-FF"},
+		{"dot_upper", FormatDotUpper, "AABB.CCDD.EEFF"},
+		{"bare_upper", FormatBareUpper, "AABBCCDDEEFF"},
 		{"unknown_format", Format(255), "aa:bb:cc:dd:ee:ff"}, // 默认为 colon
 	}
 
@@ -51,12 +53,53 @@ func TestAddr_FormatString(t *testing.T) {
 	// 无效地址测试
 	t.Run("invalid_addr", func(t *testing.T) {
 		invalid := Addr{}
-		for _, f := range []Format{FormatColon, FormatDash, FormatDot, FormatBare} {
+		for _, f := range []Format{FormatColon, FormatDash, FormatDot, FormatBare, FormatColonUpper, FormatDashUpper, FormatDotUpper, FormatBareUpper} {
 			if got := invalid.FormatString(f); got != "" {
 				t.Errorf("invalid.FormatString(%v) = %v, want empty", f, got)
 			}
 		}
 	})
+}
+
+func TestFormat_String(t *testing.T) {
+	tests := []struct {
+		format Format
+		want   string
+	}{
+		{FormatColon, "colon"},
+		{FormatDash, "dash"},
+		{FormatDot, "dot"},
+		{FormatBare, "bare"},
+		{FormatColonUpper, "colon_upper"},
+		{FormatDashUpper, "dash_upper"},
+		{FormatDotUpper, "dot_upper"},
+		{FormatBareUpper, "bare_upper"},
+		{Format(255), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.format.String(); got != tt.want {
+				t.Errorf("Format(%d).String() = %q, want %q", tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormat_IsValid(t *testing.T) {
+	// 所有已知格式都有效
+	for _, f := range []Format{FormatColon, FormatDash, FormatDot, FormatBare, FormatColonUpper, FormatDashUpper, FormatDotUpper, FormatBareUpper} {
+		if !f.IsValid() {
+			t.Errorf("Format(%d).IsValid() = false, want true", f)
+		}
+	}
+	// 超出范围的值无效
+	if Format(255).IsValid() {
+		t.Errorf("Format(255).IsValid() = true, want false")
+	}
+	if Format(8).IsValid() {
+		t.Errorf("Format(8).IsValid() = true, want false")
+	}
 }
 
 func TestFormatAllBytes(t *testing.T) {

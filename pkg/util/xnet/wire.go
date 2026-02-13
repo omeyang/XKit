@@ -10,28 +10,32 @@ import (
 // WireRange 是 IP 范围的序列化格式。
 // 使用 JSON/BSON/YAML 标签 {"s":"start","e":"end"}。
 type WireRange struct {
-	S string `json:"s" bson:"s" yaml:"s"`
-	E string `json:"e" bson:"e" yaml:"e"`
+	Start string `json:"s" bson:"s" yaml:"s"`
+	End   string `json:"e" bson:"e" yaml:"e"`
 }
 
-// WireRangeFrom 从 [netipx.IPRange] 创建 WireRange。
-//
-// 注意：此函数不校验 r 的有效性，无效范围会静默转换为可能不正确的字符串。
-// 如需校验，请使用 [WireRangeFromChecked] 或 [WireRangeFromAddrs]。
-func WireRangeFrom(r netipx.IPRange) WireRange {
-	return WireRange{
-		S: r.From().String(),
-		E: r.To().String(),
-	}
-}
-
-// WireRangeFromChecked 从 [netipx.IPRange] 创建 WireRange，带有效性校验。
+// WireRangeFrom 从 [netipx.IPRange] 创建 WireRange，带有效性校验。
 // 如果 r 无效（From > To 或包含无效地址），返回错误。
-func WireRangeFromChecked(r netipx.IPRange) (WireRange, error) {
+//
+// 如需跳过校验（例如处理来自 [*netipx.IPSet].Ranges() 的已知有效范围），
+// 请使用 [WireRangeFromUnchecked]。
+func WireRangeFrom(r netipx.IPRange) (WireRange, error) {
 	if !r.IsValid() {
 		return WireRange{}, fmt.Errorf("%w: invalid IPRange", ErrInvalidRange)
 	}
-	return WireRangeFrom(r), nil
+	return WireRangeFromUnchecked(r), nil
+}
+
+// WireRangeFromUnchecked 从 [netipx.IPRange] 创建 WireRange，不校验有效性。
+//
+// 注意：此函数不校验 r 的有效性，无效范围会静默转换为可能不正确的字符串。
+// 仅当调用方已确保 r 有效时使用（如从 [*netipx.IPSet].Ranges() 获取的范围）。
+// 一般场景请使用 [WireRangeFrom] 或 [WireRangeFromAddrs]。
+func WireRangeFromUnchecked(r netipx.IPRange) WireRange {
+	return WireRange{
+		Start: r.From().String(),
+		End:   r.To().String(),
+	}
 }
 
 // WireRangeFromAddrs 从起止地址创建 WireRange。
@@ -51,8 +55,8 @@ func WireRangeFromAddrs(from, to netip.Addr) (WireRange, error) {
 		return WireRange{}, fmt.Errorf("%w: start %s > end %s", ErrInvalidRange, from, to)
 	}
 	return WireRange{
-		S: from.String(),
-		E: to.String(),
+		Start: from.String(),
+		End:   to.String(),
 	}, nil
 }
 
@@ -77,28 +81,40 @@ func sameWireFamily(a, b netip.Addr) bool {
 
 // ToIPRange 将 WireRange 转换为 [netipx.IPRange]。
 func (w WireRange) ToIPRange() (netipx.IPRange, error) {
-	start, err := netip.ParseAddr(w.S)
+	start, err := netip.ParseAddr(w.Start)
 	if err != nil {
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid start address: %s", ErrInvalidAddress, w.S)
+		return netipx.IPRange{}, fmt.Errorf("%w: invalid start address: %s", ErrInvalidAddress, w.Start)
 	}
-	end, err := netip.ParseAddr(w.E)
+	if start.Zone() != "" {
+		return netipx.IPRange{}, fmt.Errorf("%w: IPv6 zone ID is not supported: %s", ErrInvalidAddress, w.Start)
+	}
+	end, err := netip.ParseAddr(w.End)
 	if err != nil {
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid end address: %s", ErrInvalidAddress, w.E)
+		return netipx.IPRange{}, fmt.Errorf("%w: invalid end address: %s", ErrInvalidAddress, w.End)
+	}
+	if end.Zone() != "" {
+		return netipx.IPRange{}, fmt.Errorf("%w: IPv6 zone ID is not supported: %s", ErrInvalidAddress, w.End)
 	}
 	r := netipx.IPRangeFrom(start, end)
 	if !r.IsValid() {
-		return netipx.IPRange{}, fmt.Errorf("%w: %s-%s", ErrInvalidRange, w.S, w.E)
+		return netipx.IPRange{}, fmt.Errorf("%w: %s-%s", ErrInvalidRange, w.Start, w.End)
 	}
 	return r, nil
+}
+
+// IsZero 报告 w 是否为零值。
+// 零值 WireRange 的 Start 和 End 都是空字符串。
+func (w WireRange) IsZero() bool {
+	return w.Start == "" && w.End == ""
 }
 
 // String 返回 WireRange 的字符串表示："start-end"。
 // 如果起止相同则只返回单个 IP。
 func (w WireRange) String() string {
-	if w.S == w.E {
-		return w.S
+	if w.Start == w.End {
+		return w.Start
 	}
-	return w.S + "-" + w.E
+	return w.Start + "-" + w.End
 }
 
 // WireRangesFromSet 将 [*netipx.IPSet] 转换为 WireRange 切片。
@@ -110,7 +126,7 @@ func WireRangesFromSet(set *netipx.IPSet) []WireRange {
 	ranges := set.Ranges()
 	wrs := make([]WireRange, len(ranges))
 	for i, r := range ranges {
-		wrs[i] = WireRangeFrom(r)
+		wrs[i] = WireRangeFromUnchecked(r)
 	}
 	return wrs
 }

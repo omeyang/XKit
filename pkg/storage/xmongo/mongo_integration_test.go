@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -52,6 +53,14 @@ func setupMongo(t *testing.T) (*mongo.Client, func()) {
 }
 
 func startMongoContainer(t *testing.T) string {
+	t.Helper()
+
+	// 探测 Docker 可用性，避免 testcontainers 内部 panic
+	// （例如 $XDG_RUNTIME_DIR 检查失败等环境问题）
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not found in PATH, skipping integration test")
+	}
+
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{
 		Image:        "mongo:7.0",

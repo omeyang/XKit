@@ -44,6 +44,10 @@ type Client interface {
 	// 响应体会被自动解析到 req.Response 中。
 	Request(ctx context.Context, req *AuthRequest) error
 
+	// InvalidateToken 主动使指定租户的 Token 缓存失效。
+	// 用于 Token 被服务端撤销或权限变更后强制重新获取。
+	InvalidateToken(ctx context.Context, tenantID string) error
+
 	// Close 关闭客户端，释放资源。
 	Close() error
 }

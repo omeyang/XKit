@@ -11,13 +11,20 @@ import (
 	"github.com/sony/sonyflake/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
-// resetGlobal 重置全局状态，仅用于测试
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
+// resetGlobal 重置全局状态，仅用于测试。
+// 持有 initMu 以确保与 Init/ensureInitialized 不会产生数据竞争。
 func resetGlobal() {
-	defaultGen = nil
-	defaultGenErr = nil
-	defaultGenOnce = sync.Once{}
+	initMu.Lock()
+	defer initMu.Unlock()
+	defaultGen.Store(nil)
+	initCalled = false
 }
 
 func TestNew(t *testing.T) {
@@ -47,26 +54,6 @@ func TestNewString(t *testing.T) {
 	s2, err := NewString()
 	require.NoError(t, err)
 	assert.NotEqual(t, s1, s2)
-}
-
-func TestMustNew(t *testing.T) {
-	resetGlobal()
-
-	// 正常情况不应 panic
-	assert.NotPanics(t, func() {
-		id := MustNew()
-		assert.NotZero(t, id)
-	})
-}
-
-func TestMustNewString(t *testing.T) {
-	resetGlobal()
-
-	// 正常情况不应 panic
-	assert.NotPanics(t, func() {
-		s := MustNewString()
-		assert.NotEmpty(t, s)
-	})
 }
 
 func TestParse(t *testing.T) {
@@ -141,6 +128,41 @@ func TestInit_AlreadyInitialized_ByAutoInit(t *testing.T) {
 	// 显式 Init 返回 ErrAlreadyInitialized
 	err = Init()
 	assert.ErrorIs(t, err, ErrAlreadyInitialized)
+}
+
+func TestInit_RetryAfterFailure(t *testing.T) {
+	resetGlobal()
+
+	// 第一次 Init 使用一个会失败的 MachineID 函数
+	err := Init(WithMachineID(func() (uint16, error) {
+		return 0, errors.New("transient network error")
+	}))
+	require.Error(t, err)
+
+	// sync.Once 会永久失败，但新的 atomic.Pointer 模式允许重试
+	// 第二次 Init 使用正常配置应该成功
+	err = Init()
+	require.NoError(t, err)
+
+	// 生成 ID 验证生成器工作正常
+	id, err := New()
+	require.NoError(t, err)
+	assert.NotZero(t, id)
+}
+
+func TestInit_FailedThenAutoInit_Blocked(t *testing.T) {
+	resetGlobal()
+
+	// 显式调用 Init 但失败
+	err := Init(WithMachineID(func() (uint16, error) {
+		return 0, errors.New("machine ID error")
+	}))
+	require.Error(t, err)
+
+	// 自动初始化不应覆盖用户显式 Init 的意图
+	// 应返回 ErrNotInitialized
+	_, err = New()
+	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestInit_WithCheckMachineID(t *testing.T) {
@@ -256,24 +278,47 @@ func TestClockBackwardConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// 验证配置生效（通过 defaultGen 的字段检查）
-	require.NotNil(t, defaultGen)
-	assert.Equal(t, 100*time.Millisecond, defaultGen.maxWaitDuration)
-	assert.Equal(t, 5*time.Millisecond, defaultGen.retryInterval)
+	// 验证配置生效（通过 defaultGen.Load() 的字段检查）
+	gen := defaultGen.Load()
+	require.NotNil(t, gen)
+	assert.Equal(t, 100*time.Millisecond, gen.maxWaitDuration)
+	assert.Equal(t, 5*time.Millisecond, gen.retryInterval)
+}
+
+func TestMustNewWithRetry(t *testing.T) {
+	resetGlobal()
+
+	assert.NotPanics(t, func() {
+		id := MustNewWithRetry()
+		assert.NotZero(t, id)
+	})
+}
+
+func TestMustNewStringWithRetry(t *testing.T) {
+	resetGlobal()
+
+	assert.NotPanics(t, func() {
+		s := MustNewStringWithRetry()
+		assert.NotEmpty(t, s)
+	})
 }
 
 func TestErrClockBackwardTimeout_IsUnwrappable(t *testing.T) {
 	// 验证 ErrClockBackwardTimeout 可以使用 errors.Is 检查
-	// 这测试了 P2 修复后的错误语义
+	// 这测试了错误链保留语义：双 %w 同时保留哨兵错误和底层原因
 	resetGlobal()
 
-	// 创建一个包装了原始错误的超时错误
+	// 创建一个包装了原始错误的超时错误（与 NewWithRetry 内部一致）
 	originalErr := errors.New("original clock error")
-	wrappedErr := fmt.Errorf("%w: last error was %v", ErrClockBackwardTimeout, originalErr)
+	wrappedErr := fmt.Errorf("%w: %w", ErrClockBackwardTimeout, originalErr)
 
-	// 验证 errors.Is 可以识别底层错误
+	// 验证 errors.Is 可以识别哨兵错误
 	assert.True(t, errors.Is(wrappedErr, ErrClockBackwardTimeout),
 		"wrapped error should be unwrappable to ErrClockBackwardTimeout")
+
+	// 验证 errors.Is 可以识别底层原因（error chain 保留）
+	assert.True(t, errors.Is(wrappedErr, originalErr),
+		"wrapped error should preserve underlying cause in error chain")
 
 	// 验证错误消息包含原始错误信息
 	assert.Contains(t, wrappedErr.Error(), "clock backward wait timeout")
@@ -282,59 +327,58 @@ func TestErrClockBackwardTimeout_IsUnwrappable(t *testing.T) {
 
 func BenchmarkNew(b *testing.B) {
 	resetGlobal()
-	_ = Init() //nolint:errcheck // benchmark init
+	if err := Init(); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = New() //nolint:errcheck // benchmark
+		_, _ = New() // benchmark
 	}
 }
 
 func BenchmarkNewString(b *testing.B) {
 	resetGlobal()
-	_ = Init() //nolint:errcheck // benchmark init
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = NewString() //nolint:errcheck // benchmark
+	if err := Init(); err != nil {
+		b.Fatal(err)
 	}
-}
-
-func BenchmarkMustNewString(b *testing.B) {
-	resetGlobal()
-	_ = Init() //nolint:errcheck // benchmark init
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = MustNewString()
+		_, _ = NewString() // benchmark
 	}
 }
 
 // BenchmarkComparison 对比不同 ID 生成方案的性能
 func BenchmarkComparison(b *testing.B) {
 	resetGlobal()
+	if err := Init(); err != nil {
+		b.Fatal(err)
+	}
 
 	b.Run("xid/New", func(b *testing.B) {
-		_ = Init() //nolint:errcheck // benchmark init
-		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = New() //nolint:errcheck // benchmark
+			_, _ = New() // benchmark
 		}
 	})
 
 	b.Run("xid/NewString", func(b *testing.B) {
-		_ = Init() //nolint:errcheck // benchmark init
-		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = NewString() //nolint:errcheck // benchmark
+			_, _ = NewString() // benchmark
+		}
+	})
+
+	b.Run("xid/MustNewStringWithRetry", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = MustNewStringWithRetry()
 		}
 	})
 
 	b.Run("sonyflake/NextID", func(b *testing.B) {
-		sf, _ := sonyflake.New(sonyflake.Settings{}) //nolint:errcheck // benchmark init
+		sf, _ := sonyflake.New(sonyflake.Settings{}) // benchmark init
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = sf.NextID() //nolint:errcheck // benchmark
+			_, _ = sf.NextID() // benchmark
 		}
 	})
 }

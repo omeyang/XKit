@@ -7,8 +7,10 @@ import (
 	retry "github.com/avast/retry-go/v5"
 )
 
-// 以下是 avast/retry-go/v5 的类型别名，便于直接使用底层能力
-// 用户可以直接使用这些类型，无需导入 retry-go 包
+// 设计决策: 以下类型别名和变量别名完整镜像 avast/retry-go/v5 的 API 表面，
+// 使调用方无需直接依赖第三方包。虽然增加了导出符号数量，但避免了业务代码
+// 中出现 import retry "github.com/avast/retry-go/v5" 的直接依赖，
+// 便于未来替换底层实现。
 type (
 	// Option 是 retry-go 的配置选项类型
 	Option = retry.Option
@@ -111,7 +113,12 @@ var (
 // Do 执行带重试的操作
 //
 // 这是对 retry-go 的薄包装，提供与 xretry 一致的 API 风格。
-// 函数签名接受 context.Context 作为第一个参数，与 xretry.Retryer.Do 保持一致。
+// fn 签名为 func() error（不接收 context），如需在回调中使用 context，
+// 通过闭包捕获即可。如需 fn 直接接收 context，请使用 Retryer.Do。
+//
+// 延迟语义：默认使用 retry-go 的 CombineDelay(BackOffDelay, RandomDelay)，
+// 即使设置 Delay(0)，MaxJitter 的默认值仍会引入随机延迟。
+// 若需精确的零延迟重试，请同时设置 Delay(0) 和 MaxJitter(0)。
 //
 // 示例:
 //
@@ -141,20 +148,7 @@ var (
 //	    return !errors.Is(err, ErrFatal)
 //	}))
 func Do(ctx context.Context, fn func() error, opts ...Option) error {
-	// 将 context 添加到选项中
-	allOpts := make([]Option, 0, len(opts)+2)
-	allOpts = append(allOpts, Context(ctx))
-	allOpts = append(allOpts, RetryIf(func(err error) bool {
-		// 先检查 retry-go 的 IsRecoverable（处理 Unrecoverable 包装的错误）
-		if !IsRecoverable(err) {
-			return false
-		}
-		// 再检查 xretry 的 IsRetryable（处理 PermanentError/TemporaryError）
-		return IsRetryable(err)
-	}))
-	allOpts = append(allOpts, opts...)
-
-	return retry.New(allOpts...).Do(fn)
+	return retry.New(defaultOpts(ctx, opts)...).Do(fn)
 }
 
 // DoWithData 执行带重试的操作（有返回值）
@@ -171,26 +165,30 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 // 此时 PermanentError/TemporaryError/Unrecoverable 将不会自动生效，
 // 调用方需要在自定义的 RetryIf 中处理这些情况。详见 Do 函数的文档说明。
 func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option) (T, error) {
-	// 将 context 添加到选项中
+	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(fn)
+}
+
+// defaultOpts 构建带有默认 RetryIf 逻辑的选项列表。
+// 默认的 RetryIf 检查 IsRecoverable（Unrecoverable 错误）和 IsRetryable（PermanentError/TemporaryError）。
+// 用户传入的 opts 追加在后，如果包含 RetryIf 则会覆盖默认行为。
+func defaultOpts(ctx context.Context, opts []Option) []Option {
 	allOpts := make([]Option, 0, len(opts)+2)
 	allOpts = append(allOpts, Context(ctx))
 	allOpts = append(allOpts, RetryIf(func(err error) bool {
-		// 先检查 retry-go 的 IsRecoverable（处理 Unrecoverable 包装的错误）
 		if !IsRecoverable(err) {
 			return false
 		}
-		// 再检查 xretry 的 IsRetryable（处理 PermanentError/TemporaryError）
 		return IsRetryable(err)
 	}))
-	allOpts = append(allOpts, opts...)
-
-	return retry.NewWithData[T](allOpts...).Do(fn)
+	return append(allOpts, opts...)
 }
 
 // NewRetrier 创建一个底层的 retry.Retrier
 //
-// 这个函数直接返回 retry-go 的 Retrier，适合需要完全控制的场景。
-// 与 NewRetryer 不同，这个函数不使用 RetryPolicy 和 BackoffPolicy 接口。
+// 设计决策: Retryer（xretry 策略化执行器）与 Retrier（retry-go 原生实例）
+// 命名仅一字母差异，但语义不同。Retryer 通过 RetryPolicy/BackoffPolicy 接口
+// 提供抽象；Retrier 直接暴露 retry-go 的完整配置能力。
+// 选择指南见 doc.go。
 //
 // 示例:
 //
@@ -235,21 +233,12 @@ func NewRetrierWithData[T any](opts ...Option) *retry.RetrierWithData[T] {
 //	    xretry.DelayType(xretry.ToDelayType(backoff)),
 //	)
 func ToDelayType(policy BackoffPolicy) DelayTypeFunc {
+	if policy == nil {
+		return func(_ uint, _ error, _ DelayContext) time.Duration {
+			return 0
+		}
+	}
 	return func(n uint, _ error, _ DelayContext) time.Duration {
 		return policy.NextDelay(safeUintToInt(n))
 	}
-}
-
-// ToRetryIfSimple 将仅基于错误类型的判断函数适配为 RetryIfFunc
-//
-// 用于简单场景，仅检查错误类型决定是否重试。
-//
-// 示例:
-//
-//	retryIf := xretry.ToRetryIfSimple(func(err error) bool {
-//	    return !errors.Is(err, context.Canceled)
-//	})
-//	xretry.Do(ctx, fn, xretry.RetryIf(retryIf))
-func ToRetryIfSimple(shouldRetry func(error) bool) RetryIfFunc {
-	return shouldRetry
 }

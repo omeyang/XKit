@@ -47,7 +47,9 @@ func (f *fallbackLimiter) AllowN(ctx context.Context, key Key, n int) (*Result, 
 	// 记录降级日志和指标
 	f.logFallback(ctx, err)
 	if f.opts.metrics != nil {
-		f.opts.metrics.RecordFallback(ctx, f.strategy, err.Error())
+		// 设计决策: 使用 classifyError 将错误归类为低基数标签，
+		// 避免 err.Error() 原始字符串导致指标基数膨胀。
+		f.opts.metrics.RecordFallback(ctx, f.strategy, classifyError(err))
 	}
 
 	// 触发降级回调
@@ -159,7 +161,7 @@ func (f *fallbackLimiter) Query(ctx context.Context, key Key) (*QuotaInfo, error
 		return q.Query(ctx, key)
 	}
 
-	return nil, errors.New("xlimit: query not supported")
+	return nil, ErrQueryNotSupported
 }
 
 // 确保 fallbackLimiter 实现了可选接口

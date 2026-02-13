@@ -40,6 +40,9 @@ func ExampleAddr_FormatString() {
 	fmt.Println("Dot:", addr.FormatString(xmac.FormatDot))
 	fmt.Println("Bare:", addr.FormatString(xmac.FormatBare))
 	fmt.Println("ColonUpper:", addr.FormatString(xmac.FormatColonUpper))
+	fmt.Println("DashUpper:", addr.FormatString(xmac.FormatDashUpper))
+	fmt.Println("DotUpper:", addr.FormatString(xmac.FormatDotUpper))
+	fmt.Println("BareUpper:", addr.FormatString(xmac.FormatBareUpper))
 
 	// Output:
 	// Colon: aa:bb:cc:dd:ee:ff
@@ -47,6 +50,9 @@ func ExampleAddr_FormatString() {
 	// Dot: aabb.ccdd.eeff
 	// Bare: aabbccddeeff
 	// ColonUpper: AA:BB:CC:DD:EE:FF
+	// DashUpper: AA-BB-CC-DD-EE-FF
+	// DotUpper: AABB.CCDD.EEFF
+	// BareUpper: AABBCCDDEEFF
 }
 
 func ExampleAddr_IsUsable() {

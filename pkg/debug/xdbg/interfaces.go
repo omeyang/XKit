@@ -109,7 +109,14 @@ type CacheRegistry interface {
 
 // ConfigProvider 配置提供者接口。
 // 此接口与 xconf 兼容。
+//
+// 安全警告: Dump 返回的配置会通过 config 命令输出。
+// 实现方有责任在 Dump 中对敏感字段（密码、Token、DSN 等）进行脱敏处理，
+// 框架层不会自动过滤。如果配置中包含敏感信息，建议：
+//   - 在 Dump 实现中过滤或掩码敏感字段
+//   - 或使用 WithCommandWhitelist 禁用 config 命令
 type ConfigProvider interface {
 	// Dump 导出当前配置。
+	// 实现方应确保返回值不包含敏感信息（密码、密钥等）。
 	Dump() map[string]any
 }

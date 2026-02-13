@@ -79,3 +79,17 @@ func TestIsClientClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestErrWatchDisconnected(t *testing.T) {
+	// 验证 ErrWatchDisconnected 是可检查的哨兵错误
+	err := ErrWatchDisconnected
+	if !errors.Is(err, ErrWatchDisconnected) {
+		t.Error("errors.Is(ErrWatchDisconnected, ErrWatchDisconnected) should be true")
+	}
+
+	// 验证包装后仍可检查
+	wrapped := fmt.Errorf("watch failed: %w", ErrWatchDisconnected)
+	if !errors.Is(wrapped, ErrWatchDisconnected) {
+		t.Error("wrapped ErrWatchDisconnected should be detectable via errors.Is")
+	}
+}

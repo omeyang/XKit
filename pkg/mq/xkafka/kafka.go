@@ -2,6 +2,7 @@ package xkafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,11 +36,13 @@ type Producer interface {
 
 // ProducerStats 包含 Kafka Producer 的统计信息。
 type ProducerStats struct {
-	// MessagesProduced 已发送的消息数量。
+	// MessagesProduced 已成功入队的消息数量。
+	// 设计决策: kafka.Producer.Produce() 是异步的，入队成功不等于发送到 Broker 成功。
+	// 实际发送结果需通过 deliveryChan 确认。此字段统计入队数，非最终投递数。
 	MessagesProduced int64
-	// BytesProduced 已发送的字节数。
+	// BytesProduced 已成功入队的消息字节数。
 	BytesProduced int64
-	// Errors 发送失败的消息数量。
+	// Errors 入队失败的消息数量。
 	Errors int64
 	// QueueLength 当前队列中等待发送的消息数量。
 	QueueLength int
@@ -74,8 +77,10 @@ type ConsumerStats struct {
 	MessagesConsumed int64
 	// BytesConsumed 已消费的字节数。
 	BytesConsumed int64
-	// Errors 未能成功处理的错误次数。
-	// 注意：对于 ConsumerWithDLQ，成功重试或发送到 DLQ 的消息不计入此统计。
+	// Errors 消费循环中未能恢复的错误次数。
+	// 仅在通过 ConsumeLoop/ConsumeLoopWithPolicy 消费时递增。
+	// 直接调用 ReadMessage/Consume 的错误不计入此统计。
+	// 对于 ConsumerWithDLQ，成功重试或发送到 DLQ 的消息不计入此统计，
 	// 要追踪 handler 失败次数，请使用 DLQStats。
 	Errors int64
 	// Lag 消费延迟（与最新偏移量的差值）。
@@ -141,23 +146,27 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 		opt(options)
 	}
 
+	// 复制配置，避免修改调用方传入的 ConfigMap
+	clonedConfig := &kafka.ConfigMap{}
+	for k, v := range *config {
+		if err := clonedConfig.SetKey(k, v); err != nil {
+			return nil, fmt.Errorf("clone config key %q: %w", k, err)
+		}
+	}
+
 	// 强制设置 enable.auto.offset.store=false 以确保 at-least-once 语义
 	// 这确保 offset 只在显式调用 StoreOffsets 后才会被存储
-	if err := config.SetKey("enable.auto.offset.store", false); err != nil {
+	if err := clonedConfig.SetKey("enable.auto.offset.store", false); err != nil {
 		return nil, fmt.Errorf("failed to set enable.auto.offset.store: %w", err)
 	}
 
-	consumer, err := kafka.NewConsumer(config)
+	consumer, err := kafka.NewConsumer(clonedConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := consumer.SubscribeTopics(topics, nil); err != nil {
-		closeErr := consumer.Close()
-		if closeErr != nil {
-			return nil, err // 返回原始错误
-		}
-		return nil, err
+		return nil, errors.Join(err, consumer.Close())
 	}
 
 	return &consumerWrapper{

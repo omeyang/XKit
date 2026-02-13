@@ -7,11 +7,12 @@ import (
 )
 
 func BenchmarkAcquireUnlock(b *testing.B) {
-	kl := New()
+	kl := newForTest(b)
 	defer kl.Close()
 
 	ctx := context.Background()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		h, err := kl.Acquire(ctx, "key")
@@ -23,18 +24,17 @@ func BenchmarkAcquireUnlock(b *testing.B) {
 }
 
 func BenchmarkTryAcquireUnlock(b *testing.B) {
-	kl := New()
+	kl := newForTest(b)
 	defer kl.Close()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		h, err := kl.TryAcquire("key")
 		if err != nil {
 			b.Fatal(err)
 		}
-		if h != nil {
-			h.Unlock()
-		}
+		h.Unlock() // err==nil 保证 h 非 nil
 	}
 }
 
@@ -46,12 +46,13 @@ func BenchmarkAcquireUnlockParallel(b *testing.B) {
 		keys[i] = fmt.Sprintf("key-%d", i)
 	}
 
-	for _, shards := range []uint{1, 16, 32, 64} {
+	for _, shards := range []int{1, 16, 32, 64} {
 		b.Run(fmt.Sprintf("shards=%d", shards), func(b *testing.B) {
-			kl := New(WithShardCount(shards))
+			kl := newForTest(b, WithShardCount(shards))
 			defer kl.Close()
 
 			ctx := context.Background()
+			b.ReportAllocs()
 			b.RunParallel(func(pb *testing.PB) {
 				i := 0
 				for pb.Next() {
@@ -68,10 +69,30 @@ func BenchmarkAcquireUnlockParallel(b *testing.B) {
 	}
 }
 
-func BenchmarkGetOrCreate(b *testing.B) {
-	kl := New().(*keyLockImpl)
+func BenchmarkAcquireUnlockContended(b *testing.B) {
+	kl := newForTest(b)
 	defer kl.Close()
 
+	ctx := context.Background()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			h, err := kl.Acquire(ctx, "contended-key")
+			if err != nil {
+				continue
+			}
+			h.Unlock()
+		}
+	})
+}
+
+func BenchmarkGetOrCreate(b *testing.B) {
+	kl := newForTest(b).(*keyLockImpl)
+	defer kl.Close()
+
+	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		entry, err := kl.getOrCreate("key")

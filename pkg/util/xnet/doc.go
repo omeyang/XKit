@@ -11,7 +11,7 @@
 //   - format.go: FullIP 全长格式化（"192.168.001.001"）、标准化、校验
 //   - parse.go: 解析单 IP/CIDR/掩码/范围格式为 [netipx.IPRange]，批量解析为 [*netipx.IPSet]
 //   - wire.go: [WireRange] JSON/BSON/YAML 序列化的 IP 范围结构
-//   - contains.go: IP 范围判断、合并、大小计算等辅助函数
+//   - contains.go: IP 范围包含判断、合并、大小计算、CIDR 转换等
 //
 // # 快速示例
 //
@@ -40,7 +40,7 @@
 // 序列化 IP 范围：
 //
 //	r, _ := xnet.ParseRange("192.168.1.1-192.168.1.100")
-//	w := xnet.WireRangeFrom(r)
+//	w, _ := xnet.WireRangeFrom(r)
 //	data, _ := json.Marshal(w)
 //	fmt.Println(string(data))  // {"s":"192.168.1.1","e":"192.168.1.100"}
 //
@@ -74,6 +74,19 @@
 //	r, _ := xnet.ParseRange("192.168.1.0/24")
 //	size := xnet.RangeSize(r)                // 256
 //	sizeU64, _ := xnet.RangeSizeUint64(r)    // 256 (IPv4 优化版本)
+//
+// # IPv6 Zone ID 处理
+//
+// [ParseRange]、[ParseRanges] 和 [WireRange.ToIPRange] 拒绝包含 IPv6 zone ID
+// 的地址（如 "fe80::1%eth0"），返回 [ErrInvalidRange] 或 [ErrInvalidAddress]。
+// 原因：[netipx.IPRange] 和 [*netipx.IPSet] 会静默丢弃 zone 信息，
+// 导致后续查询不匹配（ACL/白名单/黑名单误判）。
+//
+// # IP 地址分类
+//
+// [Classify] 返回地址的各种分类信息，包括 [IsReserved]（240.0.0.0/4, Class E）。
+// 分类标志不互斥，例如 240.0.0.1 同时满足 IsGlobalUnicast 和 IsReserved。
+// [Classification.String] 按优先级返回最特殊的分类标签。
 //
 // # 输入行为说明
 //
@@ -118,11 +131,11 @@
 //
 // # Go 版本要求
 //
-// xnet 要求 Go 1.23+（与 xmac 的 [iter.Seq] 依赖对齐）。
+// xnet 要求 Go 1.25+（与项目 go.mod 对齐）。
 //
 // 注意：Go 1.22.4 及更早版本的 [net/netip] 对 IPv4-mapped IPv6 地址
 // 的分类存在 bug（详见 https://go.dev/issue/67289）。
-// 当前最低要求 Go 1.23 已避开此问题。
+// 此 bug 在 Go 1.23 中已修复，项目当前要求 Go 1.25+ 不受影响。
 //
 // # 范围转 CIDR
 //
@@ -136,87 +149,15 @@
 //
 // # 从 gobase/mutils 迁移
 //
-// 以下是从 gobase mutils/iputils.go 迁移到 xnet 的 API 映射：
+// gobase mutils/iputils.go → xnet 的核心 API 映射：
 //
-// IP 地址类型：
-//
-//	// gobase: 使用 MIP 结构体存储多种格式
-//	mip, _ := mutils.NewMIP("192.168.1.1")
-//	mip.StrIP     // 字符串
-//	mip.NetIP     // net.IP
-//	mip.IntIP     // uint32
-//	mip.BigIntIP  // *big.Int
-//
-//	// xnet: 直接使用 netip.Addr 值类型
-//	addr, _ := netip.ParseAddr("192.168.1.1")
-//	addr.String()                 // 字符串
-//	xnet.AddrToUint32(addr)       // uint32（按需转换）
-//	xnet.AddrToBigInt(addr)       // *big.Int（按需转换）
-//
-// uint32 互转：
-//
-//	// gobase
-//	mutils.StringToIPv4("192.168.1.1")  // → uint32
-//	mutils.IPv4ToString(0xC0A80101)     // → string
-//
-//	// xnet
-//	addr, _ := netip.ParseAddr("192.168.1.1")
-//	v, _ := xnet.AddrToUint32(addr)           // → uint32
-//	addr = xnet.AddrFromUint32(0xC0A80101)    // → netip.Addr
-//
-// FullIP 格式化：
-//
-//	// gobase
-//	mutils.IP2FullIP("192.168.1.1")     // → "192.168.001.001"
-//	mutils.FullIP2IP("192.168.001.001") // → "192.168.1.1"
-//
-//	// xnet
-//	addr, _ := netip.ParseAddr("192.168.1.1")
-//	xnet.FormatFullIPAddr(addr)               // → "192.168.001.001"
-//	addr, _ = xnet.ParseFullIP("192.168.001.001")
-//	addr.String()                             // → "192.168.1.1"
-//
-// IP 范围解析：
-//
-//	// gobase
-//	ipr, _ := mutils.ParseIpRange("192.168.1.0/24")
-//	ipr.BeginIp  // net.IP
-//	ipr.EndIp    // net.IP
-//
-//	// xnet
-//	r, _ := xnet.ParseRange("192.168.1.0/24")
-//	r.From()     // netip.Addr
-//	r.To()       // netip.Addr
-//
-// 范围包含判断：
-//
-//	// gobase: O(n) 线性搜索
-//	ranges := mutils.IPRanges{...}
-//	ranges.MustInit()
-//	for _, r := range ranges {
-//	    if r.Contains(mip) { ... }
-//	}
-//
-//	// xnet: O(log n) 高效查询
-//	set, _ := xnet.ParseRanges([]string{...})
-//	set.Contains(addr)
-//
-// 范围合并：
-//
-//	// gobase
-//	ranges.MergeAndSort()
-//
-//	// xnet
-//	merged, _ := xnet.MergeRanges(ranges)
-//
-// 序列化结构：
-//
-//	// gobase: MIPRange 需要 MustInit() 初始化
-//	mipr := mutils.MIPRange{S: "10.0.0.1", E: "10.0.0.100"}
-//	mipr.MustInit()  // 必须调用
-//
-//	// xnet: WireRange 反序列化即可用
-//	var w xnet.WireRange
-//	json.Unmarshal(data, &w)
-//	r, _ := w.ToIPRange()  // 直接转换
+//	MIP 结构体        → netip.Addr 值类型（按需调用 AddrToUint32/AddrToBigInt 转换）
+//	StringToIPv4      → netip.ParseAddr + AddrToUint32
+//	IPv4ToString      → AddrFromUint32 + .String()
+//	IP2FullIP         → FormatFullIPAddr
+//	FullIP2IP         → ParseFullIP
+//	ParseIpRange      → ParseRange（返回 netipx.IPRange）
+//	IPRanges.Contains → ParseRanges 构建 *netipx.IPSet，O(log n) 查询
+//	MergeAndSort      → MergeRanges
+//	MIPRange{S,E}     → WireRange{Start,End}（反序列化即可用，无需 MustInit）
 package xnet

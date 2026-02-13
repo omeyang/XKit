@@ -31,7 +31,11 @@ func WithKeyPrefix(prefix string) RedisCacheOption {
 }
 
 // NewRedisCacheStore 创建 Redis 缓存存储。
-func NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) *RedisCacheStore {
+// 如果 client 为 nil，返回 ErrNilRedisClient。
+func NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) (*RedisCacheStore, error) {
+	if client == nil {
+		return nil, ErrNilRedisClient
+	}
 	s := &RedisCacheStore{
 		client:    client,
 		keyPrefix: "xauth:",
@@ -39,7 +43,7 @@ func NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) 
 	for _, opt := range opts {
 		opt(s)
 	}
-	return s
+	return s, nil
 }
 
 // tokenKey 生成 Token 缓存 key。
@@ -91,12 +95,13 @@ func (s *RedisCacheStore) SetToken(ctx context.Context, tenantID string, token *
 		return nil
 	}
 
-	// 序列化前设置 Unix 时间戳，以便反序列化时恢复真实获取时间
-	if !token.ObtainedAt.IsZero() {
-		token.ObtainedAtUnix = token.ObtainedAt.Unix()
+	// 浅拷贝后设置 Unix 时间戳，避免修改调用方的 TokenInfo
+	toSerialize := *token
+	if !toSerialize.ObtainedAt.IsZero() {
+		toSerialize.ObtainedAtUnix = toSerialize.ObtainedAt.Unix()
 	}
 
-	data, err := json.Marshal(token)
+	data, err := json.Marshal(&toSerialize)
 	if err != nil {
 		return fmt.Errorf("xauth: marshal token failed: %w", err)
 	}

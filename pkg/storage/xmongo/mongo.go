@@ -106,7 +106,7 @@ type PageResult struct {
 // BulkOptions 批量写入选项。
 type BulkOptions struct {
 	// BatchSize 每批大小。
-	// 默认为 1000。
+	// 默认为 1000，上限为 10000。超过上限时自动限制为上限值。
 	BatchSize int
 
 	// Ordered 是否有序写入。
@@ -158,7 +158,9 @@ func New(client *mongo.Client, opts ...Option) (Mongo, error) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	// 创建慢查询检测器

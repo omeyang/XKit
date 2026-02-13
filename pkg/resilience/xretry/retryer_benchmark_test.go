@@ -120,7 +120,7 @@ func BenchmarkWrapperDo(b *testing.B) {
 					return errors.New("retry")
 				}
 				return nil
-			}, Attempts(3), Delay(0))
+			}, Attempts(3), Delay(0), MaxJitter(0))
 			if err != nil {
 				b.Fatal(err)
 			}

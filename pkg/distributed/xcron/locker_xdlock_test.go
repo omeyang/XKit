@@ -84,16 +84,25 @@ func (f *mockXdlockFactory) Health(_ context.Context) error {
 
 func TestNewXdlockAdapter(t *testing.T) {
 	factory := &mockXdlockFactory{}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	require.NotNil(t, adapter)
 	assert.Equal(t, "xcron:", adapter.keyPrefix)
 	assert.Equal(t, factory, adapter.Factory())
 }
 
+func TestNewXdlockAdapter_NilFactory(t *testing.T) {
+	adapter, err := NewXdlockAdapter(nil)
+
+	assert.Nil(t, adapter)
+	assert.ErrorIs(t, err, ErrNilFactory)
+}
+
 func TestNewXdlockAdapter_WithPrefix(t *testing.T) {
 	factory := &mockXdlockFactory{}
-	adapter := NewXdlockAdapter(factory, WithXdlockKeyPrefix("custom:"))
+	adapter, err := NewXdlockAdapter(factory, WithXdlockKeyPrefix("custom:"))
+	require.NoError(t, err)
 
 	assert.Equal(t, "custom:", adapter.keyPrefix)
 }
@@ -101,7 +110,8 @@ func TestNewXdlockAdapter_WithPrefix(t *testing.T) {
 func TestXdlockAdapter_TryLock_Success(t *testing.T) {
 	handle := &mockXdlockHandle{}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 
@@ -113,7 +123,8 @@ func TestXdlockAdapter_TryLock_Success(t *testing.T) {
 
 func TestXdlockAdapter_TryLock_LockHeld(t *testing.T) {
 	factory := &mockXdlockFactory{tryLockErr: xdlock.ErrLockHeld}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 
@@ -123,7 +134,8 @@ func TestXdlockAdapter_TryLock_LockHeld(t *testing.T) {
 
 func TestXdlockAdapter_TryLock_Error(t *testing.T) {
 	factory := &mockXdlockFactory{tryLockErr: xdlock.ErrSessionExpired}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 
@@ -135,7 +147,8 @@ func TestXdlockAdapter_TryLock_Error(t *testing.T) {
 func TestXdlockHandle_Unlock_Success(t *testing.T) {
 	handle := &mockXdlockHandle{}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 	require.NoError(t, err)
@@ -147,9 +160,10 @@ func TestXdlockHandle_Unlock_Success(t *testing.T) {
 }
 
 func TestXdlockHandle_Unlock_LockNotHeld(t *testing.T) {
-	handle := &mockXdlockHandle{unlockErr: xdlock.ErrLockNotHeld}
+	handle := &mockXdlockHandle{unlockErr: xdlock.ErrNotLocked}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 	require.NoError(t, err)
@@ -162,7 +176,8 @@ func TestXdlockHandle_Unlock_LockNotHeld(t *testing.T) {
 func TestXdlockHandle_Renew_Success(t *testing.T) {
 	handle := &mockXdlockHandle{}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 	require.NoError(t, err)
@@ -176,7 +191,8 @@ func TestXdlockHandle_Renew_Success(t *testing.T) {
 func TestXdlockHandle_Renew_ExtendFailed(t *testing.T) {
 	handle := &mockXdlockHandle{extendErr: xdlock.ErrExtendFailed}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 	require.NoError(t, err)
@@ -187,9 +203,10 @@ func TestXdlockHandle_Renew_ExtendFailed(t *testing.T) {
 }
 
 func TestXdlockHandle_Renew_LockNotHeld(t *testing.T) {
-	handle := &mockXdlockHandle{extendErr: xdlock.ErrLockNotHeld}
+	handle := &mockXdlockHandle{extendErr: xdlock.ErrNotLocked}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	result, err := adapter.TryLock(context.Background(), "test-job", 5*time.Minute)
 	require.NoError(t, err)
@@ -203,13 +220,14 @@ func TestXdlockAdapter_WithScheduler(t *testing.T) {
 	// 测试适配器与调度器的集成
 	handle := &mockXdlockHandle{}
 	factory := &mockXdlockFactory{handle: handle}
-	adapter := NewXdlockAdapter(factory)
+	adapter, err := NewXdlockAdapter(factory)
+	require.NoError(t, err)
 
 	scheduler := New(WithLocker(adapter), WithSeconds())
 	require.NotNil(t, scheduler)
 
 	executed := make(chan struct{}, 1)
-	_, err := scheduler.AddFunc("*/1 * * * * *", func(ctx context.Context) error {
+	_, err = scheduler.AddFunc("*/1 * * * * *", func(ctx context.Context) error {
 		executed <- struct{}{}
 		return nil
 	}, WithName("test-job"), WithLockTTL(5*time.Minute))

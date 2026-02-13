@@ -38,12 +38,14 @@ func IdentityAttrs(ctx context.Context) []slog.Attr {
 		return nil
 	}
 
-	// 快速检查：如果所有字段都为空，直接返回 nil 避免分配
-	if PlatformID(ctx) == "" && TenantID(ctx) == "" && TenantName(ctx) == "" {
+	// 设计决策: 直接调用 AppendIdentityAttrs 而非先做快速路径检查。
+	// 前版本先逐字段检查是否全空再调用 Append，导致非空场景（生产常见路径）
+	// 每个字段被 context.Value 查找两次。去除冗余检查后，非空路径减少 N 次查找。
+	attrs := AppendIdentityAttrs(make([]slog.Attr, 0, identityFieldCount), ctx)
+	if len(attrs) == 0 {
 		return nil
 	}
-
-	return AppendIdentityAttrs(make([]slog.Attr, 0, IdentityFieldCount), ctx)
+	return attrs
 }
 
 // =============================================================================
@@ -82,12 +84,11 @@ func TraceAttrs(ctx context.Context) []slog.Attr {
 		return nil
 	}
 
-	// 快速检查：如果所有字段都为空，直接返回 nil 避免分配
-	if TraceID(ctx) == "" && SpanID(ctx) == "" && RequestID(ctx) == "" && TraceFlags(ctx) == "" {
+	attrs := AppendTraceAttrs(make([]slog.Attr, 0, traceFieldCount), ctx)
+	if len(attrs) == 0 {
 		return nil
 	}
-
-	return AppendTraceAttrs(make([]slog.Attr, 0, TraceFieldCount), ctx)
+	return attrs
 }
 
 // =============================================================================
@@ -135,13 +136,11 @@ func PlatformAttrs(ctx context.Context) []slog.Attr {
 		return nil
 	}
 
-	// 快速检查：如果所有字段都未设置，直接返回 nil 避免分配
-	_, hasParentOK := HasParent(ctx)
-	if !hasParentOK && UnclassRegionID(ctx) == "" {
+	attrs := AppendPlatformAttrs(make([]slog.Attr, 0, platformFieldCount), ctx)
+	if len(attrs) == 0 {
 		return nil
 	}
-
-	return AppendPlatformAttrs(make([]slog.Attr, 0, PlatformFieldCount), ctx)
+	return attrs
 }
 
 // =============================================================================
@@ -151,22 +150,30 @@ func PlatformAttrs(ctx context.Context) []slog.Attr {
 // LogAttrs 从 context 提取所有上下文信息，转换为 slog.Attr 切片
 // 包含身份信息、追踪信息、部署类型和平台信息，只返回非空/已设置的字段。
 //
-// 注意：deployment_type 为必填字段，缺失时会返回错误；其他字段仍会尽可能返回已存在值。
+// deployment_type 为必填字段，缺失或无效时返回错误。
+// 错误时仍返回已收集的部分属性（identity/trace/platform），调用方可自行决定是否使用。
+// 如果 context 中完全没有任何字段，返回 (nil, err) 避免不必要的分配。
 func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
 
-	// 使用 Append 变体直接追加到预分配切片，避免中间分配
-	attrs := make([]slog.Attr, 0, IdentityFieldCount+TraceFieldCount+DeploymentFieldCount+PlatformFieldCount)
+	// 先检查必填的 deployment_type，在错误路径上延迟分配
+	dt, err := GetDeploymentType(ctx)
+	if err != nil {
+		// 部署类型缺失/无效，尝试收集其他字段作为部分结果
+		var partial []slog.Attr
+		partial = AppendIdentityAttrs(partial, ctx)
+		partial = AppendTraceAttrs(partial, ctx)
+		partial = AppendPlatformAttrs(partial, ctx)
+		return partial, err
+	}
+
+	// 成功路径：预分配完整容量
+	attrs := make([]slog.Attr, 0, identityFieldCount+traceFieldCount+deploymentFieldCount+platformFieldCount)
 	attrs = AppendIdentityAttrs(attrs, ctx)
 	attrs = AppendTraceAttrs(attrs, ctx)
 	attrs = AppendPlatformAttrs(attrs, ctx)
-
-	dt, err := GetDeploymentType(ctx)
-	if err != nil {
-		return attrs, err
-	}
 	attrs = append(attrs, slog.String(KeyDeploymentType, dt.String()))
 
 	return attrs, nil

@@ -17,6 +17,10 @@ const (
 	EventPut EventType = iota
 	// EventDelete 删除事件。
 	EventDelete
+	// EventUnknown 未知事件类型。
+	// 设计决策: 使用显式常量而非默认零值，防止未来 etcd 新增事件类型时
+	// 被静默当作 EventPut 处理。
+	EventUnknown EventType = -1
 )
 
 // String 返回事件类型的字符串表示。
@@ -81,8 +85,9 @@ type Event struct {
 }
 
 // DefaultWatchBufferSize 默认 Watch 事件通道缓冲区大小。
-// 缓冲区用于暂存来自 etcd 的事件，减少事件处理慢时的阻塞。
-// 在高频更新场景下，建议通过 WithBufferSize 增大此值。
+// 适合中等频率（< 1000 events/s）的场景。
+// 高频更新场景建议通过 WithBufferSize 增大此值（如 1024 或更高），
+// 低频场景可适当减小以节省内存。
 const DefaultWatchBufferSize = 256
 
 // watchOptions Watch 选项。
@@ -224,6 +229,8 @@ func (c *Client) runWatchLoop(ctx context.Context, key string, etcdOpts []client
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.closeCh:
+			return
 		case resp, ok := <-watchCh:
 			if !ok {
 				// watch 通道被关闭（通常是 context 取消导致）
@@ -255,6 +262,8 @@ func (c *Client) sendErrorEvent(ctx context.Context, eventCh chan<- Event, err e
 	case eventCh <- Event{Error: err, Revision: lastRevision, CompactRevision: compactRevision}:
 	case <-ctx.Done():
 		// context 已取消，不发送错误事件
+	case <-c.closeCh:
+		// 客户端已关闭，不发送错误事件
 	}
 }
 
@@ -268,6 +277,8 @@ func (c *Client) dispatchEvents(ctx context.Context, events []*clientv3.Event, e
 		case eventCh <- event:
 			lastRevision = event.Revision
 		case <-ctx.Done():
+			return lastRevision, false
+		case <-c.closeCh:
 			return lastRevision, false
 		}
 	}
@@ -288,6 +299,9 @@ func convertEvent(ev *clientv3.Event) Event {
 	case mvccpb.DELETE:
 		event.Type = EventDelete
 		event.Value = nil
+	default:
+		event.Type = EventUnknown
+		event.Value = ev.Kv.Value
 	}
 
 	return event
@@ -417,21 +431,40 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 			continue
 		}
 
-		shouldExit, rev, compactRev := c.consumeEventsUntilError(ctx, innerCh, eventCh)
-		if rev > 0 {
-			state.lastRevision = rev
-		}
-		if compactRev > 0 {
-			state.compactRevision = compactRev
-		}
+		shouldExit, rev, compactRev, disconnectErr, consumed := c.consumeEventsUntilError(ctx, innerCh, eventCh)
+		state.updateAfterConsume(rev, compactRev, consumed, cfg.InitialBackoff)
 		if shouldExit {
 			return
 		}
 
-		if c.handleWatchRetry(ctx, cfg, state, fmt.Errorf("watch channel closed")) {
+		retryErr := disconnectErrOrDefault(disconnectErr)
+		if c.handleWatchRetry(ctx, cfg, state, retryErr) {
 			return
 		}
 	}
+}
+
+// updateAfterConsume 更新消费事件后的重试状态。
+// 成功消费过事件说明连接曾正常，重置连续失败计数。
+func (s *watchRetryState) updateAfterConsume(rev, compactRev int64, consumed bool, initialBackoff time.Duration) {
+	if rev > 0 {
+		s.lastRevision = rev
+	}
+	if compactRev > 0 {
+		s.compactRevision = compactRev
+	}
+	if consumed {
+		s.retryCount = 0
+		s.backoff = initialBackoff
+	}
+}
+
+// disconnectErrOrDefault 返回断开错误，无错误时使用 ErrWatchDisconnected 哨兵错误。
+func disconnectErrOrDefault(err error) error {
+	if err != nil {
+		return err
+	}
+	return ErrWatchDisconnected
 }
 
 // watchRetryState 保存 watch 重试状态。
@@ -480,48 +513,69 @@ func (c *Client) handleWatchRetry(ctx context.Context, cfg RetryConfig, state *w
 	if cfg.MaxRetries > 0 && state.retryCount > cfg.MaxRetries {
 		return true
 	}
+	// 在执行回调和 sleep 前检查 context，避免已取消后仍执行耗时操作
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+	}
 	if cfg.OnRetry != nil {
 		cfg.OnRetry(state.retryCount, err, state.backoff, state.lastRevision)
 	}
-	c.sleepWithContext(ctx, state.backoff)
-	state.backoff = c.nextBackoff(state.backoff, cfg)
+	sleepWithContext(ctx, state.backoff)
+	state.backoff = nextBackoff(state.backoff, cfg)
 	return false
 }
 
 // consumeEventsUntilError 消费事件直到发生错误。
-// 返回 (shouldExit, lastRevision, compactRevision)。
+// 返回 (shouldExit, lastRevision, compactRevision, disconnectErr)。
 // compactRevision 在 compaction 错误时非零，用于恢复时跳过已压缩的版本。
-func (c *Client) consumeEventsUntilError(ctx context.Context, innerCh <-chan Event, eventCh chan<- Event) (bool, int64, int64) {
-	var lastRevision int64
+// disconnectErr 是导致断开的原始错误，用于传递给 OnRetry 回调。
+// eventsConsumed 表示是否成功消费了至少一个正常事件。
+func (c *Client) consumeEventsUntilError(ctx context.Context, innerCh <-chan Event, eventCh chan<- Event) (shouldExit bool, lastRevision int64, compactRevision int64, disconnectErr error, eventsConsumed bool) {
 	for {
 		select {
 		case <-ctx.Done():
-			return true, lastRevision, 0
+			return true, lastRevision, 0, nil, eventsConsumed
+		case <-c.closeCh:
+			return true, lastRevision, 0, nil, eventsConsumed
 		case event, ok := <-innerCh:
 			if !ok {
 				// 通道关闭，需要重连
-				return false, lastRevision, 0
+				return false, lastRevision, 0, nil, eventsConsumed
 			}
 			if event.Error != nil {
 				// 发生错误，需要重连
 				if event.Revision > 0 {
 					lastRevision = event.Revision
 				}
-				return false, lastRevision, event.CompactRevision
+				return false, lastRevision, event.CompactRevision, event.Error, eventsConsumed
 			}
 			// 正常事件，转发到输出通道
+			eventsConsumed = true
 			lastRevision = event.Revision
-			select {
-			case eventCh <- event:
-			case <-ctx.Done():
-				return true, lastRevision, 0
+			if !c.forwardEvent(ctx, eventCh, event) {
+				return true, lastRevision, 0, nil, eventsConsumed
 			}
 		}
 	}
 }
 
+// forwardEvent 将事件转发到输出通道。
+// 返回 false 表示应该退出（context 取消或客户端关闭）。
+func (c *Client) forwardEvent(ctx context.Context, eventCh chan<- Event, event Event) bool {
+	select {
+	case eventCh <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-c.closeCh:
+		return false
+	}
+}
+
 // sleepWithContext 带 context 的 sleep。
-func (c *Client) sleepWithContext(ctx context.Context, d time.Duration) {
+func sleepWithContext(ctx context.Context, d time.Duration) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
@@ -531,10 +585,7 @@ func (c *Client) sleepWithContext(ctx context.Context, d time.Duration) {
 }
 
 // nextBackoff 计算下一次退避时间。
-func (c *Client) nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
+func nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
 	next := time.Duration(float64(current) * cfg.BackoffMultiplier)
-	if next > cfg.MaxBackoff {
-		next = cfg.MaxBackoff
-	}
-	return next
+	return min(next, cfg.MaxBackoff)
 }

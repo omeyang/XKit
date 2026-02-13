@@ -13,14 +13,42 @@
 //
 //   - Always(): 全采样，总是返回 true
 //   - Never(): 不采样，总是返回 false
-//   - NewRateSampler(rate): 固定比率采样（如 10% 采样率）
-//   - NewCountSampler(n): 计数采样（每 n 个采样 1 个）
-//   - NewProbabilitySampler(p): 概率采样
+//   - NewRateSampler(rate): 固定比率采样（如 10% 采样率），rate 超出 [0, 1] 范围返回错误
+//   - NewCountSampler(n): 计数采样（每 n 个采样 1 个），n < 1 时返回错误
 //
 // # 高级策略
 //
-//   - NewCompositeSampler(mode, ...): 组合多个采样器（AND/OR 逻辑）
-//   - NewKeyBasedSampler(rate, keyFunc): 基于 key 的一致性采样（使用 xxhash）
+//   - NewCompositeSampler(mode, ...): 组合多个采样器（AND/OR 逻辑），非法 mode 或 nil 子采样器返回错误
+//   - NewKeyBasedSampler(rate, keyFunc): 基于 key 的一致性采样（使用 xxhash），keyFunc 不能为 nil
+//
+// # 错误处理
+//
+// 所有构造函数对无效参数返回错误（fail-fast）：
+//   - ErrInvalidRate: rate 超出 [0.0, 1.0] 范围或为 NaN
+//   - ErrNilKeyFunc: keyFunc 为 nil
+//   - ErrInvalidCount: count n < 1
+//   - ErrInvalidMode: CompositeMode 不是 ModeAND 或 ModeOR
+//   - ErrNilSampler: CompositeSampler 的子采样器为 nil
+//
+// # 不可变性与状态
+//
+// 所有采样器的配置（rate、n、mode 等）创建后不可变，不支持运行时动态修改。
+// CountSampler 和 CompositeSampler 的内部计数器状态可通过 Reset() 重置。
+// 如需动态调整采样率，建议使用 atomic.Pointer[Sampler] 持有采样器引用，
+// 在配置变更时创建新采样器并原子替换。
+//
+// # 零值行为
+//
+// CountSampler 零值（未经构造函数创建）按全采样处理，避免除零 panic。
+// 其他采样器应始终通过构造函数创建。
+//
+// # 与 OTel 的关系
+//
+// xsampling.Sampler 是通用采样接口（ShouldSample(ctx) bool），
+// 与 OTel trace.Sampler（ShouldSample(SamplingParameters) SamplingResult）
+// 签名不同。xsampling 适用于日志、指标等通用采样场景；如需作为 OTel
+// TracerProvider 的采样器，需自行编写适配层将 xsampling.Sampler 包装为
+// trace.Sampler。本包不引入 OTel SDK 依赖以保持轻量。
 //
 // # KeyBasedSampler 与跨进程一致性
 //
@@ -54,9 +82,7 @@
 // 确保安全随机性，单次采样决策耗时约 50-100ns。对于采样场景（通常每请求
 // 调用一次），此性能开销完全可接受。
 //
-// 基准结果（示例环境：linux/amd64, Xeon E5-2630 v4, `go test -bench=. -benchmem ./pkg/xsampling`）：
-//   - BenchmarkKeyBasedSampler: ~29.7 ns/op, 0 allocs/op
-//   - BenchmarkXXHash: ~71.6 ns/op
-//   - BenchmarkMaphashString: ~85.1 ns/op
-//   - BenchmarkFNVStdlib: ~122.5 ns/op
+// 运行基准测试：
+//
+//	go test -bench=. -benchmem ./pkg/observability/xsampling
 package xsampling

@@ -240,6 +240,20 @@ func TestTicker_NoImmediate(t *testing.T) {
 	}
 }
 
+func TestTicker_InvalidInterval(t *testing.T) {
+	for _, interval := range []time.Duration{0, -1, -time.Second} {
+		g, _ := NewGroup(context.Background())
+		g.Go(Ticker(interval, false, func(ctx context.Context) error {
+			return nil
+		}))
+
+		err := g.Wait()
+		if !errors.Is(err, ErrInvalidInterval) {
+			t.Errorf("interval=%v: expected ErrInvalidInterval, got %v", interval, err)
+		}
+	}
+}
+
 func TestTicker_ImmediateError(t *testing.T) {
 	expectedErr := errors.New("immediate error")
 
@@ -315,6 +329,39 @@ func TestTimer_Canceled(t *testing.T) {
 	}
 }
 
+func TestTimer_InvalidDelay(t *testing.T) {
+	for _, delay := range []time.Duration{-1, -time.Second, -time.Hour} {
+		g, _ := NewGroup(context.Background())
+		g.Go(Timer(delay, func(ctx context.Context) error {
+			return nil
+		}))
+
+		err := g.Wait()
+		if !errors.Is(err, ErrInvalidDelay) {
+			t.Errorf("delay=%v: expected ErrInvalidDelay, got %v", delay, err)
+		}
+	}
+}
+
+func TestTimer_ZeroDelay(t *testing.T) {
+	// delay=0 应立即执行（有效用例）
+	var executed atomic.Bool
+
+	g, _ := NewGroup(context.Background())
+	g.Go(Timer(0, func(ctx context.Context) error {
+		executed.Store(true)
+		return nil
+	}))
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if !executed.Load() {
+		t.Error("timer function was not executed with zero delay")
+	}
+}
+
 func TestTimer_Error(t *testing.T) {
 	expectedErr := errors.New("timer error")
 
@@ -347,6 +394,41 @@ func TestHTTPServer(t *testing.T) {
 
 	if !server.shutdownCalled.Load() {
 		t.Error("Shutdown was not called")
+	}
+}
+
+func TestHTTPServer_ExternalShutdown(t *testing.T) {
+	// 测试外部直接关闭服务器（非 ctx 驱动）时不会永久阻塞
+	server := newMockHTTPServer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	g, _ := NewGroup(ctx)
+	g.Go(HTTPServer(server, time.Second))
+
+	// 外部触发关闭（不通过 ctx）
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		server.triggerClose()
+	}()
+
+	// 随后取消 ctx，确保不会永久阻塞
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- g.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		// 不应该永久阻塞
+		_ = err
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTPServer blocked indefinitely on external shutdown")
 	}
 }
 
@@ -400,29 +482,6 @@ func TestHTTPServer_NoTimeout(t *testing.T) {
 
 	g, _ := NewGroup(ctx)
 	g.Go(HTTPServer(server, 0)) // 无超时
-
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-	}()
-
-	if err := g.Wait(); err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if !server.shutdownCalled.Load() {
-		t.Error("Shutdown was not called")
-	}
-}
-
-func TestHTTPServer_WithLogger(t *testing.T) {
-	server := newMockHTTPServer()
-	logger := slog.Default()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	g, _ := NewGroup(ctx)
-	g.Go(HTTPServer(server, time.Second, WithLogger(logger)))
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -502,6 +561,14 @@ func TestSignalError(t *testing.T) {
 func TestSignalError_Error(t *testing.T) {
 	err := &SignalError{Signal: syscall.SIGINT}
 	expected := "received signal interrupt"
+	if err.Error() != expected {
+		t.Errorf("expected %q, got %q", expected, err.Error())
+	}
+}
+
+func TestSignalError_Error_Nil(t *testing.T) {
+	err := &SignalError{Signal: nil}
+	expected := "received signal <nil>"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -599,8 +666,7 @@ func TestMultipleServices(t *testing.T) {
 
 	g, _ := NewGroup(context.Background())
 
-	for i := range 5 {
-		_ = i
+	for range 5 {
 		g.Go(func(ctx context.Context) error {
 			count.Add(1)
 			return nil
@@ -901,6 +967,55 @@ func TestWithSignals(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for RunWithOptions to return")
+	}
+}
+
+func TestWithSignals_EmptySlice(t *testing.T) {
+	// WithSignals([]os.Signal{}) 应等价于使用默认信号列表，
+	// 而非 signal.Notify 的"监听所有信号"行为。
+	sigCh := make(chan os.Signal, 1)
+	ctx := withTestSigChan(context.Background(), sigCh)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx,
+			[]Option{WithSignals([]os.Signal{})},
+			func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	sigCh <- syscall.SIGTERM
+
+	select {
+	case err := <-done:
+		var sigErr *SignalError
+		if !errors.As(err, &sigErr) {
+			t.Fatalf("expected SignalError, got %v", err)
+		}
+		if sigErr.Signal != syscall.SIGTERM {
+			t.Errorf("expected SIGTERM, got %v", sigErr.Signal)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for RunWithOptions to return")
+	}
+}
+
+func TestWithSignals_DefensiveCopy(t *testing.T) {
+	signals := []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	opt := WithSignals(signals)
+
+	// 修改原始切片
+	signals[0] = syscall.SIGHUP
+
+	// 应用 option 并验证不受影响
+	opts := defaultOptions()
+	opt(opts)
+	if opts.signals[0] != syscall.SIGINT {
+		t.Error("WithSignals should make a defensive copy")
 	}
 }
 

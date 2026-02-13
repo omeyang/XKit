@@ -18,21 +18,19 @@ type Stats struct {
 	SlowQueries int64
 
 	// Pool 是连接池状态。
-	// 注意：当前 clickhouse-go/v2 驱动未直接暴露连接池详细信息，
-	// 此字段暂时返回空值。如需连接池监控，请使用驱动的 Stats() 方法。
+	// 数据来自 clickhouse-go/v2 驱动的 Stats() 方法。
 	Pool PoolStats
 }
 
 // PoolStats 包含连接池状态信息。
-// 注意：当前实现暂不提供连接池详细信息，所有字段均为零值。
-// clickhouse-go/v2 驱动的连接池信息需通过其他方式获取。
+// 数据来自 clickhouse-go/v2 驱动的 Conn.Stats()。
 type PoolStats struct {
-	// Open 是打开的连接数（当前未实现）。
+	// Open 是打开的连接数。
 	Open int
 
-	// Idle 是空闲连接数（当前未实现）。
+	// Idle 是空闲连接数。
 	Idle int
 
-	// InUse 是使用中连接数（当前未实现）。
+	// InUse 是使用中连接数（Open - Idle）。
 	InUse int
 }

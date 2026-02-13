@@ -157,10 +157,10 @@ func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
 	var nilCtx context.Context
-	// nil context + nil observer
+	// nil context + nil observer → ctx 归一化为 context.Background()
 	newCtx, span := xmetrics.Start(nilCtx, nil, xmetrics.SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 

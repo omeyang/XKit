@@ -97,6 +97,17 @@ func DefaultConfig() *Config {
 	}
 }
 
+// String 返回配置的字符串表示，密码字段会被遮蔽。
+// 避免在日志、错误信息或调试输出中泄露敏感信息。
+func (c *Config) String() string {
+	password := ""
+	if c.Password != "" {
+		password = "***"
+	}
+	return fmt.Sprintf("Config{Endpoints:%v Username:%s Password:%s DialTimeout:%v}",
+		c.Endpoints, c.Username, password, c.DialTimeout)
+}
+
 // Validate 验证配置有效性。
 // 检查必填字段是否已配置，并验证 endpoint 格式。
 //
@@ -118,6 +129,20 @@ func (c *Config) Validate() error {
 		if err := validateEndpoint(ep); err != nil {
 			return fmt.Errorf("%w: endpoint[%d]=%q %v", ErrInvalidEndpoint, i, ep, err)
 		}
+	}
+
+	// 验证 Duration 字段非负（零值由 applyDefaults 补充默认值，但负值是无效配置）
+	if c.DialTimeout < 0 {
+		return fmt.Errorf("%w: DialTimeout must not be negative", ErrInvalidConfig)
+	}
+	if c.DialKeepAliveTime < 0 {
+		return fmt.Errorf("%w: DialKeepAliveTime must not be negative", ErrInvalidConfig)
+	}
+	if c.DialKeepAliveTimeout < 0 {
+		return fmt.Errorf("%w: DialKeepAliveTimeout must not be negative", ErrInvalidConfig)
+	}
+	if c.AutoSyncInterval < 0 {
+		return fmt.Errorf("%w: AutoSyncInterval must not be negative", ErrInvalidConfig)
 	}
 
 	return nil
@@ -154,6 +179,10 @@ func validateEndpoint(ep string) error {
 	lastColon := strings.LastIndex(endpoint, ":")
 	if lastColon == -1 {
 		return fmt.Errorf("missing port")
+	}
+	host := endpoint[:lastColon]
+	if host == "" {
+		return fmt.Errorf("missing host")
 	}
 	portPart := endpoint[lastColon+1:]
 	if portPart == "" {

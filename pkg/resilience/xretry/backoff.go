@@ -54,10 +54,12 @@ func WithMaxDelay(d time.Duration) ExponentialBackoffOption {
 	}
 }
 
-// WithMultiplier 设置乘数因子
+// WithMultiplier 设置乘数因子（>= 1.0）
+// 传入 1.0 表示固定延迟（无指数增长）。
+// 小于 1.0 的值会被忽略（保持默认值 2.0）。
 func WithMultiplier(m float64) ExponentialBackoffOption {
 	return func(b *ExponentialBackoff) {
-		if m > 1 {
+		if m >= 1 {
 			b.multiplier = m
 		}
 	}
@@ -108,9 +110,14 @@ func (b *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 		delay *= jitterFactor
 	}
 
-	// 限制最大延迟
-	if delay > float64(b.maxDelay) {
-		delay = float64(b.maxDelay)
+	// 设计决策: NaN 安全的延迟限制。当 attempt 极大时 math.Pow 溢出为 +Inf，
+	// 与 jitterFactor=0 相乘产生 NaN。IEEE 754 中 NaN 的所有比较均返回 false，
+	// 会绕过 maxDelay 限制。这里额外检查 NaN 和负数确保安全。
+	if math.IsNaN(delay) || delay < 0 {
+		return 0
+	}
+	if delay >= float64(b.maxDelay) {
+		return b.maxDelay
 	}
 
 	return time.Duration(delay)
@@ -190,13 +197,12 @@ func (b *NoBackoff) NextDelay(_ int) time.Duration {
 	return 0
 }
 
-// 确保实现了 BackoffPolicy 接口
+// 确保实现了接口
 var (
-	_ BackoffPolicy     = (*FixedBackoff)(nil)
-	_ BackoffPolicy     = (*ExponentialBackoff)(nil)
-	_ BackoffPolicy     = (*LinearBackoff)(nil)
-	_ BackoffPolicy     = (*NoBackoff)(nil)
-	_ ResettableBackoff = (*ExponentialBackoff)(nil)
+	_ BackoffPolicy = (*FixedBackoff)(nil)
+	_ BackoffPolicy = (*ExponentialBackoff)(nil)
+	_ BackoffPolicy = (*LinearBackoff)(nil)
+	_ BackoffPolicy = (*NoBackoff)(nil)
 )
 
 const (

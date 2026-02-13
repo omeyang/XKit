@@ -15,6 +15,7 @@ func BenchmarkCache_Get(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	cache.Set("benchmark_key", 42)
 
@@ -30,6 +31,7 @@ func BenchmarkCache_Get_Miss(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -43,6 +45,7 @@ func BenchmarkCache_Set(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -56,6 +59,7 @@ func BenchmarkCache_Set_Eviction(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	// 预填充缓存
 	for i := range 100 {
@@ -74,6 +78,7 @@ func BenchmarkCache_Contains(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	cache.Set("benchmark_key", 42)
 
@@ -89,14 +94,15 @@ func BenchmarkCache_Delete(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
+
+	cache.Set("del_key", 42)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		b.StopTimer()
-		cache.Set("del_key", 42)
-		b.StartTimer()
 		cache.Delete("del_key")
+		cache.Set("del_key", 42)
 	}
 }
 
@@ -105,6 +111,7 @@ func BenchmarkCache_Len(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	for i := range 500 {
 		cache.Set(fmt.Sprintf("key_%d", i), i)
@@ -122,6 +129,7 @@ func BenchmarkCache_Keys(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	for i := range 100 {
 		cache.Set(fmt.Sprintf("key_%d", i), i)
@@ -143,6 +151,7 @@ func BenchmarkCache_Get_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	for i := range 100 {
 		cache.Set(fmt.Sprintf("key_%d", i), i)
@@ -164,6 +173,7 @@ func BenchmarkCache_Set_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -181,6 +191,7 @@ func BenchmarkCache_SetAndGet_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -207,6 +218,7 @@ func BenchmarkCache_IntKey_Get(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	cache.Set(42, 100)
 
@@ -222,6 +234,7 @@ func BenchmarkCache_IntKey_Set(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -251,6 +264,7 @@ func benchmarkCacheSetWithSize(b *testing.B, size int) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	value := make([]byte, size)
 	for i := range value {
@@ -273,6 +287,7 @@ func BenchmarkCache_NoTTL_Get(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	cache.Set("benchmark_key", 42)
 
@@ -288,6 +303,7 @@ func BenchmarkCache_NoTTL_Set(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() { cache.Close() })
 
 	b.ReportAllocs()
 	b.ResetTimer()

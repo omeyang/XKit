@@ -421,9 +421,6 @@ func TestPlatformKeyConstants(t *testing.T) {
 	if xctx.KeyUnclassRegionID != "unclass_region_id" {
 		t.Errorf("KeyUnclassRegionID = %q, want %q", xctx.KeyUnclassRegionID, "unclass_region_id")
 	}
-	if xctx.PlatformFieldCount != 2 {
-		t.Errorf("PlatformFieldCount = %d, want %d", xctx.PlatformFieldCount, 2)
-	}
 }
 
 // =============================================================================

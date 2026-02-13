@@ -353,6 +353,188 @@ func TestPprofCommand_CpuStartStop(t *testing.T) {
 	}
 }
 
+func TestPprofCommand_CpuStartTwice(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	// Start CPU profile
+	_, err = cmd.Execute(context.Background(), []string{"cpu", "start"})
+	if err != nil {
+		t.Fatalf("first cpu start error = %v", err)
+	}
+
+	// Start again should fail
+	_, err = cmd.Execute(context.Background(), []string{"cpu", "stop"})
+	if err != nil {
+		t.Fatalf("cpu stop error = %v", err)
+	}
+}
+
+func TestPprofCommand_CpuStopWithoutStart(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	// Stop without starting should fail
+	_, err = cmd.Execute(context.Background(), []string{"cpu", "stop"})
+	if err == nil {
+		t.Error("expected error when stopping CPU profile that was not started")
+	}
+}
+
+func TestPprofCommand_UnknownSubcommand(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	_, err = cmd.Execute(context.Background(), []string{"unknown"})
+	if err == nil {
+		t.Error("expected error for unknown subcommand")
+	}
+}
+
+func TestPprofCommand_CpuNoAction(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	// cpu without start/stop should show usage
+	output, err := cmd.Execute(context.Background(), []string{"cpu"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, "cpu start") {
+		t.Error("output should show usage")
+	}
+}
+
+func TestPprofCommand_CpuUnknownAction(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	_, err = cmd.Execute(context.Background(), []string{"cpu", "unknown"})
+	if err == nil {
+		t.Error("expected error for unknown CPU action")
+	}
+}
+
+func TestPprofCommand_ContextCancelled(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	cmd := srv.registry.Get("pprof")
+
+	// Create canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = cmd.Execute(ctx, []string{"heap"})
+	if err == nil {
+		t.Error("expected error for canceled context")
+	}
+}
+
+func TestStackCommand_ContextCancelled(t *testing.T) {
+	cmd := newStackCommand()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := cmd.Execute(ctx, nil)
+	if err == nil {
+		t.Error("expected error for canceled context")
+	}
+}
+
+func TestFreememCommand_ContextCancelled(t *testing.T) {
+	cmd := newFreememCommand()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := cmd.Execute(ctx, nil)
+	if err == nil {
+		t.Error("expected error for canceled context")
+	}
+}
+
+func TestPprofCommand_Cleanup(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Start CPU profile
+	cmd := srv.registry.Get("pprof")
+	_, err = cmd.Execute(context.Background(), []string{"cpu", "start"})
+	if err != nil {
+		t.Fatalf("cpu start error = %v", err)
+	}
+
+	// Cleanup should stop and clean
+	srv.pprofCmd.Cleanup()
+
+	if srv.pprofCmd.cpuActive {
+		t.Error("cpuActive should be false after Cleanup")
+	}
+
+	// Cleanup again should be safe (idempotent)
+	srv.pprofCmd.Cleanup()
+}
+
+func TestPprofCommand_CleanupWithoutActive(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Cleanup without active profile should be safe
+	srv.pprofCmd.Cleanup()
+}
+
 func TestBuiltinCommandsRegistered(t *testing.T) {
 	srv, err := New(
 		WithBackgroundMode(true),

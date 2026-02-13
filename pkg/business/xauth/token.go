@@ -30,9 +30,10 @@ type TokenManager struct {
 	// 后台刷新去重：防止同一租户重复刷新
 	refreshing sync.Map // map[tenantID]struct{}
 
-	// 用于 graceful shutdown，取消后台刷新
+	// 用于 graceful shutdown，取消后台刷新并等待完成
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // TokenManagerConfig TokenManager 配置。
@@ -47,6 +48,8 @@ type TokenManagerConfig struct {
 }
 
 // NewTokenManager 创建 TokenManager。
+// 设计决策: 通过 NewClient 创建时，所有依赖已经过验证；
+// 直接使用时，nil Config/HTTP/Cache 会在此处 panic，属于编程错误（同 sync.Mutex 使用前不初始化）。
 func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -54,7 +57,7 @@ func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
 	if cfg.Observer == nil {
 		cfg.Observer = xmetrics.NoopObserver{}
 	}
-	if cfg.RefreshThreshold <= 0 {
+	if cfg.RefreshThreshold <= 0 && cfg.Config != nil {
 		cfg.RefreshThreshold = cfg.Config.TokenRefreshThreshold
 	}
 	if cfg.RefreshThreshold <= 0 {
@@ -81,10 +84,10 @@ func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
 func (m *TokenManager) GetToken(ctx context.Context, tenantID string) (string, error) {
 	// 开始观测
 	ctx, span := xmetrics.Start(ctx, m.observer, xmetrics.SpanOptions{
-		Component: "xauth",
-		Operation: "GetToken",
+		Component: MetricsComponent,
+		Operation: MetricsOpGetToken,
 		Kind:      xmetrics.KindClient,
-		Attrs:     []xmetrics.Attr{{Key: "tenant_id", Value: tenantID}},
+		Attrs:     []xmetrics.Attr{{Key: MetricsAttrTenantID, Value: tenantID}},
 	})
 	var err error
 	defer func() {
@@ -103,7 +106,11 @@ func (m *TokenManager) GetToken(ctx context.Context, tenantID string) (string, e
 	// 检查是否需要后台刷新（去重：防止同一租户重复刷新）
 	if m.enableBackgroundRefresh && token.IsExpiringSoon(m.refreshThreshold) {
 		if _, loaded := m.refreshing.LoadOrStore(tenantID, struct{}{}); !loaded {
-			go m.backgroundRefresh(tenantID)
+			m.wg.Add(1)
+			go func() {
+				defer m.wg.Done()
+				m.backgroundRefresh(tenantID)
+			}()
 		}
 	}
 
@@ -131,20 +138,22 @@ func (m *TokenManager) obtainToken(ctx context.Context, tenantID string) (*Token
 
 // obtainClientToken 使用 client_credentials 获取 Token。
 func (m *TokenManager) obtainClientToken(ctx context.Context, tenantID string) (*TokenInfo, error) {
-	// 构建 URL
-	params := url.Values{
+	// 凭据通过 POST body 传递，避免在 URL 中暴露（RFC 6749 §2.3.1）
+	form := url.Values{
 		"client_id":     {m.config.ClientID},
 		"client_secret": {m.config.ClientSecret},
 		"grant_type":    {"client_credentials"},
 	}
 	if tenantID != "" {
-		params.Set("project_id", tenantID)
+		form.Set("project_id", tenantID)
 	}
 
-	path := PathTokenObtain + "?" + params.Encode()
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	}
 
 	var token TokenInfo
-	if err := m.http.Post(ctx, path, nil, nil, &token); err != nil {
+	if err := m.http.Post(ctx, PathTokenObtain, headers, form.Encode(), &token); err != nil {
 		return nil, fmt.Errorf("obtain client token: %w", err)
 	}
 
@@ -222,21 +231,21 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 		return nil, ErrRefreshTokenNotFound
 	}
 
-	params := url.Values{
+	// 凭据通过 POST body 传递，避免在 URL 中暴露
+	form := url.Values{
 		"client_id":     {m.config.ClientID},
 		"client_secret": {m.config.ClientSecret},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {currentToken.RefreshToken},
 	}
 
-	path := PathTokenObtain + "?" + params.Encode()
-
 	headers := map[string]string{
 		"Authorization": "Bearer " + currentToken.AccessToken,
+		"Content-Type":  "application/x-www-form-urlencoded",
 	}
 
 	var token TokenInfo
-	if err := m.http.Post(ctx, path, headers, nil, &token); err != nil {
+	if err := m.http.Post(ctx, PathTokenObtain, headers, form.Encode(), &token); err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
 
@@ -266,8 +275,8 @@ func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInf
 
 	// 开始观测
 	ctx, span := xmetrics.Start(ctx, m.observer, xmetrics.SpanOptions{
-		Component: "xauth",
-		Operation: "VerifyToken",
+		Component: MetricsComponent,
+		Operation: MetricsOpVerifyToken,
 		Kind:      xmetrics.KindClient,
 	})
 	var verifyErr error
@@ -275,13 +284,16 @@ func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInf
 		span.End(xmetrics.Result{Err: verifyErr})
 	}()
 
-	params := url.Values{
+	// Token 通过 POST body 传递，避免在 URL 中暴露
+	form := url.Values{
 		"token": {token},
 	}
-	path := PathTokenVerify + "?" + params.Encode()
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	}
 
 	var resp VerifyResponse
-	if err := m.http.Post(ctx, path, nil, nil, &resp); err != nil {
+	if err := m.http.Post(ctx, PathTokenVerify, headers, form.Encode(), &resp); err != nil {
 		verifyErr = fmt.Errorf("verify token: %w", err)
 		return nil, verifyErr
 	}
@@ -360,12 +372,13 @@ func (m *TokenManager) backgroundRefresh(tenantID string) {
 	)
 }
 
-// Stop 停止 TokenManager，取消所有后台刷新任务。
+// Stop 停止 TokenManager，取消所有后台刷新任务并等待完成。
 // 这是 graceful shutdown 的一部分，应在 client.Close() 时调用。
 func (m *TokenManager) Stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.wg.Wait()
 }
 
 // calculateTokenTTL 计算 Token 缓存 TTL。

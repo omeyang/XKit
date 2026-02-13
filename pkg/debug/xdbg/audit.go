@@ -81,6 +81,10 @@ type AuditSanitizer func(command string, args []string) []string
 
 // DefaultAuditSanitizer 默认脱敏函数。
 // 默认不进行脱敏，直接返回原始参数。
+//
+// 设计决策: 默认透传而非"默认全遮蔽"。内置命令（setlog、stack、freemem、pprof）
+// 的参数均不含敏感信息，"默认遮蔽"会让审计日志在大多数场景下丧失可读性。
+// 如需对自定义命令参数脱敏，使用 WithAuditSanitizer 配置按命令/参数名过滤。
 func DefaultAuditSanitizer(_ string, args []string) []string {
 	return args
 }
@@ -138,11 +142,11 @@ func (l *defaultAuditLogger) Log(record *AuditRecord) {
 	fmt.Fprintf(&sb, "[%s] [XDBG] [%s] identity=%s", ts, record.Event, identity)
 
 	if record.Command != "" {
-		fmt.Fprintf(&sb, " command=%s", record.Command)
+		fmt.Fprintf(&sb, " command=%q", record.Command)
 	}
 
 	if len(record.Args) > 0 {
-		fmt.Fprintf(&sb, " args=%v", record.Args)
+		fmt.Fprintf(&sb, " args=%q", record.Args)
 	}
 
 	if record.Duration > 0 {
@@ -154,7 +158,7 @@ func (l *defaultAuditLogger) Log(record *AuditRecord) {
 	}
 
 	for k, v := range record.Extra {
-		fmt.Fprintf(&sb, " %s=%q", k, v)
+		fmt.Fprintf(&sb, " %q=%q", k, v)
 	}
 
 	line := sb.String()
@@ -185,17 +189,6 @@ func (l *noopAuditLogger) Log(_ *AuditRecord) {}
 
 // Close 空操作。
 func (l *noopAuditLogger) Close() error { return nil }
-
-// AuditFormat 审计日志格式。
-type AuditFormat string
-
-const (
-	// AuditFormatText 文本格式。
-	AuditFormatText AuditFormat = "text"
-
-	// AuditFormatJSON JSON 格式。
-	AuditFormatJSON AuditFormat = "json"
-)
 
 // jsonAuditLogger JSON 格式审计日志记录器。
 // 便于日志聚合系统（如 ELK、Loki）解析。

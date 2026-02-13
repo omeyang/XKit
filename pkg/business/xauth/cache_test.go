@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedisCacheStore_TokenKey(t *testing.T) {
@@ -42,6 +47,11 @@ func TestRedisCacheStore_DefaultKeyPrefix(t *testing.T) {
 }
 
 func TestNewRedisCacheStore(t *testing.T) {
+	t.Run("nil client", func(t *testing.T) {
+		_, err := NewRedisCacheStore(nil)
+		assert.ErrorIs(t, err, ErrNilRedisClient)
+	})
+
 	t.Run("default key prefix", func(t *testing.T) {
 		// We can't test with real Redis client, but we can test construction
 		store := &RedisCacheStore{
@@ -72,65 +82,43 @@ func TestMockCacheStore_Integration(t *testing.T) {
 		// Set token
 		token := testToken("test-token", 3600)
 		err := store.SetToken(ctx, "tenant-1", token, time.Hour)
-		if err != nil {
-			t.Fatalf("SetToken failed: %v", err)
-		}
+		require.NoError(t, err, "SetToken failed")
 
 		// Get token
 		got, err := store.GetToken(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("GetToken failed: %v", err)
-		}
-		if got.AccessToken != token.AccessToken {
-			t.Errorf("AccessToken = %q, expected %q", got.AccessToken, token.AccessToken)
-		}
+		require.NoError(t, err, "GetToken failed")
+		assert.Equal(t, token.AccessToken, got.AccessToken)
 
 		// Get nonexistent
 		_, err = store.GetToken(ctx, "nonexistent")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err)
 
 		// Delete
 		err = store.Delete(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("Delete failed: %v", err)
-		}
+		require.NoError(t, err, "Delete failed")
 
 		// Verify deleted
 		_, err = store.GetToken(ctx, "tenant-1")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss after delete, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err, "expected ErrCacheMiss after delete")
 	})
 
 	t.Run("platform data operations", func(t *testing.T) {
 		// Set platform data
 		err := store.SetPlatformData(ctx, "tenant-1", "platform_id", "platform-123", time.Hour)
-		if err != nil {
-			t.Fatalf("SetPlatformData failed: %v", err)
-		}
+		require.NoError(t, err, "SetPlatformData failed")
 
 		// Get platform data
 		value, err := store.GetPlatformData(ctx, "tenant-1", "platform_id")
-		if err != nil {
-			t.Fatalf("GetPlatformData failed: %v", err)
-		}
-		if value != "platform-123" {
-			t.Errorf("value = %q, expected 'platform-123'", value)
-		}
+		require.NoError(t, err, "GetPlatformData failed")
+		assert.Equal(t, "platform-123", value)
 
 		// Get nonexistent field
 		_, err = store.GetPlatformData(ctx, "tenant-1", "nonexistent")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err)
 
 		// Get nonexistent tenant
 		_, err = store.GetPlatformData(ctx, "nonexistent", "platform_id")
-		if err != ErrCacheMiss {
-			t.Errorf("expected ErrCacheMiss, got %v", err)
-		}
+		assert.Equal(t, ErrCacheMiss, err)
 	})
 
 	t.Run("error injection", func(t *testing.T) {
@@ -139,33 +127,23 @@ func TestMockCacheStore_Integration(t *testing.T) {
 		// Inject errors
 		store.getTokenErr = ErrServerError
 		_, err := store.GetToken(ctx, "tenant-1")
-		if err != ErrServerError {
-			t.Errorf("expected ErrServerError, got %v", err)
-		}
+		assert.Equal(t, ErrServerError, err)
 
 		store.setTokenErr = ErrServerError
 		err = store.SetToken(ctx, "tenant-1", testToken("token", 3600), time.Hour)
-		if err != ErrServerError {
-			t.Errorf("expected ErrServerError, got %v", err)
-		}
+		assert.Equal(t, ErrServerError, err)
 
 		store.getPlatformErr = ErrServerError
 		_, err = store.GetPlatformData(ctx, "tenant-1", "field")
-		if err != ErrServerError {
-			t.Errorf("expected ErrServerError, got %v", err)
-		}
+		assert.Equal(t, ErrServerError, err)
 
 		store.setPlatformErr = ErrServerError
 		err = store.SetPlatformData(ctx, "tenant-1", "field", "value", time.Hour)
-		if err != ErrServerError {
-			t.Errorf("expected ErrServerError, got %v", err)
-		}
+		assert.Equal(t, ErrServerError, err)
 
 		store.deleteErr = ErrServerError
 		err = store.Delete(ctx, "tenant-1")
-		if err != ErrServerError {
-			t.Errorf("expected ErrServerError, got %v", err)
-		}
+		assert.Equal(t, ErrServerError, err)
 	})
 
 	t.Run("call counting", func(t *testing.T) {
@@ -177,12 +155,8 @@ func TestMockCacheStore_Integration(t *testing.T) {
 		_, _ = store.GetToken(ctx, "tenant-1")
 		_, _ = store.GetToken(ctx, "tenant-2")
 
-		if store.setTokenCalls != 2 {
-			t.Errorf("setTokenCalls = %d, expected 2", store.setTokenCalls)
-		}
-		if store.getTokenCalls != 3 {
-			t.Errorf("getTokenCalls = %d, expected 3", store.getTokenCalls)
-		}
+		assert.Equal(t, 2, store.setTokenCalls)
+		assert.Equal(t, 3, store.getTokenCalls)
 	})
 }
 
@@ -193,29 +167,19 @@ func TestMockClient(t *testing.T) {
 	t.Run("GetToken", func(t *testing.T) {
 		// Default behavior
 		token, err := mc.GetToken(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("GetToken failed: %v", err)
-		}
-		if token != "mock-token-tenant-1" {
-			t.Errorf("token = %q, expected 'mock-token-tenant-1'", token)
-		}
+		require.NoError(t, err, "GetToken failed")
+		assert.Equal(t, "mock-token-tenant-1", token)
 
 		// With preset value
 		mc.tokens["tenant-2"] = "custom-token"
 		token, err = mc.GetToken(ctx, "tenant-2")
-		if err != nil {
-			t.Fatalf("GetToken failed: %v", err)
-		}
-		if token != "custom-token" {
-			t.Errorf("token = %q, expected 'custom-token'", token)
-		}
+		require.NoError(t, err, "GetToken failed")
+		assert.Equal(t, "custom-token", token)
 
 		// With error
 		mc.getTokenErr = ErrTokenNotFound
 		_, err = mc.GetToken(ctx, "tenant-1")
-		if err != ErrTokenNotFound {
-			t.Errorf("expected ErrTokenNotFound, got %v", err)
-		}
+		assert.Equal(t, ErrTokenNotFound, err)
 	})
 
 	t.Run("VerifyToken", func(t *testing.T) {
@@ -223,29 +187,19 @@ func TestMockClient(t *testing.T) {
 
 		// Default behavior
 		info, err := mc.VerifyToken(ctx, "test-token")
-		if err != nil {
-			t.Fatalf("VerifyToken failed: %v", err)
-		}
-		if info.AccessToken != "test-token" {
-			t.Errorf("AccessToken = %q, expected 'test-token'", info.AccessToken)
-		}
+		require.NoError(t, err, "VerifyToken failed")
+		assert.Equal(t, "test-token", info.AccessToken)
 
 		// With preset value
 		mc.verifyData["custom-token"] = testToken("custom-verified", 3600)
 		info, err = mc.VerifyToken(ctx, "custom-token")
-		if err != nil {
-			t.Fatalf("VerifyToken failed: %v", err)
-		}
-		if info.AccessToken != "custom-verified" {
-			t.Errorf("AccessToken = %q, expected 'custom-verified'", info.AccessToken)
-		}
+		require.NoError(t, err, "VerifyToken failed")
+		assert.Equal(t, "custom-verified", info.AccessToken)
 
 		// With error
 		mc.verifyTokenErr = ErrTokenInvalid
 		_, err = mc.VerifyToken(ctx, "test-token")
-		if err != ErrTokenInvalid {
-			t.Errorf("expected ErrTokenInvalid, got %v", err)
-		}
+		assert.Equal(t, ErrTokenInvalid, err)
 	})
 
 	t.Run("GetPlatformID", func(t *testing.T) {
@@ -253,19 +207,13 @@ func TestMockClient(t *testing.T) {
 
 		// Default behavior
 		id, err := mc.GetPlatformID(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("GetPlatformID failed: %v", err)
-		}
-		if id != "platform-tenant-1" {
-			t.Errorf("id = %q, expected 'platform-tenant-1'", id)
-		}
+		require.NoError(t, err, "GetPlatformID failed")
+		assert.Equal(t, "platform-tenant-1", id)
 
 		// With error
 		mc.getPlatformIDErr = ErrPlatformIDNotFound
 		_, err = mc.GetPlatformID(ctx, "tenant-1")
-		if err != ErrPlatformIDNotFound {
-			t.Errorf("expected ErrPlatformIDNotFound, got %v", err)
-		}
+		assert.Equal(t, ErrPlatformIDNotFound, err)
 	})
 
 	t.Run("HasParentPlatform", func(t *testing.T) {
@@ -273,22 +221,14 @@ func TestMockClient(t *testing.T) {
 
 		// Default behavior (false)
 		hasParent, err := mc.HasParentPlatform(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("HasParentPlatform failed: %v", err)
-		}
-		if hasParent {
-			t.Error("expected hasParent to be false by default")
-		}
+		require.NoError(t, err, "HasParentPlatform failed")
+		assert.False(t, hasParent, "expected hasParent to be false by default")
 
 		// With preset value
 		mc.hasParent["tenant-2"] = true
 		hasParent, err = mc.HasParentPlatform(ctx, "tenant-2")
-		if err != nil {
-			t.Fatalf("HasParentPlatform failed: %v", err)
-		}
-		if !hasParent {
-			t.Error("expected hasParent to be true")
-		}
+		require.NoError(t, err, "HasParentPlatform failed")
+		assert.True(t, hasParent, "expected hasParent to be true")
 	})
 
 	t.Run("GetUnclassRegionID", func(t *testing.T) {
@@ -296,12 +236,8 @@ func TestMockClient(t *testing.T) {
 
 		// Default behavior
 		id, err := mc.GetUnclassRegionID(ctx, "tenant-1")
-		if err != nil {
-			t.Fatalf("GetUnclassRegionID failed: %v", err)
-		}
-		if id != "region-tenant-1" {
-			t.Errorf("id = %q, expected 'region-tenant-1'", id)
-		}
+		require.NoError(t, err, "GetUnclassRegionID failed")
+		assert.Equal(t, "region-tenant-1", id)
 	})
 
 	t.Run("Request", func(t *testing.T) {
@@ -309,33 +245,22 @@ func TestMockClient(t *testing.T) {
 
 		// Default behavior
 		err := mc.Request(ctx, &AuthRequest{})
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assert.NoError(t, err)
 
 		// With error
 		mc.requestErr = ErrRequestFailed
 		err = mc.Request(ctx, &AuthRequest{})
-		if err != ErrRequestFailed {
-			t.Errorf("expected ErrRequestFailed, got %v", err)
-		}
+		assert.Equal(t, ErrRequestFailed, err)
 	})
 
 	t.Run("Close", func(t *testing.T) {
 		mc := newMockClient()
 
-		if mc.closed {
-			t.Error("should not be closed initially")
-		}
+		assert.False(t, mc.closed, "should not be closed initially")
 
 		err := mc.Close()
-		if err != nil {
-			t.Errorf("Close failed: %v", err)
-		}
-
-		if !mc.closed {
-			t.Error("should be closed after Close()")
-		}
+		assert.NoError(t, err, "Close failed")
+		assert.True(t, mc.closed, "should be closed after Close()")
 	})
 }
 
@@ -352,20 +277,14 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 
 		// Marshal to JSON
 		data, err := json.Marshal(original)
-		if err != nil {
-			t.Fatalf("Marshal failed: %v", err)
-		}
+		require.NoError(t, err, "Marshal failed")
 
 		// Unmarshal back
 		var restored TokenInfo
-		if err := json.Unmarshal(data, &restored); err != nil {
-			t.Fatalf("Unmarshal failed: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(data, &restored), "Unmarshal failed")
 
 		// ObtainedAtUnix should be preserved
-		if restored.ObtainedAtUnix != original.ObtainedAtUnix {
-			t.Errorf("ObtainedAtUnix = %d, expected %d", restored.ObtainedAtUnix, original.ObtainedAtUnix)
-		}
+		assert.Equal(t, original.ObtainedAtUnix, restored.ObtainedAtUnix)
 
 		// Simulate RedisCacheStore.GetToken logic
 		if restored.ObtainedAtUnix > 0 {
@@ -376,15 +295,11 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 		}
 
 		// ObtainedAt should be restored to the original time
-		if restored.ObtainedAt.Unix() != obtainedAt.Unix() {
-			t.Errorf("ObtainedAt = %v, expected %v", restored.ObtainedAt, obtainedAt)
-		}
+		assert.Equal(t, obtainedAt.Unix(), restored.ObtainedAt.Unix())
 
 		// ExpiresAt should be 30 minutes from now (1 hour from obtainedAt)
 		expectedExpiresAt := obtainedAt.Add(time.Hour)
-		if restored.ExpiresAt.Unix() != expectedExpiresAt.Unix() {
-			t.Errorf("ExpiresAt = %v, expected %v", restored.ExpiresAt, expectedExpiresAt)
-		}
+		assert.Equal(t, expectedExpiresAt.Unix(), restored.ExpiresAt.Unix())
 	})
 
 	t.Run("missing ObtainedAtUnix fallback", func(t *testing.T) {
@@ -392,14 +307,10 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 		jsonData := `{"access_token":"old-token","expires_in":3600}`
 
 		var token TokenInfo
-		if err := json.Unmarshal([]byte(jsonData), &token); err != nil {
-			t.Fatalf("Unmarshal failed: %v", err)
-		}
+		require.NoError(t, json.Unmarshal([]byte(jsonData), &token), "Unmarshal failed")
 
 		// ObtainedAtUnix should be 0
-		if token.ObtainedAtUnix != 0 {
-			t.Errorf("ObtainedAtUnix = %d, expected 0", token.ObtainedAtUnix)
-		}
+		assert.Equal(t, int64(0), token.ObtainedAtUnix)
 
 		// 模拟 RedisCacheStore.GetToken 的容错逻辑
 		if token.ObtainedAtUnix > 0 {
@@ -408,10 +319,8 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 			token.ObtainedAt = time.Now()
 		}
 
-		// ObtainedAt should be set to current time (fallback)
-		if token.ObtainedAt.IsZero() {
-			t.Error("ObtainedAt should be set via fallback")
-		}
+		// ObtainedAt should be set via fallback
+		assert.False(t, token.ObtainedAt.IsZero(), "ObtainedAt should be set via fallback")
 	})
 }
 
@@ -431,31 +340,19 @@ func TestTokenInfo_JSONSerialization(t *testing.T) {
 
 		// Marshal to JSON
 		data, err := json.Marshal(original)
-		if err != nil {
-			t.Fatalf("Marshal failed: %v", err)
-		}
+		require.NoError(t, err, "Marshal failed")
 
 		// Unmarshal back
 		var restored TokenInfo
-		if err := json.Unmarshal(data, &restored); err != nil {
-			t.Fatalf("Unmarshal failed: %v", err)
-		}
+		require.NoError(t, json.Unmarshal(data, &restored), "Unmarshal failed")
 
 		// ExpiresAt and ObtainedAt should be zero after JSON round-trip
-		if !restored.ExpiresAt.IsZero() {
-			t.Error("ExpiresAt should be zero after JSON round-trip")
-		}
-		if !restored.ObtainedAt.IsZero() {
-			t.Error("ObtainedAt should be zero after JSON round-trip")
-		}
+		assert.True(t, restored.ExpiresAt.IsZero(), "ExpiresAt should be zero after JSON round-trip")
+		assert.True(t, restored.ObtainedAt.IsZero(), "ObtainedAt should be zero after JSON round-trip")
 
 		// Other fields should be preserved
-		if restored.AccessToken != original.AccessToken {
-			t.Errorf("AccessToken = %q, expected %q", restored.AccessToken, original.AccessToken)
-		}
-		if restored.ExpiresIn != original.ExpiresIn {
-			t.Errorf("ExpiresIn = %d, expected %d", restored.ExpiresIn, original.ExpiresIn)
-		}
+		assert.Equal(t, original.AccessToken, restored.AccessToken)
+		assert.Equal(t, original.ExpiresIn, restored.ExpiresIn)
 	})
 
 	t.Run("reconstruction of ExpiresAt from ExpiresIn", func(t *testing.T) {
@@ -468,9 +365,7 @@ func TestTokenInfo_JSONSerialization(t *testing.T) {
 		}
 
 		// Verify the token appears expired before reconstruction
-		if !token.IsExpired() {
-			t.Error("Token with zero ExpiresAt should be considered expired")
-		}
+		assert.True(t, token.IsExpired(), "Token with zero ExpiresAt should be considered expired")
 
 		// Simulate the reconstruction logic from RedisCacheStore.GetToken
 		if token.ObtainedAt.IsZero() {
@@ -481,16 +376,173 @@ func TestTokenInfo_JSONSerialization(t *testing.T) {
 		}
 
 		// After reconstruction, token should not be expired
-		if token.IsExpired() {
-			t.Error("Token should not be expired after ExpiresAt reconstruction")
-		}
+		assert.False(t, token.IsExpired(), "Token should not be expired after ExpiresAt reconstruction")
 
 		// ExpiresAt should be approximately 1 hour from now
 		expectedExpiry := time.Now().Add(time.Hour)
 		diff := token.ExpiresAt.Sub(expectedExpiry)
-		if diff < -time.Second || diff > time.Second {
-			t.Errorf("ExpiresAt = %v, expected approximately %v", token.ExpiresAt, expectedExpiry)
-		}
+		assert.InDelta(t, 0, diff.Seconds(), 1, "ExpiresAt should be approximately 1 hour from now")
+	})
+}
+
+// newMiniredisStore 创建基于 miniredis 的 RedisCacheStore。
+func newMiniredisStore(t *testing.T) (*RedisCacheStore, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := NewRedisCacheStore(client)
+	require.NoError(t, err)
+	return store, mr
+}
+
+func TestRedisCacheStore_Integration(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("SetToken and GetToken round-trip", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		token := testToken("redis-token", 3600)
+
+		err := store.SetToken(ctx, "tenant-1", token, time.Hour)
+		require.NoError(t, err)
+
+		got, err := store.GetToken(ctx, "tenant-1")
+		require.NoError(t, err)
+		assert.Equal(t, "redis-token", got.AccessToken)
+		assert.Equal(t, int64(3600), got.ExpiresIn)
+		assert.False(t, got.ObtainedAt.IsZero(), "ObtainedAt should be reconstructed")
+		assert.False(t, got.ExpiresAt.IsZero(), "ExpiresAt should be reconstructed")
+	})
+
+	t.Run("GetToken cache miss", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		_, err := store.GetToken(ctx, "nonexistent")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+	})
+
+	t.Run("SetToken nil token", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		err := store.SetToken(ctx, "tenant-1", nil, time.Hour)
+		assert.NoError(t, err)
+	})
+
+	t.Run("SetToken does not mutate caller", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		token := testToken("immutable-token", 3600)
+		originalUnix := token.ObtainedAtUnix
+
+		err := store.SetToken(ctx, "tenant-1", token, time.Hour)
+		require.NoError(t, err)
+		assert.Equal(t, originalUnix, token.ObtainedAtUnix, "caller's TokenInfo should not be mutated")
+	})
+
+	t.Run("GetPlatformData and SetPlatformData", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+
+		err := store.SetPlatformData(ctx, "tenant-1", "platform_id", "plat-123", time.Hour)
+		require.NoError(t, err)
+
+		value, err := store.GetPlatformData(ctx, "tenant-1", "platform_id")
+		require.NoError(t, err)
+		assert.Equal(t, "plat-123", value)
+	})
+
+	t.Run("GetPlatformData cache miss", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		_, err := store.GetPlatformData(ctx, "tenant-1", "nonexistent")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+	})
+
+	t.Run("SetPlatformData without TTL", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		err := store.SetPlatformData(ctx, "tenant-1", "field", "value", 0)
+		require.NoError(t, err)
+
+		value, err := store.GetPlatformData(ctx, "tenant-1", "field")
+		require.NoError(t, err)
+		assert.Equal(t, "value", value)
+	})
+
+	t.Run("Delete removes token and platform data", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+
+		// Set both token and platform data
+		err := store.SetToken(ctx, "tenant-1", testToken("del-token", 3600), time.Hour)
+		require.NoError(t, err)
+		err = store.SetPlatformData(ctx, "tenant-1", "platform_id", "plat-1", time.Hour)
+		require.NoError(t, err)
+
+		// Delete
+		err = store.Delete(ctx, "tenant-1")
+		require.NoError(t, err)
+
+		// Both should be gone
+		_, err = store.GetToken(ctx, "tenant-1")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+		_, err = store.GetPlatformData(ctx, "tenant-1", "platform_id")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+	})
+
+	t.Run("WithKeyPrefix option", func(t *testing.T) {
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		store, err := NewRedisCacheStore(client, WithKeyPrefix("myapp:"))
+		require.NoError(t, err)
+
+		err = store.SetToken(ctx, "tenant-1", testToken("prefixed", 3600), time.Hour)
+		require.NoError(t, err)
+
+		got, err := store.GetToken(ctx, "tenant-1")
+		require.NoError(t, err)
+		assert.Equal(t, "prefixed", got.AccessToken)
+
+		// Verify the key uses the custom prefix
+		assert.Equal(t, "myapp:", store.keyPrefix)
+	})
+
+	t.Run("GetToken ObtainedAtUnix reconstruction", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+		token := testToken("unix-token", 3600)
+		// ObtainedAt is already set by testToken
+
+		err := store.SetToken(ctx, "tenant-1", token, time.Hour)
+		require.NoError(t, err)
+
+		got, err := store.GetToken(ctx, "tenant-1")
+		require.NoError(t, err)
+
+		// ObtainedAt should be reconstructed from ObtainedAtUnix
+		assert.Equal(t, token.ObtainedAt.Unix(), got.ObtainedAt.Unix())
+	})
+
+	t.Run("GetToken corrupted data", func(t *testing.T) {
+		store, mr := newMiniredisStore(t)
+		// Write invalid JSON directly to Redis
+		mr.Set("xauth:token:bad", "not-json")
+
+		_, err := store.GetToken(ctx, "bad")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unmarshal token failed")
+	})
+
+	t.Run("Redis error propagation", func(t *testing.T) {
+		store, mr := newMiniredisStore(t)
+		mr.Close()
+
+		_, err := store.GetToken(ctx, "tenant-1")
+		assert.Error(t, err)
+		assert.NotErrorIs(t, err, ErrCacheMiss)
+
+		err = store.SetToken(ctx, "tenant-1", testToken("t", 3600), time.Hour)
+		assert.Error(t, err)
+
+		_, err = store.GetPlatformData(ctx, "tenant-1", "field")
+		assert.Error(t, err)
+
+		err = store.SetPlatformData(ctx, "tenant-1", "f", "v", time.Hour)
+		assert.Error(t, err)
+
+		err = store.Delete(ctx, "tenant-1")
+		assert.Error(t, err)
 	})
 }
 
@@ -498,40 +550,20 @@ func TestTestHelpers(t *testing.T) {
 	t.Run("testToken", func(t *testing.T) {
 		token := testToken("my-token", 3600)
 
-		if token.AccessToken != "my-token" {
-			t.Errorf("AccessToken = %q, expected 'my-token'", token.AccessToken)
-		}
-		if token.RefreshToken != "refresh-my-token" {
-			t.Errorf("RefreshToken = %q, expected 'refresh-my-token'", token.RefreshToken)
-		}
-		if token.ExpiresIn != 3600 {
-			t.Errorf("ExpiresIn = %d, expected 3600", token.ExpiresIn)
-		}
-		if token.TokenType != "bearer" {
-			t.Errorf("TokenType = %q, expected 'bearer'", token.TokenType)
-		}
-		if token.ExpiresAt.IsZero() {
-			t.Error("ExpiresAt should be set")
-		}
-		if token.ObtainedAt.IsZero() {
-			t.Error("ObtainedAt should be set")
-		}
+		assert.Equal(t, "my-token", token.AccessToken)
+		assert.Equal(t, "refresh-my-token", token.RefreshToken)
+		assert.Equal(t, int64(3600), token.ExpiresIn)
+		assert.Equal(t, "bearer", token.TokenType)
+		assert.False(t, token.ExpiresAt.IsZero(), "ExpiresAt should be set")
+		assert.False(t, token.ObtainedAt.IsZero(), "ObtainedAt should be set")
 	})
 
 	t.Run("testConfig", func(t *testing.T) {
 		cfg := testConfig()
 
-		if cfg.Host == "" {
-			t.Error("Host should not be empty")
-		}
-		if cfg.ClientID == "" {
-			t.Error("ClientID should not be empty")
-		}
-		if cfg.ClientSecret == "" {
-			t.Error("ClientSecret should not be empty")
-		}
-		if cfg.Timeout == 0 {
-			t.Error("Timeout should not be zero")
-		}
+		assert.NotEmpty(t, cfg.Host, "Host should not be empty")
+		assert.NotEmpty(t, cfg.ClientID, "ClientID should not be empty")
+		assert.NotEmpty(t, cfg.ClientSecret, "ClientSecret should not be empty")
+		assert.NotZero(t, cfg.Timeout, "Timeout should not be zero")
 	})
 }

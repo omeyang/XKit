@@ -83,7 +83,13 @@ func (c *exitCommand) Help() string {
 }
 
 func (c *exitCommand) Execute(_ context.Context, _ []string) (string, error) {
+	// 设计决策: 100ms 延迟确保"调试服务即将关闭"响应有时间写回客户端后再关闭 listener。
+	// 如果立即 Disable，底层 transport.Close() 会关闭 socket，导致响应发送失败。
+	// goroutine 纳入 WaitGroup 管理，确保 Stop() 的 waitForGoroutines
+	// 能等待此 goroutine 完成，避免 Disable 在 Stop 之后执行产生非预期状态。
+	c.server.wg.Add(1)
 	go func() {
+		defer c.server.wg.Done()
 		time.Sleep(100 * time.Millisecond)
 		if err := c.server.Disable(); err != nil {
 			c.server.audit(AuditEventCommandFailed, nil, "exit:disable", nil, 0, err)
@@ -166,23 +172,20 @@ func (c *stackCommand) Execute(ctx context.Context, _ []string) (string, error) 
 	// 使用渐进式缓冲区扩展，避免一开始就分配 1MB
 	// 从 64KB 开始，每次翻倍，最大 1MB
 	const (
-		initialSize = 64 * 1024  // 64KB
+		initialSize = 64 * 1024   // 64KB
 		maxSize     = 1024 * 1024 // 1MB
 	)
 
-	for size := initialSize; size <= maxSize; size *= 2 {
+	for size := initialSize; ; size *= 2 {
+		if size > maxSize {
+			size = maxSize
+		}
 		buf := make([]byte, size)
 		n := runtime.Stack(buf, true) // true 表示获取所有 goroutine
-		if n < size {
-			// 缓冲区足够，返回结果
+		if n < size || size >= maxSize {
 			return string(buf[:n]), nil
 		}
 	}
-
-	// 最后尝试最大缓冲区
-	buf := make([]byte, maxSize)
-	n := runtime.Stack(buf, true)
-	return string(buf[:n]), nil
 }
 
 // freememCommand freemem 命令。
@@ -221,11 +224,12 @@ func (c *freememCommand) Execute(ctx context.Context, _ []string) (string, error
 
 // pprofCommand pprof 命令。
 type pprofCommand struct {
-	server      *Server
-	mu          sync.Mutex
-	cpuFile     *os.File
-	cpuFilePath string
-	cpuActive   bool
+	server       *Server
+	mu           sync.Mutex
+	cpuFile      *os.File
+	cpuFilePath  string
+	cpuActive    bool
+	profileFiles []string // 所有已创建的 profile 文件路径，Cleanup 时删除
 }
 
 func newPprofCommand(s *Server) *pprofCommand {
@@ -369,6 +373,9 @@ func (c *pprofCommand) heapProfile(ctx context.Context) (string, error) {
 		c.server.audit(AuditEventCommandFailed, nil, "pprof:heap:close", nil, 0, closeErr)
 	}
 
+	// 记录文件路径，Cleanup 时统一删除
+	c.trackProfileFile(filename)
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Heap profile 已导出到: %s\n\n", filename)
 
@@ -426,6 +433,9 @@ func (c *pprofCommand) goroutineProfile(ctx context.Context) (string, error) {
 		c.server.audit(AuditEventCommandFailed, nil, "pprof:goroutine:close", nil, 0, closeErr)
 	}
 
+	// 记录文件路径，Cleanup 时统一删除
+	c.trackProfileFile(filename)
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Goroutine profile 已导出到: %s\n\n", filename)
 	fmt.Fprintf(&sb, "Goroutine 数量: %d\n", runtime.NumGoroutine())
@@ -435,26 +445,40 @@ func (c *pprofCommand) goroutineProfile(ctx context.Context) (string, error) {
 	return sb.String(), nil
 }
 
+// trackProfileFile 记录已创建的 profile 文件路径，Cleanup 时统一删除。
+func (c *pprofCommand) trackProfileFile(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profileFiles = append(c.profileFiles, path)
+}
+
 // Cleanup 清理资源，在 Server 关闭时调用。
 // 如果 CPU profile 正在运行，会自动停止并保存。
+// 同时删除所有已创建的临时 profile 文件，防止磁盘泄漏。
 func (c *pprofCommand) Cleanup() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.cpuActive {
-		return
-	}
+	if c.cpuActive {
+		// 停止 CPU profile
+		pprof.StopCPUProfile()
+		c.cpuActive = false
 
-	// 停止 CPU profile
-	pprof.StopCPUProfile()
-	c.cpuActive = false
-
-	// 关闭文件
-	if c.cpuFile != nil {
-		if err := c.cpuFile.Close(); err != nil {
-			// 在 Server 关闭期间，审计日志可能已关闭，输出到 stderr
-			fmt.Fprintf(os.Stderr, "[XDBG] failed to close CPU profile file: %v\n", err)
+		// 关闭文件
+		if c.cpuFile != nil {
+			if err := c.cpuFile.Close(); err != nil {
+				// 在 Server 关闭期间，审计日志可能已关闭，输出到 stderr
+				fmt.Fprintf(os.Stderr, "[XDBG] failed to close CPU profile file: %v\n", err)
+			}
+			c.cpuFile = nil
 		}
-		c.cpuFile = nil
 	}
+
+	// 删除所有已创建的临时 profile 文件
+	for _, path := range c.profileFiles {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "[XDBG] failed to remove profile file %s: %v\n", path, err)
+		}
+	}
+	c.profileFiles = nil
 }

@@ -23,15 +23,27 @@ func TestWithCache(t *testing.T) {
 }
 
 func TestWithLogger(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	opt := WithLogger(logger)
+	t.Run("non-nil logger", func(t *testing.T) {
+		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+		opt := WithLogger(logger)
 
-	options := &Options{}
-	opt(options)
+		options := &Options{}
+		opt(options)
 
-	if options.Logger != logger {
-		t.Error("Logger option not applied")
-	}
+		if options.Logger != logger {
+			t.Error("Logger option not applied")
+		}
+	})
+
+	t.Run("nil logger preserves default", func(t *testing.T) {
+		options := defaultOptions()
+		original := options.Logger
+		WithLogger(nil)(options)
+
+		if options.Logger != original {
+			t.Error("nil logger should preserve existing default")
+		}
+	})
 }
 
 func TestWithObserver(t *testing.T) {
@@ -246,4 +258,27 @@ func TestDefaultOptions(t *testing.T) {
 	if options.EnableAutoRetryOn401 {
 		t.Error("EnableAutoRetryOn401 should be false by default")
 	}
+}
+
+func TestWithLocalCacheTTL(t *testing.T) {
+	t.Run("positive duration", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(10 * time.Minute)})
+		if options.LocalCacheTTL != 10*time.Minute {
+			t.Errorf("LocalCacheTTL = %v, expected 10m", options.LocalCacheTTL)
+		}
+	})
+
+	t.Run("zero duration ignored", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(0)})
+		if options.LocalCacheTTL != 0 {
+			t.Errorf("LocalCacheTTL = %v, expected 0", options.LocalCacheTTL)
+		}
+	})
+
+	t.Run("negative duration ignored", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(-1 * time.Second)})
+		if options.LocalCacheTTL != 0 {
+			t.Errorf("LocalCacheTTL = %v, expected 0", options.LocalCacheTTL)
+		}
+	})
 }

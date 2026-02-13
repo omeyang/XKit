@@ -56,7 +56,8 @@ func TestLoader_Load_WhenCacheHit_ReturnsFromCache(t *testing.T) {
 	err := cache.Client().Set(ctx, "mykey", "cached_value", 0).Err()
 	require.NoError(t, err)
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	loadCount := 0
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		loadCount++
@@ -77,7 +78,8 @@ func TestLoader_Load_WhenCacheMiss_LoadsFromBackend(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -113,7 +115,8 @@ func TestLoader_Load_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cache.Close() })
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	mr.Close() // 模拟 Redis 故障
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -133,10 +136,11 @@ func TestLoader_Load_WithNilLoader_ReturnsError(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 
 	// When
-	_, err := loader.Load(ctx, "mykey", nil, time.Hour)
+	_, err = loader.Load(ctx, "mykey", nil, time.Hour)
 
 	// Then
 	assert.ErrorIs(t, err, ErrNilLoader)
@@ -147,14 +151,15 @@ func TestLoader_Load_WhenBackendFails_ReturnsError(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	expectedErr := errors.New("backend error")
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return nil, expectedErr
 	}
 
 	// When
-	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "mykey", loadFn, time.Hour)
 
 	// Then
 	assert.ErrorIs(t, err, expectedErr)
@@ -165,7 +170,8 @@ func TestLoader_Load_WithSingleflight_PreventsThunderingHerd(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(t, err)
 	var loadCount int32
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		atomic.AddInt32(&loadCount, 1)
@@ -201,7 +207,8 @@ func TestLoader_Load_WithoutSingleflight_AllowsDuplicateLoads(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(false))
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
 	var loadCount int32
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		atomic.AddInt32(&loadCount, 1)
@@ -235,7 +242,8 @@ func TestLoader_LoadHash_WhenCacheHit_ReturnsFromCache(t *testing.T) {
 	err := cache.Client().HSet(ctx, "myhash", "field1", "cached_value").Err()
 	require.NoError(t, err)
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	loadCount := 0
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		loadCount++
@@ -256,7 +264,8 @@ func TestLoader_LoadHash_WhenCacheMiss_LoadsFromBackend(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -292,7 +301,8 @@ func TestLoader_LoadHash_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cache.Close() })
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	mr.Close() // 模拟 Redis 故障
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -312,10 +322,11 @@ func TestLoader_LoadHash_WithNilLoader_ReturnsError(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 
 	// When
-	_, err := loader.LoadHash(ctx, "myhash", "field1", nil, time.Hour)
+	_, err = loader.LoadHash(ctx, "myhash", "field1", nil, time.Hour)
 
 	// Then
 	assert.ErrorIs(t, err, ErrNilLoader)
@@ -326,7 +337,8 @@ func TestLoader_LoadHash_WithSingleflight_PreventsThunderingHerd(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(t, err)
 	var loadCount int32
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		atomic.AddInt32(&loadCount, 1)
@@ -382,4 +394,421 @@ func TestHashFieldKey_Format(t *testing.T) {
 
 	key = hashFieldKey("user:profile", "name")
 	assert.Equal(t, "12:user:profile:name", key)
+}
+
+// =============================================================================
+// Loader 配置选项覆盖测试
+// =============================================================================
+
+func TestWithMaxRetryAttempts_SetsOption(t *testing.T) {
+	opts := defaultLoaderOptions()
+	WithMaxRetryAttempts(5)(opts)
+	assert.Equal(t, 5, opts.MaxRetryAttempts)
+}
+
+func TestWithMaxRetryAttempts_IgnoresNonPositive(t *testing.T) {
+	opts := defaultLoaderOptions()
+	original := opts.MaxRetryAttempts
+	WithMaxRetryAttempts(0)(opts)
+	assert.Equal(t, original, opts.MaxRetryAttempts)
+	WithMaxRetryAttempts(-1)(opts)
+	assert.Equal(t, original, opts.MaxRetryAttempts)
+}
+
+func TestWithHashTTLRefresh_SetsOption(t *testing.T) {
+	opts := defaultLoaderOptions()
+	assert.True(t, opts.HashTTLRefresh)
+	WithHashTTLRefresh(false)(opts)
+	assert.False(t, opts.HashTTLRefresh)
+}
+
+func TestWithOnCacheSetError_SetsOption(t *testing.T) {
+	opts := defaultLoaderOptions()
+	assert.Nil(t, opts.OnCacheSetError)
+
+	called := false
+	hook := func(ctx context.Context, key string, err error) {
+		called = true
+	}
+	WithOnCacheSetError(hook)(opts)
+	assert.NotNil(t, opts.OnCacheSetError)
+
+	// 验证 hook 可被调用
+	opts.OnCacheSetError(context.Background(), "key", errors.New("err"))
+	assert.True(t, called)
+}
+
+func TestLoader_Load_WithOnCacheSetError_CallsHookOnSetFailure(t *testing.T) {
+	// Given - Redis 关闭后写入失败，应触发 hook
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	var hookKey string
+	var hookErr error
+	hook := func(ctx context.Context, key string, err error) {
+		hookKey = key
+		hookErr = err
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithOnCacheSetError(hook),
+	)
+	require.NoError(t, err)
+
+	// 关闭 Redis，使缓存写入失败
+	mr.Close()
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}
+
+	// When
+	value, err := loader.Load(ctx, "hookkey", loadFn, time.Hour)
+
+	// Then - 加载应成功，hook 应被调用
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), value)
+	assert.Equal(t, "hookkey", hookKey)
+	assert.Error(t, hookErr)
+}
+
+func TestLoader_LoadHash_WithHashTTLRefreshFalse_OnlySetsFirstTTL(t *testing.T) {
+	// Given - 测试 HashTTLRefresh=false 时仅首次设置 TTL
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithHashTTLRefresh(false),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("value1"), nil
+	}
+
+	// When - 第一次写入：key 不存在，TTL < 0，应设置 TTL
+	value, err := loader.LoadHash(ctx, "ttl_hash", "field1", loadFn, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value1"), value)
+
+	// 验证 TTL 被设置
+	ttl := mr.TTL("ttl_hash")
+	assert.True(t, ttl > 0, "TTL should be set on first write")
+
+	// When - 第二次写入：key 已有 TTL，不应刷新
+	loadFn2 := func(ctx context.Context) ([]byte, error) {
+		return []byte("value2"), nil
+	}
+	value, err = loader.LoadHash(ctx, "ttl_hash", "field2", loadFn2, 2*time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value2"), value)
+}
+
+func TestLoader_LoadHash_WithZeroTTL_SkipsExpire(t *testing.T) {
+	// Given - TTL 为 0 时不设置过期时间
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("no_ttl_value"), nil
+	}
+
+	// When - 使用 TTL=0
+	value, err := loader.LoadHash(ctx, "no_ttl_hash", "field1", loadFn, 0)
+
+	// Then - 应成功，不设置 TTL
+	require.NoError(t, err)
+	assert.Equal(t, []byte("no_ttl_value"), value)
+}
+
+// =============================================================================
+// 内部函数覆盖测试
+// =============================================================================
+
+func TestDetachedCtx_IsFullyDetached(t *testing.T) {
+	// detachedCtx 应完全脱离原始 context 的取消链
+	origCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	detached := contextDetached(origCtx)
+
+	// Err 返回 nil（不继承取消）
+	assert.Nil(t, detached.Err())
+	// Done 返回 nil channel（不继承取消）
+	assert.Nil(t, detached.Done())
+	// Deadline 返回零值（不继承截止时间）
+	deadline, ok := detached.Deadline()
+	assert.False(t, ok)
+	assert.True(t, deadline.IsZero())
+}
+
+func TestLoader_Load_WithNilCache_ReturnsError(t *testing.T) {
+	// 测试 loader.cache == nil 的路径
+	l := &loader{cache: nil, options: defaultLoaderOptions()}
+	_, err := l.Load(context.Background(), "key", func(ctx context.Context) ([]byte, error) {
+		return nil, nil
+	}, time.Hour)
+	assert.ErrorIs(t, err, ErrNilClient)
+}
+
+func TestLoader_LoadHash_WithNilCache_ReturnsError(t *testing.T) {
+	l := &loader{cache: nil, options: defaultLoaderOptions()}
+	_, err := l.LoadHash(context.Background(), "key", "field", func(ctx context.Context) ([]byte, error) {
+		return nil, nil
+	}, time.Hour)
+	assert.ErrorIs(t, err, ErrNilClient)
+}
+
+func TestBackoffWithJitter_OverflowProtection(t *testing.T) {
+	// 测试 attempt 超过安全位移范围时使用 maxBackoff
+	result := backoffWithJitter(100) // 远超 maxSafeShift=30
+	assert.True(t, result > 0, "backoff should be positive")
+	assert.LessOrEqual(t, result, maxBackoff+time.Duration(float64(maxBackoff)*jitterFraction))
+}
+
+func TestContextWithIndependentTimeout_ZeroTimeout(t *testing.T) {
+	// timeout == 0 表示禁用超时
+	ctx := context.Background()
+	newCtx, cancel := contextWithIndependentTimeout(ctx, 0)
+	defer cancel()
+
+	_, ok := newCtx.Deadline()
+	assert.False(t, ok, "zero timeout should not set deadline")
+}
+
+func TestContextWithIndependentTimeout_NegativeTimeout(t *testing.T) {
+	// timeout < 0 表示使用默认超时 (30s)
+	ctx := context.Background()
+	newCtx, cancel := contextWithIndependentTimeout(ctx, -1*time.Second)
+	defer cancel()
+
+	deadline, ok := newCtx.Deadline()
+	assert.True(t, ok, "negative timeout should set deadline")
+	expected := time.Now().Add(defaultOperationTimeout)
+	assert.WithinDuration(t, expected, deadline, 100*time.Millisecond)
+}
+
+func TestLoader_Load_WithoutSingleflight_WithoutDistLock_DirectLoad(t *testing.T) {
+	// 测试禁用 singleflight 和 dist lock 时的直接加载路径
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithDistributedLock(false),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("direct"), nil
+	}
+
+	value, err := loader.Load(ctx, "directkey", loadFn, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("direct"), value)
+}
+
+func TestLoader_LoadHash_WithoutSingleflight_WithoutDistLock_DirectLoad(t *testing.T) {
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithDistributedLock(false),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("direct_hash"), nil
+	}
+
+	value, err := loader.LoadHash(ctx, "directhash", "field", loadFn, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("direct_hash"), value)
+}
+
+func TestWithMemoryMaxCost_MinCostClamp(t *testing.T) {
+	// 测试 cost < MinMemoryMaxCost 时被钳位到最小值
+	opts := defaultMemoryOptions()
+	WithMemoryMaxCost(100)(opts) // 100 bytes << MinMemoryMaxCost (1MB)
+	assert.Equal(t, int64(MinMemoryMaxCost), opts.MaxCost)
+}
+
+func TestLoader_Load_WithSingleflight_ContextCancelled_BeforeResult(t *testing.T) {
+	// 测试 singleflight 场景下 context 取消的路径
+	cache, _ := newTestRedis(t)
+
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		time.Sleep(200 * time.Millisecond)
+		return []byte("value"), nil
+	}
+
+	// 立即取消 context
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err = loader.Load(ctx, "sf_cancel_key", loadFn, time.Hour)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestLoader_LoadHash_WithSingleflight_ContextCancelled_BeforeResult(t *testing.T) {
+	cache, _ := newTestRedis(t)
+
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		time.Sleep(200 * time.Millisecond)
+		return []byte("value"), nil
+	}
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err = loader.LoadHash(ctx, "sf_cancel_hash", "field", loadFn, time.Hour)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// =============================================================================
+// NewLoader 构造验证测试
+// =============================================================================
+
+func TestNewLoader_NilCache_ReturnsError(t *testing.T) {
+	_, err := NewLoader(nil)
+	assert.ErrorIs(t, err, ErrNilClient)
+}
+
+func TestNewLoader_ExternalLockWithoutEnable_ReturnsError(t *testing.T) {
+	cache, mr := newTestRedis(t)
+	t.Cleanup(func() { mr.Close() })
+
+	// WithExternalLock(fn) 自动设置 EnableDistributedLock=true，
+	// 之后显式关闭，形成矛盾配置
+	_, err := NewLoader(cache,
+		WithExternalLock(func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+			return nil, nil
+		}),
+		WithDistributedLock(false),
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
+// =============================================================================
+// safeLoadFn panic 恢复测试
+// =============================================================================
+
+func TestLoader_Load_WhenLoadFnPanics_ReturnsErrLoadPanic(t *testing.T) {
+	cache, mr := newTestRedis(t)
+	t.Cleanup(func() { mr.Close() })
+
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
+
+	_, err = loader.Load(context.Background(), "panic-key", func(_ context.Context) ([]byte, error) {
+		panic("test panic in loadFn")
+	}, time.Hour)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLoadPanic)
+	assert.Contains(t, err.Error(), "test panic in loadFn")
+}
+
+func TestLoader_LoadHash_WhenLoadFnPanics_ReturnsErrLoadPanic(t *testing.T) {
+	cache, mr := newTestRedis(t)
+	t.Cleanup(func() { mr.Close() })
+
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
+
+	_, err = loader.LoadHash(context.Background(), "panic-hash", "field", func(_ context.Context) ([]byte, error) {
+		panic("hash panic test")
+	}, time.Hour)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLoadPanic)
+	assert.Contains(t, err.Error(), "hash panic test")
+}
+
+// TestLoader_Load_WithSingleflight_FirstCallerCancel_DoesNotAffectOthers 验证 FG-S1 修复：
+// 当首个调用者取消 context 时，其他共享 singleflight 的调用者仍能正常获得结果。
+func TestLoader_Load_WithSingleflight_FirstCallerCancel_DoesNotAffectOthers(t *testing.T) {
+	cache, _ := newTestRedis(t)
+
+	loader, err := NewLoader(cache, WithSingleflight(true), WithLoadTimeout(0))
+	require.NoError(t, err)
+
+	var loadCount atomic.Int32
+	loadFn := func(_ context.Context) ([]byte, error) {
+		loadCount.Add(1)
+		time.Sleep(200 * time.Millisecond)
+		return []byte("shared-value"), nil
+	}
+
+	// caller1: 短 context，会在 loadFn 执行期间被取消
+	ctx1, cancel1 := context.WithCancel(context.Background())
+
+	// caller2: 正常 context，应该收到结果
+	ctx2 := context.Background()
+
+	var wg sync.WaitGroup
+	var err1, err2 error
+	var val2 []byte
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err1 = loader.Load(ctx1, "sf-cancel-shared", loadFn, time.Hour)
+	}()
+	go func() {
+		defer wg.Done()
+		// 确保 caller2 在 caller1 之后进入 singleflight
+		time.Sleep(10 * time.Millisecond)
+		val2, err2 = loader.Load(ctx2, "sf-cancel-shared", loadFn, time.Hour)
+	}()
+
+	// 在 loadFn 执行期间取消 caller1
+	time.Sleep(50 * time.Millisecond)
+	cancel1()
+
+	wg.Wait()
+
+	// caller1 应被取消
+	assert.ErrorIs(t, err1, context.Canceled)
+	// caller2 应正常获得结果（FG-S1 修复前会收到 context.Canceled）
+	require.NoError(t, err2)
+	assert.Equal(t, []byte("shared-value"), val2)
+	// loadFn 只应调用一次（singleflight 去重）
+	assert.Equal(t, int32(1), loadCount.Load())
+}
+
+func TestLoader_Load_WithSingleflight_WhenLoadFnPanics_ReturnsErrLoadPanic(t *testing.T) {
+	cache, mr := newTestRedis(t)
+	t.Cleanup(func() { mr.Close() })
+
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	require.NoError(t, err)
+
+	_, err = loader.Load(context.Background(), "sf-panic-key", func(_ context.Context) ([]byte, error) {
+		panic("singleflight panic")
+	}, time.Hour)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLoadPanic)
 }

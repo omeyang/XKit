@@ -14,8 +14,8 @@ const (
 	// KeyUnclassRegionID 未分类区域 ID
 	KeyUnclassRegionID = "unclass_region_id"
 
-	// PlatformFieldCount 平台字段数量（用于预分配切片容量）
-	PlatformFieldCount = 2
+	// platformFieldCount 平台字段数量（用于 slog 属性预分配，不导出以避免脆弱的 API 契约）
+	platformFieldCount = 2
 )
 
 // =============================================================================
@@ -109,6 +109,9 @@ func UnclassRegionID(ctx context.Context) string {
 // Platform 平台信息结构体
 //
 // 用于批量获取平台信息，替代多参数函数。
+//
+// 注意：HasParent 的零值为 false，与"未设置"状态不可区分。
+// 如需区分"未设置"和"显式设置为 false"，请使用 HasParent(ctx) 函数（返回 value, ok）。
 type Platform struct {
 	HasParent       bool
 	UnclassRegionID string

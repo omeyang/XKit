@@ -31,7 +31,7 @@ func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duratio
 // 使用 goroutine + channel 实现可取消的输入读取，确保 Ctrl+C 能立即退出。
 func runREPL(ctx context.Context, client *Client) error {
 	inputCh := make(chan string)
-	errCh := make(chan error)
+	errCh := make(chan error, 1) // 缓冲区为 1，避免读取 goroutine 在 context 取消后泄漏
 
 	// 在单独的 goroutine 中读取输入，避免阻塞 context 取消
 	go func() {
@@ -114,14 +114,26 @@ func executeAndPrint(ctx context.Context, client *Client, command string, args [
 	fmt.Println()
 }
 
-// parseCommandLine 解析命令行，支持引号。
+// parseCommandLine 解析命令行，支持引号和反斜杠转义。
 func parseCommandLine(line string) []string {
 	var parts []string
 	var current strings.Builder
 	var inQuote bool
 	var quoteChar rune
+	var escaped bool
 
 	for _, r := range line {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+
 		switch {
 		case isQuoteStart(r, inQuote):
 			inQuote = true

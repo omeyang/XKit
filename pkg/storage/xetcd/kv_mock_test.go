@@ -15,8 +15,9 @@ import (
 func newTestClient(t *testing.T, mockClient *MocketcdClient) *Client {
 	t.Helper()
 	return &Client{
-		client: mockClient,
-		config: &Config{Endpoints: []string{"localhost:2379"}},
+		client:  mockClient,
+		config:  &Config{Endpoints: []string{"localhost:2379"}},
+		closeCh: make(chan struct{}),
 	}
 }
 
@@ -322,6 +323,36 @@ func TestKV_PutWithTTL_SmallTTL(t *testing.T) {
 	// 500ms 会被转换为 1 秒
 	mockClient.EXPECT().
 		Grant(ctx, int64(1)).
+		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
+
+	mockClient.EXPECT().
+		Put(ctx, key, string(value), gomock.Any()).
+		Return(&clientv3.PutResponse{}, nil)
+
+	err := c.PutWithTTL(ctx, key, value, ttl)
+	if err != nil {
+		t.Fatalf("PutWithTTL() error = %v, want nil", err)
+	}
+}
+
+// TestKV_PutWithTTL_CeilRounding 测试 PutWithTTL 使用向上取整（ceil）。
+// 1.5 秒应被转换为 2 秒，而非向下取整为 1 秒。
+func TestKV_PutWithTTL_CeilRounding(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	ttl := 1500 * time.Millisecond // 1.5 秒，向上取整为 2 秒
+	leaseID := clientv3.LeaseID(123456)
+
+	// ceil(1.5) = 2
+	mockClient.EXPECT().
+		Grant(ctx, int64(2)).
 		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
 
 	mockClient.EXPECT().
@@ -711,6 +742,39 @@ func TestKV_Count_Error(t *testing.T) {
 	_, err := c.Count(ctx, prefix)
 	if err == nil {
 		t.Fatal("Count() error = nil, want error")
+	}
+}
+
+// TestKV_PutWithTTL_PutError_RevokeError 测试 PutWithTTL 写入失败且租约撤销也失败时，错误被优雅忽略。
+func TestKV_PutWithTTL_PutError_RevokeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	ttl := 10 * time.Second
+	leaseID := clientv3.LeaseID(123456)
+
+	mockClient.EXPECT().
+		Grant(ctx, int64(10)).
+		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
+
+	mockClient.EXPECT().
+		Put(ctx, key, string(value), gomock.Any()).
+		Return(nil, errors.New("put failed"))
+
+	// Revoke 也失败，tryRevokeLease 应优雅处理
+	mockClient.EXPECT().
+		Revoke(gomock.Any(), leaseID).
+		Return(nil, errors.New("revoke failed"))
+
+	err := c.PutWithTTL(ctx, key, value, ttl)
+	if err == nil {
+		t.Fatal("PutWithTTL() error = nil, want error")
 	}
 }
 

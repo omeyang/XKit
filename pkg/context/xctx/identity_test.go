@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -254,6 +256,14 @@ func TestRequireFunctions(t *testing.T) {
 					t.Errorf("error = %v, want %v", err, tt.wantErr)
 				}
 			})
+
+			t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+				var nilCtx context.Context
+				_, err := tt.require(nilCtx)
+				if !errors.Is(err, xctx.ErrNilContext) {
+					t.Errorf("Require%s(nil) error = %v, want %v", tt.name, err, xctx.ErrNilContext)
+				}
+			})
 		})
 	}
 }
@@ -301,20 +311,12 @@ func TestWithIdentity(t *testing.T) {
 			TenantName: "TestCompany",
 		}
 		ctx, err := xctx.WithIdentity(context.Background(), id)
-		if err != nil {
-			t.Fatalf("WithIdentity() error = %v", err)
-		}
+		require.NoError(t, err, "WithIdentity()")
 
 		got := xctx.GetIdentity(ctx)
-		if got.PlatformID != id.PlatformID {
-			t.Errorf("PlatformID = %q, want %q", got.PlatformID, id.PlatformID)
-		}
-		if got.TenantID != id.TenantID {
-			t.Errorf("TenantID = %q, want %q", got.TenantID, id.TenantID)
-		}
-		if got.TenantName != id.TenantName {
-			t.Errorf("TenantName = %q, want %q", got.TenantName, id.TenantName)
-		}
+		assert.Equal(t, id.PlatformID, got.PlatformID, "PlatformID")
+		assert.Equal(t, id.TenantID, got.TenantID, "TenantID")
+		assert.Equal(t, id.TenantName, got.TenantName, "TenantName")
 	})
 
 	t.Run("部分字段为空", func(t *testing.T) {
@@ -323,43 +325,31 @@ func TestWithIdentity(t *testing.T) {
 			// TenantID 和 TenantName 为空
 		}
 		ctx, err := xctx.WithIdentity(context.Background(), id)
-		if err != nil {
-			t.Fatalf("WithIdentity() error = %v", err)
-		}
+		require.NoError(t, err, "WithIdentity()")
 
 		got := xctx.GetIdentity(ctx)
-		if got.PlatformID != id.PlatformID {
-			t.Errorf("PlatformID = %q, want %q", got.PlatformID, id.PlatformID)
-		}
+		assert.Equal(t, id.PlatformID, got.PlatformID, "PlatformID")
 		// 空字段应被跳过，保持为空
-		if got.TenantID != "" {
-			t.Errorf("TenantID = %q, want empty", got.TenantID)
-		}
-		if got.TenantName != "" {
-			t.Errorf("TenantName = %q, want empty", got.TenantName)
-		}
+		assert.Empty(t, got.TenantID, "TenantID should be empty")
+		assert.Empty(t, got.TenantName, "TenantName should be empty")
 	})
 
 	t.Run("全部字段为空", func(t *testing.T) {
 		id := xctx.Identity{}
 		ctx, err := xctx.WithIdentity(context.Background(), id)
-		if err != nil {
-			t.Fatalf("WithIdentity() error = %v", err)
-		}
+		require.NoError(t, err, "WithIdentity()")
 
 		got := xctx.GetIdentity(ctx)
-		if got.PlatformID != "" || got.TenantID != "" || got.TenantName != "" {
-			t.Errorf("WithIdentity(empty) should not inject any fields, got %+v", got)
-		}
+		assert.Empty(t, got.PlatformID, "PlatformID should be empty")
+		assert.Empty(t, got.TenantID, "TenantID should be empty")
+		assert.Empty(t, got.TenantName, "TenantName should be empty")
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
 		var nilCtx context.Context
 		id := xctx.Identity{PlatformID: "p1"}
 		_, err := xctx.WithIdentity(nilCtx, id)
-		if !errors.Is(err, xctx.ErrNilContext) {
-			t.Errorf("WithIdentity(nil) error = %v, want %v", err, xctx.ErrNilContext)
-		}
+		assert.ErrorIs(t, err, xctx.ErrNilContext, "WithIdentity(nil)")
 	})
 }
 

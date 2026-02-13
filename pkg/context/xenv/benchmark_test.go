@@ -75,69 +75,82 @@ func BenchmarkParse_Invalid(b *testing.B) {
 // =============================================================================
 
 func BenchmarkType(b *testing.B) {
-	// 先初始化
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		_ = xenv.Type()
 	}
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkIsLocal(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		_ = xenv.IsLocal()
 	}
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkIsSaaS(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeploySaaS)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		_ = xenv.IsSaaS()
 	}
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkIsInitialized(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		_ = xenv.IsInitialized()
 	}
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkRequireType(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		_, _ = xenv.RequireType()
 	}
+}
 
-	b.StopTimer()
+func BenchmarkType_NotInitialized(b *testing.B) {
 	xenv.Reset()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.Type()
+	}
+}
+
+func BenchmarkRequireType_NotInitialized(b *testing.B) {
+	xenv.Reset()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.RequireType()
+	}
+}
+
+func BenchmarkParse_Empty(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("")
+	}
 }
 
 // =============================================================================
@@ -147,6 +160,7 @@ func BenchmarkRequireType(b *testing.B) {
 func BenchmarkType_Parallel(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -154,14 +168,12 @@ func BenchmarkType_Parallel(b *testing.B) {
 			_ = xenv.Type()
 		}
 	})
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkIsLocal_Parallel(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -169,14 +181,12 @@ func BenchmarkIsLocal_Parallel(b *testing.B) {
 			_ = xenv.IsLocal()
 		}
 	})
-
-	b.StopTimer()
-	xenv.Reset()
 }
 
 func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	xenv.Reset()
 	_ = xenv.InitWith(xenv.DeployLocal)
+	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -184,7 +194,4 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 			_ = xenv.IsInitialized()
 		}
 	})
-
-	b.StopTimer()
-	xenv.Reset()
 }

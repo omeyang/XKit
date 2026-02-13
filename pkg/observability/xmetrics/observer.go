@@ -1,6 +1,9 @@
 package xmetrics
 
-import "context"
+import (
+	"context"
+	"strconv"
+)
 
 // Kind 表示观测跨度类型。
 type Kind int
@@ -17,6 +20,24 @@ const (
 	// KindConsumer 表示消息消费。
 	KindConsumer
 )
+
+// String 返回 Kind 的可读字符串表示，用于调试和日志输出。
+func (k Kind) String() string {
+	switch k {
+	case KindInternal:
+		return "Internal"
+	case KindServer:
+		return "Server"
+	case KindClient:
+		return "Client"
+	case KindProducer:
+		return "Producer"
+	case KindConsumer:
+		return "Consumer"
+	default:
+		return "Kind(" + strconv.Itoa(int(k)) + ")"
+	}
+}
 
 // Status 表示观测结果状态。
 type Status string
@@ -71,8 +92,11 @@ type Observer interface {
 // NoopObserver 是空实现。
 type NoopObserver struct{}
 
-// Start 返回原始 ctx 和空跨度。
+// Start 返回 ctx 和空跨度。若 ctx 为 nil，返回 context.Background()。
 func (NoopObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return ctx, NoopSpan{}
 }
 
@@ -83,9 +107,21 @@ type NoopSpan struct{}
 func (NoopSpan) End(_ Result) {}
 
 // Start 使用 observer 开始观测，nil observer 时返回空跨度。
+// Start 保证返回非 nil 的 context.Context（nil ctx 会被替换为 context.Background()）。
+//
+// 设计决策: ctx 在入口统一归一化，而非仅在 observer == nil 分支处理。
+// 这确保即使自定义 Observer 未处理 nil context，也不会导致 panic。
+// 同时对返回的 context 做兜底检查，防止自定义 Observer 返回 nil context。
 func Start(ctx context.Context, observer Observer, opts SpanOptions) (context.Context, Span) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if observer == nil {
 		return ctx, NoopSpan{}
 	}
-	return observer.Start(ctx, opts)
+	retCtx, span := observer.Start(ctx, opts)
+	if retCtx == nil {
+		retCtx = ctx
+	}
+	return retCtx, span
 }

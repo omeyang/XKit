@@ -1,6 +1,7 @@
 package xlimit
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,7 +35,7 @@ type Result struct {
 // - X-RateLimit-Limit: 配额上限
 // - X-RateLimit-Remaining: 剩余配额
 // - X-RateLimit-Reset: 配额重置时间（Unix 时间戳）
-// - Retry-After: 重试等待秒数（仅在被限流时）
+// - Retry-After: 重试等待秒数（仅在被限流时，向上取整确保最小值为 1）
 func (r *Result) Headers() map[string]string {
 	headers := map[string]string{
 		"X-RateLimit-Limit":     strconv.Itoa(r.Limit),
@@ -43,7 +44,10 @@ func (r *Result) Headers() map[string]string {
 	}
 
 	if r.RetryAfter > 0 {
-		headers["Retry-After"] = strconv.FormatInt(int64(r.RetryAfter.Seconds()), 10)
+		// 设计决策: 使用 math.Ceil 向上取整，避免亚秒级等待被截断为 0，
+		// 导致客户端立即重试并放大瞬时流量。
+		retryAfterSec := int64(math.Ceil(r.RetryAfter.Seconds()))
+		headers["Retry-After"] = strconv.FormatInt(retryAfterSec, 10)
 	}
 
 	return headers

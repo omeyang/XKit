@@ -65,4 +65,7 @@ const (
 
 	// SemaphoreTypeLocal 本地信号量
 	SemaphoreTypeLocal = "local"
+
+	// SemaphoreTypeNoop 空操作信号量（FallbackOpen 降级）
+	SemaphoreTypeNoop = "noop"
 )

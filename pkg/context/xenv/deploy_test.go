@@ -153,7 +153,8 @@ func TestParse(t *testing.T) {
 		{"  SAAS  ", xenv.DeploySaaS, nil},
 
 		// 无效值
-		{"", "", xenv.ErrMissingEnv},
+		{"", "", xenv.ErrInvalidType},
+		{"   ", "", xenv.ErrInvalidType},
 		{"invalid", "", xenv.ErrInvalidType},
 		{"LOCALx", "", xenv.ErrInvalidType},
 		{"SAAS2", "", xenv.ErrInvalidType},
@@ -195,6 +196,8 @@ func TestInit(t *testing.T) {
 		{"SAAS", "SAAS", false, xenv.DeploySaaS, nil},
 		{"saas", "saas", false, xenv.DeploySaaS, nil},
 		{"missing", "", true, "", xenv.ErrMissingEnv},
+		{"empty", "", false, "", xenv.ErrEmptyEnv},
+		{"whitespace_only", "   ", false, "", xenv.ErrEmptyEnv},
 		{"invalid", "invalid", false, "", xenv.ErrInvalidType},
 	}
 
@@ -286,7 +289,9 @@ func TestReset(t *testing.T) {
 	xenv.Reset()
 	t.Cleanup(xenv.Reset)
 
-	_ = xenv.InitWith(xenv.DeployLocal)
+	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	}
 	if !xenv.IsInitialized() {
 		t.Fatal("IsInitialized() = false after InitWith")
 	}
@@ -297,6 +302,73 @@ func TestReset(t *testing.T) {
 	}
 	if xenv.Type() != "" {
 		t.Errorf("Type() = %q after Reset, want empty", xenv.Type())
+	}
+}
+
+func TestInitAlreadyInitialized(t *testing.T) {
+	t.Run("Init重复调用", func(t *testing.T) {
+		withEnvScope(t, "LOCAL", true)
+
+		if err := xenv.Init(); err != nil {
+			t.Fatalf("first Init() error = %v", err)
+		}
+		err := xenv.Init()
+		if !errors.Is(err, xenv.ErrAlreadyInitialized) {
+			t.Errorf("second Init() error = %v, want %v", err, xenv.ErrAlreadyInitialized)
+		}
+	})
+
+	t.Run("InitWith重复调用", func(t *testing.T) {
+		xenv.Reset()
+		t.Cleanup(xenv.Reset)
+
+		if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+			t.Fatalf("first InitWith() error = %v", err)
+		}
+		err := xenv.InitWith(xenv.DeploySaaS)
+		if !errors.Is(err, xenv.ErrAlreadyInitialized) {
+			t.Errorf("second InitWith() error = %v, want %v", err, xenv.ErrAlreadyInitialized)
+		}
+	})
+}
+
+func TestConcurrentInit(t *testing.T) {
+	xenv.Reset()
+	t.Cleanup(xenv.Reset)
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	errs := make(chan error, goroutines)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			errs <- xenv.InitWith(xenv.DeployLocal)
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+
+	var successes, alreadyInits int
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, xenv.ErrAlreadyInitialized):
+			alreadyInits++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+
+	if successes != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successes)
+	}
+	if alreadyInits != goroutines-1 {
+		t.Errorf("expected %d ErrAlreadyInitialized, got %d", goroutines-1, alreadyInits)
 	}
 }
 
@@ -443,7 +515,7 @@ func TestConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			_ = xenv.Type()

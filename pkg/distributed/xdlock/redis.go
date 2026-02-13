@@ -3,8 +3,8 @@ package xdlock
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
-	"sync"
 	"sync/atomic"
 
 	"github.com/go-redsync/redsync/v4"
@@ -21,9 +21,7 @@ import (
 type redisFactory struct {
 	clients []redis.UniversalClient
 	rs      *redsync.Redsync
-	pools   []rsredis.Pool
 	closed  atomic.Bool
-	mu      sync.RWMutex
 }
 
 // NewRedisFactory 创建 Redis 锁工厂。
@@ -51,7 +49,6 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 	return &redisFactory{
 		clients: clients,
 		rs:      rs,
-		pools:   pools,
 	}, nil
 }
 
@@ -59,6 +56,9 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
 	}
 
 	mutex, fullKey := f.createMutex(key, opts...)
@@ -82,6 +82,9 @@ func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOpt
 func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
 	}
 
 	mutex, fullKey := f.createMutex(key, opts...)
@@ -150,9 +153,6 @@ func (f *redisFactory) Close() error {
 // Health 健康检查。
 // 对所有 Redis 节点执行 PING 命令。
 func (f *redisFactory) Health(ctx context.Context) error {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
 	if f.closed.Load() {
 		return ErrFactoryClosed
 	}
@@ -185,43 +185,44 @@ type redisLockHandle struct {
 }
 
 // Unlock 释放锁。
+//
+// 设计决策: 允许在 factory 关闭后解锁，避免锁悬挂等待 TTL 过期。
+// factory.Close() 仅设置逻辑标志，Redis 连接仍由调用者管理，解锁操作可正常执行。
 func (h *redisLockHandle) Unlock(ctx context.Context) error {
-	if h.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
 	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
 		// 锁过期也视为"未持有锁"
 		if errors.Is(wrappedErr, ErrLockExpired) {
-			return ErrLockNotHeld
+			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
-		return ErrLockNotHeld
+		return ErrNotLocked
 	}
 	return nil
 }
 
 // Extend 续期锁。
+//
+// 设计决策: 允许在 factory 关闭后续期，与 Unlock 保持一致。
+// factory.Close() 不影响已持有锁的操作，仅阻止创建新锁。
+//
+// 设计决策: ErrLockExpired 转为 ErrNotLocked（锁已失去），
+// ErrExtendFailed 保持原语义（续期操作失败，锁可能仍在），使调用方可区分两种情况。
 func (h *redisLockHandle) Extend(ctx context.Context) error {
-	if h.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 续期失败视为"未持有锁"
-		if errors.Is(wrappedErr, ErrExtendFailed) || errors.Is(wrappedErr, ErrLockExpired) {
-			return ErrLockNotHeld
+		// 锁已过期/被抢走 → 锁已失去
+		if errors.Is(wrappedErr, ErrLockExpired) {
+			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
-		return ErrLockNotHeld
+		return ErrNotLocked
 	}
 	return nil
 }
@@ -235,7 +236,7 @@ func (h *redisLockHandle) Key() string {
 // 错误转换
 // =============================================================================
 
-// wrapRedisError 将 redsync 错误转换为 xdlock 错误。
+// wrapRedisError 将 redsync 错误转换为 xdlock 错误，保留原始错误链。
 func wrapRedisError(err error) error {
 	if err == nil {
 		return nil
@@ -249,18 +250,18 @@ func wrapRedisError(err error) error {
 	// ErrTaken 是一个结构体类型，需要使用 errors.As 检查
 	var errTaken *redsync.ErrTaken
 	if errors.As(err, &errTaken) {
-		return ErrLockHeld
+		return fmt.Errorf("%w: %w", ErrLockHeld, err)
 	}
 
-	// redsync 错误
+	// redsync 错误，使用双 %w 保留原始错误链
 	if errors.Is(err, redsync.ErrFailed) {
-		return ErrLockFailed
+		return fmt.Errorf("%w: %w", ErrLockFailed, err)
 	}
 	if errors.Is(err, redsync.ErrExtendFailed) {
-		return ErrExtendFailed
+		return fmt.Errorf("%w: %w", ErrExtendFailed, err)
 	}
 	if errors.Is(err, redsync.ErrLockAlreadyExpired) {
-		return ErrLockExpired
+		return fmt.Errorf("%w: %w", ErrLockExpired, err)
 	}
 
 	return err

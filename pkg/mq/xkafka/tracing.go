@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/omeyang/xkit/internal/mqcore"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -88,7 +87,8 @@ func (w *TracingConsumer) ReadMessage(ctx context.Context) (context.Context, *ka
 			if errors.As(err, &kafkaErr) && kafkaErr.Code() == kafka.ErrTimedOut {
 				continue
 			}
-			w.errorsCount.Add(1)
+			// 设计决策: 不在此处递增 errorsCount，由 ConsumeLoopWithPolicy 统一计数，
+			// 避免 ReadMessage → Consume → ConsumeLoop 链路上的双重计数。
 			return ctx, nil, err
 		}
 
@@ -118,7 +118,7 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 		Component: componentName,
 		Operation: "consume",
 		Kind:      xmetrics.KindConsumer,
-		Attrs:     kafkaAttrs(topicFromKafkaMessage(msg)),
+		Attrs:     kafkaMessageAttrs(msg),
 	})
 	defer func() {
 		span.End(xmetrics.Result{Err: err})
@@ -126,12 +126,14 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 
 	err = handler(msgCtx, msg)
 	if err != nil {
-		w.errorsCount.Add(1)
 		return err
 	}
 
 	// 成功处理后存储 offset，确保 at-least-once 语义
-	if _, storeErr := w.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); storeErr != nil {
+	// 设计决策: 使用 StoreMessage 而非 StoreOffsets，因为 StoreMessage 内部会将 offset+1，
+	// 表示"下次从此 offset 之后的位置开始消费"。直接使用 StoreOffsets 传递当前 offset
+	// 会导致重启后重复消费已处理的消息。
+	if _, storeErr := w.consumer.StoreMessage(msg); storeErr != nil {
 		return fmt.Errorf("store offset failed: %w", storeErr)
 	}
 
@@ -152,20 +154,11 @@ func (w *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 //   - handler: 消息处理函数
 //   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
 func (w *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
+	if handler == nil {
+		return ErrNilHandler
+	}
 	consume := func(ctx context.Context) error {
 		return w.Consume(ctx, handler)
 	}
-
-	onError := func(_ error) {
-		w.errorsCount.Add(1)
-	}
-
-	opts := []mqcore.ConsumeLoopOption{
-		mqcore.WithOnError(onError),
-	}
-	if backoff != nil {
-		opts = append(opts, mqcore.WithBackoff(backoff))
-	}
-
-	return mqcore.RunConsumeLoop(ctx, consume, opts...)
+	return runConsumeLoop(ctx, consume, &w.errorsCount, backoff)
 }

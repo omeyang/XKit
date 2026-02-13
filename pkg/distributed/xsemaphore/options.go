@@ -209,10 +209,10 @@ func (o *options) validate() error {
 		return err
 	}
 	if o.podCount <= 0 {
-		return fmt.Errorf("xsemaphore: pod count must be positive, got %d", o.podCount)
+		return fmt.Errorf("%w: pod count must be positive, got %d", ErrInvalidPodCount, o.podCount)
 	}
 	if o.fallback != FallbackNone && !o.fallback.IsValid() {
-		return fmt.Errorf("xsemaphore: invalid fallback strategy %q", o.fallback)
+		return fmt.Errorf("%w: %q", ErrInvalidFallbackStrategy, o.fallback)
 	}
 	return nil
 }

@@ -28,6 +28,11 @@
 //	注意：socket 文件发现需要调试服务已启用（即 socket 文件已创建）。
 //	若服务未启用，需使用 --pid 或 --name 参数指定目标进程。
 //
+// 退出码:
+//
+//	0: 命令执行成功（status 命令: 服务在线）
+//	1: 命令执行失败或服务离线（status 命令）
+//
 // 示例:
 //
 //	xdbgctl toggle                        # 切换调试服务状态（通过 socket 发现进程）
@@ -41,6 +46,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -50,14 +56,17 @@ import (
 
 const (
 	// DefaultSocketPath 默认 Socket 路径。
+	// 设计决策: 使用 /var/run 与 xdbg 服务端默认路径保持一致。
+	// K8s 环境中通常以 root 运行，此路径可直接使用。
+	// 非 root 用户需通过 --socket 指定自定义路径。
 	DefaultSocketPath = "/var/run/xdbg.sock"
 
 	// DefaultTimeout 默认超时时间。
 	DefaultTimeout = 30 * time.Second
-
-	// Version 版本号。
-	Version = "0.1.0"
 )
+
+// Version 版本号（可通过 -ldflags "-X main.Version=x.y.z" 注入）。
+var Version = "0.1.0-dev"
 
 func main() {
 	os.Exit(run())
@@ -82,7 +91,7 @@ func run() int {
 				Value:   DefaultTimeout,
 			},
 		},
-		Commands: createCommands(),
+		Commands:       createCommands(),
 		DefaultCommand: "help",
 		Authors: []any{
 			"XKit Team",
@@ -115,6 +124,10 @@ func run() int {
 	setupSignalHandler(cancel)
 
 	if err := app.Run(ctx, os.Args); err != nil {
+		var exitErr *exitError
+		if errors.As(err, &exitErr) {
+			return exitErr.code
+		}
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		return 1
 	}

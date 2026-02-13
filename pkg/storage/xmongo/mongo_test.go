@@ -20,6 +20,27 @@ func TestNew_NilClient(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilClient)
 }
 
+func TestNew_NilOption(t *testing.T) {
+	// 创建一个客户端 - 使用延迟连接
+	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer func() {
+		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+	}()
+
+	// When: New is called with nil option — should not panic
+	m, err := New(client, nil, WithHealthTimeout(10*time.Second), nil)
+
+	// Then: should succeed and ignore nil options
+	assert.NoError(t, err)
+	assert.NotNil(t, m)
+	wrapper, ok := m.(*mongoWrapper)
+	assert.True(t, ok)
+	assert.Equal(t, 10*time.Second, wrapper.options.HealthTimeout)
+}
+
 func TestNew_Success(t *testing.T) {
 	// 创建一个客户端 - 使用延迟连接，不需要真实的 MongoDB 服务器
 	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))

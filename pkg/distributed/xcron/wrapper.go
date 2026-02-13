@@ -2,6 +2,7 @@ package xcron
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -10,21 +11,21 @@ import (
 // jobWrapper 包装原始任务，添加锁、超时、重试等能力。
 // 实现 cron.Job 接口，以便被 robfig/cron 调度。
 type jobWrapper struct {
-	job    Job
-	opts   *jobOptions
-	locker Locker
-	logger Logger
-	stats  *Stats // 执行统计
+	job     Job
+	opts    *jobOptions
+	locker  Locker
+	logger  Logger
+	stats   *Stats          // 执行统计
+	baseCtx context.Context // 可选: 立即执行任务使用的可取消上下文
 }
 
 // renewHandle 保存单次任务执行的锁续期状态
 // 每次 Run() 执行独立创建，避免并发执行间的竞态
 type renewHandle struct {
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	renewFailed chan struct{}      // 续期失败信号
-	taskCancel  context.CancelFunc // 用于在续期失败时取消任务
-	lockHandle  LockHandle         // 本次获取的锁句柄（用于 Unlock 和 Renew）
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	taskCancel context.CancelFunc // 用于在续期失败时取消任务
+	lockHandle LockHandle         // 本次获取的锁句柄（用于 Unlock 和 Renew）
 }
 
 // newJobWrapper 创建任务包装器
@@ -41,6 +42,9 @@ func newJobWrapper(job Job, locker Locker, logger Logger, stats *Stats, opts *jo
 // Run 实现 cron.Job 接口
 func (w *jobWrapper) Run() {
 	ctx := context.Background()
+	if w.baseCtx != nil {
+		ctx = w.baseCtx
+	}
 	startTime := time.Now()
 
 	// 创建可取消的任务上下文，用于续期失败时中止任务
@@ -48,11 +52,17 @@ func (w *jobWrapper) Run() {
 	defer taskCancel()
 
 	// 1. 尝试获取锁（如果配置了任务名）
-	rh := w.tryAcquireLock(taskCtx, taskCancel)
+	rh, lockErr := w.tryAcquireLock(taskCtx, taskCancel)
 	if rh == nil && w.opts.name != "" && w.locker != nil {
-		// 需要锁但未获取到，记录跳过
+		// 需要锁但未获取到
 		if w.stats != nil {
-			w.stats.recordSkip(w.opts.name)
+			if lockErr != nil {
+				// 锁服务异常，计入失败（而非跳过），便于健康检查发现问题
+				w.stats.recordExecution(w.opts.name, 0, lockErr)
+			} else {
+				// 锁竞争失败（正常跳过）
+				w.stats.recordSkip(w.opts.name)
+			}
 		}
 		return
 	}
@@ -69,14 +79,14 @@ func (w *jobWrapper) Run() {
 		defer span.End()
 	}
 
-	// 4. 执行钩子 BeforeJob（正序）
+	// 4. 执行钩子 BeforeJob（正序），每个钩子独立 panic 保护
 	taskCtx = w.runBeforeHooks(taskCtx)
 
 	// 5. 执行任务（可能带重试）
 	err := w.executeJob(taskCtx, rh)
 	duration := time.Since(startTime)
 
-	// 6. 执行钩子 AfterJob（逆序，类似 defer）
+	// 6. 执行钩子 AfterJob（逆序，类似 defer），每个钩子独立 panic 保护
 	w.runAfterHooks(taskCtx, duration, err)
 
 	// 7. 记录统计
@@ -88,12 +98,16 @@ func (w *jobWrapper) Run() {
 	w.logResult(taskCtx, span, err)
 }
 
-// tryAcquireLock 尝试获取分布式锁
-// 返回 renewHandle 用于后续停止续期；如果不需要锁或获取失败返回 nil
+// tryAcquireLock 尝试获取分布式锁。
+//
+// 返回值:
+//   - renewHandle: 成功时返回续期句柄，不需要锁或获取失败返回 nil
+//   - error: 锁服务异常时返回错误（区别于锁竞争失败的 nil,nil）
+//
 // taskCancel 用于在续期失败时取消任务执行
-func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.CancelFunc) *renewHandle {
+func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.CancelFunc) (*renewHandle, error) {
 	if w.opts.name == "" || w.locker == nil {
-		return nil // 不需要锁
+		return nil, nil // 不需要锁
 	}
 
 	// 应用锁获取超时，防止底层存储响应慢导致 goroutine 长时间阻塞
@@ -106,18 +120,18 @@ func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.Canc
 
 	handle, err := w.locker.TryLock(lockCtx, w.opts.name, w.opts.lockTTL)
 	if err != nil {
-		w.logWarn(ctx, "failed to acquire lock",
+		w.logWarn(ctx, "lock service error",
 			"job", w.opts.name, "error", err)
-		return nil
+		return nil, err // 锁服务异常
 	}
 	if handle == nil {
 		w.logDebug(ctx, "lock not acquired, skipping",
 			"job", w.opts.name)
-		return nil
+		return nil, nil // 锁竞争失败（正常）
 	}
 
 	// 启动锁续期，返回 renewHandle（包含 LockHandle）
-	return w.startRenew(ctx, taskCancel, handle)
+	return w.startRenew(ctx, taskCancel, handle), nil
 }
 
 // applyTimeout 应用超时控制
@@ -136,8 +150,8 @@ func (w *jobWrapper) startSpan(ctx context.Context) (context.Context, Span) {
 	return ctx, nil
 }
 
-// executeJob 执行任务（可能带重试）
-func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) error {
+// executeJob 执行任务（可能带重试），包含 panic 恢复
+func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) (err error) {
 	// 确保释放锁
 	if rh != nil && rh.lockHandle != nil {
 		defer func() {
@@ -145,12 +159,19 @@ func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) error {
 			// 使用独立的 context 进行 Unlock，避免任务取消导致释放失败
 			unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer unlockCancel()
-			if err := rh.lockHandle.Unlock(unlockCtx); err != nil {
+			if unlockErr := rh.lockHandle.Unlock(unlockCtx); unlockErr != nil {
 				w.logWarn(ctx, "failed to release lock",
-					"job", w.opts.name, "error", err)
+					"job", w.opts.name, "error", unlockErr)
 			}
 		}()
 	}
+
+	// panic 恢复：防止单个任务 panic 导致整个调度器崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("xcron: job %q panicked: %v", w.opts.name, r)
+		}
+	}()
 
 	if w.opts.retry != nil {
 		return w.runWithRetry(ctx)
@@ -172,10 +193,12 @@ func (w *jobWrapper) logResult(ctx context.Context, span Span, err error) {
 	}
 }
 
-// runWithRetry 带重试执行任务
+// runWithRetry 带重试执行任务。
+// 每次重试独立 recover，将 panic 转为 error 参与重试判断，
+// 避免 panic 中断整个重试循环且掩盖之前的重试错误。
 func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 	for attempt := 1; ; attempt++ {
-		err := w.job.Run(ctx)
+		err := w.safeRunJob(ctx)
 		if err == nil {
 			return nil // 成功
 		}
@@ -205,6 +228,17 @@ func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 	}
 }
 
+// safeRunJob 执行一次任务，将 panic 转为 error。
+// 用于 runWithRetry 中每次重试的独立 panic 保护。
+func (w *jobWrapper) safeRunJob(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("xcron: job %q panicked: %v", w.opts.name, r)
+		}
+	}()
+	return w.job.Run(ctx)
+}
+
 // startRenew 启动锁续期协程，返回用于停止的 handle
 // taskCancel 用于在续期失败时取消任务执行，防止锁过期后继续执行导致并发
 // lockHandle 是本次获取的锁句柄，用于续期和释放
@@ -214,23 +248,17 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 	}
 
 	// 续期间隔为 TTL 的 1/3
-	interval := w.opts.lockTTL / 3
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := max(w.opts.lockTTL/3, time.Second)
 
 	renewCtx, cancel := context.WithCancel(ctx)
 	rh := &renewHandle{
-		cancel:      cancel,
-		renewFailed: make(chan struct{}),
-		taskCancel:  taskCancel,
-		lockHandle:  lockHandle,
+		cancel:     cancel,
+		taskCancel: taskCancel,
+		lockHandle: lockHandle,
 	}
 	rh.wg.Add(1)
-
 	go func() {
 		defer rh.wg.Done()
-
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -246,7 +274,6 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 					if taskCancel != nil {
 						taskCancel()
 					}
-					close(rh.renewFailed)
 					return
 				}
 			}
@@ -267,6 +294,9 @@ func (w *jobWrapper) stopRenew(rh *renewHandle) {
 
 // 日志辅助方法
 
+// logDebug 记录调试日志。
+// 设计决策: 无 logger 时静默丢弃（不回退到 log.Printf），因为 Debug 日志通常量大，
+// 输出到标准库 log 会造成噪音。logWarn/logError 回退是因为警告和错误不应被静默忽略。
 func (w *jobWrapper) logDebug(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Debug(ctx, msg, args...)
@@ -289,19 +319,34 @@ func (w *jobWrapper) logError(ctx context.Context, msg string, args ...any) {
 	}
 }
 
-// runBeforeHooks 执行 BeforeJob 钩子（正序）
+// runBeforeHooks 执行 BeforeJob 钩子（正序）。
+// 每个钩子独立 recover，防止单个钩子 panic 导致调度器崩溃。
 func (w *jobWrapper) runBeforeHooks(ctx context.Context) context.Context {
 	if len(w.opts.hooks) == 0 {
 		return ctx
 	}
 
 	for _, hook := range w.opts.hooks {
-		ctx = hook.BeforeJob(ctx, w.opts.name)
+		ctx = w.safeBeforeHook(ctx, hook)
 	}
 	return ctx
 }
 
-// runAfterHooks 执行 AfterJob 钩子（逆序，类似 defer）
+// safeBeforeHook 安全执行单个 BeforeJob 钩子，捕获 panic。
+func (w *jobWrapper) safeBeforeHook(ctx context.Context, hook Hook) (result context.Context) {
+	result = ctx
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "BeforeJob hook panicked",
+				"job", w.opts.name, "panic", r)
+			result = ctx // panic 时返回原始 ctx
+		}
+	}()
+	return hook.BeforeJob(ctx, w.opts.name)
+}
+
+// runAfterHooks 执行 AfterJob 钩子（逆序，类似 defer）。
+// 每个钩子独立 recover，防止单个钩子 panic 导致调度器崩溃。
 func (w *jobWrapper) runAfterHooks(ctx context.Context, duration time.Duration, err error) {
 	if len(w.opts.hooks) == 0 {
 		return
@@ -309,6 +354,17 @@ func (w *jobWrapper) runAfterHooks(ctx context.Context, duration time.Duration, 
 
 	// 逆序执行，类似 defer 的行为
 	for i := len(w.opts.hooks) - 1; i >= 0; i-- {
-		w.opts.hooks[i].AfterJob(ctx, w.opts.name, duration, err)
+		w.safeAfterHook(ctx, w.opts.hooks[i], duration, err)
 	}
+}
+
+// safeAfterHook 安全执行单个 AfterJob 钩子，捕获 panic。
+func (w *jobWrapper) safeAfterHook(ctx context.Context, hook Hook, duration time.Duration, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "AfterJob hook panicked",
+				"job", w.opts.name, "panic", r)
+		}
+	}()
+	hook.AfterJob(ctx, w.opts.name, duration, err)
 }

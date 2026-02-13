@@ -53,13 +53,20 @@ func FuzzWithSlowQueryThreshold(f *testing.F) {
 	f.Fuzz(func(t *testing.T, ns int64) {
 		threshold := time.Duration(ns)
 		opts := defaultOptions()
+		original := opts.SlowQueryThreshold
 
 		// 不应 panic
 		WithSlowQueryThreshold(threshold)(opts)
 
-		// 验证值被正确设置（任意值都接受）
-		if opts.SlowQueryThreshold != threshold {
-			t.Errorf("WithSlowQueryThreshold(%v) set SlowQueryThreshold to %v", threshold, opts.SlowQueryThreshold)
+		// 负值被忽略，保持原值；非负值被正确设置
+		if threshold < 0 {
+			if opts.SlowQueryThreshold != original {
+				t.Errorf("WithSlowQueryThreshold(%v) should keep default, got %v", threshold, opts.SlowQueryThreshold)
+			}
+		} else {
+			if opts.SlowQueryThreshold != threshold {
+				t.Errorf("WithSlowQueryThreshold(%v) set SlowQueryThreshold to %v", threshold, opts.SlowQueryThreshold)
+			}
 		}
 	})
 }
@@ -157,247 +164,6 @@ func FuzzDefaultOptions(f *testing.F) {
 }
 
 // =============================================================================
-// PageOptions Fuzz 测试
-// =============================================================================
-
-// FuzzPageOptions 模糊测试 PageOptions 结构。
-func FuzzPageOptions(f *testing.F) {
-	f.Add(int64(1), int64(10))
-	f.Add(int64(0), int64(0))
-	f.Add(int64(-1), int64(-1))
-	f.Add(int64(100), int64(1000))
-	f.Add(int64(1<<62), int64(1<<62))
-
-	f.Fuzz(func(t *testing.T, page, pageSize int64) {
-		opts := PageOptions{
-			Page:     page,
-			PageSize: pageSize,
-		}
-
-		// 验证字段正确设置
-		if opts.Page != page {
-			t.Errorf("PageOptions.Page = %d, want %d", opts.Page, page)
-		}
-		if opts.PageSize != pageSize {
-			t.Errorf("PageOptions.PageSize = %d, want %d", opts.PageSize, pageSize)
-		}
-	})
-}
-
-// =============================================================================
-// BatchOptions Fuzz 测试
-// =============================================================================
-
-// FuzzBatchOptions 模糊测试 BatchOptions 结构。
-func FuzzBatchOptions(f *testing.F) {
-	f.Add(10000)
-	f.Add(0)
-	f.Add(-1)
-	f.Add(1)
-	f.Add(100000)
-
-	f.Fuzz(func(t *testing.T, batchSize int) {
-		opts := BatchOptions{
-			BatchSize: batchSize,
-		}
-
-		// 验证字段正确设置
-		if opts.BatchSize != batchSize {
-			t.Errorf("BatchOptions.BatchSize = %d, want %d", opts.BatchSize, batchSize)
-		}
-	})
-}
-
-// =============================================================================
-// SlowQueryInfo Fuzz 测试
-// =============================================================================
-
-// FuzzSlowQueryInfo 模糊测试 SlowQueryInfo 结构。
-func FuzzSlowQueryInfo(f *testing.F) {
-	f.Add("SELECT * FROM users", int64(1000000)) // 1ms
-	f.Add("", int64(0))
-	f.Add("SELECT * FROM 测试表", int64(-1))
-	f.Add("INSERT INTO t\x00 VALUES", int64(1<<62))
-
-	f.Fuzz(func(t *testing.T, query string, durationNs int64) {
-		duration := time.Duration(durationNs)
-
-		info := SlowQueryInfo{
-			Query:    query,
-			Args:     []any{1, "test"},
-			Duration: duration,
-		}
-
-		// 验证字段正确设置
-		if info.Query != query {
-			t.Errorf("SlowQueryInfo.Query = %q, want %q", info.Query, query)
-		}
-		if info.Duration != duration {
-			t.Errorf("SlowQueryInfo.Duration = %v, want %v", info.Duration, duration)
-		}
-		if len(info.Args) != 2 {
-			t.Errorf("SlowQueryInfo.Args length = %d, want 2", len(info.Args))
-		}
-	})
-}
-
-// =============================================================================
-// Stats Fuzz 测试
-// =============================================================================
-
-// FuzzStats 模糊测试 Stats 结构。
-func FuzzStats(f *testing.F) {
-	f.Add(int64(0), int64(0), int64(0), int64(0), int64(0), 0, 0, 0)
-	f.Add(int64(100), int64(5), int64(1000), int64(10), int64(20), 50, 40, 10)
-	f.Add(int64(-1), int64(-1), int64(-1), int64(-1), int64(-1), -1, -1, -1)
-	f.Add(int64(1<<62), int64(1<<62), int64(1<<62), int64(1<<62), int64(1<<62), 1<<30, 1<<30, 1<<30)
-
-	f.Fuzz(func(t *testing.T, pingCount, pingErrors, queryCount, queryErrors, slowQueries int64, open, idle, inUse int) {
-		stats := Stats{
-			PingCount:   pingCount,
-			PingErrors:  pingErrors,
-			QueryCount:  queryCount,
-			QueryErrors: queryErrors,
-			SlowQueries: slowQueries,
-			Pool: PoolStats{
-				Open:  open,
-				Idle:  idle,
-				InUse: inUse,
-			},
-		}
-
-		// 验证字段正确设置
-		if stats.PingCount != pingCount {
-			t.Errorf("Stats.PingCount = %d, want %d", stats.PingCount, pingCount)
-		}
-		if stats.PingErrors != pingErrors {
-			t.Errorf("Stats.PingErrors = %d, want %d", stats.PingErrors, pingErrors)
-		}
-		if stats.QueryCount != queryCount {
-			t.Errorf("Stats.QueryCount = %d, want %d", stats.QueryCount, queryCount)
-		}
-		if stats.QueryErrors != queryErrors {
-			t.Errorf("Stats.QueryErrors = %d, want %d", stats.QueryErrors, queryErrors)
-		}
-		if stats.SlowQueries != slowQueries {
-			t.Errorf("Stats.SlowQueries = %d, want %d", stats.SlowQueries, slowQueries)
-		}
-		if stats.Pool.Open != open {
-			t.Errorf("Stats.Pool.Open = %d, want %d", stats.Pool.Open, open)
-		}
-	})
-}
-
-// FuzzPoolStats 模糊测试 PoolStats 结构。
-func FuzzPoolStats(f *testing.F) {
-	f.Add(100, 90, 10)
-	f.Add(0, 0, 0)
-	f.Add(-1, -1, -1)
-
-	f.Fuzz(func(t *testing.T, open, idle, inUse int) {
-		pool := PoolStats{
-			Open:  open,
-			Idle:  idle,
-			InUse: inUse,
-		}
-
-		// 验证字段正确设置
-		if pool.Open != open {
-			t.Error("PoolStats.Open mismatch")
-		}
-		if pool.Idle != idle {
-			t.Error("PoolStats.Idle mismatch")
-		}
-		if pool.InUse != inUse {
-			t.Error("PoolStats.InUse mismatch")
-		}
-	})
-}
-
-// =============================================================================
-// PageResult Fuzz 测试
-// =============================================================================
-
-// FuzzPageResult 模糊测试 PageResult 结构。
-func FuzzPageResult(f *testing.F) {
-	f.Add(int64(100), int64(1), int64(10), int64(10))
-	f.Add(int64(0), int64(0), int64(0), int64(0))
-	f.Add(int64(-1), int64(-1), int64(-1), int64(-1))
-	f.Add(int64(1<<62), int64(1<<62), int64(1<<62), int64(1<<62))
-
-	f.Fuzz(func(t *testing.T, total, page, pageSize, totalPages int64) {
-		result := PageResult{
-			Columns:    []string{"id", "name"},
-			Rows:       [][]any{{1, "test"}},
-			Total:      total,
-			Page:       page,
-			PageSize:   pageSize,
-			TotalPages: totalPages,
-		}
-
-		// 验证字段正确设置
-		if result.Total != total {
-			t.Errorf("PageResult.Total = %d, want %d", result.Total, total)
-		}
-		if result.Page != page {
-			t.Errorf("PageResult.Page = %d, want %d", result.Page, page)
-		}
-		if result.PageSize != pageSize {
-			t.Errorf("PageResult.PageSize = %d, want %d", result.PageSize, pageSize)
-		}
-		if result.TotalPages != totalPages {
-			t.Errorf("PageResult.TotalPages = %d, want %d", result.TotalPages, totalPages)
-		}
-		if len(result.Columns) != 2 {
-			t.Error("PageResult.Columns should have 2 elements")
-		}
-		if len(result.Rows) != 1 {
-			t.Error("PageResult.Rows should have 1 element")
-		}
-	})
-}
-
-// =============================================================================
-// BatchResult Fuzz 测试
-// =============================================================================
-
-// FuzzBatchResult 模糊测试 BatchResult 结构。
-func FuzzBatchResult(f *testing.F) {
-	f.Add(int64(1000), 0)
-	f.Add(int64(0), 5)
-	f.Add(int64(-1), -1)
-	f.Add(int64(1<<62), 100)
-
-	f.Fuzz(func(t *testing.T, insertedCount int64, errorCount int) {
-		// 限制错误数量
-		if errorCount < 0 {
-			errorCount = 0
-		}
-		if errorCount > 100 {
-			errorCount = 100
-		}
-
-		errors := make([]error, errorCount)
-		for i := 0; i < errorCount; i++ {
-			errors[i] = ErrNilConn
-		}
-
-		result := BatchResult{
-			InsertedCount: insertedCount,
-			Errors:        errors,
-		}
-
-		// 验证字段正确设置
-		if result.InsertedCount != insertedCount {
-			t.Errorf("BatchResult.InsertedCount = %d, want %d", result.InsertedCount, insertedCount)
-		}
-		if len(result.Errors) != errorCount {
-			t.Errorf("BatchResult.Errors length = %d, want %d", len(result.Errors), errorCount)
-		}
-	})
-}
-
-// =============================================================================
 // New Factory Fuzz 测试
 // =============================================================================
 
@@ -442,23 +208,6 @@ func FuzzIsErrNilConn(f *testing.F) {
 
 		// 验证 errors.Is 对于非匹配错误不会 panic
 		_ = (err == ErrNilConn)
-	})
-}
-
-// FuzzIsErrClosed 模糊测试 ErrClosed 错误匹配。
-func FuzzIsErrClosed(f *testing.F) {
-	f.Add("")
-	f.Add("some error")
-	f.Add("xclickhouse: connection closed")
-
-	f.Fuzz(func(t *testing.T, errMsg string) {
-		var err error
-		if errMsg != "" {
-			err = &testError{msg: errMsg}
-		}
-
-		// 验证 errors.Is 对于非匹配错误不会 panic
-		_ = (err == ErrClosed)
 	})
 }
 

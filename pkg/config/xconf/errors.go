@@ -18,4 +18,23 @@ var (
 
 	// ErrUnmarshalFailed 表示配置反序列化失败。
 	ErrUnmarshalFailed = errors.New("xconf: failed to unmarshal config")
+
+	// ErrNotFromFile 表示操作仅支持从文件创建的配置实例。
+	// Reload 和 Watch 都需要文件路径，不支持从 bytes 创建的配置。
+	ErrNotFromFile = errors.New("xconf: operation not supported for config created from bytes")
+
+	// ErrWatchFailed 表示创建文件监视器失败。
+	ErrWatchFailed = errors.New("xconf: failed to create watcher")
+
+	// ErrInvalidDelim 表示无效的键分隔符。
+	ErrInvalidDelim = errors.New("xconf: invalid delimiter")
+
+	// ErrInvalidTag 表示无效的结构体标签名。
+	ErrInvalidTag = errors.New("xconf: invalid struct tag")
+
+	// ErrInvalidDebounce 表示无效的防抖时间。
+	ErrInvalidDebounce = errors.New("xconf: invalid debounce duration")
+
+	// ErrNilCallback 表示 Watch 回调函数为 nil。
+	ErrNilCallback = errors.New("xconf: nil watch callback")
 )

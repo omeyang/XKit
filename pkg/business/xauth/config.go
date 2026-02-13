@@ -100,8 +100,14 @@ const (
 // Config 定义 xauth 客户端配置。
 type Config struct {
 	// Host 认证服务地址（必填）。
+	// 必须使用 https:// 前缀，除非显式设置 AllowInsecure = true。
 	// 例如：https://auth.example.com
 	Host string
+
+	// AllowInsecure 允许使用 http:// 非加密连接。
+	// 设计决策: 默认强制 HTTPS——认证服务传输 Bearer Token 和客户端凭据，
+	// 明文 HTTP 会暴露这些敏感信息。仅在开发/测试环境中启用此选项。
+	AllowInsecure bool
 
 	// ClientID 客户端 ID。
 	// 为空时根据 DEPLOYMENT_TYPE 自动选择：
@@ -131,8 +137,8 @@ type Config struct {
 	PlatformDataCacheTTL time.Duration
 
 	// TLS TLS 配置。
-	// 为 nil 时使用默认配置（跳过证书验证）。
-	// 生产环境强烈建议显式配置 TLS 选项。
+	// 为 nil 时使用默认配置（启用证书验证）。
+	// 开发/测试环境可设置 InsecureSkipVerify: true 跳过证书验证。
 	TLS *TLSConfig
 }
 
@@ -158,8 +164,16 @@ func (c *Config) Validate() error {
 		return ErrNilConfig
 	}
 
-	if strings.TrimSpace(c.Host) == "" {
+	host := strings.TrimSpace(c.Host)
+	if host == "" {
 		return ErrMissingHost
+	}
+
+	// 设计决策: 强制 HTTPS——认证服务传输 Bearer Token 和客户端凭据，
+	// 明文 HTTP 会将凭据暴露给网络上的窃听者。
+	// 开发/测试环境可通过 AllowInsecure = true 放行 http://。
+	if !c.AllowInsecure && strings.HasPrefix(host, "http://") {
+		return ErrInsecureHost
 	}
 
 	if c.Timeout < 0 {
@@ -191,7 +205,9 @@ func (c *Config) ApplyDefaults() {
 		c.ClientID = getDefaultClientID()
 	}
 
-	// ClientSecret 默认与 ClientID 相同
+	// 设计决策: ClientSecret 默认与 ClientID 相同，这是认证服务的约定——
+	// 内部 client_credentials 模式下 secret 与 id 一致，简化配置。
+	// 外部调用方如需独立 secret，通过 Config.ClientSecret 显式指定。
 	if c.ClientSecret == "" {
 		c.ClientSecret = c.ClientID
 	}

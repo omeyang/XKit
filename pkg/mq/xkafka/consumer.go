@@ -18,9 +18,11 @@ type consumerWrapper struct {
 	options  *consumerOptions
 
 	// mu 保护 Assignment、Committed、QueryWatermarkOffsets、Close 等管理操作的并发访问。
-	// 注意：Consumer.ReadMessage() 本身是线程安全的，不需要加锁。
-	// 锁仅用于确保管理操作（如健康检查、统计计算、关闭）的原子性。
-	mu sync.Mutex
+	// 设计决策: confluent-kafka-go 底层基于 librdkafka，其 API 是线程安全的。
+	// 本包设计为单 goroutine 消费模型（不应从多个 goroutine 并发调用 ReadMessage），
+	// mu 仅串行化管理操作（Health/Stats/Close）之间的并发，不覆盖消费路径。
+	mu     sync.Mutex
+	closed atomic.Bool // 防止重复关闭，atomic 确保消费路径无锁读取安全
 
 	// 统计信息
 	messagesConsumed atomic.Int64
@@ -35,6 +37,11 @@ func (w *consumerWrapper) Consumer() *kafka.Consumer {
 
 // Health 执行健康检查。
 // 检查消费者是否已分配分区。
+//
+// 设计决策: Health 内部启动 goroutine 检查分区分配，当外部 ctx 取消时会立即返回，
+// 但后台 goroutine 仍持有 mu 锁直到操作完成（受 HealthTimeout 限制）。
+// 在此期间 Close() 会被短暂阻塞。这是可接受的权衡：HealthTimeout 默认 5s，
+// 且 Assignment/GetMetadata 通常在毫秒级完成。
 func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: componentName,
@@ -102,16 +109,18 @@ func (w *consumerWrapper) calculateLag() int64 {
 		return 0
 	}
 
+	timeoutMs := int(w.options.HealthTimeout.Milliseconds())
+
 	var totalLag int64
 	for _, tp := range assignment {
 		// 获取当前位置
-		committed, err := w.consumer.Committed([]kafka.TopicPartition{tp}, 1000)
+		committed, err := w.consumer.Committed([]kafka.TopicPartition{tp}, timeoutMs)
 		if err != nil || len(committed) == 0 {
 			continue
 		}
 
 		// 获取高水位
-		_, high, err := w.consumer.QueryWatermarkOffsets(*tp.Topic, tp.Partition, 1000)
+		_, high, err := w.consumer.QueryWatermarkOffsets(*tp.Topic, tp.Partition, timeoutMs)
 		if err != nil {
 			continue
 		}
@@ -129,12 +138,16 @@ func (w *consumerWrapper) calculateLag() int64 {
 
 // Close 优雅关闭消费者。
 // 会提交通过 StoreOffsets 存储的偏移量并取消订阅。
+// 重复调用 Close 安全返回 ErrClosed。
 //
 // 注意：只有通过 StoreOffsets 存储的 offset 才会被提交。
 // 如果消息处理失败且未调用 StoreOffsets，则不会提交该 offset，
 // 确保消息可以被重新消费（at-least-once 语义）。
 func (w *consumerWrapper) Close() error {
-	// 加锁保护对底层 consumer 的访问
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

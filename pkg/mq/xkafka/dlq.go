@@ -2,7 +2,6 @@ package xkafka
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -330,15 +329,12 @@ func parseOriginalPartition(msg *kafka.Message) int32 {
 	if headerVal == "" {
 		return msg.TopicPartition.Partition
 	}
+	// ParseInt with bitSize 32 保证返回值在 int32 范围内
 	parsed, err := strconv.ParseInt(headerVal, 10, 32)
 	if err != nil {
 		return msg.TopicPartition.Partition
 	}
-	// ParseInt with bitSize 32 保证值在 int32 范围内，显式检查以满足静态分析
-	if parsed >= math.MinInt32 && parsed <= math.MaxInt32 {
-		return int32(parsed)
-	}
-	return msg.TopicPartition.Partition
+	return int32(parsed)
 }
 
 // parseOriginalOffset 从消息头解析原始偏移量。

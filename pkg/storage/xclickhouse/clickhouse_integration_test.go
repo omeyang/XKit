@@ -1002,8 +1002,8 @@ func TestClickHouse_Stats_QueryCount_Integration(t *testing.T) {
 
 	stats := wrapper.Stats()
 	// 每次 QueryPage 执行 count 查询 + 分页查询 = 2 次内部查询
-	// 但 QueryCount 统计的是 QueryPage 调用次数
-	assert.Equal(t, int64(5), stats.QueryCount, "查询计数应为 5")
+	// QueryCount 统计的是实际 SQL 执行次数，5 次 QueryPage = 10 次查询
+	assert.Equal(t, int64(10), stats.QueryCount, "查询计数应为 10（5 次 QueryPage × 2）")
 	assert.Zero(t, stats.QueryErrors, "查询错误应为 0")
 }
 

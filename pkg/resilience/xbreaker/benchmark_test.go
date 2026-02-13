@@ -104,7 +104,10 @@ func BenchmarkExecute_SuccessParallel(b *testing.B) {
 
 func BenchmarkManagedBreaker_Execute(b *testing.B) {
 	breaker := NewBreaker("test")
-	managed := NewManagedBreaker[int](breaker)
+	managed, err := NewManagedBreaker[int](breaker)
+	if err != nil {
+		b.Fatal(err)
+	}
 	fn := func() (int, error) { return 42, nil }
 
 	b.ReportAllocs()
@@ -117,7 +120,10 @@ func BenchmarkManagedBreaker_Execute(b *testing.B) {
 
 func BenchmarkManagedBreaker_ExecuteParallel(b *testing.B) {
 	breaker := NewBreaker("test")
-	managed := NewManagedBreaker[int](breaker)
+	managed, err := NewManagedBreaker[int](breaker)
+	if err != nil {
+		b.Fatal(err)
+	}
 	fn := func() (int, error) { return 42, nil }
 
 	b.ReportAllocs()

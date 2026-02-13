@@ -145,21 +145,17 @@ task bench         # 性能基准测试
 
 ## 开发工作流
 
-本项目遵循 **Spec-Driven Development** 工作流：
+本项目遵循规范驱动开发工作流：
 
 ```
-Phase 0: 项目原则 → Phase 0.5: 搜索已有方案 → Phase 1: 需求规格
-  ↓
-Phase 2: 技术计划 → Phase 3: 任务拆解 → Phase 4: 执行实现 → Phase 5: 会话归档
+项目原则 → 搜索已有方案 → 需求规格 → 技术计划 → 任务拆解 → 执行实现
 ```
-
-详细流程参见 `.claude/CLAUDE.md`。
 
 ---
 
 ## 项目原则
 
-本项目遵循以下核心原则（详见 `.specify/memory/constitution.md`）：
+本项目遵循以下核心原则：
 
 1. **模块化设计**：独立、可复用，职责清晰
 2. **API 稳定性优先**：语义化版本控制
@@ -194,20 +190,14 @@ task ci          # 完整检查
 ### Merge Request 流程
 
 1. 创建分支：`git checkout -b feature/xxx`
-2. 执行开发工作流（Phase 0.5 → Phase 5）
-3. 提交代码（使用 AI-Meta 模板）
-4. 创建 MR（使用 `.gitlab/merge_request_templates/ai-assisted.md` 模板）
+2. 执行开发工作流
+3. 提交代码（遵循 Conventional Commits 规范）
+4. 创建 MR
 5. Code Review 通过后合并
 
 ---
 
 ## 文档
 
-**项目文档**：
-- **项目原则**：`.specify/memory/constitution.md`
-- **标准文档索引**：`.specify/prior-art/README.md`
-- **Feature 规格**：`.specify/specs/` 目录
-
-**AI 协作配置**：
-- **入口说明**：`AI.md`
-- **项目配置**：`.claude/CLAUDE.md`
+- **API 文档**：`docs/API.md`
+- **命名规范**：`docs/NAMING.md`

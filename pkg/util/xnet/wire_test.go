@@ -11,38 +11,38 @@ import (
 	"go4.org/netipx"
 )
 
-func TestWireRangeFrom(t *testing.T) {
+func TestWireRangeFromUnchecked(t *testing.T) {
 	r := netipx.IPRangeFrom(
 		netip.MustParseAddr("192.168.1.1"),
 		netip.MustParseAddr("192.168.1.100"),
 	)
-	w := WireRangeFrom(r)
-	assert.Equal(t, "192.168.1.1", w.S)
-	assert.Equal(t, "192.168.1.100", w.E)
+	w := WireRangeFromUnchecked(r)
+	assert.Equal(t, "192.168.1.1", w.Start)
+	assert.Equal(t, "192.168.1.100", w.End)
 }
 
-func TestWireRangeFromChecked(t *testing.T) {
+func TestWireRangeFrom(t *testing.T) {
 	// 有效范围
 	validRange := netipx.IPRangeFrom(
 		netip.MustParseAddr("10.0.0.1"),
 		netip.MustParseAddr("10.0.0.100"),
 	)
-	w, err := WireRangeFromChecked(validRange)
+	w, err := WireRangeFrom(validRange)
 	require.NoError(t, err)
-	assert.Equal(t, "10.0.0.1", w.S)
-	assert.Equal(t, "10.0.0.100", w.E)
+	assert.Equal(t, "10.0.0.1", w.Start)
+	assert.Equal(t, "10.0.0.100", w.End)
 
 	// 无效范围 (From > To)
 	invalidRange := netipx.IPRangeFrom(
 		netip.MustParseAddr("10.0.0.100"),
 		netip.MustParseAddr("10.0.0.1"),
 	)
-	_, err = WireRangeFromChecked(invalidRange)
+	_, err = WireRangeFrom(invalidRange)
 	assert.ErrorIs(t, err, ErrInvalidRange)
 
 	// 零值范围
 	var zeroRange netipx.IPRange
-	_, err = WireRangeFromChecked(zeroRange)
+	_, err = WireRangeFrom(zeroRange)
 	assert.ErrorIs(t, err, ErrInvalidRange)
 
 	// IPv6 有效范围
@@ -50,10 +50,10 @@ func TestWireRangeFromChecked(t *testing.T) {
 		netip.MustParseAddr("2001:db8::1"),
 		netip.MustParseAddr("2001:db8::ff"),
 	)
-	w, err = WireRangeFromChecked(ipv6Range)
+	w, err = WireRangeFrom(ipv6Range)
 	require.NoError(t, err)
-	assert.Equal(t, "2001:db8::1", w.S)
-	assert.Equal(t, "2001:db8::ff", w.E)
+	assert.Equal(t, "2001:db8::1", w.Start)
+	assert.Equal(t, "2001:db8::ff", w.End)
 }
 
 func TestWireRangeFromAddrs(t *testing.T) {
@@ -62,8 +62,8 @@ func TestWireRangeFromAddrs(t *testing.T) {
 		netip.MustParseAddr("10.0.0.100"),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "10.0.0.1", w.S)
-	assert.Equal(t, "10.0.0.100", w.E)
+	assert.Equal(t, "10.0.0.1", w.Start)
+	assert.Equal(t, "10.0.0.100", w.End)
 
 	// Invalid: zero-value addr
 	_, err = WireRangeFromAddrs(netip.Addr{}, netip.MustParseAddr("10.0.0.1"))
@@ -113,8 +113,17 @@ func TestWireRangeFromAddrs(t *testing.T) {
 		netip.MustParseAddr("::ffff:192.168.1.100"),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "::ffff:192.168.1.1", w.S)
-	assert.Equal(t, "::ffff:192.168.1.100", w.E)
+	assert.Equal(t, "::ffff:192.168.1.1", w.Start)
+	assert.Equal(t, "::ffff:192.168.1.100", w.End)
+
+	// Valid: both pure IPv6
+	w, err = WireRangeFromAddrs(
+		netip.MustParseAddr("2001:db8::1"),
+		netip.MustParseAddr("2001:db8::ff"),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "2001:db8::1", w.Start)
+	assert.Equal(t, "2001:db8::ff", w.End)
 }
 
 func TestWireRangeFromAddrs_MixedIPv4AndMapped(t *testing.T) {
@@ -136,39 +145,61 @@ func TestWireRangeFromAddrs_MixedIPv4AndMapped(t *testing.T) {
 }
 
 func TestWireRangeToIPRange(t *testing.T) {
-	w := WireRange{S: "192.168.1.1", E: "192.168.1.100"}
+	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
 	r, err := w.ToIPRange()
 	require.NoError(t, err)
 	assert.Equal(t, "192.168.1.1", r.From().String())
 	assert.Equal(t, "192.168.1.100", r.To().String())
 
 	// Invalid start
-	w = WireRange{S: "invalid", E: "192.168.1.1"}
+	w = WireRange{Start: "invalid", End: "192.168.1.1"}
 	_, err = w.ToIPRange()
 	assert.ErrorIs(t, err, ErrInvalidAddress)
 
 	// Invalid end
-	w = WireRange{S: "192.168.1.1", E: "invalid"}
+	w = WireRange{Start: "192.168.1.1", End: "invalid"}
 	_, err = w.ToIPRange()
 	assert.ErrorIs(t, err, ErrInvalidAddress)
 
 	// Inverted range (start > end → invalid IPRange)
-	w = WireRange{S: "192.168.1.100", E: "192.168.1.1"}
+	w = WireRange{Start: "192.168.1.100", End: "192.168.1.1"}
 	_, err = w.ToIPRange()
 	assert.ErrorIs(t, err, ErrInvalidRange)
+
+	// Zone address in start
+	w = WireRange{Start: "fe80::1%eth0", End: "fe80::1"}
+	_, err = w.ToIPRange()
+	assert.ErrorIs(t, err, ErrInvalidAddress)
+	assert.Contains(t, err.Error(), "zone")
+
+	// Zone address in end
+	w = WireRange{Start: "fe80::1", End: "fe80::1%eth0"}
+	_, err = w.ToIPRange()
+	assert.ErrorIs(t, err, ErrInvalidAddress)
+	assert.Contains(t, err.Error(), "zone")
+}
+
+func TestWireRangeIsZero(t *testing.T) {
+	// 零值
+	assert.True(t, WireRange{}.IsZero())
+
+	// 非零值
+	assert.False(t, WireRange{Start: "10.0.0.1", End: "10.0.0.1"}.IsZero())
+	assert.False(t, WireRange{Start: "10.0.0.1"}.IsZero())
+	assert.False(t, WireRange{End: "10.0.0.1"}.IsZero())
 }
 
 func TestWireRangeString(t *testing.T) {
-	w := WireRange{S: "10.0.0.1", E: "10.0.0.100"}
+	w := WireRange{Start: "10.0.0.1", End: "10.0.0.100"}
 	assert.Equal(t, "10.0.0.1-10.0.0.100", w.String())
 
 	// Single IP
-	w = WireRange{S: "192.168.1.1", E: "192.168.1.1"}
+	w = WireRange{Start: "192.168.1.1", End: "192.168.1.1"}
 	assert.Equal(t, "192.168.1.1", w.String())
 }
 
 func TestWireRangeJSON(t *testing.T) {
-	w := WireRange{S: "192.168.1.1", E: "192.168.1.100"}
+	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
 
 	// Marshal
 	data, err := json.Marshal(w)
@@ -189,7 +220,7 @@ func TestWireRangeJSON(t *testing.T) {
 }
 
 func TestWireRangeBSON(t *testing.T) {
-	w := WireRange{S: "192.168.1.1", E: "192.168.1.100"}
+	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
 
 	// Marshal
 	data, err := bson.Marshal(w)
@@ -223,16 +254,16 @@ func TestWireRangesFromSet(t *testing.T) {
 	wrs := WireRangesFromSet(set)
 	assert.Equal(t, 2, len(wrs))
 	// IPSet 排序：10.x 在前
-	assert.Equal(t, "10.0.0.1", wrs[0].S)
-	assert.Equal(t, "10.0.0.100", wrs[0].E)
-	assert.Equal(t, "192.168.1.0", wrs[1].S)
-	assert.Equal(t, "192.168.1.255", wrs[1].E)
+	assert.Equal(t, "10.0.0.1", wrs[0].Start)
+	assert.Equal(t, "10.0.0.100", wrs[0].End)
+	assert.Equal(t, "192.168.1.0", wrs[1].Start)
+	assert.Equal(t, "192.168.1.255", wrs[1].End)
 }
 
 func TestWireRangesToSet(t *testing.T) {
 	wrs := []WireRange{
-		{S: "10.0.0.1", E: "10.0.0.100"},
-		{S: "192.168.1.0", E: "192.168.1.255"},
+		{Start: "10.0.0.1", End: "10.0.0.100"},
+		{Start: "192.168.1.0", End: "192.168.1.255"},
 	}
 	set, err := WireRangesToSet(wrs)
 	require.NoError(t, err)
@@ -242,7 +273,7 @@ func TestWireRangesToSet(t *testing.T) {
 	assert.False(t, set.Contains(netip.MustParseAddr("8.8.8.8")))
 
 	// Invalid wire range
-	wrs = []WireRange{{S: "invalid", E: "10.0.0.1"}}
+	wrs = []WireRange{{Start: "invalid", End: "10.0.0.1"}}
 	_, err = WireRangesToSet(wrs)
 	assert.ErrorIs(t, err, ErrInvalidAddress)
 }
@@ -253,7 +284,7 @@ func TestWireRangeRoundTrip(t *testing.T) {
 		netip.MustParseAddr("10.0.0.1"),
 		netip.MustParseAddr("10.0.0.100"),
 	)
-	w := WireRangeFrom(r)
+	w := WireRangeFromUnchecked(r)
 	r2, err := w.ToIPRange()
 	require.NoError(t, err)
 	assert.Equal(t, r, r2)

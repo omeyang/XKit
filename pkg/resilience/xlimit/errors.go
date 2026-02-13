@@ -34,6 +34,15 @@ var (
 
 	// ErrNoRuleMatched 表示没有匹配的规则
 	ErrNoRuleMatched = errors.New("xlimit: no rule matched")
+
+	// ErrQueryNotSupported 表示限流器不支持配额查询
+	ErrQueryNotSupported = errors.New("xlimit: query not supported")
+
+	// ErrInvalidN 表示请求数量参数无效（必须为正整数）
+	ErrInvalidN = errors.New("xlimit: invalid request count")
+
+	// ErrNilClient 表示传入的 Redis 客户端为 nil
+	ErrNilClient = errors.New("xlimit: redis client is nil")
 )
 
 // =============================================================================
@@ -138,6 +147,20 @@ func IsRedisError(err error) bool {
 
 	// 检查网络相关错误
 	return isNetworkError(err)
+}
+
+// classifyError 将错误分类为低基数标签，用于指标记录
+//
+// 设计决策: 使用错误分类（而非 err.Error() 原始字符串）作为指标标签，
+// 避免高基数导致指标存储膨胀和潜在的内部信息泄漏。
+func classifyError(err error) string {
+	if errors.Is(err, ErrRedisUnavailable) {
+		return "redis_unavailable"
+	}
+	if isNetworkError(err) {
+		return "network_error"
+	}
+	return "unknown"
 }
 
 // isNetworkError 检查是否是网络相关错误

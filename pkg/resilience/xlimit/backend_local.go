@@ -8,6 +8,12 @@ import (
 
 // localBackend 本地令牌桶后端
 // 使用内存存储，适用于单 Pod 场景或作为分布式限流的降级方案
+//
+// 设计决策: buckets 使用 sync.Map 存储，当前无自动过期清理。
+// 理由：(1) 本地后端主要用于降级场景，非常驻存储；
+// (2) 高基数场景应使用分布式后端（Redis 自带 TTL）；
+// (3) 可通过 Reset 方法手动清理特定键。
+// 如需定期清理，由调用方通过重建 limiter 实例实现。
 type localBackend struct {
 	buckets          sync.Map // map[string]*tokenBucket
 	podCount         int
@@ -59,7 +65,7 @@ func (b *localBackend) Reset(_ context.Context, key string) error {
 
 // Query 查询当前配额状态（不消耗配额）
 func (b *localBackend) Query(ctx context.Context, key string, limit, _ int, window time.Duration) (
-	remaining int, resetAt time.Time, err error) {
+	effectiveLimit, remaining int, resetAt time.Time, err error) {
 	// 获取当前 Pod 数量
 	podCount := b.getPodCount(ctx)
 	localLimit := max(limit/podCount, 1)
@@ -75,7 +81,7 @@ func (b *localBackend) Query(ctx context.Context, key string, limit, _ int, wind
 		}
 	}
 
-	return remaining, resetAt, nil
+	return localLimit, remaining, resetAt, nil
 }
 
 // Close 关闭后端
@@ -97,9 +103,12 @@ func (b *localBackend) getPodCount(ctx context.Context) int {
 }
 
 // getOrCreateBucket 获取或创建令牌桶
+// 设计决策: 复用已有桶时刷新 limit/window，确保动态 Pod 数量变化后
+// 存量桶的补令牌速率和上限与新计算的 localLimit 一致。
 func (b *localBackend) getOrCreateBucket(key string, limit int, window time.Duration) *tokenBucket {
 	if val, ok := b.buckets.Load(key); ok {
 		if bucket, ok := val.(*tokenBucket); ok {
+			bucket.updateParams(limit, window)
 			return bucket
 		}
 	}
@@ -125,6 +134,20 @@ type tokenBucket struct {
 	limit      int
 	window     time.Duration
 	lastUpdate time.Time
+}
+
+// updateParams 原子刷新桶参数（limit/window），使动态 Pod 数量变化对存量桶生效。
+// 若 limit 缩小导致当前 tokens 超过新上限，截断到新上限。
+func (tb *tokenBucket) updateParams(limit int, window time.Duration) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	tb.limit = limit
+	tb.window = window
+
+	if tb.tokens > float64(limit) {
+		tb.tokens = float64(limit)
+	}
 }
 
 // take 尝试从令牌桶获取 n 个令牌

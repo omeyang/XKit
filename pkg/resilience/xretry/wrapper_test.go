@@ -67,6 +67,29 @@ func TestDo(t *testing.T) {
 
 		assert.Error(t, err)
 	})
+
+	t.Run("InternalContextCanceledNoRetry", func(t *testing.T) {
+		// wrapper 路径：函数返回内部 context 取消错误时，不应重试
+		var attempts int
+		err := Do(context.Background(), func() error {
+			attempts++
+			return context.Canceled
+		}, Attempts(5), Delay(time.Millisecond))
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, attempts)
+	})
+
+	t.Run("InternalDeadlineExceededNoRetry", func(t *testing.T) {
+		var attempts int
+		err := Do(context.Background(), func() error {
+			attempts++
+			return context.DeadlineExceeded
+		}, Attempts(5), Delay(time.Millisecond))
+
+		assert.Error(t, err)
+		assert.Equal(t, 1, attempts)
+	})
 }
 
 func TestDoWithData(t *testing.T) {
@@ -229,6 +252,12 @@ func TestToDelayType(t *testing.T) {
 	})
 }
 
+func TestToDelayType_NilPolicy(t *testing.T) {
+	delayFunc := ToDelayType(nil)
+	assert.Equal(t, time.Duration(0), delayFunc(1, nil, nil))
+	assert.Equal(t, time.Duration(0), delayFunc(5, nil, nil))
+}
+
 func TestUnrecoverableCompat(t *testing.T) {
 	t.Run("RetryGoUnrecoverable", func(t *testing.T) {
 		// 使用 retry-go 原生的 Unrecoverable
@@ -301,42 +330,9 @@ func TestRetrierWithData_Function(t *testing.T) {
 	assert.Equal(t, "success", result)
 }
 
-// TestToRetryIfSimple 测试 ToRetryIfSimple 函数
-func TestToRetryIfSimple(t *testing.T) {
-	t.Run("BasicUsage", func(t *testing.T) {
-		// 简单的错误类型检查：只要不是 context.Canceled 就重试
-		retryIf := ToRetryIfSimple(func(err error) bool {
-			return !errors.Is(err, context.Canceled)
-		})
-
-		assert.True(t, retryIf(errors.New("temporary")))
-		assert.True(t, retryIf(errors.New("network error")))
-		assert.False(t, retryIf(context.Canceled))
-	})
-
-	t.Run("CustomErrorTypes", func(t *testing.T) {
-		// 自定义错误类型列表
-		permanentErrors := []error{
-			errors.New("invalid input"),
-			errors.New("permission denied"),
-		}
-
-		retryIf := ToRetryIfSimple(func(err error) bool {
-			for _, pe := range permanentErrors {
-				if err.Error() == pe.Error() {
-					return false
-				}
-			}
-			return true
-		})
-
-		assert.False(t, retryIf(errors.New("invalid input")))
-		assert.False(t, retryIf(errors.New("permission denied")))
-		assert.True(t, retryIf(errors.New("timeout")))
-	})
-
+// TestCustomRetryIf 测试自定义 RetryIf 与 Do 函数的集成
+func TestCustomRetryIf(t *testing.T) {
 	t.Run("IntegrationWithDo", func(t *testing.T) {
-		// 集成测试：与 Do 函数一起使用
 		var attempts int
 		err := Do(context.Background(), func() error {
 			attempts++
@@ -347,9 +343,9 @@ func TestToRetryIfSimple(t *testing.T) {
 		},
 			Attempts(5),
 			Delay(time.Millisecond),
-			RetryIf(ToRetryIfSimple(func(err error) bool {
+			RetryIf(func(err error) bool {
 				return err.Error() == "temporary"
-			})),
+			}),
 		)
 
 		assert.NoError(t, err)
@@ -357,7 +353,6 @@ func TestToRetryIfSimple(t *testing.T) {
 	})
 
 	t.Run("StopOnPermanentError", func(t *testing.T) {
-		// 遇到永久性错误时停止重试
 		var attempts int
 		err := Do(context.Background(), func() error {
 			attempts++
@@ -368,12 +363,12 @@ func TestToRetryIfSimple(t *testing.T) {
 		},
 			Attempts(5),
 			Delay(time.Millisecond),
-			RetryIf(ToRetryIfSimple(func(err error) bool {
+			RetryIf(func(err error) bool {
 				return err.Error() == "temporary"
-			})),
+			}),
 		)
 
 		assert.Error(t, err)
-		assert.Equal(t, 2, attempts) // 第 2 次返回 permanent 错误后停止
+		assert.Equal(t, 2, attempts)
 	})
 }

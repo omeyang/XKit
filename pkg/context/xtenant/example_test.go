@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
 )
@@ -84,7 +85,7 @@ func ExampleHTTPMiddleware() {
 	req.Header.Set("X-Tenant-ID", "tenant-123")
 
 	// 执行 handler
-	handler.ServeHTTP(nil, req)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	// Output:
 	// TenantID: tenant-123

@@ -2,7 +2,11 @@ package xtenant_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/context/xplatform"
@@ -10,6 +14,14 @@ import (
 
 	"google.golang.org/grpc/metadata"
 )
+
+// assertMetadataValue 验证 gRPC metadata 中指定 key 的首个值等于 expected。
+func assertMetadataValue(t *testing.T, md metadata.MD, key, expected string) {
+	t.Helper()
+	vals := md.Get(key)
+	require.NotEmpty(t, vals, "metadata key %q should be present", key)
+	assert.Equal(t, expected, vals[0], "metadata key %q", key)
+}
 
 // =============================================================================
 // gRPC Metadata 提取测试
@@ -189,6 +201,10 @@ func TestMetadataConstants(t *testing.T) {
 		{"MetaTenantName", xtenant.MetaTenantName, "x-tenant-name"},
 		{"MetaHasParent", xtenant.MetaHasParent, "x-has-parent"},
 		{"MetaUnclassRegionID", xtenant.MetaUnclassRegionID, "x-unclass-region-id"},
+		{"MetaTraceID", xtenant.MetaTraceID, "x-trace-id"},
+		{"MetaSpanID", xtenant.MetaSpanID, "x-span-id"},
+		{"MetaRequestID", xtenant.MetaRequestID, "x-request-id"},
+		{"MetaTraceFlags", xtenant.MetaTraceFlags, "x-trace-flags"},
 	}
 
 	for _, tt := range tests {
@@ -198,6 +214,106 @@ func TestMetadataConstants(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// gRPC Trace Metadata 提取测试
+// =============================================================================
+
+func TestExtractTraceFromMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		md   metadata.MD
+		want xctx.Trace
+	}{
+		{
+			name: "nil Metadata",
+			md:   nil,
+			want: xctx.Trace{},
+		},
+		{
+			name: "空 Metadata",
+			md:   metadata.MD{},
+			want: xctx.Trace{},
+		},
+		{
+			name: "完整 Trace Metadata",
+			md: metadata.Pairs(
+				xtenant.MetaTraceID, "trace-001",
+				xtenant.MetaSpanID, "span-001",
+				xtenant.MetaRequestID, "req-001",
+				xtenant.MetaTraceFlags, "01",
+			),
+			want: xctx.Trace{
+				TraceID:    "trace-001",
+				SpanID:     "span-001",
+				RequestID:  "req-001",
+				TraceFlags: "01",
+			},
+		},
+		{
+			name: "部分 Trace Metadata",
+			md: metadata.Pairs(
+				xtenant.MetaTraceID, "trace-002",
+			),
+			want: xctx.Trace{
+				TraceID: "trace-002",
+			},
+		},
+		{
+			name: "带空白的值会被 trim",
+			md: metadata.Pairs(
+				xtenant.MetaTraceID, "  trace-003  ",
+				xtenant.MetaSpanID, "  span-003  ",
+			),
+			want: xctx.Trace{
+				TraceID: "trace-003",
+				SpanID:  "span-003",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := xtenant.ExtractTraceFromMetadata(tt.md)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestExtractTraceFromIncomingContext(t *testing.T) {
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		got := xtenant.ExtractTraceFromIncomingContext(nilCtx)
+		assert.Equal(t, xctx.Trace{}, got)
+	})
+
+	t.Run("无 Metadata", func(t *testing.T) {
+		got := xtenant.ExtractTraceFromIncomingContext(context.Background())
+		assert.Equal(t, xctx.Trace{}, got)
+	})
+
+	t.Run("有 Trace Metadata", func(t *testing.T) {
+		md := metadata.Pairs(
+			xtenant.MetaTraceID, "trace-001",
+			xtenant.MetaSpanID, "span-001",
+			xtenant.MetaRequestID, "req-001",
+			xtenant.MetaTraceFlags, "01",
+		)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		got := xtenant.ExtractTraceFromIncomingContext(ctx)
+		assert.Equal(t, "trace-001", got.TraceID)
+		assert.Equal(t, "span-001", got.SpanID)
+		assert.Equal(t, "req-001", got.RequestID)
+		assert.Equal(t, "01", got.TraceFlags)
+	})
+}
+
+func TestExtractFromIncomingContext_NilContext(t *testing.T) {
+	var nilCtx context.Context
+	got := xtenant.ExtractFromIncomingContext(nilCtx)
+	assert.True(t, got.IsEmpty())
 }
 
 // =============================================================================
@@ -309,6 +425,87 @@ func TestExtractFromIncomingContext_OnlyTenantName(t *testing.T) {
 }
 
 // =============================================================================
+// InjectToOutgoingContext trace 信息传播测试
+// =============================================================================
+
+func TestInjectToOutgoingContext_WithTraceInfo(t *testing.T) {
+	xplatform.Reset()
+
+	ctx := context.Background()
+	var err error
+	ctx, err = xctx.WithTraceID(ctx, "trace-001")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "span-001")
+	require.NoError(t, err)
+	ctx, err = xctx.WithRequestID(ctx, "req-001")
+	require.NoError(t, err)
+	ctx, err = xctx.WithTraceFlags(ctx, "01")
+	require.NoError(t, err)
+
+	ctx = xtenant.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok, "metadata not found in outgoing context")
+
+	assertMetadataValue(t, md, xtenant.MetaTraceID, "trace-001")
+	assertMetadataValue(t, md, xtenant.MetaSpanID, "span-001")
+	assertMetadataValue(t, md, xtenant.MetaRequestID, "req-001")
+	assertMetadataValue(t, md, xtenant.MetaTraceFlags, "01")
+}
+
+func TestInjectToOutgoingContext_PartialTraceInfo(t *testing.T) {
+	xplatform.Reset()
+
+	ctx := context.Background()
+	var err error
+	ctx, err = xctx.WithTraceID(ctx, "trace-only")
+	require.NoError(t, err)
+
+	ctx = xtenant.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+
+	assertMetadataValue(t, md, xtenant.MetaTraceID, "trace-only")
+	// 未设置的字段不应出现
+	assert.Empty(t, md.Get(xtenant.MetaSpanID))
+	assert.Empty(t, md.Get(xtenant.MetaRequestID))
+	assert.Empty(t, md.Get(xtenant.MetaTraceFlags))
+}
+
+func TestInjectToOutgoingContext_NilContext(t *testing.T) {
+	xplatform.Reset()
+
+	// nil context 应该 panic（与 Go 标准库行为一致）
+	assert.Panics(t, func() {
+		var nilCtx context.Context
+		xtenant.InjectToOutgoingContext(nilCtx)
+	})
+}
+
+func TestInjectToOutgoingContext_PreservesExistingMetadata(t *testing.T) {
+	xplatform.Reset()
+
+	ctx := context.Background()
+	// 预设 outgoing metadata
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("existing-key", "existing-value"))
+
+	var err error
+	ctx, err = xctx.WithTenantID(ctx, "tenant-123")
+	require.NoError(t, err)
+
+	ctx = xtenant.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+
+	// 应保留已有 metadata
+	assertMetadataValue(t, md, "existing-key", "existing-value")
+	// 并添加租户信息
+	assertMetadataValue(t, md, xtenant.MetaTenantID, "tenant-123")
+}
+
+// =============================================================================
 // xplatform 集成测试（覆盖平台信息注入分支）
 // =============================================================================
 
@@ -320,47 +517,29 @@ func TestInjectToOutgoingContext_WithPlatformInitialized(t *testing.T) {
 		HasParent:       true,
 		UnclassRegionID: "region-001",
 	})
-	if err != nil {
-		t.Fatalf("xplatform.Init() error = %v", err)
-	}
+	require.NoError(t, err, "xplatform.Init()")
 	t.Cleanup(xplatform.Reset)
 
 	// 设置租户信息
 	ctx := context.Background()
 	ctx, err = xctx.WithTenantID(ctx, "tenant-123")
-	if err != nil {
-		t.Fatalf("xctx.WithTenantID() error = %v", err)
-	}
+	require.NoError(t, err, "xctx.WithTenantID()")
 	ctx, err = xctx.WithTenantName(ctx, "TestTenant")
-	if err != nil {
-		t.Fatalf("xctx.WithTenantName() error = %v", err)
-	}
+	require.NoError(t, err, "xctx.WithTenantName()")
 
 	ctx = xtenant.InjectToOutgoingContext(ctx)
 
 	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		t.Fatal("metadata not found in outgoing context")
-	}
+	require.True(t, ok, "metadata not found in outgoing context")
 
 	// 验证平台信息
-	if got := md.Get(xtenant.MetaPlatformID); len(got) == 0 || got[0] != "test-platform-001" {
-		t.Errorf("MetaPlatformID = %v, want [test-platform-001]", got)
-	}
-	if got := md.Get(xtenant.MetaHasParent); len(got) == 0 || got[0] != "true" {
-		t.Errorf("MetaHasParent = %v, want [true]", got)
-	}
-	if got := md.Get(xtenant.MetaUnclassRegionID); len(got) == 0 || got[0] != "region-001" {
-		t.Errorf("MetaUnclassRegionID = %v, want [region-001]", got)
-	}
+	assertMetadataValue(t, md, xtenant.MetaPlatformID, "test-platform-001")
+	assertMetadataValue(t, md, xtenant.MetaHasParent, "true")
+	assertMetadataValue(t, md, xtenant.MetaUnclassRegionID, "region-001")
 
 	// 验证租户信息
-	if got := md.Get(xtenant.MetaTenantID); len(got) == 0 || got[0] != "tenant-123" {
-		t.Errorf("MetaTenantID = %v, want [tenant-123]", got)
-	}
-	if got := md.Get(xtenant.MetaTenantName); len(got) == 0 || got[0] != "TestTenant" {
-		t.Errorf("MetaTenantName = %v, want [TestTenant]", got)
-	}
+	assertMetadataValue(t, md, xtenant.MetaTenantID, "tenant-123")
+	assertMetadataValue(t, md, xtenant.MetaTenantName, "TestTenant")
 }
 
 func TestInjectToOutgoingContext_WithPlatformNoParent(t *testing.T) {
@@ -423,5 +602,113 @@ func TestInjectToOutgoingContext_WithPlatformNotInitialized(t *testing.T) {
 	// 但租户信息应该正常设置
 	if got := md.Get(xtenant.MetaTenantID); len(got) == 0 || got[0] != "tenant-123" {
 		t.Errorf("MetaTenantID = %v, want [tenant-123]", got)
+	}
+}
+
+// =============================================================================
+// FG-S2: 出站传播清理旧租户键测试
+// =============================================================================
+
+func TestInjectToOutgoingContext_ClearsStalePlatformMetadata(t *testing.T) {
+	// FG-S1 回归测试：xplatform 未初始化时清除旧平台 Metadata
+	xplatform.Reset()
+	err := xplatform.Init(xplatform.Config{
+		PlatformID:      "plat-001",
+		HasParent:       true,
+		UnclassRegionID: "region-001",
+	})
+	require.NoError(t, err, "xplatform.Init()")
+
+	// 先注入平台信息到 outgoing metadata
+	ctx := context.Background()
+	ctx = xtenant.InjectToOutgoingContext(ctx)
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+	assertMetadataValue(t, md, xtenant.MetaPlatformID, "plat-001")
+	assertMetadataValue(t, md, xtenant.MetaHasParent, "true")
+	assertMetadataValue(t, md, xtenant.MetaUnclassRegionID, "region-001")
+
+	// Reset xplatform，模拟 metadata 复用但平台未初始化的场景
+	xplatform.Reset()
+	ctx = xtenant.InjectToOutgoingContext(ctx)
+
+	md, ok = metadata.FromOutgoingContext(ctx)
+	require.True(t, ok)
+	assert.Empty(t, md.Get(xtenant.MetaPlatformID), "stale PlatformID should be cleared")
+	assert.Empty(t, md.Get(xtenant.MetaHasParent), "stale HasParent should be cleared")
+	assert.Empty(t, md.Get(xtenant.MetaUnclassRegionID), "stale UnclassRegionID should be cleared")
+}
+
+func TestInjectToOutgoingContext_ClearsStaleMetadata(t *testing.T) {
+	xplatform.Reset()
+
+	t.Run("清除旧租户metadata", func(t *testing.T) {
+		// 预设 outgoing metadata 带有旧租户值
+		ctx := context.Background()
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(
+			xtenant.MetaTenantID, "old-tenant",
+			xtenant.MetaTenantName, "OldTenant",
+		))
+
+		// 调用 InjectToOutgoingContext，context 无租户信息
+		ctx = xtenant.InjectToOutgoingContext(ctx)
+
+		md, ok := metadata.FromOutgoingContext(ctx)
+		if !ok {
+			t.Fatal("metadata not found")
+		}
+
+		// 旧值应被清除
+		assert.Empty(t, md.Get(xtenant.MetaTenantID), "stale TenantID should be cleared")
+		assert.Empty(t, md.Get(xtenant.MetaTenantName), "stale TenantName should be cleared")
+	})
+
+	t.Run("清除旧trace metadata", func(t *testing.T) {
+		ctx := context.Background()
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(
+			xtenant.MetaTraceID, "old-trace",
+			xtenant.MetaSpanID, "old-span",
+		))
+
+		ctx = xtenant.InjectToOutgoingContext(ctx)
+
+		md, ok := metadata.FromOutgoingContext(ctx)
+		// 没有任何信息时，可能不创建 metadata
+		if ok {
+			assert.Empty(t, md.Get(xtenant.MetaTraceID), "stale TraceID should be cleared")
+			assert.Empty(t, md.Get(xtenant.MetaSpanID), "stale SpanID should be cleared")
+		}
+	})
+}
+
+// =============================================================================
+// FG-M9: Header/Metadata 常量对应关系测试
+// =============================================================================
+
+func TestHeaderMetadataCorrespondence(t *testing.T) {
+	// 验证每个 HTTP Header 常量都有对应的 gRPC Metadata 常量
+	// 且 strings.ToLower(headerName) == metaName
+	pairs := []struct {
+		header string
+		meta   string
+	}{
+		{xtenant.HeaderPlatformID, xtenant.MetaPlatformID},
+		{xtenant.HeaderTenantID, xtenant.MetaTenantID},
+		{xtenant.HeaderTenantName, xtenant.MetaTenantName},
+		{xtenant.HeaderHasParent, xtenant.MetaHasParent},
+		{xtenant.HeaderUnclassRegionID, xtenant.MetaUnclassRegionID},
+		{xtenant.HeaderTraceID, xtenant.MetaTraceID},
+		{xtenant.HeaderSpanID, xtenant.MetaSpanID},
+		{xtenant.HeaderRequestID, xtenant.MetaRequestID},
+		{xtenant.HeaderTraceFlags, xtenant.MetaTraceFlags},
+	}
+
+	for _, p := range pairs {
+		t.Run(p.header, func(t *testing.T) {
+			want := strings.ToLower(p.header)
+			assert.Equal(t, want, p.meta,
+				"Header %q should map to Metadata %q, got %q", p.header, want, p.meta)
+		})
 	}
 }

@@ -16,8 +16,15 @@ func Example_quickStart() {
 	xenv.Reset()
 
 	// 设置环境变量（实际场景由 K8s ConfigMap 注入）
-	os.Setenv("DEPLOYMENT_TYPE", "SAAS")
-	defer os.Unsetenv("DEPLOYMENT_TYPE")
+	if err := os.Setenv(xenv.EnvDeployType, "SAAS"); err != nil {
+		fmt.Println("设置环境变量失败:", err)
+		return
+	}
+	defer func() {
+		if err := os.Unsetenv(xenv.EnvDeployType); err != nil {
+			fmt.Println("清理环境变量失败:", err)
+		}
+	}()
 
 	// 服务启动时初始化
 	if err := xenv.Init(); err != nil {
@@ -89,12 +96,12 @@ func ExampleParse_invalidInput() {
 	fmt.Printf("无效输入: %v\n", errors.Is(err, xenv.ErrInvalidType))
 	fmt.Printf("错误信息包含输入值: %v\n", err)
 
-	// 空输入返回 ErrMissingEnv
+	// 空输入返回 ErrInvalidType
 	_, err = xenv.Parse("")
-	fmt.Printf("空输入: %v\n", err == xenv.ErrMissingEnv)
+	fmt.Printf("空输入: %v\n", errors.Is(err, xenv.ErrInvalidType))
 
 	// Output:
 	// 无效输入: true
-	// 错误信息包含输入值: deploy: invalid deployment type: "invalid"
+	// 错误信息包含输入值: xenv: invalid deployment type: "invalid"
 	// 空输入: true
 }

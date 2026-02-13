@@ -22,6 +22,13 @@ var (
 
 	// ErrEmptyKey 键名为空。
 	ErrEmptyKey = errors.New("xetcd: key is empty")
+
+	// ErrInvalidConfig 配置值无效。
+	ErrInvalidConfig = errors.New("xetcd: invalid config")
+
+	// ErrWatchDisconnected Watch 通道意外关闭。
+	// 用于 WatchWithRetry 内部标识需要重连的断开事件。
+	ErrWatchDisconnected = errors.New("xetcd: watch disconnected")
 )
 
 // IsKeyNotFound 检查错误是否为键不存在。

@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStaticPodCount(t *testing.T) {
@@ -21,12 +24,8 @@ func TestStaticPodCount(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			count, err := tc.count.GetPodCount(context.Background())
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if count != tc.expected {
-				t.Errorf("expected %d, got %d", tc.expected, count)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, count)
 		})
 	}
 }
@@ -38,12 +37,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar+"_MISSING", 4)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 4 {
-			t.Errorf("expected default 4, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 4, count)
 	})
 
 	t.Run("env var with valid value", func(t *testing.T) {
@@ -52,12 +47,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar, 4)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 8 {
-			t.Errorf("expected 8 from env, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 8, count)
 	})
 
 	t.Run("env var with invalid value uses default", func(t *testing.T) {
@@ -66,12 +57,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar+"_INVALID", 3)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 3 {
-			t.Errorf("expected default 3, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 3, count)
 	})
 
 	t.Run("env var with zero uses default", func(t *testing.T) {
@@ -80,12 +67,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar+"_ZERO", 2)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 2 {
-			t.Errorf("expected default 2, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
 	})
 
 	t.Run("env var with negative uses default", func(t *testing.T) {
@@ -94,12 +77,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar+"_NEG", 6)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 6 {
-			t.Errorf("expected default 6, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 6, count)
 	})
 
 	t.Run("default count normalized", func(t *testing.T) {
@@ -107,12 +86,8 @@ func TestEnvPodCount(t *testing.T) {
 		provider := NewEnvPodCount(testEnvVar+"_MISSING2", 0)
 
 		count, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count != 1 {
-			t.Errorf("expected normalized default 1, got %d", count)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
 	})
 }
 
@@ -126,24 +101,16 @@ func TestEnvPodCount_WithCaching(t *testing.T) {
 
 		// 首次读取
 		count1, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count1 != 10 {
-			t.Errorf("expected 10, got %d", count1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 10, count1)
 
 		// 修改环境变量
 		t.Setenv(testEnvVar, "20")
 
 		// 缓存期内应该返回旧值
 		count2, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count2 != 10 {
-			t.Errorf("expected cached 10, got %d", count2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 10, count2)
 	})
 
 	t.Run("no caching reads every time", func(t *testing.T) {
@@ -153,24 +120,16 @@ func TestEnvPodCount_WithCaching(t *testing.T) {
 
 		// 首次读取
 		count1, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count1 != 10 {
-			t.Errorf("expected 10, got %d", count1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 10, count1)
 
 		// 修改环境变量
 		t.Setenv(testEnvVar+"_NOCACHE", "20")
 
 		// 无缓存时应该立即读取新值
 		count2, err := provider.GetPodCount(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if count2 != 20 {
-			t.Errorf("expected new 20, got %d", count2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, 20, count2)
 	})
 }
 

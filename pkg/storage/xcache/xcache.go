@@ -90,6 +90,11 @@ func NewMemoryFromClient(client *ristretto.Cache[string, []byte]) (Memory, error
 // cache 必须是已初始化的 Redis 缓存实例。
 // 提供 singleflight、分布式锁、Cache-Aside 等功能。
 //
+// 构造期校验（fail-fast）：
+//   - cache 为 nil → 返回 ErrNilClient
+//   - EnableDistributedLock 为 true 但 DistributedLockTTL ≤ 0 → 返回 ErrInvalidConfig
+//   - ExternalLock 非 nil 但 EnableDistributedLock 被禁用 → 返回 ErrInvalidConfig
+//
 // 生命周期说明：
 //   - Loader 不持有需要释放的资源，无需调用 Close
 //   - 内部使用的 singleflight.Group 是无状态的，会随 Loader 一起被 GC 回收
@@ -98,17 +103,25 @@ func NewMemoryFromClient(client *ristretto.Cache[string, []byte]) (Memory, error
 // 使用示例：
 //
 //	cache, _ := xcache.NewRedis(redisClient)
-//	loader := xcache.NewLoader(cache, xcache.WithDistributedLock(true))
+//	loader, _ := xcache.NewLoader(cache, xcache.WithDistributedLock(true))
 //	// 使用 loader...
 //	// 无需关闭 loader，只需在适当时机关闭 cache
 //	cache.Close()
-func NewLoader(cache Redis, opts ...LoaderOption) Loader {
+func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
+	if cache == nil {
+		return nil, ErrNilClient
+	}
+
 	options := defaultLoaderOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	return newLoader(cache, options)
+	if err := options.validate(); err != nil {
+		return nil, err
+	}
+
+	return newLoader(cache, options), nil
 }
 
 // =============================================================================

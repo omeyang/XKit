@@ -2,6 +2,7 @@ package xrun
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -70,7 +71,7 @@ func BenchmarkGroup_Wait(b *testing.B) {
 
 func BenchmarkGroup_MultipleServices(b *testing.B) {
 	for _, n := range []int{1, 10, 100} {
-		b.Run(serviceCountName(n), func(b *testing.B) {
+		b.Run(strconv.Itoa(n), func(b *testing.B) {
 			ctx := context.Background()
 			for b.Loop() {
 				g, _ := NewGroup(ctx)
@@ -84,19 +85,6 @@ func BenchmarkGroup_MultipleServices(b *testing.B) {
 				}
 			}
 		})
-	}
-}
-
-func serviceCountName(n int) string {
-	switch n {
-	case 1:
-		return "1"
-	case 10:
-		return "10"
-	case 100:
-		return "100"
-	default:
-		return "unknown"
 	}
 }
 

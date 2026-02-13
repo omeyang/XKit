@@ -1,7 +1,6 @@
 package xid_test
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -10,12 +9,9 @@ import (
 )
 
 func Example_basic() {
-	// 推荐：使用 WithRetry 方法，自动处理时钟回拨
-	id, err := xid.NewStringWithRetry(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	// ID 长度通常在 11-13 个字符之间（取决于时间戳）
+	// 推荐：使用 MustNewStringWithRetry，自动处理时钟回拨
+	id := xid.MustNewStringWithRetry()
+	// ID 长度通常为 12-13 个字符（取决于时间戳大小）
 	fmt.Printf("Generated ID length in range: %v\n", len(id) >= 10 && len(id) <= 13)
 	fmt.Printf("ID is not empty: %v\n", id != "")
 
@@ -50,13 +46,13 @@ func Example_parseAndDecompose() {
 		log.Fatal(err)
 	}
 	fmt.Printf("Has time component: %v\n", parts.Time > 0)
-	fmt.Printf("Has machine: %v\n", parts.Machine >= 0)
-	fmt.Printf("Has sequence: %v\n", parts.Sequence >= 0)
+	fmt.Printf("Machine in range: %v\n", parts.Machine >= 0 && parts.Machine <= 65535)
+	fmt.Printf("Sequence in range: %v\n", parts.Sequence >= 0 && parts.Sequence <= 255)
 
 	// Output:
 	// Has time component: true
-	// Has machine: true
-	// Has sequence: true
+	// Machine in range: true
+	// Sequence in range: true
 }
 
 func Example_concurrent() {
@@ -68,7 +64,7 @@ func Example_concurrent() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids <- xid.MustNewString()
+			ids <- xid.MustNewStringWithRetry()
 		}()
 	}
 

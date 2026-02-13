@@ -233,8 +233,9 @@ func TestCommandRegistry_EssentialCommandsWithEmptyWhitelist(t *testing.T) {
 
 	registry.Register(&mockCommand{name: "help", help: "h"})
 	registry.Register(&mockCommand{name: "exit", help: "e"})
+	registry.Register(&mockCommand{name: "setlog", help: "s"})
 
-	// 设置空白名单（禁止所有命令）
+	// 设置空白名单（仅允许必要命令）
 	registry.SetWhitelist([]string{})
 
 	// 必要命令应该仍然被允许
@@ -243,5 +244,33 @@ func TestCommandRegistry_EssentialCommandsWithEmptyWhitelist(t *testing.T) {
 	}
 	if !registry.IsAllowed("exit") {
 		t.Error("expected 'exit' to be allowed even with empty whitelist")
+	}
+
+	// 非必要命令应该被禁止
+	if registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be forbidden with empty whitelist")
+	}
+}
+
+func TestCommandRegistry_NilVsEmptyWhitelist(t *testing.T) {
+	registry := NewCommandRegistry()
+	registry.Register(&mockCommand{name: "setlog", help: "s"})
+
+	// nil 白名单: 允许所有
+	registry.SetWhitelist(nil)
+	if !registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be allowed with nil whitelist")
+	}
+
+	// 空切片白名单: 仅必要命令
+	registry.SetWhitelist([]string{})
+	if registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be forbidden with empty whitelist")
+	}
+
+	// 恢复 nil
+	registry.SetWhitelist(nil)
+	if !registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be allowed after restoring nil whitelist")
 	}
 }

@@ -34,7 +34,7 @@ type LockHandle interface {
 	// Unlock 释放锁。
 	//
 	// 只释放本次获取的锁，不会影响其他 goroutine 或实例持有的锁。
-	// 返回 [ErrLockNotHeld] 表示锁已过期或被其他获取覆盖。
+	// 返回 [ErrNotLocked] 表示锁已过期或被其他获取覆盖。
 	Unlock(ctx context.Context) error
 
 	// Extend 续期锁。
@@ -42,10 +42,11 @@ type LockHandle interface {
 	// 延长锁的 TTL，用于长时间运行的任务。
 	// 续期时间使用创建锁时配置的 Expiry。
 	//
-	// 注意：etcd 使用 Session 自动续期，调用此方法返回 nil（无需手动续期）。
+	// 注意：etcd 使用 Session 自动续期，调用此方法仅检查 Session 健康状态，
+	// 若 Session 有效返回 nil，若已过期返回 [ErrSessionExpired]。
 	//
-	// 返回 [ErrLockNotHeld] 表示锁已过期或被其他获取覆盖。
-	// 返回 [ErrExtendFailed] 表示续期失败。
+	// 返回 [ErrNotLocked] 表示锁已过期或被其他获取覆盖（所有权已丢失）。
+	// 返回 [ErrExtendFailed] 表示续期操作失败（锁可能仍在，可重试）。
 	Extend(ctx context.Context) error
 
 	// Key 返回锁的 key。
@@ -53,10 +54,6 @@ type LockHandle interface {
 	// 用于日志记录等场景。
 	Key() string
 }
-
-// ErrLockNotHeld 表示尝试操作未持有的锁。
-// 当 Unlock 或 Extend 时锁已过期或被其他实例持有时返回此错误。
-var ErrLockNotHeld = ErrNotLocked
 
 // Factory 定义锁工厂接口。
 // 工厂管理底层连接，并提供锁操作。

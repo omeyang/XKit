@@ -84,6 +84,21 @@ var (
 	// ErrInvalidRetryDelay 无效的重试间隔配置。
 	// 重试间隔必须为正数时返回此错误。
 	ErrInvalidRetryDelay = errors.New("xsemaphore: invalid retry delay")
+
+	// ErrNilContext context 参数为空。
+	// 所有公开方法都要求传入非 nil 的 context.Context。
+	ErrNilContext = errors.New("xsemaphore: context must not be nil")
+
+	// ErrInvalidPodCount 无效的 Pod 数量配置。
+	// Pod 数量必须为正整数。
+	ErrInvalidPodCount = errors.New("xsemaphore: invalid pod count")
+
+	// ErrInvalidFallbackStrategy 无效的降级策略。
+	// 降级策略必须为 FallbackLocal、FallbackOpen 或 FallbackClose。
+	ErrInvalidFallbackStrategy = errors.New("xsemaphore: invalid fallback strategy")
+
+	// errUnexpectedScriptResult Lua 脚本返回结果不符合预期（内部使用）
+	errUnexpectedScriptResult = errors.New("xsemaphore: unexpected script result")
 )
 
 // =============================================================================

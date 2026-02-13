@@ -34,24 +34,12 @@ go mod download
 
 ## 开发工作流
 
-### Spec-Driven Development 流程
+### 规范驱动开发流程
 
-本项目遵循 **Spec-Driven Development** 工作流，所有新功能必须按以下流程开发：
+本项目遵循规范驱动开发工作流，所有新功能按以下流程开发：
 
 ```
-Phase 0: 项目原则 (.specify/memory/constitution.md)
-  ↓
-Phase 1: 需求规格 (/speckit.specify) - 包含 10 项强制字段
-  ↓
-Phase 1.5: 澄清需求 (/speckit.clarify)
-  ↓
-Phase 2: 技术计划 (/speckit.plan) - 包含 ADR
-  ↓
-Phase 3: 任务拆解 (/speckit.tasks)
-  ↓
-Phase 3.5: 一致性分析 (/speckit.analyze)
-  ↓
-Phase 4: 执行实现 (/speckit.implement)
+项目原则 → 需求规格 → 技术计划（含 ADR） → 任务拆解 → 执行实现
 ```
 
 ### 创建新功能
@@ -62,23 +50,18 @@ Phase 4: 执行实现 (/speckit.implement)
 git checkout -b feature/001-feature-name
 ```
 
-**步骤 2: Phase 1 - 创建需求规格**
+**步骤 2: 创建需求规格**
 
-使用 `/speckit.specify` 命令创建需求规格，必须包含：
-- 10 项强制字段（元数据、需求溯源、差异化等）
+在 `.specify/specs/{feature-name}/spec.md` 创建需求规格，包含：
 - SMART 验收标准（可量化、可测试）
 - 人工审核签字（架构师、安全专家、测试经理）
 
-**步骤 3: Phase 2-4 - 技术计划、任务拆解、执行实现**
+**步骤 3: 技术计划、任务拆解、执行实现**
 
-依次执行后续 Phase，确保：
+依次完成：
 - Plan 包含 ADR 记录技术决策
 - Tasks 拆解为可执行任务
-- 实现符合项目原则（constitution.md）
-
-**步骤 4:（可选）会话归档**
-
-如需保留 AI 会话日志，可手动归档到 `.specify/specs/{feature}/ai-sessions/`
+- 实现符合项目原则
 
 ---
 
@@ -90,7 +73,7 @@ git checkout -b feature/001-feature-name
 xkit/
 ├── internal/       # 内部包（不导出，仅项目内使用）
 ├── pkg/            # 公开包（可导出，供外部使用）
-└── .specify/       # 规格、标准与项目记忆
+└── .specify/       # 规格与标准文档
 ```
 
 ### 命名规范
@@ -259,26 +242,19 @@ task lint-fix
 
 ### Commit 消息格式
 
-使用全局 Git Commit 模板（`~/.gitmessage`），包含 AI-Meta 信息：
+遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
 
 ```
-[AI-Assisted] 简要描述功能或修复
+<type>(<scope>): 简要描述
 
 详细说明：
 - 变更 1
 - 变更 2
-
-AI-Meta:
-- Model: claude-sonnet-4-5
-- Session-ID: sess-20251119-xxx
-- AI-Generated: 70%
-- Human-Modified: 30%
-- Related-Spec: FEAT-2025-11-19-001
-- Human-Review: 张三, 李四
-
-Reviewed-by: 张三, 李四
-Co-Authored-By: Claude <ai@anthropic.com>
 ```
+
+**type 类型**：`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
+
+**scope 示例**：`xlog`, `xretry`, `xbreaker`, `util` 等包名
 
 ### 提交步骤
 
@@ -286,8 +262,8 @@ Co-Authored-By: Claude <ai@anthropic.com>
 # 1. 暂存变更
 git add .
 
-# 2. 提交（会自动应用模板）
-git commit
+# 2. 提交
+git commit -m "feat(xlog): 新增动态日志级别支持"
 
 # 3. 推送到远程
 git push origin feature/001-feature-name
@@ -299,26 +275,17 @@ git push origin feature/001-feature-name
 
 ### 创建 MR
 
-**步骤 1: 使用 MR 模板**
+**填写 MR 信息**：
 
-使用 `.gitlab/merge_request_templates/ai-assisted.md` 模板创建 MR。
-
-**步骤 2: 填写 MR 信息**
-
-- **Feature ID**：FEAT-{YYYY-MM-DD}-{序号}
 - **关联文档**：Spec、Plan、Tasks 链接
-- **AI 协作元数据**：会话 ID、贡献占比、审核人
 - **验收确认**：功能性验收、非功能性验收
 - **测试证据**：单元测试、集成测试、性能测试、安全扫描
 
-**步骤 3: 检查清单**
+**检查清单**：
 
-- [ ] Phase 0.5 搜索已有方案
-- [ ] Spec 包含 10 项强制字段 + 人工审核签字
-- [ ] Plan 包含 ADR 记录技术决策
 - [ ] 测试覆盖率达标（核心业务 ≥ 95%，整体 ≥ 90%）
 - [ ] golangci-lint 检查通过
-- [ ] 会话日志已归档
+- [ ] Plan 包含 ADR 记录技术决策
 
 ### Code Review 要求
 
@@ -358,21 +325,6 @@ git push origin feature/001-feature-name
 10. **代码溯源**：标注仓库、分支、提交
 11. **决策留痕**：记录已拒绝方案（ADR）
 12. **控制篇幅**：单文件 ≤ 800 行
-
-**参考文档**：
-- `.specify/prior-art/01-standards/01-documentation/`
-
-### 文档类型
-
-**技术分析文档**（`.specify/specs/*/analysis/`）：
-- 强制遵循文档金标准
-- 基于实际代码和数据
-- 标注代码基准
-
-**设计文档**（`.specify/specs/*/design/`）：
-- 强制遵循文档金标准
-- ADR 记录技术决策
-- 包含架构图（Mermaid）
 
 **API 文档**（代码注释）：
 - 公开 API 必须有中文注释
@@ -423,14 +375,8 @@ task check  # Lint + 测试 + 数据竞争检测
 
 ## 参考文档
 
-**项目文档**：
-- **项目原则**：`.specify/memory/constitution.md`
-- **标准文档索引**：`.specify/prior-art/README.md`
-- **文档金标准**：`.specify/prior-art/01-standards/01-documentation/`
-- **代码质量标准**：`.specify/prior-art/01-standards/02-code-quality/`
-- **测试标准**：`.specify/prior-art/01-standards/03-testing/`
-
-**其他配置**：
 - **golangci-lint 配置**：`.golangci.yml`
+- **API 文档**：`docs/API.md`
+- **命名规范**：`docs/NAMING.md`
 
 ---

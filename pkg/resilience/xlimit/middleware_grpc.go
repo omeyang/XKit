@@ -157,6 +157,9 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 	for _, opt := range opts {
 		opt(options)
 	}
+	if options.KeyExtractor == nil {
+		options.KeyExtractor = DefaultGRPCKeyExtractor()
+	}
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// 检查是否跳过
@@ -170,7 +173,14 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 		// 执行限流检查
 		result, err := limiter.Allow(ctx, key)
 		if err != nil {
-			// 限流器错误，放行请求
+			// 设计决策: 优先检查 result 是否携带拒绝信息（如 FallbackClose 策略
+			// 返回 Allowed=false + ErrRedisUnavailable）。仅当 result 为空时
+			// 才 fail-open（限流器内部错误不阻塞业务请求）。
+			if result != nil && !result.Allowed {
+				return nil, status.Errorf(codes.ResourceExhausted,
+					"rate limit exceeded: limit=%d, retry_after=%v",
+					result.Limit, result.RetryAfter)
+			}
 			return handler(ctx, req)
 		}
 
@@ -198,6 +208,9 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 	for _, opt := range opts {
 		opt(options)
 	}
+	if options.KeyExtractor == nil {
+		options.KeyExtractor = DefaultGRPCKeyExtractor()
+	}
 
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx := stream.Context()
@@ -213,7 +226,12 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 		// 执行限流检查
 		result, err := limiter.Allow(ctx, key)
 		if err != nil {
-			// 限流器错误，放行请求
+			// 设计决策: 同 UnaryServerInterceptor，优先检查 result 拒绝信息。
+			if result != nil && !result.Allowed {
+				return status.Errorf(codes.ResourceExhausted,
+					"rate limit exceeded: limit=%d, retry_after=%v",
+					result.Limit, result.RetryAfter)
+			}
 			return handler(srv, stream)
 		}
 

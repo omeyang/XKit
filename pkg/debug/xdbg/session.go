@@ -4,6 +4,7 @@ package xdbg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -96,12 +97,12 @@ func (s *Session) readRequest() (*Request, bool) {
 	// 读取请求
 	req, err := s.codec.DecodeRequest(s.conn)
 	if err != nil {
-		if err == ErrConnectionClosed {
+		if errors.Is(err, ErrConnectionClosed) {
 			return nil, false
 		}
 		// 检查是否是超时错误
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			s.sendError(fmt.Errorf("读取请求超时"))
+			s.sendError(ErrTimeout)
 			return nil, false
 		}
 		s.sendError(fmt.Errorf("decode request: %w", err))
@@ -119,6 +120,12 @@ func (s *Session) readRequest() (*Request, bool) {
 }
 
 // handleRequest 处理单个请求。
+//
+// 设计决策: 命令执行前仅校验"命令白名单"，不校验调用者身份（UID/GID/PID）。
+// 安全边界由多层机制保证：Unix Socket 文件权限（0600）限制访问、SO_PEERCRED 记录
+// 调用者身份到审计日志、命令白名单限制可用命令集。在 Kubernetes 环境中，
+// kubectl exec 的 RBAC 策略提供外层访问控制。如需更细粒度的命令级授权，
+// 可通过自定义 Command 实现在 Execute 内部检查身份。
 func (s *Session) handleRequest(req *Request) {
 	startTime := time.Now()
 
@@ -194,39 +201,7 @@ func (s *Session) sendResponse(resp *Response) {
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return
-	}
-
-	// 设置写超时，防止客户端不读取数据阻塞 goroutine
-	if s.server.opts.SessionWriteTimeout > 0 {
-		if err := s.conn.SetWriteDeadline(time.Now().Add(s.server.opts.SessionWriteTimeout)); err != nil {
-			s.server.audit(AuditEventCommandFailed, s.identity, "", nil, 0,
-				fmt.Errorf("set write deadline failed: %w", err))
-			s.closed = true
-			return
-		}
-	}
-
-	if _, err := s.conn.Write(data); err != nil {
-		// 写入错误时记录审计日志，并标记会话为关闭状态
-		s.server.audit(AuditEventCommandFailed, s.identity, "", nil, 0,
-			fmt.Errorf("write response failed: %w", err))
-		// 标记会话关闭，后续的 Run 循环会检测到并退出
-		s.closed = true
-		return
-	}
-
-	// 清除写超时
-	if s.server.opts.SessionWriteTimeout > 0 {
-		if err := s.conn.SetWriteDeadline(time.Time{}); err != nil {
-			s.server.audit(AuditEventCommandFailed, s.identity, "", nil, 0,
-				fmt.Errorf("clear write deadline failed: %w", err))
-		}
-	}
+	s.writeData(data)
 }
 
 // sendEncodingErrorResponse 发送编码错误响应。
@@ -246,6 +221,12 @@ func (s *Session) sendEncodingErrorResponse() {
 		return
 	}
 
+	s.writeData(data)
+}
+
+// writeData 将已编码的数据写入连接，带写超时保护。
+// 调用方已完成编码，此方法负责加锁、设置超时、写入、清除超时。
+func (s *Session) writeData(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -253,7 +234,7 @@ func (s *Session) sendEncodingErrorResponse() {
 		return
 	}
 
-	// 设置写超时
+	// 设置写超时，防止客户端不读取数据阻塞 goroutine
 	if s.server.opts.SessionWriteTimeout > 0 {
 		if err := s.conn.SetWriteDeadline(time.Now().Add(s.server.opts.SessionWriteTimeout)); err != nil {
 			s.server.audit(AuditEventCommandFailed, s.identity, "", nil, 0,
@@ -265,7 +246,7 @@ func (s *Session) sendEncodingErrorResponse() {
 
 	if _, err := s.conn.Write(data); err != nil {
 		s.server.audit(AuditEventCommandFailed, s.identity, "", nil, 0,
-			fmt.Errorf("write error response failed: %w", err))
+			fmt.Errorf("write response failed: %w", err))
 		s.closed = true
 		return
 	}

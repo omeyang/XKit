@@ -7,6 +7,31 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// errFailedByPolicy 当 SuccessPolicy 判定 nil error 为失败时使用的占位错误。
+// 这是一个极端情况：操作未返回错误，但 SuccessPolicy 仍判定为失败。
+var errFailedByPolicy = errors.New("xbreaker: operation marked as failed by success policy")
+
+// 参数校验错误
+var (
+	// ErrNilBreaker 传入的 Breaker 为 nil
+	ErrNilBreaker = errors.New("xbreaker: breaker cannot be nil")
+
+	// ErrNilRetryer 传入的 Retryer 为 nil
+	ErrNilRetryer = errors.New("xbreaker: retryer cannot be nil")
+
+	// ErrNilBreakerRetryer 传入的 BreakerRetryer 为 nil
+	ErrNilBreakerRetryer = errors.New("xbreaker: BreakerRetryer cannot be nil")
+
+	// ErrNilRetryThenBreak 传入的 RetryThenBreak 为 nil
+	ErrNilRetryThenBreak = errors.New("xbreaker: RetryThenBreak cannot be nil")
+
+	// ErrNilContext 传入的 context 为 nil
+	ErrNilContext = errors.New("xbreaker: context cannot be nil")
+
+	// ErrNilFunc 传入的操作函数为 nil
+	ErrNilFunc = errors.New("xbreaker: function cannot be nil")
+)
+
 // BreakerError 熔断器错误包装类型
 //
 // 包装 gobreaker 的错误（ErrOpenState、ErrTooManyRequests），
@@ -134,16 +159,16 @@ func IsBreakerError(err error) bool {
 	return IsOpen(err) || IsTooManyRequests(err)
 }
 
-// IsRecoverable 检查错误是否可恢复（可重试）
+// IsRecoverable 检查错误是否表示熔断器拒绝（暂时性保护措施）
 //
-// 熔断器相关错误通常是可恢复的，因为它们只是暂时性的保护措施。
-// 业务逻辑可以根据此函数决定是否进行重试。
+// 设计决策: IsRecoverable 与 BreakerError.Retryable() 语义不同：
+//   - IsRecoverable 判断错误是否来自熔断器拒绝（熔断器最终会恢复）
+//   - BreakerError.Retryable() 返回 false 表示当前请求不应被 xretry 立即重试
 //
-// 注意：这与 xretry.IsRetryable 的语义不同。
-// xretry.IsRetryable 判断的是业务错误是否应该重试，
-// 而 IsRecoverable 判断的是熔断器错误是否可恢复。
+// 两者不矛盾：熔断器拒绝的请求不应立即重试（Retryable=false），
+// 但业务层可通过 IsRecoverable 判断是否需要降级或延迟重试。
+//
+// Deprecated: 推荐使用 IsBreakerError 代替，语义更清晰。
 func IsRecoverable(err error) bool {
-	// 熔断器错误通常是可恢复的
-	// 但需要等待一段时间后重试
 	return IsBreakerError(err)
 }

@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -38,11 +39,16 @@ func (c *limiterCore) Allow(ctx context.Context, key Key) (*Result, error) {
 
 // AllowN 检查是否允许 n 个请求通过
 // 这是核心限流逻辑，统一处理:
+//   - 参数校验（n 必须为正整数）
 //   - 关闭状态检查
 //   - 可观测性（span 创建、指标记录）
 //   - 规则遍历
 //   - 回调调用
 func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, error) {
+	if n <= 0 {
+		return nil, fmt.Errorf("%w: must be positive, got %d", ErrInvalidN, n)
+	}
+
 	if c.closed.Load() {
 		return nil, ErrLimiterClosed
 	}
@@ -96,6 +102,9 @@ func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, erro
 		}
 	}
 
+	// 设计决策: 无匹配规则时默认放行（fail-open）。
+	// 理由：(1) 动态配置场景中可能临时无规则；(2) 明确拒绝应通过规则配置实现。
+	// 如需强制限流，确保至少配置一条启用的规则。
 	if lastResult == nil {
 		lastResult = AllowedResult(0, 0)
 	}
@@ -163,13 +172,13 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 		burst := c.matcher.getEffectiveBurst(rule, key)
 		renderedKey := c.matcher.renderKey(rule, key, c.opts.config.KeyPrefix)
 
-		remaining, resetAt, err := c.backend.Query(ctx, renderedKey, limit, burst, window)
+		effectiveLimit, remaining, resetAt, err := c.backend.Query(ctx, renderedKey, limit, burst, window)
 		if err != nil {
 			return nil, err
 		}
 
 		return &QuotaInfo{
-			Limit:     limit,
+			Limit:     effectiveLimit,
 			Remaining: remaining,
 			ResetAt:   resetAt,
 			Rule:      rule.Name,
@@ -177,7 +186,7 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 		}, nil
 	}
 
-	return nil, ErrConfigNotFound
+	return nil, ErrNoRuleMatched
 }
 
 // Close 关闭限流器

@@ -22,11 +22,33 @@ func newOverflowGenerator(t *testing.T) *Generator {
 		MachineID: func() (int, error) { return 1, nil },
 	})
 	require.NoError(t, err)
-	return &Generator{
+	g := &Generator{
 		sf:              sf,
 		maxWaitDuration: 50 * time.Millisecond,
 		retryInterval:   5 * time.Millisecond,
 	}
+	g.generateID = sf.NextID
+	return g
+}
+
+// newRetryableFailGenerator 创建一个 generateID 总是返回可重试错误的生成器。
+// 用于测试 NewWithRetry 的超时和 context 取消路径。
+func newRetryableFailGenerator(t *testing.T) *Generator {
+	t.Helper()
+	sf, err := sonyflake.New(sonyflake.Settings{
+		MachineID: func() (int, error) { return 1, nil },
+	})
+	require.NoError(t, err)
+	retryableErr := errors.New("clock backward (simulated)")
+	g := &Generator{
+		sf:              sf,
+		maxWaitDuration: 50 * time.Millisecond,
+		retryInterval:   5 * time.Millisecond,
+	}
+	g.generateID = func() (int64, error) {
+		return 0, retryableErr
+	}
+	return g
 }
 
 // =============================================================================
@@ -34,15 +56,15 @@ func newOverflowGenerator(t *testing.T) *Generator {
 // =============================================================================
 
 func TestMachineIDFromPrivateIP(t *testing.T) {
-	// 在有网络接口的环境中，应该能获取到私有 IP
+	// 环境依赖测试：结果取决于运行环境是否有私有 IP 地址。
+	// 有私有 IP（大多数开发/CI 环境）→ 走成功路径
+	// 无私有 IP（隔离容器、无网络）→ 走错误路径
+	// 两条路径均有断言。纯函数 isPrivateIPv4 的确定性测试见 TestIsPrivateIPv4。
 	id, err := machineIDFromPrivateIP()
-	// 如果有私有 IP，应该成功
-	// 如果没有私有 IP（如在隔离容器中），会返回错误
 	if err == nil {
 		assert.NotZero(t, id)
 	} else {
-		// 验证是正确的错误类型
-		assert.True(t, errors.Is(err, ErrNoPrivateAddress) || err != nil)
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
 	}
 }
 
@@ -51,13 +73,16 @@ func TestMachineIDFromPrivateIP(t *testing.T) {
 // =============================================================================
 
 func TestPrivateIPv4(t *testing.T) {
+	// 环境依赖测试：结果取决于运行环境的网络配置。
+	// 纯函数 isPrivateIPv4 的确定性测试见 TestIsPrivateIPv4 和 TestIsPrivateIPv4_EdgeCases。
 	ip, err := privateIPv4()
 	if err == nil {
 		assert.NotNil(t, ip)
 		assert.Len(t, ip, 4) // IPv4 should be 4 bytes
 		assert.True(t, isPrivateIPv4(ip), "returned IP should be private")
+	} else {
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
 	}
-	// Error case is acceptable in some environments
 }
 
 // =============================================================================
@@ -133,10 +158,25 @@ func TestNew_InitFailure(t *testing.T) {
 	}))
 	require.Error(t, err)
 
+	// 显式 Init 失败后，自动初始化不应覆盖用户意图
 	_, err = New()
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotInitialized)
 
 	// 重置以避免影响其他测试
+	resetGlobal()
+}
+
+func TestNew_AutoInitFailure(t *testing.T) {
+	resetGlobal()
+
+	// 设置无效的 XID_MACHINE_ID 使 DefaultMachineID 返回错误，
+	// 覆盖 ensureInitialized 中 NewGenerator() 失败的路径
+	t.Setenv(EnvMachineID, "invalid")
+
+	_, err := New()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid")
+
 	resetGlobal()
 }
 
@@ -154,7 +194,7 @@ func TestNewWithRetry_InitFailure(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = NewWithRetry(context.Background())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotInitialized)
 
 	// 重置以避免影响其他测试
 	resetGlobal()
@@ -174,7 +214,7 @@ func TestNewString_InitFailure(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = NewString()
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotInitialized)
 
 	// 重置以避免影响其他测试
 	resetGlobal()
@@ -194,56 +234,66 @@ func TestNewStringWithRetry_InitFailure(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = NewStringWithRetry(context.Background())
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotInitialized)
 
 	// 重置以避免影响其他测试
 	resetGlobal()
 }
 
 // =============================================================================
-// MustNew panic 测试
+// MustNewWithRetry / MustNewStringWithRetry 测试
 // =============================================================================
 
-func TestMustNew_Panic_OnInitFailure(t *testing.T) {
+func TestMustNewWithRetry_Panic_OnInitFailure(t *testing.T) {
 	resetGlobal()
-
-	// 使用一个会失败的 MachineID 函数初始化
 	err := Init(WithMachineID(func() (uint16, error) {
 		return 0, errors.New("machine ID error")
 	}))
 	require.Error(t, err)
 
-	assert.Panics(t, func() {
-		MustNew()
-	})
-
-	// 重置以避免影响其他测试
+	assert.Panics(t, func() { MustNewWithRetry() })
 	resetGlobal()
 }
 
-// =============================================================================
-// MustNewWithRetry panic 测试
-// =============================================================================
-
-// =============================================================================
-// MustNewString panic 测试
-// =============================================================================
-
-func TestMustNewString_Panic_OnInitFailure(t *testing.T) {
+func TestMustNewStringWithRetry_Panic_OnInitFailure(t *testing.T) {
 	resetGlobal()
-
-	// 使用一个会失败的 MachineID 函数初始化
 	err := Init(WithMachineID(func() (uint16, error) {
 		return 0, errors.New("machine ID error")
 	}))
 	require.Error(t, err)
 
-	assert.Panics(t, func() {
-		MustNewString()
-	})
-
-	// 重置以避免影响其他测试
+	assert.Panics(t, func() { MustNewStringWithRetry() })
 	resetGlobal()
+}
+
+func TestGenerator_MustNewWithRetry(t *testing.T) {
+	gen, err := NewGenerator()
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		id := gen.MustNewWithRetry()
+		assert.NotZero(t, id)
+	})
+}
+
+func TestGenerator_MustNewStringWithRetry(t *testing.T) {
+	gen, err := NewGenerator()
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		s := gen.MustNewStringWithRetry()
+		assert.NotEmpty(t, s)
+	})
+}
+
+func TestGenerator_MustNewWithRetry_Panic(t *testing.T) {
+	gen := newOverflowGenerator(t)
+	assert.Panics(t, func() { gen.MustNewWithRetry() })
+}
+
+func TestGenerator_MustNewStringWithRetry_Panic(t *testing.T) {
+	gen := newOverflowGenerator(t)
+	assert.Panics(t, func() { gen.MustNewStringWithRetry() })
 }
 
 // =============================================================================
@@ -252,27 +302,27 @@ func TestMustNewString_Panic_OnInitFailure(t *testing.T) {
 
 func TestWithMaxWaitDuration_Zero(t *testing.T) {
 	// 零值存储到 config，NewGenerator 中使用默认值
-	cfg := &config{}
+	cfg := &options{}
 	WithMaxWaitDuration(0)(cfg)
 	assert.Equal(t, time.Duration(0), cfg.maxWaitDuration)
 }
 
 func TestWithRetryInterval_Zero(t *testing.T) {
 	// 零值存储到 config，NewGenerator 中使用默认值
-	cfg := &config{}
+	cfg := &options{}
 	WithRetryInterval(0)(cfg)
 	assert.Equal(t, time.Duration(0), cfg.retryInterval)
 }
 
 func TestNewGenerator_NegativeMaxWaitDuration(t *testing.T) {
 	_, err := NewGenerator(WithMaxWaitDuration(-1 * time.Second))
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 	assert.Contains(t, err.Error(), "max wait duration must be non-negative")
 }
 
 func TestNewGenerator_NegativeRetryInterval(t *testing.T) {
 	_, err := NewGenerator(WithRetryInterval(-1 * time.Millisecond))
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 	assert.Contains(t, err.Error(), "retry interval must be non-negative")
 }
 
@@ -330,19 +380,17 @@ func TestParse_EdgeCases(t *testing.T) {
 		errType error // 可选的错误类型检查
 	}{
 		{"valid base36 ID", "1a2b3c", false, nil},
-		{"empty string", "", true, nil},
+		{"empty string", "", true, ErrInvalidID},
 		{"valid numeric", "12345", false, nil},
-		{"overflow", "99999999999999999999999999999", true, nil},
-		{"zero", "0", true, ErrInvalidID},      // 零不是有效 xid
-		{"negative", "-1", true, ErrInvalidID}, // 负数不是有效 xid
+		{"overflow", "99999999999999999999999999999", true, ErrInvalidID},
+		{"zero", "0", true, ErrInvalidID},
+		{"negative", "-1", true, ErrInvalidID},
 		{"negative base36", "-abc", true, ErrInvalidID},
-		// H5: Sonyflake 位范围校验（39+8+16=63 位）
-		// int64 正数范围恰好覆盖 63 位，strconv.ParseInt 溢出的值由 strconv 自身捕获
-		{"max int64 base36", strconv.FormatInt((1<<63)-1, 36), false, nil},                                          // time = maxTimeValue，恰好有效
-		{"max time boundary", strconv.FormatInt(maxTimeValue<<(sequenceBits+machineBits)|0xFFFFFF, 36), false, nil}, // 恰好 39 位时间上限
-		// 注意：39+8+16=63 位恰好等于 int64 正数范围，不存在"时间溢出但 int64 有效"的情况
-		// 超过 39 位时间的值必然超过 int64 范围，由 strconv.ParseInt 捕获
-		{"strconv overflow triggers error", "zzzzzzzzzzzzzz", true, nil}, // 超出 int64 范围由 strconv 捕获
+		// int64 正数范围恰好覆盖 Sonyflake 63 位有效位，strconv.ParseInt 溢出由 strconv 自身捕获
+		{"max int64 base36", strconv.FormatInt((1<<63)-1, 36), false, nil},
+		{"max time boundary", strconv.FormatInt(maxTimeValue<<(sequenceBits+machineBits)|0xFFFFFF, 36), false, nil},
+		// 所有 Parse 错误统一包裹为 ErrInvalidID，调用方可稳定分类
+		{"strconv overflow triggers error", "zzzzzzzzzzzzzz", true, ErrInvalidID},
 	}
 
 	for _, tt := range tests {
@@ -361,77 +409,6 @@ func TestParse_EdgeCases(t *testing.T) {
 }
 
 // =============================================================================
-// Decompose 测试
-// =============================================================================
-
-func TestDecompose_ValidID(t *testing.T) {
-	resetGlobal()
-	require.NoError(t, Init())
-
-	// 生成一个 ID
-	id, err := New()
-	require.NoError(t, err)
-
-	// 分解 ID（纯函数，无需初始化）
-	result, err := Decompose(id)
-	require.NoError(t, err)
-
-	// 验证值
-	assert.Equal(t, id, result.ID)
-	assert.NotZero(t, result.Time)
-
-	resetGlobal()
-}
-
-// =============================================================================
-// 并发安全测试
-// =============================================================================
-
-func TestConcurrentNew_NoCollision(t *testing.T) {
-	resetGlobal()
-	require.NoError(t, Init())
-
-	const goroutines = 10
-	const idsPerGoroutine = 100
-
-	ids := make(chan int64, goroutines*idsPerGoroutine)
-	done := make(chan struct{})
-
-	// 启动多个 goroutine 并发生成 ID
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			for j := 0; j < idsPerGoroutine; j++ {
-				id, err := New()
-				if err != nil {
-					t.Errorf("New() error: %v", err)
-					return
-				}
-				ids <- id
-			}
-			done <- struct{}{}
-		}()
-	}
-
-	// 等待所有 goroutine 完成
-	for i := 0; i < goroutines; i++ {
-		<-done
-	}
-	close(ids)
-
-	// 检查是否有重复
-	seen := make(map[int64]bool)
-	for id := range ids {
-		if seen[id] {
-			t.Errorf("Duplicate ID found: %d", id)
-		}
-		seen[id] = true
-	}
-
-	assert.Equal(t, goroutines*idsPerGoroutine, len(seen), "Expected %d unique IDs", goroutines*idsPerGoroutine)
-	resetGlobal()
-}
-
-// =============================================================================
 // Generator 实例方法覆盖测试
 // =============================================================================
 
@@ -444,27 +421,17 @@ func TestGenerator_NewStringWithRetry(t *testing.T) {
 	assert.NotEmpty(t, s)
 }
 
-func TestGenerator_MustNewString(t *testing.T) {
-	gen, err := NewGenerator()
-	require.NoError(t, err)
-
-	assert.NotPanics(t, func() {
-		s := gen.MustNewString()
-		assert.NotEmpty(t, s)
-	})
-}
-
 func TestGenerator_NewWithRetry_ContextCanceled(t *testing.T) {
 	gen, err := NewGenerator()
 	require.NoError(t, err)
 
-	// 使用已取消的 context
+	// M2 修复：已取消的 context 应在入口处立即失败
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// 即使 context 已取消，如果第一次尝试就成功（大概率），仍然返回 ID
-	// 如果 sonyflake 碰巧遇到时钟问题，则返回 ctx 错误
-	_, _ = gen.NewWithRetry(ctx) //nolint:errcheck // 测试 context 取消路径
+	_, err = gen.NewWithRetry(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestGenerator_NewString_Success(t *testing.T) {
@@ -492,8 +459,33 @@ func TestGenerator_NewWithRetry_OverTimeLimit(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrClockBackwardTimeout)
 }
 
+func TestGenerator_NewWithRetry_Timeout(t *testing.T) {
+	gen := newRetryableFailGenerator(t)
+
+	start := time.Now()
+	_, err := gen.NewWithRetry(context.Background())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrClockBackwardTimeout)
+	// 应在 maxWaitDuration (50ms) 附近超时
+	assert.GreaterOrEqual(t, elapsed, 40*time.Millisecond)
+	assert.Less(t, elapsed, 200*time.Millisecond)
+}
+
+func TestGenerator_NewWithRetry_ContextCancelDuringWait(t *testing.T) {
+	gen := newRetryableFailGenerator(t)
+	gen.maxWaitDuration = 5 * time.Second // 设置很长的超时，确保走到 context 取消分支
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	_, err := gen.NewWithRetry(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestGenerator_NewWithRetry_ContextCancel(t *testing.T) {
-	// 使用一个永远失败但可重试的生成器来测试 context 取消
 	gen, err := NewGenerator(
 		WithMachineID(func() (uint16, error) { return 1, nil }),
 		WithMaxWaitDuration(5*time.Second),
@@ -501,14 +493,13 @@ func TestGenerator_NewWithRetry_ContextCancel(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// 替换底层 sonyflake 为一个总是返回可重试错误的版本
-	// 通过已取消的 context 测试取消路径
+	// M2 修复：已取消的 context 在入口处快速失败
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 立即取消
+	cancel()
 
-	// 即使第一次尝试就成功（大概率），仍然会返回 ID
-	// 只有在 sonyflake 碰巧遇到错误时，才会走到 context 取消分支
-	_, _ = gen.NewWithRetry(ctx) //nolint:errcheck // 测试 context 取消路径
+	_, err = gen.NewWithRetry(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 func TestGenerator_NewWithRetry_OverTimeLimit_Immediate(t *testing.T) {
@@ -541,20 +532,80 @@ func TestGenerator_NewStringWithRetry_Error(t *testing.T) {
 	assert.ErrorIs(t, err, ErrOverTimeLimit)
 }
 
-func TestGenerator_MustNew_Panic(t *testing.T) {
-	gen := newOverflowGenerator(t)
+func TestGenerator_NewWithRetry_NilContext(t *testing.T) {
+	gen, err := NewGenerator()
+	require.NoError(t, err)
 
-	assert.Panics(t, func() {
-		gen.MustNew()
-	})
+	//nolint:staticcheck // SA1012: 故意传入 nil context 以测试错误路径
+	_, err = gen.NewWithRetry(nil)
+	assert.ErrorIs(t, err, ErrNilContext)
 }
 
-func TestGenerator_MustNewString_Panic(t *testing.T) {
+// =============================================================================
+// Generator nil/零值接收者测试
+// =============================================================================
+
+func TestGenerator_NilReceiver(t *testing.T) {
+	var g *Generator
+
+	_, err := g.New()
+	assert.ErrorIs(t, err, ErrNilGenerator)
+
+	//nolint:staticcheck // SA1012: 故意传入 nil context 以测试错误路径
+	_, err = g.NewWithRetry(context.Background())
+	assert.ErrorIs(t, err, ErrNilGenerator)
+
+	_, err = g.NewString()
+	assert.ErrorIs(t, err, ErrNilGenerator)
+
+	_, err = g.NewStringWithRetry(context.Background())
+	assert.ErrorIs(t, err, ErrNilGenerator)
+}
+
+func TestGenerator_ZeroValue(t *testing.T) {
+	g := &Generator{}
+
+	_, err := g.New()
+	assert.ErrorIs(t, err, ErrNilGenerator)
+
+	_, err = g.NewWithRetry(context.Background())
+	assert.ErrorIs(t, err, ErrNilGenerator)
+}
+
+// =============================================================================
+// Generator.New 溢出错误映射一致性测试
+// =============================================================================
+
+func TestGenerator_New_OverTimeLimit(t *testing.T) {
 	gen := newOverflowGenerator(t)
 
-	assert.Panics(t, func() {
-		gen.MustNewString()
-	})
+	_, err := gen.New()
+	require.Error(t, err)
+	// New() 应与 NewWithRetry() 一致地映射 ErrOverTimeLimit
+	assert.ErrorIs(t, err, ErrOverTimeLimit)
+}
+
+func TestGenerator_New_NonOverflowError(t *testing.T) {
+	// 覆盖 New() 中非溢出错误的透传路径（前向兼容预留）
+	gen := newRetryableFailGenerator(t)
+
+	_, err := gen.New()
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrOverTimeLimit)
+}
+
+// =============================================================================
+// NewGenerator 包裹 sonyflake 配置错误测试
+// =============================================================================
+
+func TestNewGenerator_WrapsConfigErrors(t *testing.T) {
+	// sonyflake.New 的错误（如 CheckMachineID 验证失败）应包裹为 ErrInvalidConfig
+	_, err := NewGenerator(
+		WithMachineID(func() (uint16, error) { return 100, nil }),
+		WithCheckMachineID(func(id uint16) bool { return false }),
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 // =============================================================================
@@ -576,6 +627,6 @@ func FuzzParse(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, s string) {
 		// Parse 不应该 panic
-		_, _ = Parse(s) //nolint:errcheck // fuzz 测试仅验证不 panic
+		_, _ = Parse(s) // fuzz 测试仅验证不 panic
 	})
 }

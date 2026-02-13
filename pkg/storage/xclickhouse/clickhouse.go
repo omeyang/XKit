@@ -176,14 +176,13 @@ func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQuery
 		AsyncQueueSize:      opts.AsyncSlowQueryQueueSize,
 	}
 
-	// 适配同步钩子
+	// 设计决策: 使用闭包适配而非直接赋值，因为 SlowQueryHook 和
+	// storageopt.SlowQueryHook[SlowQueryInfo] 是不同的命名类型（Go 不允许直接赋值）。
 	if opts.SlowQueryHook != nil {
 		sqOpts.SyncHook = func(ctx context.Context, info SlowQueryInfo) {
 			opts.SlowQueryHook(ctx, info)
 		}
 	}
-
-	// 适配异步钩子
 	if opts.AsyncSlowQueryHook != nil {
 		sqOpts.AsyncHook = func(info SlowQueryInfo) {
 			opts.AsyncSlowQueryHook(info)

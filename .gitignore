@@ -41,9 +41,10 @@ vendor/
 # -----------------------------------------------------------------------------
 
 # Taskfile 定义的构建产物目录
-/.artifacts/
+.artifacts/
 
 # 覆盖率输出文件
+cover.out
 coverage.out
 coverage*.out
 cover_*.out
@@ -143,18 +144,29 @@ $RECYCLE.BIN/
 *~
 
 # -----------------------------------------------------------------------------
-# Claude Code / AI 相关
+# 本地开发环境（不提交）
 # -----------------------------------------------------------------------------
 
-# Claude Code 本地设置（含 MCP 凭证，不提交）
-.claude/settings.local.json
-
-# CoSpec 规格文件（私有，不提交）
+# AI 辅助编码工具（通用覆盖）
+.claude/
+.cursor/
+.aider*
+.continue/
+.codeium/
+.windsurf/
+.copilot/
+.tabnine/
+.sourcegraph/
 .cospec/
+AI.md
 COSTRICT.md
 
-# AI 提示词目录（个人使用，不提交）
-.specify/prompts/
+# Spec 工作产物（整个 .specify 目录不提交）
+.specify/
+
+# 本地脚本与分析报告
+scripts/
+fix-reports/
 
 # -----------------------------------------------------------------------------
 # 日志文件

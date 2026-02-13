@@ -7,7 +7,8 @@
 //   - xenv: 环境变量管理，部署类型检测
 //
 // 设计原则：
-//   - 所有上下文信息通过 context.Context 传递，不使用全局变量
+//   - 请求级上下文信息通过 context.Context 传递（xctx, xtenant, xplatform）
+//   - 进程级配置通过全局单例管理（xenv 的部署类型，初始化后不可变）
 //   - 提供中间件自动注入/提取，减少业务代码侵入
 //   - 支持 W3C Trace Context 标准
 package context

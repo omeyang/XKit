@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -263,16 +264,16 @@ func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 	defer func() { _ = factory.Close() }()
 
 	ctx := context.Background()
-	var counter int64
+	var counter atomic.Int64
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	b.RunParallel(func(pb *testing.PB) {
-		i := 0
 		for pb.Next() {
-			// 每个 goroutine 使用唯一 key
-			key := fmt.Sprintf("parallel-lock-%d-%d", counter, i)
+			// 每个操作使用全局唯一 key，避免跨 goroutine 冲突
+			seq := counter.Add(1)
+			key := fmt.Sprintf("parallel-lock-%d", seq)
 			handle, err := factory.TryLock(ctx, key)
 			if err != nil {
 				b.Error(err)
@@ -286,7 +287,6 @@ func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			i++
 		}
 	})
 }

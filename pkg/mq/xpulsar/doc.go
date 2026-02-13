@@ -10,11 +10,14 @@
 // # 基本使用
 //
 // 使用 NewClient 创建客户端，通过 CreateProducer/Subscribe 创建生产者/消费者。
+// 客户端关闭后，CreateProducer/Subscribe/Health 均返回 ErrClosed。
 // 使用 Client() 方法可访问底层 pulsar.Client 调用原生 API。
 //
 // # 链路追踪
 //
 // 使用 WrapProducer/WrapConsumer 包装原生生产者/消费者，自动注入/提取追踪信息。
+// 两者均要求非 nil 的 producer/consumer 参数，否则返回 ErrNilProducer/ErrNilConsumer。
+// WrapProducer 的 topic 参数为空时自动从 producer.Topic() 获取。
 //
 // # DLQ 配置
 //

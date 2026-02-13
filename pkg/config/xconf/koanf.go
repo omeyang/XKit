@@ -1,12 +1,11 @@
 package xconf
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/knadh/koanf/parsers/json"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -15,21 +14,29 @@ import (
 )
 
 // koanfConfig 是 Config 接口的 koanf 实现。
+//
+// 设计决策: 使用 atomic.Pointer 替代 sync.RWMutex 保护 koanf 实例指针。
+// koanf 内部已有 sync.RWMutex，外层再加一层会导致双重加锁（cache line bouncing）。
+// atomic.Pointer 实现无锁读取，Reload 使用 Store 原子替换，性能更优。
 type koanfConfig struct {
-	k       *koanf.Koanf
+	k       atomic.Pointer[koanf.Koanf]
 	path    string
 	format  Format
-	opts    *Options
-	mu      sync.RWMutex
+	opts    *options
 	isBytes bool // 标记是否从字节数据创建
 }
 
 // New 从文件路径创建配置实例。
 // 根据文件扩展名自动检测格式（.yaml/.yml 或 .json）。
+//
+// 设计决策: 路径使用 filepath.Clean 规范化，但不做沙箱限制。
+// xconf 是工具库，路径安全（防止路径穿越等）由调用方负责。
 func New(path string, opts ...Option) (Config, error) {
 	if path == "" {
 		return nil, ErrEmptyPath
 	}
+
+	path = filepath.Clean(path)
 
 	format, err := detectFormat(path)
 	if err != nil {
@@ -45,19 +52,23 @@ func New(path string, opts ...Option) (Config, error) {
 	for _, opt := range opts {
 		opt(options)
 	}
+	if err := options.validate(); err != nil {
+		return nil, err
+	}
 
-	k := koanf.New(options.Delim)
+	k := koanf.New(options.delim)
 	if err := loadData(k, data, format); err != nil {
 		return nil, err
 	}
 
-	return &koanfConfig{
-		k:       k,
+	cfg := &koanfConfig{
 		path:    path,
 		format:  format,
 		opts:    options,
 		isBytes: false,
-	}, nil
+	}
+	cfg.k.Store(k)
+	return cfg, nil
 }
 
 // NewFromBytes 从字节数据创建配置实例。
@@ -76,8 +87,11 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 	for _, opt := range opts {
 		opt(options)
 	}
+	if err := options.validate(); err != nil {
+		return nil, err
+	}
 
-	k := koanf.New(options.Delim)
+	k := koanf.New(options.delim)
 
 	// 空数据时创建空配置，与 New 行为一致
 	if len(data) > 0 {
@@ -86,46 +100,40 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 		}
 	}
 
-	return &koanfConfig{
-		k:       k,
+	cfg := &koanfConfig{
 		path:    "",
 		format:  format,
 		opts:    options,
 		isBytes: true,
-	}, nil
+	}
+	cfg.k.Store(k)
+	return cfg, nil
 }
 
-// Client 返回底层的 koanf 实例。
+// Client 返回底层的 koanf 实例（当前时刻的快照）。
+//
+// 设计决策: 返回的指针在 Reload() 后仍然有效，但指向旧配置。
+// 推荐用法：每次需要时调用 Client()，不要长期缓存返回的指针。
 func (c *koanfConfig) Client() *koanf.Koanf {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.k
+	return c.k.Load()
 }
 
 // Unmarshal 将指定路径的配置反序列化到目标结构体。
 func (c *koanfConfig) Unmarshal(path string, target any) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	k := c.k.Load()
 
-	if err := c.k.UnmarshalWithConf(path, target, koanf.UnmarshalConf{
-		Tag: c.opts.Tag,
+	if err := k.UnmarshalWithConf(path, target, koanf.UnmarshalConf{
+		Tag: c.opts.tag,
 	}); err != nil {
 		return fmt.Errorf("%w: %w", ErrUnmarshalFailed, err)
 	}
 	return nil
 }
 
-// MustUnmarshal 与 Unmarshal 相同，但失败时 panic。
-func (c *koanfConfig) MustUnmarshal(path string, target any) {
-	if err := c.Unmarshal(path, target); err != nil {
-		panic(err)
-	}
-}
-
 // Reload 重新加载配置文件。
 func (c *koanfConfig) Reload() error {
 	if c.isBytes {
-		return errors.New("xconf: cannot reload config created from bytes")
+		return ErrNotFromFile
 	}
 
 	data, err := os.ReadFile(c.path)
@@ -133,14 +141,12 @@ func (c *koanfConfig) Reload() error {
 		return fmt.Errorf("%w: %w", ErrLoadFailed, err)
 	}
 
-	newK := koanf.New(c.opts.Delim)
+	newK := koanf.New(c.opts.delim)
 	if err := loadData(newK, data, c.format); err != nil {
 		return err
 	}
 
-	c.mu.Lock()
-	c.k = newK
-	c.mu.Unlock()
+	c.k.Store(newK)
 
 	return nil
 }
@@ -153,6 +159,14 @@ func (c *koanfConfig) Path() string {
 // Format 返回配置格式。
 func (c *koanfConfig) Format() Format {
 	return c.format
+}
+
+// MustUnmarshal 与 Unmarshal 相同，但失败时 panic。
+// 适用于程序启动时的必要配置加载。
+func MustUnmarshal(cfg Config, path string, target any) {
+	if err := cfg.Unmarshal(path, target); err != nil {
+		panic(err)
+	}
 }
 
 // =============================================================================
@@ -183,6 +197,10 @@ func isValidFormat(format Format) bool {
 }
 
 // loadData 加载数据到 koanf 实例。
+//
+// 设计决策: default 分支使用 panic 而非返回错误。
+// 所有调用方（New/NewFromBytes/Reload）在调用前已验证 format 有效性，
+// 到达 default 分支表示内部逻辑错误，应立即暴露而非静默返回。
 func loadData(k *koanf.Koanf, data []byte, format Format) error {
 	var parser koanf.Parser
 	switch format {
@@ -191,7 +209,7 @@ func loadData(k *koanf.Koanf, data []byte, format Format) error {
 	case FormatJSON:
 		parser = json.Parser()
 	default:
-		return ErrUnsupportedFormat
+		panic("xconf: loadData called with invalid format: " + string(format))
 	}
 
 	if err := k.Load(rawbytes.Provider(data), parser); err != nil {

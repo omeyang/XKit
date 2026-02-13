@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
-	"github.com/omeyang/xkit/pkg/observability/xlog"
 )
 
 // =============================================================================
@@ -104,9 +103,9 @@ func (f *fallbackSemaphore) Acquire(ctx context.Context, resource string, opts .
 func (f *fallbackSemaphore) logFallback(ctx context.Context, resource string, err error) {
 	if f.opts.logger != nil {
 		f.opts.logger.Warn(ctx, "semaphore falling back due to Redis error",
-			slog.String("strategy", string(f.strategy)),
-			slog.String("resource", resource),
-			slog.String("error", err.Error()),
+			AttrStrategy(f.strategy),
+			AttrResource(resource),
+			AttrError(err),
 		)
 	}
 }
@@ -123,8 +122,8 @@ func (f *fallbackSemaphore) handleRedisError(ctx context.Context, resource strin
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.AddEvent("xsemaphore.fallback", trace.WithAttributes(
 			attribute.Bool(attrFallbackUsed, true),
-			attribute.String("xsemaphore.fallback_strategy", string(f.strategy)),
-			attribute.String("xsemaphore.fallback_reason", ClassifyError(err)),
+			attribute.String(attrStrategy, string(f.strategy)),
+			attribute.String(attrFailReason, ClassifyError(err)),
 		))
 	}
 
@@ -152,7 +151,7 @@ func (f *fallbackSemaphore) safeOnFallback(ctx context.Context, resource string,
 		if r := recover(); r != nil {
 			if f.opts.logger != nil {
 				f.opts.logger.Error(ctx, "onFallback callback panicked",
-					slog.String("resource", resource),
+					AttrResource(resource),
 					slog.Any("panic", r),
 				)
 			}
@@ -187,7 +186,7 @@ func (f *fallbackSemaphore) doFallback(ctx context.Context, resource string, opt
 		if tenantID == "" {
 			tenantID = xtenant.TenantID(ctx)
 		}
-		return newNoopPermit(ctx, resource, tenantID, cfg.ttl, f.opts.logger, cfg.metadata, f.opts)
+		return newNoopPermit(ctx, resource, tenantID, cfg.ttl, cfg.metadata, f.opts)
 
 	case FallbackClose:
 		return nil, ErrRedisUnavailable
@@ -225,10 +224,19 @@ func (f *fallbackSemaphore) Query(ctx context.Context, resource string, opts ...
 
 // queryFallback 执行 Query 的降级策略
 func (f *fallbackSemaphore) queryFallback(ctx context.Context, resource string, opts []QueryOption, err error) (*ResourceInfo, error) {
-	// 处理 Redis 错误：记录日志和指标（Query 无需触发 onFallback 回调）
+	// 处理 Redis 错误：记录日志、指标和 trace 事件（Query 无需触发 onFallback 回调）
 	f.logFallback(ctx, resource, err)
 	if f.opts.metrics != nil {
 		f.opts.metrics.RecordFallback(ctx, f.strategy, resource, ClassifyError(err))
+	}
+
+	// 记录 fallback 事件到 trace（与 handleRedisError 保持一致）
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		span.AddEvent("xsemaphore.fallback", trace.WithAttributes(
+			attribute.Bool(attrFallbackUsed, true),
+			attribute.String(attrStrategy, string(f.strategy)),
+			attribute.String(attrFailReason, ClassifyError(err)),
+		))
 	}
 
 	// 根据策略返回不同结果
@@ -337,67 +345,79 @@ func (f *fallbackSemaphore) Health(ctx context.Context) error {
 // noopPermit 空操作许可
 // 用于 FallbackOpen 策略，不实际占用资源
 // 内嵌 permitBase 复用 ID/Resource/TenantID/ExpiresAt/Metadata 等通用实现
+//
+// 设计决策: noopPermit 使用 releaseCommon/extendCommon/startAutoExtendLoop 模板方法，
+// 与 redisPermit/localPermit 保持一致的 trace span 和 metrics 记录，
+// 确保 FallbackOpen 模式下的操作在分布式追踪和指标仪表盘中可见。
 type noopPermit struct {
 	permitBase
-	logger xlog.Logger
+	opts *options // 用于获取 tracer、metrics、logger
 }
 
 // newNoopPermit 创建空操作许可
 // 使用注入的 ID 生成器生成唯一 ID，确保多个 FallbackOpen 许可可以正确区分
-func newNoopPermit(ctx context.Context, resource, tenantID string, ttl time.Duration, logger xlog.Logger, metadata map[string]string, opts *options) (*noopPermit, error) {
+func newNoopPermit(ctx context.Context, resource, tenantID string, ttl time.Duration, metadata map[string]string, opts *options) (*noopPermit, error) {
 	// 生成许可 ID（通过注入的生成器，默认使用 xid.NewStringWithRetry）
 	id, err := opts.effectiveIDGenerator()(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 
-	p := &noopPermit{logger: logger}
+	p := &noopPermit{opts: opts}
 	expiresAt := time.Now().Add(ttl)
 	initPermitBase(&p.permitBase, "noop-"+id, resource, tenantID, expiresAt, ttl, false, metadata)
 	return p, nil
 }
 
-// Release 释放许可（空操作）
-// 标记为已释放，确保后续 Extend 能正确返回 ErrPermitNotHeld
-func (p *noopPermit) Release(_ context.Context) error {
-	p.markReleased()
-	return nil
+// Release 释放许可
+// 通过 releaseCommon 模板方法创建 trace span 并记录 metrics，
+// 确保与 redisPermit/localPermit 的可观测性一致。
+func (p *noopPermit) Release(ctx context.Context) error {
+	return p.releaseCommon(ctx, p.opts.tracer, SemaphoreTypeNoop, p.opts.logger,
+		func(ctx context.Context) error {
+			// noop: 不实际占用资源，记录释放指标
+			if p.opts.metrics != nil {
+				p.opts.metrics.RecordRelease(ctx, SemaphoreTypeNoop, p.Resource())
+			}
+			return nil
+		})
 }
 
-// Extend 续期许可（空操作）
-// 已释放的许可不可续期，与 redisPermit/localPermit 行为一致
-// 成功续期时更新 expiresAt，确保 ExpiresAt() 返回正确值
-func (p *noopPermit) Extend(_ context.Context) error {
-	if p.isReleased() {
-		return ErrPermitNotHeld
-	}
-	p.setExpiresAt(time.Now().Add(p.ttl))
-	return nil
+// Extend 续期许可
+// 通过 extendCommon 模板方法创建 trace span、记录 metrics 并更新 expiresAt，
+// 确保 ExpiresAt() 返回正确值。
+func (p *noopPermit) Extend(ctx context.Context) error {
+	return p.extendCommon(ctx, p.opts.tracer, SemaphoreTypeNoop,
+		func(ctx context.Context, _ time.Time) error {
+			// noop: 不实际续期后端，记录续期指标
+			if p.opts.metrics != nil {
+				p.opts.metrics.RecordExtend(ctx, SemaphoreTypeNoop, p.Resource(), true)
+			}
+			return nil
+		})
 }
 
-// StartAutoExtend 启动自动续租（空操作）
-// 在 FallbackOpen 模式下，许可不实际占用资源，因此续租是空操作。
-// 但仍记录日志以便于调试和问题追踪。
+// StartAutoExtend 启动自动续租
+// 复用 permitBase.startAutoExtendLoop 模板方法，周期性调用 Extend 更新 expiresAt，
+// 确保 ExpiresAt() 在长时间运行的 FallbackOpen 任务中保持准确。
 func (p *noopPermit) StartAutoExtend(interval time.Duration) func() {
-	if p.logger != nil {
-		p.logger.Info(context.Background(), "noop permit auto-extend started (fallback open mode)",
-			AttrPermitID(p.ID()),
-			AttrResource(p.Resource()),
-			slog.Duration("interval", interval),
+	return p.startAutoExtendLoop(interval, p.Extend, p)
+}
+
+// logExtendFailed 实现 loggerForExtend 接口
+func (p *noopPermit) logExtendFailed(ctx context.Context, permitID, resource string, err error) {
+	if p.opts.logger != nil {
+		p.opts.logger.Warn(ctx, "noop permit auto-extend failed",
+			AttrPermitID(permitID),
+			AttrResource(resource),
+			AttrError(err),
 		)
-	}
-	return func() {
-		if p.logger != nil {
-			p.logger.Debug(context.Background(), "noop permit auto-extend stopped",
-				AttrPermitID(p.ID()),
-				AttrResource(p.Resource()),
-			)
-		}
 	}
 }
 
 // 编译时接口检查
 var (
-	_ Semaphore = (*fallbackSemaphore)(nil)
-	_ Permit    = (*noopPermit)(nil)
+	_ Semaphore       = (*fallbackSemaphore)(nil)
+	_ Permit          = (*noopPermit)(nil)
+	_ loggerForExtend = (*noopPermit)(nil)
 )

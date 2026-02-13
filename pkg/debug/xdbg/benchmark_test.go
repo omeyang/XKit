@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 )
 
@@ -265,7 +266,7 @@ func BenchmarkIdentityInfo_String(b *testing.B) {
 
 // BenchmarkAuditRecord_Format 测试审计记录格式化性能。
 func BenchmarkAuditRecord_Format(b *testing.B) {
-	logger := NewDefaultAuditLogger()
+	logger := NewAuditLogger(io.Discard)
 	record := &AuditRecord{
 		Event:    AuditEventCommand,
 		Command:  "test",

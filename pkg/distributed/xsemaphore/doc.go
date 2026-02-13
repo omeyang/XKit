@@ -36,7 +36,7 @@
 //	if err != nil {
 //	    return err
 //	}
-//	defer sem.Close()
+//	defer sem.Close(context.Background())
 //
 //	// 获取许可
 //	permit, err := sem.TryAcquire(ctx, "clickhouse-inference",
@@ -321,7 +321,7 @@
 //	// 1. 停止接受新请求（业务层）
 //	// 2. 等待所有任务完成并释放许可
 //	// 3. 关闭信号量
-//	sem.Close()
+//	sem.Close(context.Background())
 //
 // # Redis 键 TTL 管理
 //

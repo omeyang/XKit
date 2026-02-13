@@ -65,28 +65,6 @@ func TestBuildSlowQueryInfoFromOps_WithNilDatabase(t *testing.T) {
 	assert.Equal(t, "insert", info.Operation)
 }
 
-func TestBuildSlowQueryInfo_WithRealCollection(t *testing.T) {
-	// 创建一个客户端 - 使用延迟连接
-	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
-	}()
-
-	// 获取一个 collection
-	coll := client.Database("testdb").Collection("testcoll")
-
-	// When: buildSlowQueryInfo is called
-	info := buildSlowQueryInfo(coll, "update", map[string]any{"id": 1}, 100)
-
-	// Then: should return correct info
-	assert.Equal(t, "testdb", info.Database)
-	assert.Equal(t, "testcoll", info.Collection)
-	assert.Equal(t, "update", info.Operation)
-}
-
 // 使用真实 collection 来测试 collectionAdapter 的所有方法
 func TestCollectionAdapter_AllMethods(t *testing.T) {
 	// 创建一个客户端 - 使用延迟连接

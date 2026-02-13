@@ -28,12 +28,13 @@
 // # 日志级别
 //
 // LevelDebug(-4)、LevelInfo(0)、LevelWarn(4)、LevelError(8)。
-// 可通过 [ParseLevel] 从字符串解析。
+// 可通过 [ParseLevel] 从字符串解析。Level 实现 encoding.TextMarshaler/TextUnmarshaler，
+// 支持配置文件直接序列化/反序列化。
 //
 // # 延迟求值
 //
-// 避免不必要的计算开销：
-// [Lazy]、[LazyString]、[LazyInt]、[LazyError]、[LazyDuration]、[LazyGroup]。
+// 避免日志级别禁用时执行昂贵计算（注意：接口装箱的 1 次分配仍然存在）：
+// [Lazy]、[LazyString]、[LazyInt]、[LazyError]、[LazyErr]、[LazyDuration]、[LazyGroup]。
 //
 // # 便捷属性
 //

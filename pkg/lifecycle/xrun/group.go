@@ -96,7 +96,7 @@ func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 		)
 		err := fn(g.ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			g.opts.logger.Info("service exited with error",
+			g.opts.logger.Warn("service exited with error",
 				slog.String("group", g.opts.name),
 				slog.String("service", name),
 				slog.Any("error", err),
@@ -118,13 +118,13 @@ func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 // 这样 Cancel(cause) 或信号处理设置的退出原因不会丢失。
 // 如果没有显式原因（普通的 context 取消），返回 nil。
 func (g *Group) Wait() error {
-	g.opts.logger.Info("waiting for services",
+	g.opts.logger.Debug("waiting for services",
 		slog.String("group", g.opts.name),
 	)
 
 	err := g.eg.Wait()
 
-	g.opts.logger.Info("all services stopped",
+	g.opts.logger.Debug("all services stopped",
 		slog.String("group", g.opts.name),
 	)
 
@@ -178,7 +178,10 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 	// 信号处理服务（可通过 WithoutSignalHandler 禁用）
 	if !g.opts.noSignalHandler {
 		signals := g.opts.signals
-		if signals == nil {
+		// 设计决策: 空切片与 nil 等价，均使用默认信号列表。
+		// signal.Notify(ch) 无参调用会订阅所有信号，这不是用户预期行为。
+		// 如需禁用信号处理，应使用 WithoutSignalHandler()。
+		if len(signals) == 0 {
 			signals = DefaultSignals()
 		}
 
@@ -267,6 +270,10 @@ func (f ServiceFunc) Run(ctx context.Context) error {
 
 // RunServices 运行多个 Service，监听信号并协调关闭。
 //
+// 普通函数可通过 ServiceFunc 适配为 Service 接口：
+//
+//	svc := xrun.ServiceFunc(func(ctx context.Context) error { ... })
+//
 // 示例：
 //
 //	err := xrun.RunServices(ctx,
@@ -304,18 +311,14 @@ func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Serv
 
 // HTTPServer 将 http.Server 包装为支持优雅关闭的服务函数。
 //
-// 可选 opts 用于配置日志记录器（默认使用 slog.Default()）。
+// shutdownTimeout 为 0 或负数时表示无超时限制，Shutdown 将等待所有在途请求
+// 完成后才返回。如需禁用等待，请传入一个较短的超时值。
 //
 // 示例：
 //
 //	server := &http.Server{Addr: ":8080", Handler: mux}
 //	err := xrun.Run(ctx, xrun.HTTPServer(server, 10*time.Second))
-func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration, opts ...Option) func(ctx context.Context) error {
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-
+func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		// 用 buffered channel 传递 shutdown 结果
 		shutdownErrCh := make(chan error, 1)
@@ -335,14 +338,25 @@ func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration, opts 
 		// 启动服务器
 		err := server.ListenAndServe()
 		if err != nil && errors.Is(err, http.ErrServerClosed) {
-			// 正常关闭——等待 shutdown 结果并传播错误（如有）
-			return <-shutdownErrCh
+			// 设计决策: 使用 select 防止在非 ctx 驱动关闭场景下永久阻塞。
+			// 当 ListenAndServe 因外部直接调用 server.Shutdown/Close 返回
+			// ErrServerClosed，而 ctx 尚未取消时，shutdown goroutine 尚未启动。
+			// 此时通过 ctx.Done() 等待 ctx 最终被取消后再收集 shutdown 结果，
+			// 而非无条件阻塞在 shutdownErrCh 上。
+			select {
+			case shutdownErr := <-shutdownErrCh:
+				return shutdownErr
+			case <-ctx.Done():
+				return <-shutdownErrCh
+			}
 		}
 		return err
 	}
 }
 
-// HTTPServerInterface 定义 HTTP 服务器接口（用于测试）。
+// HTTPServerInterface 定义 HTTP 服务器接口。
+//
+// *http.Server 天然满足此接口。导出此接口以支持自定义服务器实现和测试 mock。
 type HTTPServerInterface interface {
 	ListenAndServe() error
 	Shutdown(ctx context.Context) error

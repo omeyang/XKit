@@ -43,11 +43,11 @@ var (
 // 用法：
 //
 //	// 方式 1：直接创建
-//	locker := xcron.NewRedisLocker(redisClient)
+//	locker, err := xcron.NewRedisLocker(redisClient)
 //
 //	// 方式 2：复用 xcache 的客户端
 //	cache := xcache.NewRedis(cfg)
-//	locker := xcron.NewRedisLocker(cache.Client())
+//	locker, err := xcron.NewRedisLocker(cache.Client())
 //
 //	scheduler := xcron.New(xcron.WithLocker(locker))
 type RedisLocker struct {
@@ -85,13 +85,20 @@ func WithRedisIdentity(identity string) RedisLockerOption {
 	}
 }
 
+// ErrNilRedisClient 表示 Redis 客户端为 nil。
+var ErrNilRedisClient = fmt.Errorf("xcron: redis client cannot be nil")
+
+// ErrInvalidTTL 表示 TTL 无效（必须为正值）。
+// ttl<=0 会导致锁永不过期，形成实质性"死锁"。
+var ErrInvalidTTL = fmt.Errorf("xcron: lock TTL must be positive")
+
 // NewRedisLocker 创建基于 Redis 的分布式锁。
 //
 // client 可以是 *redis.Client、*redis.ClusterClient 或 xcache.Client() 返回值。
-// 如果 client 为 nil，会 panic。
-func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) *RedisLocker {
+// 如果 client 为 nil，返回 [ErrNilRedisClient]。
+func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) (*RedisLocker, error) {
 	if client == nil {
-		panic("xcron: redis client cannot be nil")
+		return nil, ErrNilRedisClient
 	}
 
 	l := &RedisLocker{
@@ -104,14 +111,20 @@ func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) *Re
 		opt(l)
 	}
 
-	return l
+	return l, nil
 }
 
 // TryLock 尝试获取锁（非阻塞）。
 //
 // 每次调用生成唯一 token，确保不同获取之间不会互相干扰。
 // 使用 Redis SET key value NX PX ttl 命令原子性地获取锁。
+//
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
+// ttl<=0 会导致 Redis 键永不过期，形成实质性"死锁"。
 func (l *RedisLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
+	if ttl <= 0 {
+		return nil, ErrInvalidTTL
+	}
 	fullKey := l.prefix + key
 	// 每次获取生成唯一 token，包含实例标识便于调试
 	token := fmt.Sprintf("%s:%s", l.identity, uuid.New().String())

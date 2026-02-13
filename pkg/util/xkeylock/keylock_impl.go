@@ -2,25 +2,36 @@ package xkeylock
 
 import (
 	"context"
+	"hash/maphash"
 	"sync"
 	"sync/atomic"
-
-	"github.com/cespare/xxhash/v2"
 )
 
-// keyLockImpl 是 KeyLock 的分片实现。
+// hashSeed 是分片哈希的种子，进程级别唯一。
+// 分片选择不需要跨进程确定性，maphash 足以胜任。
+var hashSeed = maphash.MakeSeed()
+
+// keyLockImpl 是 Locker 的分片实现。
 type keyLockImpl struct {
 	shards   []shard
 	mask     uint64
-	opts     *options
+	opts     options
 	closed   atomic.Bool
 	keyCount atomic.Int64
 	done     chan struct{}
+
+	// testHookAfterTryAcquireSend 在 TryAcquire 的 channel 发送成功后、closed 检查前调用。
+	// 仅供测试使用，生产环境为 nil（零开销）。实例级字段避免并行测试的数据竞争。
+	testHookAfterTryAcquireSend func()
 }
 
 type shard struct {
 	mu      sync.Mutex
 	entries map[string]*lockEntry
+	// 设计决策: 填充至 cache line 边界（64 字节），消除相邻 shard 之间的伪共享。
+	// shard 本体 ~16 字节（sync.Mutex 8 + map pointer 8），需补齐 48 字节。
+	// 内存代价可忽略（32 分片 × 64B = 2KB），在高核心数机器上可改善并发吞吐。
+	_ [64 - 16]byte //nolint:unused // cache line padding
 }
 
 // lockEntry 表示一个 key 的锁条目。
@@ -43,23 +54,21 @@ type handle struct {
 	done  atomic.Bool
 }
 
-func newKeyLockImpl(opts *options) *keyLockImpl {
+func newKeyLockImpl(opts options) *keyLockImpl {
 	shards := make([]shard, opts.shardCount)
 	for i := range shards {
 		shards[i].entries = make(map[string]*lockEntry)
 	}
-	// shardCount 为 uint 类型且已验证为 2 的幂，uint → uint64 为安全宽化。
-	mask := uint64(opts.shardCount - 1)
 	return &keyLockImpl{
 		shards: shards,
-		mask:   mask,
+		mask:   opts.shardMask, // validate() 已计算
 		opts:   opts,
 		done:   make(chan struct{}),
 	}
 }
 
 func (kl *keyLockImpl) getShard(key string) *shard {
-	h := xxhash.Sum64String(key)
+	h := maphash.String(hashSeed, key)
 	return &kl.shards[h&kl.mask]
 }
 
@@ -112,30 +121,46 @@ func (kl *keyLockImpl) Acquire(ctx context.Context, key string) (Handle, error) 
 	if ctx == nil {
 		panic("xkeylock: nil Context")
 	}
-	// 快速检查：ctx 已取消时避免进入 getOrCreate 造成不必要的锁竞争。
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if key == "" {
+		return nil, ErrInvalidKey
 	}
+	// 快速检查：已关闭时优先返回 ErrClosed，语义优先级高于 ctx 取消。
 	if kl.closed.Load() {
 		return nil, ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	entry, err := kl.getOrCreate(key)
 	if err != nil {
 		return nil, err
 	}
+	// 设计决策: 当 ctx.Done() 和 kl.done 同时就绪时，Go select 随机选取分支，
+	// 因此阻塞路径下 ErrClosed 与 ctx.Err() 的返回不可控。快速路径（上方）
+	// 保证 ErrClosed 优先，但阻塞等待后两者等价——调用方应同时处理这两种错误。
 	select {
 	case entry.ch <- struct{}{}: // 获取成功
+		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
+		// Close 设置 closed 后才关闭 done channel，所以此处 Load 能可靠观测到。
+		if kl.closed.Load() {
+			<-entry.ch
+			kl.releaseRef(key, entry)
+			return nil, ErrClosed
+		}
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	case <-ctx.Done(): // 超时或取消
 		kl.releaseRef(key, entry)
 		return nil, ctx.Err()
-	case <-kl.done: // KeyLock 已关闭
+	case <-kl.done: // Locker 已关闭
 		kl.releaseRef(key, entry)
 		return nil, ErrClosed
 	}
 }
 
 func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
+	if key == "" {
+		return nil, ErrInvalidKey
+	}
 	if kl.closed.Load() {
 		return nil, ErrClosed
 	}
@@ -145,14 +170,29 @@ func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
 	}
 	select {
 	case entry.ch <- struct{}{}: // 获取成功
+		if kl.testHookAfterTryAcquireSend != nil {
+			kl.testHookAfterTryAcquireSend()
+		}
+		if kl.closed.Load() {
+			<-entry.ch
+			kl.releaseRef(key, entry)
+			return nil, ErrClosed
+		}
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	default: // 锁被占用
 		kl.releaseRef(key, entry)
-		return nil, nil
+		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
+		// 避免将"已关闭"误报为"锁被占用"。
+		if kl.closed.Load() {
+			return nil, ErrClosed
+		}
+		return nil, ErrLockOccupied
 	}
 }
 
 func (kl *keyLockImpl) Len() int {
+	// 防御性下界：正常情况下 keyCount 不会为负，
+	// 但在 getOrCreate/releaseRef 并发路径中使用 max 作为安全网。
 	return int(max(kl.keyCount.Load(), 0))
 }
 
@@ -185,6 +225,9 @@ func (h *handle) Unlock() error {
 	}
 	<-h.entry.ch
 	h.kl.releaseRef(h.key, h.entry)
+	// 释放引用，防止长期持有 Handle 时阻止 GC 回收 keyLockImpl。
+	h.kl = nil
+	h.entry = nil
 	return nil
 }
 
@@ -194,6 +237,6 @@ func (h *handle) Key() string {
 
 // 编译期接口检查。
 var (
-	_ KeyLock = (*keyLockImpl)(nil)
-	_ Handle  = (*handle)(nil)
+	_ Locker = (*keyLockImpl)(nil)
+	_ Handle = (*handle)(nil)
 )

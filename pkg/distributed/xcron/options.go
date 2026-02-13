@@ -131,13 +131,14 @@ type jobOptions struct {
 // defaultJobOptions 返回默认任务配置
 func defaultJobOptions() *jobOptions {
 	return &jobOptions{
-		name:    "",
-		locker:  nil, // nil 表示使用全局锁
-		lockTTL: 5 * time.Minute,
-		timeout: 0, // 0 表示无超时
-		retry:   nil,
-		backoff: nil,
-		tracer:  nil,
+		name:        "",
+		locker:      nil, // nil 表示使用全局锁
+		lockTTL:     5 * time.Minute,
+		lockTimeout: 5 * time.Second, // 默认锁获取超时，防止底层存储响应慢
+		timeout:     0,               // 0 表示无超时
+		retry:       nil,
+		backoff:     nil,
+		tracer:      nil,
 	}
 }
 

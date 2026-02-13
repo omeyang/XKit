@@ -1,10 +1,13 @@
 package xlru
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 func TestNew(t *testing.T) {
@@ -20,14 +23,14 @@ func TestNew(t *testing.T) {
 
 	t.Run("zero size", func(t *testing.T) {
 		_, err := New[string, int](Config{Size: 0})
-		if err != ErrInvalidSize {
+		if !errors.Is(err, ErrInvalidSize) {
 			t.Errorf("expected ErrInvalidSize, got %v", err)
 		}
 	})
 
 	t.Run("negative size", func(t *testing.T) {
 		_, err := New[string, int](Config{Size: -1})
-		if err != ErrInvalidSize {
+		if !errors.Is(err, ErrInvalidSize) {
 			t.Errorf("expected ErrInvalidSize, got %v", err)
 		}
 	})
@@ -312,14 +315,12 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent writes
 	for i := range numGoroutines {
-		wg.Add(1)
-		go func(base int) {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range numOperations {
-				key := base*numOperations + j
+				key := i*numOperations + j
 				cache.Set(key, key*2)
 			}
-		}(i)
+		})
 	}
 
 	// Concurrent reads
@@ -337,6 +338,49 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 
 	// Should complete without race conditions or panics
 	// The test passes if we get here without issues
+}
+
+func TestCache_Close_ConcurrentSetGet(t *testing.T) {
+	cache, err := New[int, int](Config{Size: 1000, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// 预填充
+	for i := range 100 {
+		cache.Set(i, i)
+	}
+
+	var wg sync.WaitGroup
+
+	// 并发读写
+	for range 50 {
+		wg.Go(func() {
+			for i := range 200 {
+				cache.Set(i, i*2)
+				cache.Get(i)
+			}
+		})
+	}
+
+	// 并发关闭
+	wg.Go(func() {
+		cache.Close()
+	})
+
+	wg.Wait()
+
+	// Close 后所有操作应安全降级
+	if cache.Len() != 0 {
+		t.Errorf("Len after Close = %d, expected 0", cache.Len())
+	}
+	val, ok := cache.Get(1)
+	if ok {
+		t.Error("Get after Close should return false")
+	}
+	if val != 0 {
+		t.Errorf("Get after Close should return zero value, got %d", val)
+	}
 }
 
 func TestCache_ZeroTTL(t *testing.T) {
@@ -491,4 +535,298 @@ func TestNew_NilOption(t *testing.T) {
 	if !called {
 		t.Error("OnEvicted callback should have been called")
 	}
+}
+
+func TestCache_Close(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 10, TTL: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Set("key2", 200)
+
+	// Close should purge and stop goroutine
+	cache.Close()
+
+	if cache.Len() != 0 {
+		t.Errorf("len = %d, expected 0 after close", cache.Len())
+	}
+}
+
+func TestCache_Close_Idempotent(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 10, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// 多次 Close 不应 panic
+	cache.Close()
+	cache.Close()
+	cache.Close()
+}
+
+func TestCache_Close_ThenUse(t *testing.T) {
+	// 验证 Close 后所有操作安全降级：读返回零值/false，写静默忽略
+	cache, err := New[string, int](Config{Size: 10, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Close()
+
+	// Get 返回零值和 false
+	val, ok := cache.Get("key1")
+	if ok {
+		t.Error("Get after Close should return false")
+	}
+	if val != 0 {
+		t.Errorf("Get after Close should return zero value, got %d", val)
+	}
+
+	// Set 静默忽略
+	evicted := cache.Set("key2", 200)
+	if evicted {
+		t.Error("Set after Close should return false")
+	}
+
+	// Delete 返回 false
+	if cache.Delete("key1") {
+		t.Error("Delete after Close should return false")
+	}
+
+	// Contains 返回 false
+	if cache.Contains("key1") {
+		t.Error("Contains after Close should return false")
+	}
+
+	// Len 返回 0
+	if cache.Len() != 0 {
+		t.Errorf("Len after Close should return 0, got %d", cache.Len())
+	}
+
+	// Keys 返回 nil
+	if cache.Keys() != nil {
+		t.Error("Keys after Close should return nil")
+	}
+
+	// Peek 返回零值和 false
+	val, ok = cache.Peek("key1")
+	if ok {
+		t.Error("Peek after Close should return false")
+	}
+	if val != 0 {
+		t.Errorf("Peek after Close should return zero value, got %d", val)
+	}
+
+	// Clear 不应 panic
+	cache.Clear()
+}
+
+func TestCache_Close_ZeroTTL(t *testing.T) {
+	// TTL=0 时无清理 goroutine，Close 仍应正常工作
+	cache, err := New[string, int](Config{Size: 10, TTL: 0})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Close()
+
+	if cache.Len() != 0 {
+		t.Errorf("len = %d, expected 0 after close", cache.Len())
+	}
+}
+
+func TestNew_NegativeTTL(t *testing.T) {
+	_, err := New[string, int](Config{Size: 10, TTL: -1 * time.Second})
+	if !errors.Is(err, ErrInvalidTTL) {
+		t.Errorf("expected ErrInvalidTTL, got %v", err)
+	}
+}
+
+func TestNew_SizeExceedsMax(t *testing.T) {
+	_, err := New[string, int](Config{Size: maxSize + 1, TTL: time.Minute})
+	if !errors.Is(err, ErrSizeExceedsMax) {
+		t.Errorf("expected ErrSizeExceedsMax, got %v", err)
+	}
+
+	// 恰好等于上限应该成功
+	cache, err := New[string, int](Config{Size: maxSize, TTL: 0})
+	if err != nil {
+		t.Fatalf("New with maxSize should succeed: %v", err)
+	}
+	if cache == nil {
+		t.Fatal("cache should not be nil")
+	}
+	cache.Close()
+}
+
+func TestCache_Peek(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 3, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Set("key2", 200)
+	cache.Set("key3", 300)
+
+	// Peek 应返回正确的值
+	val, ok := cache.Peek("key1")
+	if !ok {
+		t.Fatal("expected key to exist")
+	}
+	if val != 100 {
+		t.Errorf("val = %d, expected 100", val)
+	}
+
+	// Peek 不应更新 LRU 顺序：key1 仍然是最久未通过 Get 访问的
+	// 添加新条目应淘汰 key1（因为 Peek 不提升优先级）
+	cache.Set("key4", 400)
+
+	if cache.Contains("key1") {
+		t.Error("key1 should have been evicted (Peek does not update LRU order)")
+	}
+
+	// Peek 不存在的键
+	val, ok = cache.Peek("nonexistent")
+	if ok {
+		t.Error("expected Peek to return false for nonexistent key")
+	}
+	if val != 0 {
+		t.Errorf("val = %d, expected zero value", val)
+	}
+}
+
+func TestCache_TTLExpiration_SemanticDifference(t *testing.T) {
+	// 验证已知限制：Get/Peek 过滤过期条目，但 Contains/Len/Keys 不过滤。
+	// 过期条目在后台清理前仍会出现在 Contains/Len/Keys 中。
+	cache, err := New[string, int](Config{Size: 10, TTL: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer cache.Close()
+
+	cache.Set("key1", 100)
+
+	// 等待过期（但后台清理可能尚未执行）
+	time.Sleep(80 * time.Millisecond)
+
+	// Get 应返回 miss（过滤过期）
+	_, ok := cache.Get("key1")
+	if ok {
+		t.Error("Get should return false for expired key")
+	}
+
+	// Peek 也应返回 miss（过滤过期）
+	_, ok = cache.Peek("key1")
+	if ok {
+		t.Error("Peek should return false for expired key")
+	}
+
+	// Contains/Len/Keys 可能仍包含已过期条目（延迟清理语义）——
+	// 这是底层库的已知行为，不视为 bug。
+	// 不做断言，因为后台清理时机不确定。
+}
+
+func TestCache_SetRefreshesTTL(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 10, TTL: 80 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+
+	// 等待 50ms，然后重新 Set 刷新 TTL
+	time.Sleep(50 * time.Millisecond)
+	cache.Set("key1", 200)
+
+	// 再等 50ms（距第一次 Set 已 100ms，超过 80ms TTL）
+	time.Sleep(50 * time.Millisecond)
+
+	// 由于 Set 刷新了 TTL，key1 仍应存在（距第二次 Set 仅 50ms < 80ms）
+	val, ok := cache.Get("key1")
+	if !ok {
+		t.Error("expected key1 to exist (Set should refresh TTL)")
+	}
+	if val != 200 {
+		t.Errorf("val = %d, expected 200", val)
+	}
+}
+
+func TestCache_Close_StopsCleanupGoroutine(t *testing.T) {
+	// 使用 goleak 验证 Close 后本测试创建的清理 goroutine 确实退出。
+	// 忽略其他测试（未调用 Close）创建的后台 goroutine。
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/hashicorp/golang-lru/v2/expirable.NewLRU[...].func1"),
+	)
+
+	var evictCount atomic.Int32
+	cache, err := New(Config{Size: 100, TTL: 50 * time.Millisecond},
+		WithOnEvicted(func(_ string, _ int) {
+			evictCount.Add(1)
+		}))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Close()
+
+	// Close 会 Purge 所有条目（触发 onEvicted）
+	if evictCount.Load() != 1 {
+		t.Errorf("expected 1 eviction from Close/Purge, got %d", evictCount.Load())
+	}
+}
+
+func TestCache_OnEvicted_AsyncPattern(t *testing.T) {
+	// 验证 OnEvicted 回调的推荐异步模式：
+	// 回调将事件发送到 channel，由外部消费者处理。
+	// 注意：回调中严禁调用 Cache 自身方法（会死锁）。
+	type evictEvent struct {
+		key   string
+		value int
+	}
+
+	evictCh := make(chan evictEvent, 10)
+	cache, err := New(Config{Size: 2, TTL: time.Minute},
+		WithOnEvicted(func(key string, value int) {
+			evictCh <- evictEvent{key, value}
+		}))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("a", 1)
+	cache.Set("b", 2)
+	cache.Set("c", 3) // 淘汰 "a"
+
+	select {
+	case ev := <-evictCh:
+		if ev.key != "a" || ev.value != 1 {
+			t.Errorf("expected eviction of a=1, got %s=%d", ev.key, ev.value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for eviction event")
+	}
+
+	cache.Close()
+}
+
+func TestStopCleanupGoroutine_EdgeCases(t *testing.T) {
+	// nil 输入不应 panic
+	stopCleanupGoroutine(nil)
+
+	// 非指针输入不应 panic
+	stopCleanupGoroutine(42)
+
+	// 无 done 字段的结构体不应 panic
+	type noDone struct{ Name string }
+	stopCleanupGoroutine(&noDone{Name: "test"})
+
+	// done 字段类型不匹配不应 panic
+	type wrongDone struct{ done int }
+	stopCleanupGoroutine(&wrongDone{done: 1})
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -186,6 +187,45 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 	assert.False(t, triggered)
 }
 
+func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
+	opts := &Options{
+		SlowQueryThreshold:      100 * time.Millisecond,
+		AsyncSlowQueryHook:      func(_ SlowQueryInfo) {},
+		AsyncSlowQueryWorkers:   5,
+		AsyncSlowQueryQueueSize: 100,
+	}
+
+	detector := newSlowQueryDetector(opts)
+	assert.NotNil(t, detector)
+	detector.Close()
+}
+
+func TestNewSlowQueryDetector_WithBothHooks(t *testing.T) {
+	var syncCalled bool
+	opts := &Options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook: func(_ context.Context, _ SlowQueryInfo) {
+			syncCalled = true
+		},
+		AsyncSlowQueryHook:      func(_ SlowQueryInfo) {},
+		AsyncSlowQueryWorkers:   2,
+		AsyncSlowQueryQueueSize: 10,
+	}
+
+	detector := newSlowQueryDetector(opts)
+	assert.NotNil(t, detector)
+
+	w := &clickhouseWrapper{
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: detector,
+	}
+
+	w.maybeSlowQuery(context.Background(), SlowQueryInfo{Duration: 200 * time.Millisecond})
+	assert.True(t, syncCalled)
+	detector.Close()
+}
+
 func TestWrapper_Close_NilConn(t *testing.T) {
 	w := &clickhouseWrapper{
 		conn:    nil,
@@ -195,6 +235,25 @@ func TestWrapper_Close_NilConn(t *testing.T) {
 	// 关闭 nil conn 不应该出错
 	err := w.Close()
 	assert.NoError(t, err)
+}
+
+func TestWrapper_Close_Idempotent(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	// 第一次关闭成功
+	err := w.Close()
+	assert.NoError(t, err)
+
+	// 第二次关闭返回 ErrClosed
+	err = w.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+
+	// 第三次也返回 ErrClosed
+	err = w.Close()
+	assert.ErrorIs(t, err, ErrClosed)
 }
 
 func TestWrapper_Conn_NilConn(t *testing.T) {
@@ -366,6 +425,51 @@ func TestBatchInsert_EmptyTable(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEmptyTable)
 }
 
+func TestBatchInsert_InvalidTableName(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.BatchInsert(context.Background(), "table; DROP TABLE--", []any{1}, BatchOptions{})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrInvalidTableName)
+}
+
+func TestValidateTableName(t *testing.T) {
+	tests := []struct {
+		name    string
+		table   string
+		wantErr error
+	}{
+		{"空表名", "", ErrEmptyTable},
+		{"简单表名", "users", nil},
+		{"带数据库前缀", "mydb.users", nil},
+		{"下划线表名", "_temp_table", nil},
+		{"反引号表名", "`my table`", nil},
+		{"反引号带数据库", "`my db`.`my table`", nil},
+		{"SQL 注入", "table; DROP TABLE--", ErrInvalidTableName},
+		{"特殊字符", "table@name", ErrInvalidTableName},
+		{"反引号含换行", "`table\nname`", ErrInvalidTableName},
+		{"反引号含回车", "`table\rname`", ErrInvalidTableName},
+		{"反引号含空字节", "`table\x00name`", ErrInvalidTableName},
+		{"反引号含制表符", "`table\tname`", ErrInvalidTableName},
+		{"数字开头", "123table", ErrInvalidTableName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTableName(tt.table)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestBatchInsert_EmptyRows(t *testing.T) {
 	w := &clickhouseWrapper{
 		conn:    nil,
@@ -479,6 +583,30 @@ func TestValidateQuerySyntax(t *testing.T) {
 	}
 }
 
+func TestQueryPage_PageSizeTooLarge(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize + 1,
+	})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrPageSizeTooLarge)
+}
+
+func TestQueryPage_PageSizeAtMax(t *testing.T) {
+	// MaxPageSize 正好等于限制值时应该通过（会在后续查询时失败，但分页验证通过）
+	_, _, err := validatePageOptions("SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize,
+	})
+	assert.NoError(t, err)
+}
+
 func TestQueryPage_ContainsFormat(t *testing.T) {
 	w := &clickhouseWrapper{
 		conn:    nil,
@@ -537,7 +665,7 @@ func TestCalculateTotalPages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateTotalPages(tt.total, tt.pageSize)
+			result := storageopt.CalculateTotalPages(tt.total, tt.pageSize)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

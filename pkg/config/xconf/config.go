@@ -16,6 +16,10 @@ const (
 
 // Config 定义配置接口。
 // 只提供增值功能，基础操作请直接使用 Client() 返回的 koanf 实例。
+//
+// 设计决策: MustUnmarshal 是包级函数而非接口方法。
+// 接口中定义 panic 方法会强制所有实现者 panic，限制灵活性（如 mock 实现）。
+// 使用包级函数 MustUnmarshal(cfg, path, target) 替代。
 type Config interface {
 	// Client 返回底层的 koanf 实例。
 	// 用于执行所有 koanf 支持的操作。
@@ -25,10 +29,6 @@ type Config interface {
 	// path 为空字符串时反序列化整个配置。
 	// 使用 mapstructure 进行反序列化。
 	Unmarshal(path string, target any) error
-
-	// MustUnmarshal 与 Unmarshal 相同，但失败时 panic。
-	// 适用于程序启动时的必要配置加载。
-	MustUnmarshal(path string, target any)
 
 	// Reload 重新加载配置文件。
 	// 此方法是并发安全的。

@@ -298,6 +298,167 @@ func TestTruncateOutput(t *testing.T) {
 	}
 }
 
+func TestCodec_DecodeRequest_WrongType(t *testing.T) {
+	codec := NewCodec()
+
+	// Encode a response, then try to decode it as a request
+	resp := NewSuccessResponse("OK")
+	data, err := codec.EncodeResponse(resp)
+	if err != nil {
+		t.Fatalf("EncodeResponse() error = %v", err)
+	}
+
+	reader := bytes.NewReader(data)
+	_, err = codec.DecodeRequest(reader)
+	if err == nil {
+		t.Error("expected error when decoding response as request")
+	}
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Errorf("expected ErrInvalidMessage, got %v", err)
+	}
+}
+
+func TestCodec_DecodeResponse_WrongType(t *testing.T) {
+	codec := NewCodec()
+
+	// Encode a request, then try to decode it as a response
+	req := &Request{Command: "help"}
+	data, err := codec.EncodeRequest(req)
+	if err != nil {
+		t.Fatalf("EncodeRequest() error = %v", err)
+	}
+
+	reader := bytes.NewReader(data)
+	_, err = codec.DecodeResponse(reader)
+	if err == nil {
+		t.Error("expected error when decoding request as response")
+	}
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Errorf("expected ErrInvalidMessage, got %v", err)
+	}
+}
+
+func TestCodec_DecodeHeader_PartialHeader(t *testing.T) {
+	codec := NewCodec()
+
+	// Only 3 bytes — too short for a full header
+	reader := bytes.NewReader([]byte{0xDB, 0x90, 0x01})
+	_, _, err := codec.DecodeHeader(reader)
+	if err == nil {
+		t.Error("expected error for partial header")
+	}
+}
+
+func TestCodec_DecodeRequest_TruncatedPayload(t *testing.T) {
+	codec := NewCodec()
+
+	// Valid header but payload is cut short
+	header := make([]byte, HeaderSize)
+	binary.BigEndian.PutUint16(header[0:2], ProtocolMagic)
+	header[2] = ProtocolVersion
+	header[3] = byte(MessageTypeRequest)
+	binary.BigEndian.PutUint32(header[4:8], 100) // Claims 100 bytes payload
+
+	// Only provide 5 bytes of payload
+	msg := make([]byte, 0, HeaderSize+5)
+	msg = append(msg, header...)
+	msg = append(msg, []byte("short")...)
+	reader := bytes.NewReader(msg)
+	_, err := codec.DecodeRequest(reader)
+	if err == nil {
+		t.Error("expected error for truncated payload")
+	}
+}
+
+func TestCodec_DecodeRequest_InvalidJSON(t *testing.T) {
+	codec := NewCodec()
+
+	payload := []byte("{invalid json")
+	payloadLen, err := safeIntToUint32(len(payload))
+	if err != nil {
+		t.Fatalf("safeIntToUint32() error = %v", err)
+	}
+
+	header := make([]byte, HeaderSize)
+	binary.BigEndian.PutUint16(header[0:2], ProtocolMagic)
+	header[2] = ProtocolVersion
+	header[3] = byte(MessageTypeRequest)
+	binary.BigEndian.PutUint32(header[4:8], payloadLen)
+
+	msg := make([]byte, 0, HeaderSize+len(payload))
+	msg = append(msg, header...)
+	msg = append(msg, payload...)
+	reader := bytes.NewReader(msg)
+	_, err = codec.DecodeRequest(reader)
+	if err == nil {
+		t.Error("expected error for invalid JSON payload")
+	}
+}
+
+func TestCodec_DecodeResponse_TruncatedPayload(t *testing.T) {
+	codec := NewCodec()
+
+	// Valid header claiming response type with 100 bytes, but only 5 bytes payload
+	header := make([]byte, HeaderSize)
+	binary.BigEndian.PutUint16(header[0:2], ProtocolMagic)
+	header[2] = ProtocolVersion
+	header[3] = byte(MessageTypeResponse)
+	binary.BigEndian.PutUint32(header[4:8], 100)
+
+	msg := make([]byte, 0, HeaderSize+5)
+	msg = append(msg, header...)
+	msg = append(msg, []byte("short")...)
+	reader := bytes.NewReader(msg)
+	_, err := codec.DecodeResponse(reader)
+	if err == nil {
+		t.Error("expected error for truncated response payload")
+	}
+}
+
+func TestCodec_Encode_PayloadTooLarge(t *testing.T) {
+	codec := NewCodec()
+
+	// Create a response with output larger than MaxPayloadSize
+	large := strings.Repeat("x", MaxPayloadSize+1)
+	resp := NewSuccessResponse(large)
+	_, err := codec.EncodeResponse(resp)
+	if !errors.Is(err, ErrMessageTooLarge) {
+		t.Errorf("expected ErrMessageTooLarge, got %v", err)
+	}
+}
+
+func TestSafeIntToUint32(t *testing.T) {
+	tests := []struct {
+		name    string
+		n       int
+		wantErr bool
+	}{
+		{"zero", 0, false},
+		{"positive", 100, false},
+		{"negative", -1, true},
+		{"max_uint32", 1<<32 - 1, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := safeIntToUint32(tt.n)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("safeIntToUint32(%d) error = %v, wantErr %v", tt.n, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCodec_ParseHeader_TooShort(t *testing.T) {
+	codec := NewCodec()
+
+	// Header shorter than HeaderSize
+	_, _, err := codec.parseHeader([]byte{0x01, 0x02})
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Errorf("expected ErrInvalidMessage for short header, got %v", err)
+	}
+}
+
 func TestMessageType_String(t *testing.T) {
 	tests := []struct {
 		msgType MessageType

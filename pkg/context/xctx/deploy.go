@@ -161,4 +161,3 @@ func ParseDeploymentType(s string) (DeploymentType, error) {
 	}
 	return dt, nil
 }
-

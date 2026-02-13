@@ -7,6 +7,8 @@ import (
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/context/xtenant"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -507,6 +509,29 @@ func TestWithGRPCRequireTenantID_Stream(t *testing.T) {
 // WithGRPCEnsureTrace 选项测试
 // =============================================================================
 
+// assertInterceptorOK 验证拦截器调用无错误且返回 "ok"。
+func assertInterceptorOK(t *testing.T, resp any, err error) {
+	t.Helper()
+	require.NoError(t, err, "interceptor error")
+	assert.Equal(t, "ok", resp)
+}
+
+// assertTraceFieldsGenerated 验证追踪字段均被自动生成（非空）。
+func assertTraceFieldsGenerated(t *testing.T, traceID, spanID, requestID string) {
+	t.Helper()
+	assert.NotEmpty(t, traceID, "TraceID should be auto-generated")
+	assert.NotEmpty(t, spanID, "SpanID should be auto-generated")
+	assert.NotEmpty(t, requestID, "RequestID should be auto-generated")
+}
+
+// assertTraceFieldsEmpty 验证追踪字段均为空。
+func assertTraceFieldsEmpty(t *testing.T, traceID, spanID, requestID string) {
+	t.Helper()
+	assert.Empty(t, traceID, "TraceID should be empty without EnsureTrace")
+	assert.Empty(t, spanID, "SpanID should be empty without EnsureTrace")
+	assert.Empty(t, requestID, "RequestID should be empty without EnsureTrace")
+}
+
 func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 	t.Run("启用EnsureTrace自动生成追踪信息", func(t *testing.T) {
 		var capturedTraceID, capturedSpanID, capturedRequestID string
@@ -515,9 +540,7 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 			xtenant.WithGRPCEnsureTrace(),
 		)
 
-		// 不设置任何 trace metadata
 		ctx := context.Background()
-
 		handler := func(ctx context.Context, req any) (any, error) {
 			capturedTraceID = xctx.TraceID(ctx)
 			capturedSpanID = xctx.SpanID(ctx)
@@ -526,24 +549,8 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 		}
 
 		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
-
-		if err != nil {
-			t.Fatalf("interceptor error = %v", err)
-		}
-		if resp != "ok" {
-			t.Errorf("response = %v, want 'ok'", resp)
-		}
-
-		// 应该自动生成追踪信息
-		if capturedTraceID == "" {
-			t.Error("TraceID should be auto-generated, got empty")
-		}
-		if capturedSpanID == "" {
-			t.Error("SpanID should be auto-generated, got empty")
-		}
-		if capturedRequestID == "" {
-			t.Error("RequestID should be auto-generated, got empty")
-		}
+		assertInterceptorOK(t, resp, err)
+		assertTraceFieldsGenerated(t, capturedTraceID, capturedSpanID, capturedRequestID)
 	})
 
 	t.Run("启用EnsureTrace但上游已有trace则保留", func(t *testing.T) {
@@ -563,18 +570,8 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 		}
 
 		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
-
-		if err != nil {
-			t.Fatalf("interceptor error = %v", err)
-		}
-		if resp != "ok" {
-			t.Errorf("response = %v, want 'ok'", resp)
-		}
-
-		// 应该保留上游传来的 TraceID
-		if capturedTraceID != existingTraceID {
-			t.Errorf("TraceID = %q, want %q (should preserve upstream value)", capturedTraceID, existingTraceID)
-		}
+		assertInterceptorOK(t, resp, err)
+		assert.Equal(t, existingTraceID, capturedTraceID, "should preserve upstream TraceID")
 	})
 
 	t.Run("默认不启用EnsureTrace则不自动生成", func(t *testing.T) {
@@ -582,9 +579,7 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 
 		interceptor := xtenant.GRPCUnaryServerInterceptor()
 
-		// 不设置任何 trace metadata
 		ctx := context.Background()
-
 		handler := func(ctx context.Context, req any) (any, error) {
 			capturedTraceID = xctx.TraceID(ctx)
 			capturedSpanID = xctx.SpanID(ctx)
@@ -593,24 +588,8 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 		}
 
 		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
-
-		if err != nil {
-			t.Fatalf("interceptor error = %v", err)
-		}
-		if resp != "ok" {
-			t.Errorf("response = %v, want 'ok'", resp)
-		}
-
-		// 默认行为：不自动生成
-		if capturedTraceID != "" {
-			t.Errorf("TraceID should be empty without EnsureTrace, got %q", capturedTraceID)
-		}
-		if capturedSpanID != "" {
-			t.Errorf("SpanID should be empty without EnsureTrace, got %q", capturedSpanID)
-		}
-		if capturedRequestID != "" {
-			t.Errorf("RequestID should be empty without EnsureTrace, got %q", capturedRequestID)
-		}
+		assertInterceptorOK(t, resp, err)
+		assertTraceFieldsEmpty(t, capturedTraceID, capturedSpanID, capturedRequestID)
 	})
 
 	t.Run("上游传递trace则正常传播", func(t *testing.T) {
@@ -641,27 +620,11 @@ func TestWithGRPCEnsureTrace_Unary(t *testing.T) {
 		}
 
 		resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, handler)
-
-		if err != nil {
-			t.Fatalf("interceptor error = %v", err)
-		}
-		if resp != "ok" {
-			t.Errorf("response = %v, want 'ok'", resp)
-		}
-
-		// 应该正确传播上游的追踪信息
-		if capturedTraceID != existingTraceID {
-			t.Errorf("TraceID = %q, want %q", capturedTraceID, existingTraceID)
-		}
-		if capturedSpanID != existingSpanID {
-			t.Errorf("SpanID = %q, want %q", capturedSpanID, existingSpanID)
-		}
-		if capturedRequestID != existingRequestID {
-			t.Errorf("RequestID = %q, want %q", capturedRequestID, existingRequestID)
-		}
-		if capturedTraceFlags != existingTraceFlags {
-			t.Errorf("TraceFlags = %q, want %q", capturedTraceFlags, existingTraceFlags)
-		}
+		assertInterceptorOK(t, resp, err)
+		assert.Equal(t, existingTraceID, capturedTraceID)
+		assert.Equal(t, existingSpanID, capturedSpanID)
+		assert.Equal(t, existingRequestID, capturedRequestID)
+		assert.Equal(t, existingTraceFlags, capturedTraceFlags)
 	})
 }
 

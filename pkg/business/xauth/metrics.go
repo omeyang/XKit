@@ -16,13 +16,13 @@ const (
 	MetricsComponent = "xauth"
 
 	// 操作名称
-	MetricsOpGetToken         = "GetToken"
-	MetricsOpVerifyToken      = "VerifyToken"
-	MetricsOpRefreshToken     = "RefreshToken"
-	MetricsOpGetPlatformID    = "GetPlatformID"
+	MetricsOpGetToken          = "GetToken"
+	MetricsOpVerifyToken       = "VerifyToken"
+	MetricsOpRefreshToken      = "RefreshToken"
+	MetricsOpGetPlatformID     = "GetPlatformID"
 	MetricsOpHasParentPlatform = "HasParentPlatform"
-	MetricsOpGetUnclassRegion = "GetUnclassRegionID"
-	MetricsOpHTTPRequest      = "HTTPRequest"
+	MetricsOpGetUnclassRegion  = "GetUnclassRegionID"
+	MetricsOpHTTPRequest       = "HTTPRequest"
 
 	// 属性 Key
 	MetricsAttrTenantID  = "tenant_id"
@@ -110,10 +110,12 @@ type MetricsRecorder interface {
 // NoopMetricsRecorder 空指标记录器。
 type NoopMetricsRecorder struct{}
 
-func (NoopMetricsRecorder) RecordTokenObtain(_ context.Context, _, _ string, _ time.Duration, _ error) {}
-func (NoopMetricsRecorder) RecordTokenVerify(_ context.Context, _ time.Duration, _ error)             {}
-func (NoopMetricsRecorder) RecordTokenRefresh(_ context.Context, _ string, _ time.Duration, _ error)  {}
-func (NoopMetricsRecorder) RecordCacheHit(_ context.Context, _, _ string, _ bool)                     {}
+func (NoopMetricsRecorder) RecordTokenObtain(_ context.Context, _, _ string, _ time.Duration, _ error) {
+}
+func (NoopMetricsRecorder) RecordTokenVerify(_ context.Context, _ time.Duration, _ error) {}
+func (NoopMetricsRecorder) RecordTokenRefresh(_ context.Context, _ string, _ time.Duration, _ error) {
+}
+func (NoopMetricsRecorder) RecordCacheHit(_ context.Context, _, _ string, _ bool) {}
 func (NoopMetricsRecorder) RecordHTTPRequest(_ context.Context, _, _ string, _ int, _ time.Duration, _ error) {
 }
 

@@ -2,16 +2,111 @@ package xsampling
 
 import (
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // testContextKey 测试用的 context key 类型
 type testContextKey string
 
 const testKeyName testContextKey = "key"
+
+// assertAlwaysSamples 验证采样器在多次调用中始终返回 true
+func assertAlwaysSamples(t *testing.T, sampler Sampler, ctx context.Context, msg string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		assert.True(t, sampler.ShouldSample(ctx), msg)
+	}
+}
+
+// assertNeverSamples 验证采样器在多次调用中始终返回 false
+func assertNeverSamples(t *testing.T, sampler Sampler, ctx context.Context, msg string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		assert.False(t, sampler.ShouldSample(ctx), msg)
+	}
+}
+
+// countSamples 统计采样器在指定次数调用中返回 true 的次数
+func countSamples(sampler Sampler, ctx context.Context, total int) int {
+	sampled := 0
+	for i := 0; i < total; i++ {
+		if sampler.ShouldSample(ctx) {
+			sampled++
+		}
+	}
+	return sampled
+}
+
+// assertSamplingRateApprox 验证采样率在预期范围内
+func assertSamplingRateApprox(t *testing.T, sampler Sampler, ctx context.Context, expectedRate, tolerance float64) {
+	t.Helper()
+	total := 10000
+	sampled := countSamples(sampler, ctx, total)
+	rate := float64(sampled) / float64(total)
+	assert.InDelta(t, expectedRate, rate, tolerance,
+		"采样率应接近 %f，实际为 %f", expectedRate, rate)
+}
+
+// assertConsistentSampling 验证基于 key 的采样器对同一 key 产生一致结果
+func assertConsistentSampling(t *testing.T, sampler Sampler, key string) {
+	t.Helper()
+	ctx := context.WithValue(context.Background(), testKeyName, key)
+	first := sampler.ShouldSample(ctx)
+	for i := 0; i < 10; i++ {
+		assert.Equal(t, first, sampler.ShouldSample(ctx),
+			"Key %s should produce consistent results", key)
+	}
+}
+
+// testKeyFunc 测试用的 context key 提取函数
+func testKeyFunc(ctx context.Context) string {
+	if v, ok := ctx.Value(testKeyName).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// runConcurrentSampling 并发运行采样并返回采样成功次数
+func runConcurrentSampling(sampler Sampler, ctx context.Context, goroutines, iterations int) int64 {
+	var wg sync.WaitGroup
+	var sampled atomic.Int64
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				if sampler.ShouldSample(ctx) {
+					sampled.Add(1)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	return sampled.Load()
+}
+
+// runConcurrentSamplingOnly 并发运行采样，不统计结果（仅验证并发安全）
+func runConcurrentSamplingOnly(sampler Sampler, ctx context.Context, goroutines, iterations int) {
+	var wg sync.WaitGroup
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				sampler.ShouldSample(ctx)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
 
 func TestAlwaysSampler(t *testing.T) {
 	sampler := Always()
@@ -53,53 +148,23 @@ func TestRateSampler(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("rate=0", func(t *testing.T) {
-		sampler := NewRateSampler(0.0)
-		for i := 0; i < 100; i++ {
-			if sampler.ShouldSample(ctx) {
-				t.Error("RateSampler with rate=0 should never sample")
-			}
-		}
+		assertNeverSamples(t, NewRateSampler(0.0), ctx, "RateSampler with rate=0 should never sample")
 	})
 
 	t.Run("rate=1", func(t *testing.T) {
-		sampler := NewRateSampler(1.0)
-		for i := 0; i < 100; i++ {
-			if !sampler.ShouldSample(ctx) {
-				t.Error("RateSampler with rate=1 should always sample")
-			}
-		}
+		assertAlwaysSamples(t, NewRateSampler(1.0), ctx, "RateSampler with rate=1 should always sample")
 	})
 
 	t.Run("rate negative", func(t *testing.T) {
-		sampler := NewRateSampler(-0.5)
-		if sampler.Rate() != 0.0 {
-			t.Error("Negative rate should be clamped to 0")
-		}
+		assert.Equal(t, 0.0, NewRateSampler(-0.5).Rate(), "Negative rate should be clamped to 0")
 	})
 
 	t.Run("rate > 1", func(t *testing.T) {
-		sampler := NewRateSampler(1.5)
-		if sampler.Rate() != 1.0 {
-			t.Error("Rate > 1 should be clamped to 1")
-		}
+		assert.Equal(t, 1.0, NewRateSampler(1.5).Rate(), "Rate > 1 should be clamped to 1")
 	})
 
 	t.Run("rate=0.5 statistical", func(t *testing.T) {
-		sampler := NewRateSampler(0.5)
-		sampled := 0
-		total := 10000
-
-		for i := 0; i < total; i++ {
-			if sampler.ShouldSample(ctx) {
-				sampled++
-			}
-		}
-
-		rate := float64(sampled) / float64(total)
-		// 允许 10% 的误差
-		if rate < 0.4 || rate > 0.6 {
-			t.Errorf("Rate should be around 0.5, got %f", rate)
-		}
+		assertSamplingRateApprox(t, NewRateSampler(0.5), ctx, 0.5, 0.1)
 	})
 }
 
@@ -107,39 +172,17 @@ func TestCountSampler(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("n=1", func(t *testing.T) {
-		sampler := NewCountSampler(1)
-		for i := 0; i < 100; i++ {
-			if !sampler.ShouldSample(ctx) {
-				t.Error("CountSampler with n=1 should always sample")
-			}
-		}
+		assertAlwaysSamples(t, NewCountSampler(1), ctx, "CountSampler with n=1 should always sample")
 	})
 
 	t.Run("n=10", func(t *testing.T) {
-		sampler := NewCountSampler(10)
-		sampled := 0
-
-		for i := 0; i < 100; i++ {
-			if sampler.ShouldSample(ctx) {
-				sampled++
-			}
-		}
-
-		if sampled != 10 {
-			t.Errorf("CountSampler with n=10 should sample 10 times in 100 calls, got %d", sampled)
-		}
+		sampled := countSamples(NewCountSampler(10), ctx, 100)
+		assert.Equal(t, 10, sampled, "CountSampler with n=10 should sample 10 times in 100 calls")
 	})
 
 	t.Run("n < 1", func(t *testing.T) {
-		sampler := NewCountSampler(0)
-		if sampler.N() != 1 {
-			t.Error("n < 1 should be set to 1")
-		}
-
-		sampler2 := NewCountSampler(-5)
-		if sampler2.N() != 1 {
-			t.Error("Negative n should be set to 1")
-		}
+		assert.Equal(t, 1, NewCountSampler(0).N(), "n < 1 should be set to 1")
+		assert.Equal(t, 1, NewCountSampler(-5).N(), "Negative n should be set to 1")
 	})
 
 	t.Run("reset", func(t *testing.T) {
@@ -154,9 +197,7 @@ func TestCountSampler(t *testing.T) {
 		sampler.Reset()
 
 		// 重置后第一次调用应该返回 true
-		if !sampler.ShouldSample(ctx) {
-			t.Error("After reset, first call should return true")
-		}
+		assert.True(t, sampler.ShouldSample(ctx), "After reset, first call should return true")
 	})
 
 	t.Run("sampling pattern", func(t *testing.T) {
@@ -165,10 +206,7 @@ func TestCountSampler(t *testing.T) {
 		// 第 1、4、7、10... 个应该被采样
 		expected := []bool{true, false, false, true, false, false, true, false, false, true}
 		for i, exp := range expected {
-			got := sampler.ShouldSample(ctx)
-			if got != exp {
-				t.Errorf("Call %d: expected %v, got %v", i+1, exp, got)
-			}
+			assert.Equal(t, exp, sampler.ShouldSample(ctx), "Call %d", i+1)
 		}
 	})
 }
@@ -370,48 +408,23 @@ func TestKeyBasedSampler(t *testing.T) {
 		sampler := NewKeyBasedSampler(0.0, func(ctx context.Context) string {
 			return "test-key"
 		})
-		ctx := context.Background()
-
-		for i := 0; i < 100; i++ {
-			if sampler.ShouldSample(ctx) {
-				t.Error("KeyBasedSampler with rate=0 should never sample")
-			}
-		}
+		assertNeverSamples(t, sampler, context.Background(),
+			"KeyBasedSampler with rate=0 should never sample")
 	})
 
 	t.Run("rate=1", func(t *testing.T) {
 		sampler := NewKeyBasedSampler(1.0, func(ctx context.Context) string {
 			return "test-key"
 		})
-		ctx := context.Background()
-
-		for i := 0; i < 100; i++ {
-			if !sampler.ShouldSample(ctx) {
-				t.Error("KeyBasedSampler with rate=1 should always sample")
-			}
-		}
+		assertAlwaysSamples(t, sampler, context.Background(),
+			"KeyBasedSampler with rate=1 should always sample")
 	})
 
 	t.Run("consistency", func(t *testing.T) {
-		sampler := NewKeyBasedSampler(0.5, func(ctx context.Context) string {
-			if v, ok := ctx.Value(testKeyName).(string); ok {
-				return v
-			}
-			return ""
-		})
-
-		// 测试相同 key 产生相同结果
+		sampler := NewKeyBasedSampler(0.5, testKeyFunc)
 		keys := []string{"key1", "key2", "key3", "key4", "key5"}
 		for _, key := range keys {
-			ctx := context.WithValue(context.Background(), testKeyName, key)
-			first := sampler.ShouldSample(ctx)
-
-			// 同一个 key 多次调用应该返回相同结果
-			for i := 0; i < 10; i++ {
-				if sampler.ShouldSample(ctx) != first {
-					t.Errorf("Key %s should produce consistent results", key)
-				}
-			}
+			assertConsistentSampling(t, sampler, key)
 		}
 	})
 
@@ -419,68 +432,25 @@ func TestKeyBasedSampler(t *testing.T) {
 		sampler := NewKeyBasedSampler(0.5, func(ctx context.Context) string {
 			return "" // 返回空 key
 		})
-		ctx := context.Background()
-
-		// 空 key 应该回退到随机采样
-		sampled := 0
-		total := 10000
-
-		for i := 0; i < total; i++ {
-			if sampler.ShouldSample(ctx) {
-				sampled++
-			}
-		}
-
-		rate := float64(sampled) / float64(total)
-		// 允许 10% 的误差
-		if rate < 0.4 || rate > 0.6 {
-			t.Errorf("Empty key fallback rate should be around 0.5, got %f", rate)
-		}
+		assertSamplingRateApprox(t, sampler, context.Background(), 0.5, 0.1)
 	})
 
 	t.Run("nil keyFunc", func(t *testing.T) {
 		sampler := NewKeyBasedSampler(0.5, nil)
-		ctx := context.Background()
-
-		// nil keyFunc 应该回退到随机采样
-		sampled := 0
-		total := 10000
-
-		for i := 0; i < total; i++ {
-			if sampler.ShouldSample(ctx) {
-				sampled++
-			}
-		}
-
-		rate := float64(sampled) / float64(total)
-		// 允许 10% 的误差
-		if rate < 0.4 || rate > 0.6 {
-			t.Errorf("Nil keyFunc fallback rate should be around 0.5, got %f", rate)
-		}
+		assertSamplingRateApprox(t, sampler, context.Background(), 0.5, 0.1)
 	})
 
 	t.Run("rate clamping", func(t *testing.T) {
-		sampler1 := NewKeyBasedSampler(-0.5, nil)
-		if sampler1.Rate() != 0.0 {
-			t.Error("Negative rate should be clamped to 0")
-		}
-
-		sampler2 := NewKeyBasedSampler(1.5, nil)
-		if sampler2.Rate() != 1.0 {
-			t.Error("Rate > 1 should be clamped to 1")
-		}
+		assert.Equal(t, 0.0, NewKeyBasedSampler(-0.5, nil).Rate(),
+			"Negative rate should be clamped to 0")
+		assert.Equal(t, 1.0, NewKeyBasedSampler(1.5, nil).Rate(),
+			"Rate > 1 should be clamped to 1")
 	})
 
 	t.Run("distribution", func(t *testing.T) {
-		sampler := NewKeyBasedSampler(0.1, func(ctx context.Context) string {
-			if v, ok := ctx.Value(testKeyName).(string); ok {
-				return v
-			}
-			return ""
-		})
-
-		sampled := 0
+		sampler := NewKeyBasedSampler(0.1, testKeyFunc)
 		total := 10000
+		sampled := 0
 
 		for i := 0; i < total; i++ {
 			key := string(rune('a'+i%26)) + string(rune('0'+i/26%10)) + string(rune(i))
@@ -491,10 +461,7 @@ func TestKeyBasedSampler(t *testing.T) {
 		}
 
 		rate := float64(sampled) / float64(total)
-		// 允许 5% 的误差
-		if math.Abs(rate-0.1) > 0.05 {
-			t.Errorf("Distribution should be around 0.1, got %f", rate)
-		}
+		assert.InDelta(t, 0.1, rate, 0.05, "Distribution should be around 0.1, got %f", rate)
 	})
 }
 
@@ -505,89 +472,26 @@ func TestConcurrency(t *testing.T) {
 	const iterations = 1000
 
 	t.Run("CountSampler", func(t *testing.T) {
-		sampler := NewCountSampler(10)
-		var wg sync.WaitGroup
-		var sampled atomic.Int64
-
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < iterations; j++ {
-					if sampler.ShouldSample(ctx) {
-						sampled.Add(1)
-					}
-				}
-			}()
-		}
-
-		wg.Wait()
-
-		// 总调用次数 = goroutines * iterations
-		// 预期采样次数 = total / 10
-		total := goroutines * iterations
-		expected := total / 10
-		got := sampled.Load()
-
-		if got != int64(expected) {
-			t.Errorf("Expected %d samples, got %d", expected, got)
-		}
+		got := runConcurrentSampling(NewCountSampler(10), ctx, goroutines, iterations)
+		expected := int64(goroutines * iterations / 10)
+		assert.Equal(t, expected, got)
 	})
 
 	t.Run("RateSampler", func(t *testing.T) {
-		sampler := NewRateSampler(0.1)
-		var wg sync.WaitGroup
-		var sampled atomic.Int64
-
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < iterations; j++ {
-					if sampler.ShouldSample(ctx) {
-						sampled.Add(1)
-					}
-				}
-			}()
-		}
-
-		wg.Wait()
-
+		got := runConcurrentSampling(NewRateSampler(0.1), ctx, goroutines, iterations)
 		total := float64(goroutines * iterations)
-		rate := float64(sampled.Load()) / total
-
-		// 允许较大误差，主要验证并发安全
-		if rate < 0.05 || rate > 0.15 {
-			t.Errorf("Concurrent rate should be around 0.1, got %f", rate)
-		}
+		rate := float64(got) / total
+		assert.InDelta(t, 0.1, rate, 0.05, "Concurrent rate should be around 0.1")
 	})
 
 	t.Run("CompositeSampler", func(t *testing.T) {
-		counter := NewCountSampler(10)
-		sampler := All(counter, NewRateSampler(1.0))
-		var wg sync.WaitGroup
-
-		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < iterations; j++ {
-					sampler.ShouldSample(ctx)
-				}
-			}()
-		}
-
-		wg.Wait()
+		sampler := All(NewCountSampler(10), NewRateSampler(1.0))
+		runConcurrentSamplingOnly(sampler, ctx, goroutines, iterations)
 		// 主要验证没有 panic 或 data race
 	})
 
 	t.Run("KeyBasedSampler", func(t *testing.T) {
-		sampler := NewKeyBasedSampler(0.5, func(ctx context.Context) string {
-			if v, ok := ctx.Value(testKeyName).(string); ok {
-				return v
-			}
-			return ""
-		})
+		sampler := NewKeyBasedSampler(0.5, testKeyFunc)
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
@@ -595,8 +499,8 @@ func TestConcurrency(t *testing.T) {
 			go func(id int) {
 				defer wg.Done()
 				for j := 0; j < iterations; j++ {
-					ctx := context.WithValue(context.Background(), testKeyName, string(rune('a'+id%26)))
-					sampler.ShouldSample(ctx)
+					kctx := context.WithValue(context.Background(), testKeyName, string(rune('a'+id%26)))
+					sampler.ShouldSample(kctx)
 				}
 			}(i)
 		}

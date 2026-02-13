@@ -105,16 +105,16 @@ func Classify(addr netip.Addr) Classification {
 		return Classification{}
 	}
 	return Classification{
-		Version:                 AddrVersion(addr),
-		IsValid:                 true,
-		IsPrivate:               addr.IsPrivate(),
-		IsLoopback:              addr.IsLoopback(),
-		IsLinkLocalUnicast:      addr.IsLinkLocalUnicast(),
-		IsLinkLocalMulticast:    addr.IsLinkLocalMulticast(),
+		Version:                   AddrVersion(addr),
+		IsValid:                   true,
+		IsPrivate:                 addr.IsPrivate(),
+		IsLoopback:                addr.IsLoopback(),
+		IsLinkLocalUnicast:        addr.IsLinkLocalUnicast(),
+		IsLinkLocalMulticast:      addr.IsLinkLocalMulticast(),
 		IsInterfaceLocalMulticast: addr.IsInterfaceLocalMulticast(),
-		IsGlobalUnicast:         addr.IsGlobalUnicast(),
-		IsMulticast:             addr.IsMulticast(),
-		IsUnspecified:           addr.IsUnspecified(),
+		IsGlobalUnicast:           addr.IsGlobalUnicast(),
+		IsMulticast:               addr.IsMulticast(),
+		IsUnspecified:             addr.IsUnspecified(),
 	}
 }
 

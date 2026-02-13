@@ -6,6 +6,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockBreakerRegistry 测试用的 mock 熔断器注册表。
@@ -549,28 +552,20 @@ func TestConfigCommand_NoProvider(t *testing.T) {
 }
 
 func TestXkitCommandsConditionalRegistration(t *testing.T) {
+	a := assert.New(t)
+
 	// 不配置任何 xkit 组件
 	srv1, err := New(
 		WithBackgroundMode(true),
 		WithAuditLogger(NewNoopAuditLogger()),
 	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	require.NoError(t, err, "New() without xkit components")
 
 	// 验证 xkit 命令未注册
-	if srv1.registry.Has("breaker") {
-		t.Error("breaker should not be registered")
-	}
-	if srv1.registry.Has("limit") {
-		t.Error("limit should not be registered")
-	}
-	if srv1.registry.Has("cache") {
-		t.Error("cache should not be registered")
-	}
-	if srv1.registry.Has("config") {
-		t.Error("config should not be registered")
-	}
+	a.False(srv1.registry.Has("breaker"), "breaker should not be registered")
+	a.False(srv1.registry.Has("limit"), "limit should not be registered")
+	a.False(srv1.registry.Has("cache"), "cache should not be registered")
+	a.False(srv1.registry.Has("config"), "config should not be registered")
 
 	// 配置所有 xkit 组件
 	srv2, err := New(
@@ -581,23 +576,13 @@ func TestXkitCommandsConditionalRegistration(t *testing.T) {
 		WithCacheRegistry(newMockCacheRegistry()),
 		WithConfigProvider(newMockConfigProvider()),
 	)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	require.NoError(t, err, "New() with all xkit components")
 
 	// 验证 xkit 命令已注册
-	if !srv2.registry.Has("breaker") {
-		t.Error("breaker should be registered")
-	}
-	if !srv2.registry.Has("limit") {
-		t.Error("limit should be registered")
-	}
-	if !srv2.registry.Has("cache") {
-		t.Error("cache should be registered")
-	}
-	if !srv2.registry.Has("config") {
-		t.Error("config should be registered")
-	}
+	a.True(srv2.registry.Has("breaker"), "breaker should be registered")
+	a.True(srv2.registry.Has("limit"), "limit should be registered")
+	a.True(srv2.registry.Has("cache"), "cache should be registered")
+	a.True(srv2.registry.Has("config"), "config should be registered")
 }
 
 func TestBreakerCommand_EmptyList(t *testing.T) {

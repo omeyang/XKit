@@ -15,8 +15,8 @@ import (
 func ExampleDLQBuilder() {
 	// 创建 DLQ 配置
 	dlqPolicy := xpulsar.NewDLQBuilder().
-		WithMaxDeliveries(5).                // 最多投递 5 次
-		WithDeadLetterTopic("orders.dlq").   // 自定义死信 Topic
+		WithMaxDeliveries(5).                 // 最多投递 5 次
+		WithDeadLetterTopic("orders.dlq").    // 自定义死信 Topic
 		WithRetryLetterTopic("orders.retry"). // 自定义重试 Topic
 		Build()
 

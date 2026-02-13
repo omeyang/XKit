@@ -7,9 +7,64 @@ import (
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
+
+// clampRetryCount 将重试次数限制在 [0, 1000] 范围内。
+func clampRetryCount(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 1000 {
+		return 1000
+	}
+	return n
+}
+
+// newTopicPtr 当 topic 非空时返回其指针，否则返回 nil。
+func newTopicPtr(topic string) *string {
+	if topic == "" {
+		return nil
+	}
+	return &topic
+}
+
+// newFuzzMessage 构建用于 fuzz 测试的 kafka.Message。
+func newFuzzMessage(topicPtr *string, partition int32, offset int64) *kafka.Message {
+	return &kafka.Message{
+		TopicPartition: kafka.TopicPartition{
+			Topic:     topicPtr,
+			Partition: partition,
+			Offset:    kafka.Offset(offset),
+		},
+	}
+}
+
+// maybeError 当 errMsg 非空时返回对应的 error，否则返回 nil。
+func maybeError(errMsg string) error {
+	if errMsg == "" {
+		return nil
+	}
+	return errors.New(errMsg)
+}
+
+// buildFuzzByTopic 构建用于 fuzz 测试的 ByTopic 映射。
+func buildFuzzByTopic(topicCount int) map[string]int64 {
+	if topicCount <= 0 {
+		return nil
+	}
+	if topicCount > 100 {
+		topicCount = 100
+	}
+	byTopic := make(map[string]int64, topicCount)
+	for i := range topicCount {
+		byTopic["topic-"+string(rune('a'+i%26))] = int64(i * 10)
+	}
+	return byTopic
+}
 
 // =============================================================================
 // DLQPolicy Fuzz Tests
@@ -208,53 +263,21 @@ func FuzzBuildDLQMessageFromPolicy(f *testing.F) {
 		if len(originalTopic) > 500 || len(dlqTopic) > 500 || len(errMsg) > 1000 {
 			return
 		}
-		if retryCount < 0 {
-			retryCount = 0
-		}
-		if retryCount > 1000 {
-			retryCount = 1000
-		}
+		retryCount = clampRetryCount(retryCount)
 
-		var topicPtr *string
-		if originalTopic != "" {
-			topicPtr = &originalTopic
-		}
-
-		msg := &kafka.Message{
-			TopicPartition: kafka.TopicPartition{
-				Topic:     topicPtr,
-				Partition: partition,
-				Offset:    kafka.Offset(offset),
-			},
-			Key:   []byte("test-key"),
-			Value: []byte("test-value"),
-		}
-
-		var err error
-		if errMsg != "" {
-			err = errors.New(errMsg)
-		}
+		msg := newFuzzMessage(newTopicPtr(originalTopic), partition, offset)
+		msg.Key = []byte("test-key")
+		msg.Value = []byte("test-value")
 
 		// 不应 panic
-		result := buildDLQMessageFromPolicy(msg, dlqTopic, err, retryCount)
+		result := buildDLQMessageFromPolicy(msg, dlqTopic, maybeError(errMsg), retryCount)
 
 		// 验证不变式
-		if result == nil {
-			t.Error("buildDLQMessageFromPolicy should never return nil")
-			return
-		}
-
-		if result.TopicPartition.Topic == nil || *result.TopicPartition.Topic != dlqTopic {
-			t.Errorf("DLQ message should have topic %q", dlqTopic)
-		}
-
-		if string(result.Key) != "test-key" {
-			t.Error("DLQ message should preserve original key")
-		}
-
-		if string(result.Value) != "test-value" {
-			t.Error("DLQ message should preserve original value")
-		}
+		require.NotNil(t, result, "buildDLQMessageFromPolicy should never return nil")
+		require.NotNil(t, result.TopicPartition.Topic, "DLQ message topic should not be nil")
+		assert.Equal(t, dlqTopic, *result.TopicPartition.Topic, "DLQ message should have correct topic")
+		assert.Equal(t, "test-key", string(result.Key), "DLQ message should preserve original key")
+		assert.Equal(t, "test-value", string(result.Value), "DLQ message should preserve original value")
 	})
 }
 
@@ -268,51 +291,21 @@ func FuzzBuildDLQMetadataFromMessage(f *testing.F) {
 		if len(topic) > 500 || len(errMsg) > 1000 {
 			return
 		}
-		if retryCount < 0 {
-			retryCount = 0
-		}
-		if retryCount > 1000 {
-			retryCount = 1000
-		}
+		retryCount = clampRetryCount(retryCount)
 
-		var topicPtr *string
-		if topic != "" {
-			topicPtr = &topic
-		}
-
-		msg := &kafka.Message{
-			TopicPartition: kafka.TopicPartition{
-				Topic:     topicPtr,
-				Partition: partition,
-				Offset:    kafka.Offset(offset),
-			},
-			Timestamp: time.Now(),
-		}
-
-		var err error
-		if errMsg != "" {
-			err = errors.New(errMsg)
-		}
+		msg := newFuzzMessage(newTopicPtr(topic), partition, offset)
+		msg.Timestamp = time.Now()
 
 		// 不应 panic
-		metadata := buildDLQMetadataFromMessage(msg, err, retryCount)
+		metadata := buildDLQMetadataFromMessage(msg, maybeError(errMsg), retryCount)
 
 		// 验证不变式
-		if topic != "" && metadata.OriginalTopic != topic {
-			t.Errorf("metadata.OriginalTopic = %q, want %q", metadata.OriginalTopic, topic)
+		if topic != "" {
+			assert.Equal(t, topic, metadata.OriginalTopic, "metadata.OriginalTopic mismatch")
 		}
-
-		if metadata.FailureCount != retryCount+1 {
-			t.Errorf("metadata.FailureCount = %d, want %d", metadata.FailureCount, retryCount+1)
-		}
-
-		if metadata.FirstFailureTime.IsZero() {
-			t.Error("metadata.FirstFailureTime should not be zero")
-		}
-
-		if metadata.LastFailureTime.IsZero() {
-			t.Error("metadata.LastFailureTime should not be zero")
-		}
+		assert.Equal(t, retryCount+1, metadata.FailureCount, "metadata.FailureCount mismatch")
+		assert.False(t, metadata.FirstFailureTime.IsZero(), "metadata.FirstFailureTime should not be zero")
+		assert.False(t, metadata.LastFailureTime.IsZero(), "metadata.LastFailureTime should not be zero")
 	})
 }
 
@@ -386,20 +379,7 @@ func FuzzDLQStats_Clone(f *testing.F) {
 	f.Add(int64(999999), int64(999999), int64(999999), int64(999999), 100)
 
 	f.Fuzz(func(t *testing.T, total, retried, deadLetter, success int64, topicCount int) {
-		if topicCount < 0 {
-			topicCount = 0
-		}
-		if topicCount > 100 {
-			topicCount = 100
-		}
-
-		var byTopic map[string]int64
-		if topicCount > 0 {
-			byTopic = make(map[string]int64, topicCount)
-			for i := 0; i < topicCount; i++ {
-				byTopic["topic-"+string(rune('a'+i%26))] = int64(i * 10)
-			}
-		}
+		byTopic := buildFuzzByTopic(topicCount)
 
 		original := DLQStats{
 			TotalMessages:      total,
@@ -414,25 +394,14 @@ func FuzzDLQStats_Clone(f *testing.F) {
 		clone := original.Clone()
 
 		// 验证不变式：值相等
-		if clone.TotalMessages != original.TotalMessages {
-			t.Errorf("TotalMessages mismatch: got %d, want %d", clone.TotalMessages, original.TotalMessages)
-		}
-
-		if clone.RetriedMessages != original.RetriedMessages {
-			t.Errorf("RetriedMessages mismatch")
-		}
-
-		if clone.DeadLetterMessages != original.DeadLetterMessages {
-			t.Errorf("DeadLetterMessages mismatch")
-		}
+		assert.Equal(t, original.TotalMessages, clone.TotalMessages, "TotalMessages mismatch")
+		assert.Equal(t, original.RetriedMessages, clone.RetriedMessages, "RetriedMessages mismatch")
+		assert.Equal(t, original.DeadLetterMessages, clone.DeadLetterMessages, "DeadLetterMessages mismatch")
 
 		// 验证 ByTopic 是深拷贝
 		if byTopic != nil && clone.ByTopic != nil {
-			// 修改 clone 不应影响 original
 			clone.ByTopic["modified"] = 999
-			if _, exists := original.ByTopic["modified"]; exists {
-				t.Error("Clone should create independent copy of ByTopic")
-			}
+			assert.NotContains(t, original.ByTopic, "modified", "Clone should create independent copy of ByTopic")
 		}
 	})
 }

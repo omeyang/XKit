@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewHTTPClient(t *testing.T) {
@@ -179,20 +182,12 @@ func TestHTTPClient_Request_Errors(t *testing.T) {
 		client := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 
 		err := client.Get(ctx, "/test", nil, nil)
-		if err == nil {
-			t.Fatal("expected error for 4xx response")
-		}
+		require.Error(t, err, "expected error for 4xx response")
 
 		apiErr, ok := err.(*APIError)
-		if !ok {
-			t.Fatalf("expected APIError, got %T", err)
-		}
-		if apiErr.StatusCode != 400 {
-			t.Errorf("StatusCode = %d, expected 400", apiErr.StatusCode)
-		}
-		if apiErr.Code != 1001 {
-			t.Errorf("Code = %d, expected 1001", apiErr.Code)
-		}
+		require.True(t, ok, "expected APIError, got %T", err)
+		assert.Equal(t, 400, apiErr.StatusCode)
+		assert.Equal(t, 1001, apiErr.Code)
 	})
 
 	t.Run("5xx error", func(t *testing.T) {
@@ -208,17 +203,11 @@ func TestHTTPClient_Request_Errors(t *testing.T) {
 		client := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 
 		err := client.Get(ctx, "/test", nil, nil)
-		if err == nil {
-			t.Fatal("expected error for 5xx response")
-		}
+		require.Error(t, err, "expected error for 5xx response")
 
 		apiErr, ok := err.(*APIError)
-		if !ok {
-			t.Fatalf("expected APIError, got %T", err)
-		}
-		if !apiErr.Retryable() {
-			t.Error("5xx error should be retryable")
-		}
+		require.True(t, ok, "expected APIError, got %T", err)
+		assert.True(t, apiErr.Retryable(), "5xx error should be retryable")
 	})
 
 	t.Run("network error", func(t *testing.T) {
@@ -228,14 +217,10 @@ func TestHTTPClient_Request_Errors(t *testing.T) {
 		})
 
 		err := client.Get(ctx, "/test", nil, nil)
-		if err == nil {
-			t.Fatal("expected error for network failure")
-		}
+		require.Error(t, err, "expected error for network failure")
 
 		// Should be a temporary error
-		if !IsRetryable(err) {
-			t.Error("network error should be retryable")
-		}
+		assert.True(t, IsRetryable(err), "network error should be retryable")
 	})
 
 	t.Run("body marshal error", func(t *testing.T) {
@@ -249,9 +234,7 @@ func TestHTTPClient_Request_Errors(t *testing.T) {
 		// Channels cannot be marshaled to JSON
 		unmarshalable := make(chan int)
 		err := client.Post(ctx, "/test", nil, unmarshalable, nil)
-		if err == nil {
-			t.Fatal("expected error for unmarshalable body")
-		}
+		require.Error(t, err, "expected error for unmarshalable body")
 	})
 
 	t.Run("invalid json response", func(t *testing.T) {
@@ -265,9 +248,7 @@ func TestHTTPClient_Request_Errors(t *testing.T) {
 
 		var result map[string]string
 		err := client.Get(ctx, "/test", nil, &result)
-		if err == nil {
-			t.Fatal("expected error for invalid JSON")
-		}
+		require.Error(t, err, "expected error for invalid JSON")
 	})
 }
 

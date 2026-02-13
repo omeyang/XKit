@@ -4,12 +4,23 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/context/xplatform"
 	"github.com/omeyang/xkit/pkg/context/xtenant"
 
 	"google.golang.org/grpc/metadata"
 )
+
+// assertMetadataValue 验证 gRPC metadata 中指定 key 的首个值等于 expected。
+func assertMetadataValue(t *testing.T, md metadata.MD, key, expected string) {
+	t.Helper()
+	vals := md.Get(key)
+	require.NotEmpty(t, vals, "metadata key %q should be present", key)
+	assert.Equal(t, expected, vals[0], "metadata key %q", key)
+}
 
 // =============================================================================
 // gRPC Metadata 提取测试
@@ -320,47 +331,29 @@ func TestInjectToOutgoingContext_WithPlatformInitialized(t *testing.T) {
 		HasParent:       true,
 		UnclassRegionID: "region-001",
 	})
-	if err != nil {
-		t.Fatalf("xplatform.Init() error = %v", err)
-	}
+	require.NoError(t, err, "xplatform.Init()")
 	t.Cleanup(xplatform.Reset)
 
 	// 设置租户信息
 	ctx := context.Background()
 	ctx, err = xctx.WithTenantID(ctx, "tenant-123")
-	if err != nil {
-		t.Fatalf("xctx.WithTenantID() error = %v", err)
-	}
+	require.NoError(t, err, "xctx.WithTenantID()")
 	ctx, err = xctx.WithTenantName(ctx, "TestTenant")
-	if err != nil {
-		t.Fatalf("xctx.WithTenantName() error = %v", err)
-	}
+	require.NoError(t, err, "xctx.WithTenantName()")
 
 	ctx = xtenant.InjectToOutgoingContext(ctx)
 
 	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
-		t.Fatal("metadata not found in outgoing context")
-	}
+	require.True(t, ok, "metadata not found in outgoing context")
 
 	// 验证平台信息
-	if got := md.Get(xtenant.MetaPlatformID); len(got) == 0 || got[0] != "test-platform-001" {
-		t.Errorf("MetaPlatformID = %v, want [test-platform-001]", got)
-	}
-	if got := md.Get(xtenant.MetaHasParent); len(got) == 0 || got[0] != "true" {
-		t.Errorf("MetaHasParent = %v, want [true]", got)
-	}
-	if got := md.Get(xtenant.MetaUnclassRegionID); len(got) == 0 || got[0] != "region-001" {
-		t.Errorf("MetaUnclassRegionID = %v, want [region-001]", got)
-	}
+	assertMetadataValue(t, md, xtenant.MetaPlatformID, "test-platform-001")
+	assertMetadataValue(t, md, xtenant.MetaHasParent, "true")
+	assertMetadataValue(t, md, xtenant.MetaUnclassRegionID, "region-001")
 
 	// 验证租户信息
-	if got := md.Get(xtenant.MetaTenantID); len(got) == 0 || got[0] != "tenant-123" {
-		t.Errorf("MetaTenantID = %v, want [tenant-123]", got)
-	}
-	if got := md.Get(xtenant.MetaTenantName); len(got) == 0 || got[0] != "TestTenant" {
-		t.Errorf("MetaTenantName = %v, want [TestTenant]", got)
-	}
+	assertMetadataValue(t, md, xtenant.MetaTenantID, "tenant-123")
+	assertMetadataValue(t, md, xtenant.MetaTenantName, "TestTenant")
 }
 
 func TestInjectToOutgoingContext_WithPlatformNoParent(t *testing.T) {

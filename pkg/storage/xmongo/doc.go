@@ -16,5 +16,4 @@
 //   - Stats()：统计信息
 //   - FindPage()：分页查询
 //   - BulkWrite()：批量写入（支持 context 取消）
-//
 package xmongo

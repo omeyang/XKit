@@ -112,9 +112,9 @@ func TestWithSetNXOnExtend(t *testing.T) {
 
 // 确保接口定义正确（编译时检查）
 var (
-	_ xdlock.LockHandle  = (*mockLockHandle)(nil)
-	_ xdlock.Factory     = (*mockFactory)(nil)
-	_ xdlock.EtcdFactory = (*mockEtcdFactory)(nil)
+	_ xdlock.LockHandle   = (*mockLockHandle)(nil)
+	_ xdlock.Factory      = (*mockFactory)(nil)
+	_ xdlock.EtcdFactory  = (*mockEtcdFactory)(nil)
 	_ xdlock.RedisFactory = (*mockRedisFactory)(nil)
 )
 

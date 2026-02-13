@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -72,23 +74,13 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 		cfg := &Config{Host: "https://auth.test.com"}
 		cfg.ApplyDefaults()
 
-		if cfg.Timeout != DefaultTimeout {
-			t.Errorf("Timeout = %v, expected %v", cfg.Timeout, DefaultTimeout)
-		}
-		if cfg.TokenRefreshThreshold != DefaultTokenRefreshThreshold {
-			t.Errorf("TokenRefreshThreshold = %v, expected %v", cfg.TokenRefreshThreshold, DefaultTokenRefreshThreshold)
-		}
-		if cfg.PlatformDataCacheTTL != DefaultPlatformDataCacheTTL {
-			t.Errorf("PlatformDataCacheTTL = %v, expected %v", cfg.PlatformDataCacheTTL, DefaultPlatformDataCacheTTL)
-		}
+		assert.Equal(t, DefaultTimeout, cfg.Timeout)
+		assert.Equal(t, DefaultTokenRefreshThreshold, cfg.TokenRefreshThreshold)
+		assert.Equal(t, DefaultPlatformDataCacheTTL, cfg.PlatformDataCacheTTL)
 		// ClientID should be set based on environment
-		if cfg.ClientID == "" {
-			t.Error("ClientID should not be empty")
-		}
+		assert.NotEmpty(t, cfg.ClientID, "ClientID should not be empty")
 		// ClientSecret defaults to ClientID
-		if cfg.ClientSecret != cfg.ClientID {
-			t.Errorf("ClientSecret = %v, expected %v", cfg.ClientSecret, cfg.ClientID)
-		}
+		assert.Equal(t, cfg.ClientID, cfg.ClientSecret)
 	})
 
 	t.Run("preserve existing values", func(t *testing.T) {
@@ -102,21 +94,11 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 		}
 		cfg.ApplyDefaults()
 
-		if cfg.Timeout != 30*time.Second {
-			t.Errorf("Timeout was overwritten")
-		}
-		if cfg.TokenRefreshThreshold != 10*time.Minute {
-			t.Errorf("TokenRefreshThreshold was overwritten")
-		}
-		if cfg.PlatformDataCacheTTL != 1*time.Hour {
-			t.Errorf("PlatformDataCacheTTL was overwritten")
-		}
-		if cfg.ClientID != "custom-client" {
-			t.Errorf("ClientID was overwritten")
-		}
-		if cfg.ClientSecret != "custom-secret" {
-			t.Errorf("ClientSecret was overwritten")
-		}
+		assert.Equal(t, 30*time.Second, cfg.Timeout, "Timeout was overwritten")
+		assert.Equal(t, 10*time.Minute, cfg.TokenRefreshThreshold, "TokenRefreshThreshold was overwritten")
+		assert.Equal(t, 1*time.Hour, cfg.PlatformDataCacheTTL, "PlatformDataCacheTTL was overwritten")
+		assert.Equal(t, "custom-client", cfg.ClientID, "ClientID was overwritten")
+		assert.Equal(t, "custom-secret", cfg.ClientSecret, "ClientSecret was overwritten")
 	})
 }
 

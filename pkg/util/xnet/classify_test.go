@@ -144,17 +144,17 @@ func TestIsGlobalUnicast(t *testing.T) {
 		{"8.8.8.8", true},
 		{"1.1.1.1", true},
 		{"2001:4860:4860::8888", true},
-		{"192.168.1.1", true},   // 私有但也是全局单播
-		{"10.0.0.1", true},      // 私有但也是全局单播
-		{"fc00::1", true},       // ULA 但也是全局单播
+		{"192.168.1.1", true}, // 私有但也是全局单播
+		{"10.0.0.1", true},    // 私有但也是全局单播
+		{"fc00::1", true},     // ULA 但也是全局单播
 
 		// 非全局单播
-		{"224.0.0.1", false},     // 多播
-		{"::1", false},           // 环回
-		{"0.0.0.0", false},       // 未指定
-		{"169.254.0.1", false},   // 链路本地
-		{"fe80::1", false},       // 链路本地
-		{"127.0.0.1", false},     // 环回
+		{"224.0.0.1", false},   // 多播
+		{"::1", false},         // 环回
+		{"0.0.0.0", false},     // 未指定
+		{"169.254.0.1", false}, // 链路本地
+		{"fe80::1", false},     // 链路本地
+		{"127.0.0.1", false},   // 环回
 	}
 
 	for _, tt := range tests {
@@ -242,13 +242,13 @@ func TestIsInterfaceLocalMulticast(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	tests := []struct {
-		addr           string
-		wantVersion    Version
-		wantString     string
-		wantPrivate    bool
-		wantLoopback   bool
-		wantMulticast  bool
-		wantGlobal     bool
+		addr          string
+		wantVersion   Version
+		wantString    string
+		wantPrivate   bool
+		wantLoopback  bool
+		wantMulticast bool
+		wantGlobal    bool
 	}{
 		{
 			addr:        "192.168.1.1",
@@ -347,12 +347,12 @@ func TestIsRoutable(t *testing.T) {
 		{"2001:db8::1", true},
 
 		// 不可路由
-		{"127.0.0.1", false},     // 环回
-		{"::1", false},           // 环回
-		{"169.254.0.1", false},   // 链路本地
-		{"fe80::1", false},       // 链路本地
-		{"0.0.0.0", false},       // 未指定
-		{"::", false},            // 未指定
+		{"127.0.0.1", false},   // 环回
+		{"::1", false},         // 环回
+		{"169.254.0.1", false}, // 链路本地
+		{"fe80::1", false},     // 链路本地
+		{"0.0.0.0", false},     // 未指定
+		{"::", false},          // 未指定
 	}
 
 	for _, tt := range tests {
@@ -373,11 +373,11 @@ func TestIsDocumentation(t *testing.T) {
 		want bool
 	}{
 		// IPv4 文档地址
-		{"192.0.2.1", true},     // TEST-NET-1
+		{"192.0.2.1", true}, // TEST-NET-1
 		{"192.0.2.255", true},
-		{"198.51.100.1", true},  // TEST-NET-2
+		{"198.51.100.1", true}, // TEST-NET-2
 		{"198.51.100.255", true},
-		{"203.0.113.1", true},   // TEST-NET-3
+		{"203.0.113.1", true}, // TEST-NET-3
 		{"203.0.113.255", true},
 
 		// IPv6 文档地址
@@ -548,15 +548,34 @@ func FuzzClassify(f *testing.F) {
 	})
 }
 
+// expectedDocumentation 根据 IPv4 uint32 范围判断地址是否为文档地址。
+// 仅适用于 IPv4/IPv4-mapped 地址，返回 (expected, applicable)。
+func expectedDocumentation(addr netip.Addr) (bool, bool) {
+	if !addr.Is4() && !addr.Is4In6() {
+		return false, false
+	}
+
+	v, ok := AddrToUint32(addr)
+	if !ok {
+		return false, false
+	}
+
+	inTestNet1 := v >= 0xC0000200 && v <= 0xC00002FF
+	inTestNet2 := v >= 0xC6336400 && v <= 0xC63364FF
+	inTestNet3 := v >= 0xCB007100 && v <= 0xCB0071FF
+
+	return inTestNet1 || inTestNet2 || inTestNet3, true
+}
+
 func FuzzIsDocumentation(f *testing.F) {
 	// 添加边界值种子
-	f.Add("192.0.2.0")     // TEST-NET-1 起始
-	f.Add("192.0.2.255")   // TEST-NET-1 结束
-	f.Add("192.0.1.255")   // TEST-NET-1 之前
-	f.Add("192.0.3.0")     // TEST-NET-1 之后
-	f.Add("198.51.100.0")  // TEST-NET-2 起始
-	f.Add("203.0.113.0")   // TEST-NET-3 起始
-	f.Add("2001:db8::1")   // IPv6 文档地址
+	f.Add("192.0.2.0")    // TEST-NET-1 起始
+	f.Add("192.0.2.255")  // TEST-NET-1 结束
+	f.Add("192.0.1.255")  // TEST-NET-1 之前
+	f.Add("192.0.3.0")    // TEST-NET-1 之后
+	f.Add("198.51.100.0") // TEST-NET-2 起始
+	f.Add("203.0.113.0")  // TEST-NET-3 起始
+	f.Add("2001:db8::1")  // IPv6 文档地址
 
 	f.Fuzz(func(t *testing.T, s string) {
 		addr, err := netip.ParseAddr(s)
@@ -567,16 +586,9 @@ func FuzzIsDocumentation(f *testing.F) {
 		got := IsDocumentation(addr)
 
 		// 验证 IPv4 TEST-NET 范围
-		if addr.Is4() || addr.Is4In6() {
-			v, ok := AddrToUint32(addr)
-			if ok {
-				inTestNet1 := v >= 0xC0000200 && v <= 0xC00002FF
-				inTestNet2 := v >= 0xC6336400 && v <= 0xC63364FF
-				inTestNet3 := v >= 0xCB007100 && v <= 0xCB0071FF
-				expected := inTestNet1 || inTestNet2 || inTestNet3
-				if got != expected {
-					t.Errorf("IsDocumentation(%s) = %v, expected %v", addr, got, expected)
-				}
+		if expected, ok := expectedDocumentation(addr); ok {
+			if got != expected {
+				t.Errorf("IsDocumentation(%s) = %v, expected %v", addr, got, expected)
 			}
 		}
 	})

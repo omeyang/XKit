@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewClient(t *testing.T) {
@@ -413,6 +416,42 @@ func TestClient_GetUnclassRegionID(t *testing.T) {
 	})
 }
 
+// handleTokenAndCustomEndpoint is a named HTTP handler that serves token requests
+// and a custom /test endpoint with auth verification.
+// Extracting this from the test function closure reduces TestClient_Request's CC.
+func handleTokenAndCustomEndpoint(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Token endpoint (client_id is in query params for token requests)
+		if r.URL.Query().Get("client_id") != "" {
+			writeJSONToken(w, "test-token", 3600)
+			return
+		}
+
+		// Custom endpoint - should have Authorization header
+		if r.URL.Path == "/test" {
+			auth := r.Header.Get("Authorization")
+			assert.Equal(t, "Bearer test-token", auth, "Authorization header mismatch")
+			resp := map[string]string{"status": "ok"}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// writeJSONToken writes a standard token JSON response.
+func writeJSONToken(w http.ResponseWriter, accessToken string, expiresIn int) {
+	resp := map[string]any{
+		"access_token": accessToken,
+		"expires_in":   expiresIn,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func TestClient_Request(t *testing.T) {
 	ctx := context.Background()
 
@@ -420,68 +459,33 @@ func TestClient_Request(t *testing.T) {
 		cfg := testConfig()
 
 		c, err := NewClient(cfg)
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		defer c.Close()
 
 		err = c.Request(ctx, nil)
-		if err == nil {
-			t.Error("expected error for nil request")
-		}
+		assert.Error(t, err, "expected error for nil request")
 	})
 
 	t.Run("client closed", func(t *testing.T) {
 		cfg := testConfig()
 
 		c, err := NewClient(cfg)
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		c.Close()
 
 		err = c.Request(ctx, &AuthRequest{URL: "/test"})
-		if err != ErrClientClosed {
-			t.Errorf("expected ErrClientClosed, got %v", err)
-		}
+		assert.Equal(t, ErrClientClosed, err)
 	})
 
 	t.Run("successful request", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Token endpoint (client_id is in query params for token requests)
-			if r.URL.Query().Get("client_id") != "" {
-				resp := map[string]any{
-					"access_token": "test-token",
-					"expires_in":   3600,
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			// Custom endpoint - should have Authorization header
-			if r.URL.Path == "/test" {
-				auth := r.Header.Get("Authorization")
-				if auth == "" || auth != "Bearer test-token" {
-					t.Errorf("Authorization header = %q, expected 'Bearer test-token'", auth)
-				}
-				resp := map[string]string{"status": "ok"}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			w.WriteHeader(http.StatusNotFound)
-		}))
+		server := httptest.NewServer(handleTokenAndCustomEndpoint(t))
 		defer server.Close()
 
 		cfg := testConfig()
 		cfg.Host = server.URL
 
 		c, err := NewClient(cfg, WithLocalCache(true))
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		defer c.Close()
 
 		var result map[string]string
@@ -491,9 +495,7 @@ func TestClient_Request(t *testing.T) {
 			Method:   "GET",
 			Response: &result,
 		})
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
+		require.NoError(t, err, "Request failed")
 	})
 }
 
@@ -690,6 +692,51 @@ func TestDefaultTLSConfig(t *testing.T) {
 	}
 }
 
+// handleRetryOn401 creates an HTTP handler that returns 401 on the first request
+// and 200 on subsequent requests. It tracks request and token request counts.
+func handleRetryOn401(requestCount, tokenRequestCount *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Token endpoint
+		if r.URL.Query().Get("client_id") != "" {
+			*tokenRequestCount++
+			writeJSONToken(w, "token-"+string(rune('0'+*tokenRequestCount)), 3600)
+			return
+		}
+
+		// Custom endpoint
+		*requestCount++
+		if *requestCount == 1 {
+			// First request: return 401
+			w.WriteHeader(http.StatusUnauthorized)
+			resp := map[string]any{"code": 401, "message": "unauthorized"}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		// Second request: success
+		w.WriteHeader(http.StatusOK)
+		resp := map[string]string{"status": "ok"}
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// handleAlways401 creates an HTTP handler that always returns 401 for custom endpoints
+// while serving tokens normally. It tracks request count.
+func handleAlways401(requestCount *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Token endpoint
+		if r.URL.Query().Get("client_id") != "" {
+			writeJSONToken(w, "test-token", 3600)
+			return
+		}
+
+		// Custom endpoint - always return 401
+		*requestCount++
+		w.WriteHeader(http.StatusUnauthorized)
+		resp := map[string]any{"code": 401, "message": "unauthorized"}
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
 func TestClient_Request_AutoRetryOn401(t *testing.T) {
 	ctx := context.Background()
 
@@ -697,33 +744,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 		requestCount := 0
 		tokenRequestCount := 0
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Token endpoint
-			if r.URL.Query().Get("client_id") != "" {
-				tokenRequestCount++
-				resp := map[string]any{
-					"access_token": "token-" + string(rune('0'+tokenRequestCount)),
-					"expires_in":   3600,
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			// Custom endpoint
-			requestCount++
-			if requestCount == 1 {
-				// First request: return 401
-				w.WriteHeader(http.StatusUnauthorized)
-				resp := map[string]any{"code": 401, "message": "unauthorized"}
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-			// Second request: success
-			w.WriteHeader(http.StatusOK)
-			resp := map[string]string{"status": "ok"}
-			json.NewEncoder(w).Encode(resp)
-		}))
+		server := httptest.NewServer(handleRetryOn401(&requestCount, &tokenRequestCount))
 		defer server.Close()
 
 		cfg := testConfig()
@@ -733,9 +754,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithLocalCache(true),
 			WithAutoRetryOn401(true), // Enable auto-retry
 		)
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		defer c.Close()
 
 		var result map[string]string
@@ -745,42 +764,19 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			Method:   "GET",
 			Response: &result,
 		})
-		if err != nil {
-			t.Fatalf("Request should succeed on retry: %v", err)
-		}
+		require.NoError(t, err, "Request should succeed on retry")
 
 		// Should have made 2 requests to the endpoint
-		if requestCount != 2 {
-			t.Errorf("requestCount = %d, expected 2 (initial + retry)", requestCount)
-		}
+		assert.Equal(t, 2, requestCount, "expected initial + retry")
 
 		// Should have fetched token twice (initial + after cache clear)
-		if tokenRequestCount != 2 {
-			t.Errorf("tokenRequestCount = %d, expected 2", tokenRequestCount)
-		}
+		assert.Equal(t, 2, tokenRequestCount)
 	})
 
 	t.Run("no retry on 401 when disabled", func(t *testing.T) {
 		requestCount := 0
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Token endpoint
-			if r.URL.Query().Get("client_id") != "" {
-				resp := map[string]any{
-					"access_token": "test-token",
-					"expires_in":   3600,
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			// Custom endpoint - always return 401
-			requestCount++
-			w.WriteHeader(http.StatusUnauthorized)
-			resp := map[string]any{"code": 401, "message": "unauthorized"}
-			json.NewEncoder(w).Encode(resp)
-		}))
+		server := httptest.NewServer(handleAlways401(&requestCount))
 		defer server.Close()
 
 		cfg := testConfig()
@@ -790,9 +786,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithLocalCache(true),
 			WithAutoRetryOn401(false), // Disable auto-retry (default)
 		)
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		defer c.Close()
 
 		err = c.Request(ctx, &AuthRequest{
@@ -800,37 +794,16 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			URL:      "/test",
 			Method:   "GET",
 		})
-		if err == nil {
-			t.Error("expected error on 401")
-		}
+		assert.Error(t, err, "expected error on 401")
 
 		// Should have made only 1 request
-		if requestCount != 1 {
-			t.Errorf("requestCount = %d, expected 1 (no retry)", requestCount)
-		}
+		assert.Equal(t, 1, requestCount, "no retry expected")
 	})
 
 	t.Run("no infinite retry on persistent 401", func(t *testing.T) {
 		requestCount := 0
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Token endpoint
-			if r.URL.Query().Get("client_id") != "" {
-				resp := map[string]any{
-					"access_token": "test-token",
-					"expires_in":   3600,
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-
-			// Custom endpoint - always return 401
-			requestCount++
-			w.WriteHeader(http.StatusUnauthorized)
-			resp := map[string]any{"code": 401, "message": "unauthorized"}
-			json.NewEncoder(w).Encode(resp)
-		}))
+		server := httptest.NewServer(handleAlways401(&requestCount))
 		defer server.Close()
 
 		cfg := testConfig()
@@ -840,9 +813,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithLocalCache(true),
 			WithAutoRetryOn401(true), // Enable auto-retry
 		)
-		if err != nil {
-			t.Fatalf("NewClient failed: %v", err)
-		}
+		require.NoError(t, err, "NewClient failed")
 		defer c.Close()
 
 		err = c.Request(ctx, &AuthRequest{
@@ -850,14 +821,10 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			URL:      "/test",
 			Method:   "GET",
 		})
-		if err == nil {
-			t.Error("expected error on persistent 401")
-		}
+		assert.Error(t, err, "expected error on persistent 401")
 
 		// Should have made exactly 2 requests (initial + one retry)
-		if requestCount != 2 {
-			t.Errorf("requestCount = %d, expected 2 (initial + one retry only)", requestCount)
-		}
+		assert.Equal(t, 2, requestCount, "expected initial + one retry only")
 	})
 }
 

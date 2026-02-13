@@ -36,12 +36,12 @@ type PlatformManager struct {
 
 // PlatformManagerConfig PlatformManager 配置。
 type PlatformManagerConfig struct {
-	HTTP      *HTTPClient
-	Cache     CacheStore
-	TokenMgr  *TokenManager
-	Logger    *slog.Logger
-	Observer  xmetrics.Observer
-	CacheTTL  time.Duration
+	HTTP     *HTTPClient
+	Cache    CacheStore
+	TokenMgr *TokenManager
+	Logger   *slog.Logger
+	Observer xmetrics.Observer
+	CacheTTL time.Duration
 
 	// LocalCacheSize 本地缓存最大条目数。
 	// 默认 1000。

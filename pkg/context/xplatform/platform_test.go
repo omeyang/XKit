@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xplatform"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -71,21 +73,11 @@ func TestInit(t *testing.T) {
 			HasParent:       true,
 			UnclassRegionID: "region-001",
 		})
-		if err != nil {
-			t.Fatalf("Init() error = %v", err)
-		}
-		if !xplatform.IsInitialized() {
-			t.Error("IsInitialized() = false, want true")
-		}
-		if xplatform.PlatformID() != "platform-001" {
-			t.Errorf("PlatformID() = %q, want %q", xplatform.PlatformID(), "platform-001")
-		}
-		if !xplatform.HasParent() {
-			t.Error("HasParent() = false, want true")
-		}
-		if xplatform.UnclassRegionID() != "region-001" {
-			t.Errorf("UnclassRegionID() = %q, want %q", xplatform.UnclassRegionID(), "region-001")
-		}
+		require.NoError(t, err, "Init() should succeed")
+		assert.True(t, xplatform.IsInitialized(), "IsInitialized() should be true")
+		assert.Equal(t, "platform-001", xplatform.PlatformID())
+		assert.True(t, xplatform.HasParent(), "HasParent() should be true")
+		assert.Equal(t, "region-001", xplatform.UnclassRegionID())
 	})
 
 	t.Run("缺少PlatformID返回错误", func(t *testing.T) {
@@ -93,12 +85,8 @@ func TestInit(t *testing.T) {
 		t.Cleanup(xplatform.Reset)
 
 		err := xplatform.Init(xplatform.Config{})
-		if !errors.Is(err, xplatform.ErrMissingPlatformID) {
-			t.Errorf("Init() error = %v, want %v", err, xplatform.ErrMissingPlatformID)
-		}
-		if xplatform.IsInitialized() {
-			t.Error("IsInitialized() = true after failed init, want false")
-		}
+		assert.ErrorIs(t, err, xplatform.ErrMissingPlatformID)
+		assert.False(t, xplatform.IsInitialized(), "IsInitialized() should be false after failed init")
 	})
 
 	t.Run("重复初始化返回错误", func(t *testing.T) {
@@ -106,19 +94,13 @@ func TestInit(t *testing.T) {
 		t.Cleanup(xplatform.Reset)
 
 		err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
-		if err != nil {
-			t.Fatalf("first Init() error = %v", err)
-		}
+		require.NoError(t, err, "first Init() should succeed")
 
 		err = xplatform.Init(xplatform.Config{PlatformID: "platform-002"})
-		if !errors.Is(err, xplatform.ErrAlreadyInitialized) {
-			t.Errorf("second Init() error = %v, want %v", err, xplatform.ErrAlreadyInitialized)
-		}
+		assert.ErrorIs(t, err, xplatform.ErrAlreadyInitialized)
 
 		// 验证原值未被覆盖
-		if xplatform.PlatformID() != "platform-001" {
-			t.Errorf("PlatformID() = %q, want %q (should not be overwritten)", xplatform.PlatformID(), "platform-001")
-		}
+		assert.Equal(t, "platform-001", xplatform.PlatformID(), "PlatformID should not be overwritten")
 	})
 }
 

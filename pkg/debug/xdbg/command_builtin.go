@@ -166,7 +166,7 @@ func (c *stackCommand) Execute(ctx context.Context, _ []string) (string, error) 
 	// 使用渐进式缓冲区扩展，避免一开始就分配 1MB
 	// 从 64KB 开始，每次翻倍，最大 1MB
 	const (
-		initialSize = 64 * 1024  // 64KB
+		initialSize = 64 * 1024   // 64KB
 		maxSize     = 1024 * 1024 // 1MB
 	)
 

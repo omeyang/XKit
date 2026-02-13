@@ -149,6 +149,7 @@ func TestSession_CommandForbidden(t *testing.T) {
 		WithBackgroundMode(true),
 		WithAutoShutdown(0),
 		WithAuditLogger(NewNoopAuditLogger()),
+		WithMaxSessions(2),                     // 避免顺序连接间 session 清理竞态
 		WithCommandWhitelist([]string{"help"}), // 只允许 help 命令
 	)
 	if err != nil {
@@ -280,6 +281,7 @@ func TestSession_MultipleRequests(t *testing.T) {
 		WithBackgroundMode(true),
 		WithAutoShutdown(0),
 		WithAuditLogger(NewNoopAuditLogger()),
+		WithMaxSessions(5), // 避免顺序连接间 session 清理竞态
 	)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -417,6 +419,7 @@ func TestSession_CommandWithArgs(t *testing.T) {
 		WithBackgroundMode(true),
 		WithAutoShutdown(0),
 		WithAuditLogger(NewNoopAuditLogger()),
+		WithMaxSessions(2), // 避免顺序连接间 session 清理竞态
 	)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

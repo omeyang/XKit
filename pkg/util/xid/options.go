@@ -1,0 +1,73 @@
+package xid
+
+import "time"
+
+// =============================================================================
+// 配置
+// =============================================================================
+
+// config 内部配置结构
+type config struct {
+	machineID       func() (uint16, error)
+	checkMachineID  func(uint16) bool
+	maxWaitDuration time.Duration
+	retryInterval   time.Duration
+}
+
+// Option 配置选项函数
+type Option func(*config)
+
+// WithMachineID 设置自定义机器 ID 生成函数。
+//
+// 默认使用私有 IP 地址的低 16 位。
+// 在以下场景可能需要自定义：
+//   - 使用 Host Network 模式的 K8s Pod
+//   - 需要基于其他信息（如环境变量、配置文件）确定机器 ID
+//   - 需要与外部服务协调机器 ID 分配
+//
+// 函数返回的 ID 必须在 0-65535 范围内。
+func WithMachineID(fn func() (uint16, error)) Option {
+	return func(c *config) {
+		c.machineID = fn
+	}
+}
+
+// WithCheckMachineID 设置机器 ID 验证函数。
+//
+// 在创建生成器时会调用此函数验证机器 ID 的有效性。
+// 如果返回 false，Init 会失败。
+//
+// 典型用途：
+//   - 检查机器 ID 是否在预期范围内
+//   - 通过外部服务验证机器 ID 未被占用
+func WithCheckMachineID(fn func(uint16) bool) Option {
+	return func(c *config) {
+		c.checkMachineID = fn
+	}
+}
+
+// WithMaxWaitDuration 设置时钟回拨时的最大等待时间。
+//
+// 当使用 NewWithRetry 等方法时，
+// 如果检测到时钟回拨，会等待一段时间让时钟追上。
+// 此选项设置最大等待时间，超过后返回 ErrClockBackwardTimeout。
+//
+// 默认值为 500ms，适合大多数 NTP 同步场景。
+// 如果你的环境时钟漂移较大，可以适当增加。
+// 传入非正值会在 NewGenerator 中返回错误（fail-fast）。
+func WithMaxWaitDuration(d time.Duration) Option {
+	return func(c *config) {
+		c.maxWaitDuration = d
+	}
+}
+
+// WithRetryInterval 设置时钟回拨等待时的重试间隔。
+//
+// 当检测到时钟回拨时，每隔此间隔尝试一次生成 ID。
+// 默认值为 10ms（sonyflake 时间精度是 10ms）。
+// 传入非正值会在 NewGenerator 中返回错误（fail-fast）。
+func WithRetryInterval(d time.Duration) Option {
+	return func(c *config) {
+		c.retryInterval = d
+	}
+}

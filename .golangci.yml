@@ -154,6 +154,28 @@ linters:
         linters:
           - errcheck
         source: "client\\d?\\.(Close|Ping)"  # Redis client close/ping in test cleanup
+      # xsemaphore test files: semaphore/permit/fallback operations cleanup in tests
+      - path: xsemaphore/.*_test\.go
+        linters:
+          - errcheck
+        source: "sem\\.(Close|Query)"  # semaphore close/query in test cleanup
+      - path: xsemaphore/.*_test\.go
+        linters:
+          - errcheck
+        source: "permit\\.(Release|Extend)"  # permit operations in test cleanup
+      - path: xsemaphore/.*_test\.go
+        linters:
+          - errcheck
+        source: "f\\.local\\.Close"  # fallback local semaphore close in tests
+      - path: xsemaphore/.*_test\.go
+        linters:
+          - errcheck
+        source: "result\\.Close"  # ensureLocalSemaphore result close in tests
+      # xid test files: Init errors in panic tests (intentionally checked by assert.Panics)
+      - path: xid/.*_test\.go
+        linters:
+          - errcheck
+        source: "Parse"  # fuzz test Parse calls
       # xdlock factory/locker/handle cleanup in tests
       - path: _test\.go
         linters:

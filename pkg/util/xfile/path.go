@@ -1,50 +1,48 @@
-// Package xfile 提供通用文件系统操作工具
-//
-// 本包提供安全、便捷的文件和目录操作函数，是逐步积累的工具集。
-// 所有函数都考虑了安全性（如路径穿越防护）和跨平台兼容性。
-//
-// # 路径安全函数对比
-//
-//   - SanitizePath: 检查路径格式，防止相对路径穿越，不限制目标目录
-//   - SafeJoin: 确保结果路径始终在指定的 base 目录内，推荐用于处理用户输入
-//   - SafeJoinWithOptions: SafeJoin 的增强版，支持符号链接解析等选项
-//
-// # 路径穿越检测
-//
-// 路径穿越检测使用精确的路径段匹配，只有 ".." 作为独立路径段时才被视为穿越攻击。
-// 以 ".." 开头的合法文件名（如 "..config"、"...hidden"）不会被误判：
-//
-//	SafeJoin("/var/log", "..config")      // ✓ 合法 -> "/var/log/..config"
-//	SafeJoin("/var/log", "../etc/passwd") // ✗ 拒绝 -> 路径穿越
-//
-// # 符号链接安全注意事项
-//
-// SafeJoin 默认不解析符号链接，这在大多数场景下是合适的（如日志目录）。
-// 但如果 base 目录内可能存在恶意符号链接，攻击者可能通过符号链接访问
-// base 目录外的文件。
-//
-// 对于高安全场景（如用户上传、沙箱目录），应使用 SafeJoinWithOptions
-// 并启用 ResolveSymlinks 选项：
-//
-//	SafeJoinWithOptions(base, path, SafeJoinOptions{ResolveSymlinks: true})
 package xfile
 
 import (
-	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 )
+
+// containsNullByte 检测路径是否包含空字节。
+// Linux 内核在 VFS 层会在空字节处截断路径，导致 Go 代码与操作系统看到的路径不一致。
+func containsNullByte(path string) bool {
+	return strings.ContainsRune(path, 0)
+}
+
+// isWindowsAbsPath 检测 Windows 风格的绝对或驱动器相关路径。
+// 在非 Windows 平台上，filepath.IsAbs 不识别 "C:\..." 或 "\\server\..." 形式，
+// 需要显式检测以防止跨平台场景下的安全策略绕过。
+//
+// 检测的 Windows 路径形式：
+//   - 驱动器绝对路径: "C:\..." 或 "C:/..."
+//   - 驱动器相对路径: "C:foo"（当前驱动器工作目录下的相对路径）
+//   - UNC 路径: "\\server\..."
+//   - 根路径: "\Windows\..." (当前驱动器的根目录)
+func isWindowsAbsPath(path string) bool {
+	// 驱动器号: "C:\..."、"C:/..." 以及驱动器相对路径 "C:foo"
+	// 一律拒绝任何 "X:" 开头的路径，避免 Windows 驱动器相关的语义歧义
+	if len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':' {
+		return true
+	}
+	// Windows 根路径 "\foo\..." 或 UNC 路径 "\\server\..."
+	// 任何以反斜杠开头的路径在 Windows 上都是绝对路径（根路径或 UNC），
+	// 在 Linux 上反斜杠开头的文件名极为罕见，为安全起见一并拒绝。
+	return len(path) >= 1 && path[0] == '\\'
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
 
 func hasDotDotSegment(path string) bool {
 	segments := strings.FieldsFunc(path, func(r rune) bool {
 		return r == '/' || r == '\\'
 	})
-	for _, seg := range segments {
-		if seg == ".." {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(segments, "..")
 }
 
 // SanitizePath 对文件路径进行安全检查和规范化
@@ -52,12 +50,13 @@ func hasDotDotSegment(path string) bool {
 // 功能：
 //   - 路径规范化（消除 . 和冗余斜杠）
 //   - 阻止相对路径穿越（如 "../etc/passwd"）
-//   - 拒绝空路径和纯目录路径
+//   - 拒绝空路径和显式目录路径（尾随 "/" 或 "\"）
 //
 // 重要限制：
+//   - 本函数接受绝对路径（包括 Windows 格式如 "C:\..." 和 UNC "\\server\..."）
 //   - 绝对路径的 ".." 会被 filepath.Clean 正常解析
 //   - 例如："/var/log/../etc" -> "/etc"（这是合法的绝对路径，不是穿越）
-//   - 如需将路径限制在特定目录内，请使用 SafeJoin
+//   - 如需将路径限制在特定目录内或拒绝绝对路径，请使用 SafeJoin
 //
 // 适用场景：
 //   - 验证用户输入的文件名格式
@@ -68,16 +67,24 @@ func hasDotDotSegment(path string) bool {
 //   - 需要防止绝对路径访问敏感文件（请用系统权限控制）
 //
 // 返回规范化后的路径，或错误（如果路径格式无效）。
+//
+// 设计决策: 函数名 SanitizePath 表示"格式净化"（空路径、空字节、穿越、目录路径），
+// 不等同于"沙箱隔离"。如需目录隔离语义，请使用 SafeJoin。
 func SanitizePath(filename string) (string, error) {
 	if filename == "" {
-		return "", errors.New("xfile: filename is required")
+		return "", fmt.Errorf("filename is required: %w", ErrEmptyPath)
+	}
+
+	if containsNullByte(filename) {
+		return "", fmt.Errorf("filename contains null byte: %w", ErrNullByte)
 	}
 
 	// 先检查原始路径是否以分隔符结尾（表示目录）
 	// 必须在 filepath.Clean 之前检查，因为 Clean 会移除尾部斜杠
-	// 同时检查 / 和 \ 以确保跨平台兼容性（Windows 接受两种分隔符）
+	// 同时检查 / 和 \ 以确保跨平台兼容性：Windows 接受两种分隔符，
+	// 拒绝尾部 \ 可防止 Windows 路径被误传入后产生语义歧义
 	if strings.HasSuffix(filename, "/") || strings.HasSuffix(filename, "\\") {
-		return "", errors.New("xfile: invalid filename: path is a directory")
+		return "", fmt.Errorf("path is a directory: %w", ErrInvalidPath)
 	}
 
 	// 规范化路径
@@ -89,13 +96,13 @@ func SanitizePath(filename string) (string, error) {
 	//   - 会误伤合法文件名（如 "app..2024.log"）
 	// 这里按路径段精确判断：只要某个 segment 恰好是 ".." 就拒绝。
 	if hasDotDotSegment(cleaned) {
-		return "", errors.New("xfile: invalid filename: path traversal detected")
+		return "", fmt.Errorf("path traversal in filename: %w", ErrPathTraversal)
 	}
 
 	// 获取文件名部分，确保不为空
 	base := filepath.Base(cleaned)
 	if base == "." || base == string(filepath.Separator) {
-		return "", errors.New("xfile: invalid filename: no file name specified")
+		return "", fmt.Errorf("no file name specified: %w", ErrInvalidPath)
 	}
 
 	return cleaned, nil
@@ -146,6 +153,9 @@ type SafeJoinOptions struct {
 //	SafeJoin("/var/log", "app.log")       // -> "/var/log/app.log", nil
 //	SafeJoin("/var/log", "../etc/passwd") // -> "", error (path traversal)
 //	SafeJoin("/var/log", "/etc/passwd")   // -> "", error (absolute path)
+//
+// 设计决策: 默认不解析符号链接，因为启用后要求 base 目录在文件系统上存在，
+// 会破坏纯路径构建场景（如配置阶段目录尚未创建）。高安全场景应用 SafeJoinWithOptions。
 func SafeJoin(base, path string) (string, error) {
 	return SafeJoinWithOptions(base, path, SafeJoinOptions{})
 }
@@ -155,7 +165,11 @@ func SafeJoin(base, path string) (string, error) {
 // 当 ResolveSymlinks 为 true 时：
 //   - base 目录必须存在（用于解析符号链接）
 //   - 会验证解析后的真实路径仍在 base 目录内
-//   - 可防止通过符号链接绕过路径检查
+//   - 降低通过符号链接绕过路径检查的风险
+//
+// 注意：符号链接检查存在 TOCTOU（Time-of-Check-Time-of-Use）窗口，
+// 即检查与实际使用之间符号链接可能被修改。对于需要强安全保证的场景，
+// 建议配合操作系统级别的目录权限控制（如禁止在 base 目录内创建符号链接）。
 func SafeJoinWithOptions(base, path string, opts SafeJoinOptions) (string, error) {
 	// 验证并清理基础路径
 	cleanBase, err := validateBase(base)
@@ -186,11 +200,11 @@ func SafeJoinWithOptions(base, path string, opts SafeJoinOptions) (string, error
 // validateBase 验证并清理基础路径
 func validateBase(base string) (string, error) {
 	if base == "" {
-		return "", errors.New("xfile: base directory is required")
+		return "", fmt.Errorf("base directory is required: %w", ErrEmptyPath)
 	}
 	cleanBase := filepath.Clean(base)
 	if !filepath.IsAbs(cleanBase) {
-		return "", errors.New("xfile: base must be an absolute path")
+		return "", fmt.Errorf("base must be an absolute path: %w", ErrInvalidPath)
 	}
 	return cleanBase, nil
 }
@@ -198,31 +212,37 @@ func validateBase(base string) (string, error) {
 // validatePath 验证并清理目标路径
 func validatePath(path string) (string, error) {
 	if path == "" {
-		return "", errors.New("xfile: path is required")
+		return "", fmt.Errorf("path is required: %w", ErrEmptyPath)
 	}
-	if filepath.IsAbs(path) {
-		return "", errors.New("xfile: path must be relative (absolute path not allowed)")
+	if containsNullByte(path) {
+		return "", fmt.Errorf("path contains null byte: %w", ErrNullByte)
+	}
+	if filepath.IsAbs(path) || isWindowsAbsPath(path) {
+		return "", fmt.Errorf("path must be relative (absolute path not allowed): %w", ErrInvalidPath)
 	}
 	cleanPath := filepath.Clean(path)
 	// hasDotDotSegment 已精确检测路径穿越（".." 作为独立路径段）
 	// 不使用 strings.HasPrefix(cleanPath, "..") 避免误伤合法文件名如 "..config"
 	if hasDotDotSegment(cleanPath) {
-		return "", errors.New("xfile: path traversal detected")
+		return "", fmt.Errorf("path traversal in path: %w", ErrPathTraversal)
 	}
 	return cleanPath, nil
 }
 
 // joinAndVerify 拼接路径并验证结果仍在 base 内
+//
+// 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处的错误分支
+// 是防御性代码，防止标准库行为变更时出现静默安全漏洞。
 func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	joined := filepath.Join(cleanBase, cleanPath)
 	rel, err := filepath.Rel(cleanBase, joined)
 	if err != nil {
-		return "", errors.New("xfile: failed to compute relative path")
+		return "", fmt.Errorf("failed to compute relative path (%v): %w", err, ErrPathEscaped)
 	}
 	// 使用 hasDotDotSegment 精确检测路径穿越
 	// 避免误判以 ".." 开头的合法文件名（如 "..config"）
 	if hasDotDotSegment(rel) {
-		return "", errors.New("xfile: path escapes base directory")
+		return "", ErrPathEscaped
 	}
 	return joined, nil
 }
@@ -231,25 +251,24 @@ func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 	realBase, err := filepath.EvalSymlinks(cleanBase)
 	if err != nil {
-		return "", errors.New("xfile: failed to resolve base directory symlinks")
+		return "", fmt.Errorf("resolve base directory symlinks: %w: %w", ErrSymlinkResolution, err)
 	}
 
 	realJoined, err := evalSymlinksPartial(joined)
 	if err != nil {
-		return "", errors.New("xfile: failed to resolve path symlinks")
+		return "", fmt.Errorf("resolve path symlinks: %w: %w", ErrSymlinkResolution, err)
 	}
 
 	rel, err := filepath.Rel(realBase, realJoined)
 	// 使用 hasDotDotSegment 精确检测路径穿越
 	if err != nil || hasDotDotSegment(rel) {
-		return "", errors.New("xfile: resolved path escapes base directory")
+		return "", fmt.Errorf("resolved path escapes base directory: %w", ErrPathEscaped)
 	}
 
 	return realJoined, nil
 }
 
-// maxSymlinkDepth 是 evalSymlinksPartial 递归的最大深度
-// 与 Linux 路径最大深度一致，防止栈溢出
+// maxSymlinkDepth 是 evalSymlinksPartial 递归的最大深度，防止过深目录层级导致栈溢出。
 const maxSymlinkDepth = 255
 
 // evalSymlinksPartial 尽可能解析符号链接
@@ -261,7 +280,7 @@ func evalSymlinksPartial(path string) (string, error) {
 // evalSymlinksPartialWithDepth 带深度限制的符号链接解析
 func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
 	if depth > maxSymlinkDepth {
-		return "", errors.New("xfile: path too deep")
+		return "", ErrPathTooDeep
 	}
 
 	// 先尝试直接解析

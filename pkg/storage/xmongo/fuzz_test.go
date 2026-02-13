@@ -26,13 +26,20 @@ func FuzzWithHealthTimeout(f *testing.F) {
 	f.Fuzz(func(t *testing.T, ns int64) {
 		timeout := time.Duration(ns)
 		opts := defaultOptions()
+		original := opts.HealthTimeout
 
 		// 不应 panic
 		WithHealthTimeout(timeout)(opts)
 
-		// 验证值被正确设置
-		if opts.HealthTimeout != timeout {
-			t.Errorf("WithHealthTimeout(%v) set HealthTimeout to %v", timeout, opts.HealthTimeout)
+		// 非正值应被忽略，保持原值
+		if timeout <= 0 {
+			if opts.HealthTimeout != original {
+				t.Errorf("WithHealthTimeout(%v) should keep default, got %v", timeout, opts.HealthTimeout)
+			}
+		} else {
+			if opts.HealthTimeout != timeout {
+				t.Errorf("WithHealthTimeout(%v) set HealthTimeout to %v", timeout, opts.HealthTimeout)
+			}
 		}
 	})
 }

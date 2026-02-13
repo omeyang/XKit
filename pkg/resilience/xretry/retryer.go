@@ -28,6 +28,9 @@ func safeUintToInt(n uint) int {
 	return int(n)
 }
 
+// 确保 *Retryer 实现 Executor 接口
+var _ Executor = (*Retryer)(nil)
+
 // Retryer 重试执行器
 //
 // Retryer 组合了 RetryPolicy（重试策略）和 BackoffPolicy（退避策略），
@@ -71,6 +74,9 @@ func WithOnRetry(f func(attempt int, err error)) RetryerOption {
 
 // NewRetryer 创建重试执行器
 // 默认使用 FixedRetry(3) 和 ExponentialBackoff
+//
+// 设计决策: 返回 *Retryer 而非 Executor 接口，因为泛型函数 DoWithResult
+// 需要访问内部方法。如需 mock，请在调用方使用 Executor 接口作为参数类型。
 func NewRetryer(opts ...RetryerOption) *Retryer {
 	r := &Retryer{
 		retryPolicy:   NewFixedRetry(3),
@@ -110,6 +116,8 @@ func DoWithResult[T any](ctx context.Context, r *Retryer, fn func(ctx context.Co
 }
 
 // buildOptions 构建 retry-go 的选项
+// 设计决策: 每次 Do 调用重建选项切片（约 384 B/op），对于重试场景完全可接受。
+// 预构建不变选项可减少分配，但增加并发安全复杂度，收益微乎其微。
 func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	opts := make([]Option, 0, 5)
 
@@ -136,16 +144,17 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	}
 
 	// 设置重试条件
+	// 通过闭包捕获 ctx 并维护计数器，使 ShouldRetry 在 Retryer 路径下真正生效。
+	// RetryIf 在每次失败后被顺序调用（非并发），因此普通 int 计数器是安全的。
+	var attemptCount int
 	opts = append(opts, RetryIf(func(err error) bool {
+		attemptCount++
 		// 先检查 retry-go 的 Unrecoverable（处理 xretry.Unrecoverable 包装的错误）
 		if !IsRecoverable(err) {
 			return false
 		}
-		// 再检查 xretry 的 IsRetryable（处理 PermanentError/TemporaryError）
-		// 注意：RetryPolicy.ShouldRetry 的 ctx/attempt 参数无法在此使用，
-		// 因为 retry-go 的 RetryIf 不提供这些参数。
-		// 实际的 attempt 限制已经通过 Attempts 选项设置。
-		return IsRetryable(err)
+		// 委托给 RetryPolicy.ShouldRetry，传递完整的 ctx 和 attempt 参数
+		return retryPolicy.ShouldRetry(ctx, attemptCount, err)
 	}))
 
 	// 设置延迟类型（使用 BackoffPolicy）

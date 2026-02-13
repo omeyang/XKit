@@ -91,12 +91,13 @@ func (s *RedisCacheStore) SetToken(ctx context.Context, tenantID string, token *
 		return nil
 	}
 
-	// 序列化前设置 Unix 时间戳，以便反序列化时恢复真实获取时间
-	if !token.ObtainedAt.IsZero() {
-		token.ObtainedAtUnix = token.ObtainedAt.Unix()
+	// 浅拷贝后设置 Unix 时间戳，避免修改调用方的 TokenInfo
+	toSerialize := *token
+	if !toSerialize.ObtainedAt.IsZero() {
+		toSerialize.ObtainedAtUnix = toSerialize.ObtainedAt.Unix()
 	}
 
-	data, err := json.Marshal(token)
+	data, err := json.Marshal(&toSerialize)
 	if err != nil {
 		return fmt.Errorf("xauth: marshal token failed: %w", err)
 	}

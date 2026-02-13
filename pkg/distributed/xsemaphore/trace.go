@@ -64,13 +64,11 @@ func getTracer(tp trace.TracerProvider) trace.Tracer {
 
 // startSpan 创建新的 span
 // 如果 tracer 为 nil，使用全局 tracer（可能是 noop tracer）
-//
-//nolint:unparam // opts 参数保留用于未来扩展（如设置 span kind、attributes）
-func startSpan(ctx context.Context, tracer trace.Tracer, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+func startSpan(ctx context.Context, tracer trace.Tracer, name string) (context.Context, trace.Span) {
 	if tracer == nil {
 		tracer = otel.GetTracerProvider().Tracer(tracerName)
 	}
-	return tracer.Start(ctx, name, opts...)
+	return tracer.Start(ctx, name)
 }
 
 // setSpanError 设置 span 错误状态

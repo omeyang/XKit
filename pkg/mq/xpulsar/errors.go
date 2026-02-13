@@ -22,4 +22,13 @@ var (
 var (
 	// ErrEmptyURL URL 为空错误
 	ErrEmptyURL = errors.New("xpulsar: empty URL")
+
+	// ErrNilProducer 生产者为 nil 错误
+	ErrNilProducer = errors.New("xpulsar: nil producer")
+
+	// ErrNilConsumer 消费者为 nil 错误
+	ErrNilConsumer = errors.New("xpulsar: nil consumer")
+
+	// ErrClosed 客户端已关闭错误
+	ErrClosed = errors.New("xpulsar: client closed")
 )

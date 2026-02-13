@@ -328,11 +328,9 @@ func TestPlatformManager_Singleflight(t *testing.T) {
 	// Launch concurrent requests
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = mgr.GetPlatformID(ctx, "tenant-1")
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -560,7 +558,7 @@ func TestPlatformManager_FetchPlatformID_HTTPError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Token endpoint succeeds
-		if r.URL.Query().Get("client_id") != "" {
+		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
 				"access_token": "test-token",
 				"expires_in":   3600,
@@ -630,7 +628,7 @@ func TestPlatformManager_FetchUnclassRegionID_HTTPError(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Token endpoint succeeds
-		if r.URL.Query().Get("client_id") != "" {
+		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
 				"access_token": "test-token",
 				"expires_in":   3600,

@@ -199,7 +199,8 @@ func FuzzResult(f *testing.F) {
 	f.Add(uint8(2), "unicode错误🚫")
 
 	f.Fuzz(func(t *testing.T, status uint8, errMsg string) {
-		mappedStatus := Status(status % 2)
+		statuses := [3]Status{"", StatusOK, StatusError}
+		mappedStatus := statuses[status%3]
 
 		result := Result{
 			Status: mappedStatus,

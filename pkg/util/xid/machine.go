@@ -1,7 +1,6 @@
 package xid
 
 import (
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"net"
@@ -74,6 +73,9 @@ func DefaultMachineID() (uint16, error) {
 	}
 
 	// 策略 5：从私有 IP 地址
+	// 设计决策: 策略 2-4 使用 (id, bool) 而非 (id, error)，
+	// 因为失败原因总是"环境变量未设置"或"主机名为空"，不需要聚合中间错误。
+	// 只有策略 5 可能产生有意义的系统级错误（如 net.InterfaceAddrs 失败）。
 	return machineIDFromPrivateIP()
 }
 
@@ -114,8 +116,12 @@ func machineIDFromOSHostname() (uint16, bool) {
 	return hashToMachineID(hostname), true
 }
 
-// machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID
-// 这是 sonyflake 的默认方式
+// machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID。
+// 这是 sonyflake 的默认方式。
+//
+// 注意：net.InterfaceAddrs 的枚举顺序依赖于操作系统，多网卡环境下
+// 重启后可能选到不同的 IP，导致 machine ID 变化。
+// 生产环境建议通过 XID_MACHINE_ID 环境变量显式分配。
 func machineIDFromPrivateIP() (uint16, error) {
 	ip, err := privateIPv4()
 	if err != nil {
@@ -130,15 +136,12 @@ func hashToMachineID(s string) uint16 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(s)) // hash.Hash.Write never returns error
 	// 取低 16 位，这是有意的截断以适配机器 ID 范围
-	return uint16(h.Sum32()) //nolint:gosec // intentional truncation to 16-bit machine ID
+	return uint16(h.Sum32())
 }
 
 // =============================================================================
 // 私有 IP 获取（参考 sonyflake 实现）
 // =============================================================================
-
-// ErrNoPrivateAddress 无法找到私有 IP 地址
-var ErrNoPrivateAddress = errors.New("xid: no private IP address found")
 
 // privateIPv4 获取私有 IPv4 地址
 func privateIPv4() (net.IP, error) {

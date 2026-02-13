@@ -12,9 +12,6 @@ var (
 	// ErrNilConn 表示传入了 nil 连接。
 	ErrNilConn = errors.New("xclickhouse: nil connection")
 
-	// ErrClosed 表示连接已关闭。
-	ErrClosed = errors.New("xclickhouse: connection closed")
-
 	// ErrInvalidPage 表示页码无效。
 	// 此错误包装了 storageopt.ErrInvalidPage，可以使用 errors.Is 检查任一错误。
 	ErrInvalidPage = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPage)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/omeyang/xkit/internal/storageopt"
@@ -32,7 +33,12 @@ type clickhouseWrapper struct {
 	slowQueryCounter storageopt.SlowQueryCounter
 }
 
-const clickhouseComponent = "xclickhouse"
+const (
+	clickhouseComponent = "xclickhouse"
+
+	// DefaultBatchSize 默认批量插入每批大小。
+	DefaultBatchSize = 10000
+)
 
 // Conn 返回底层 ClickHouse 连接。
 func (w *clickhouseWrapper) Conn() driver.Conn {
@@ -69,14 +75,22 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 
 // Stats 返回统计信息。
 func (w *clickhouseWrapper) Stats() Stats {
-	return Stats{
+	s := Stats{
 		PingCount:   w.healthCounter.PingCount(),
 		PingErrors:  w.healthCounter.PingErrors(),
 		QueryCount:  w.queryCounter.QueryCount(),
 		QueryErrors: w.queryCounter.QueryErrors(),
 		SlowQueries: w.slowQueryCounter.Count(),
-		Pool:        PoolStats{},
 	}
+	if w.conn != nil {
+		ds := w.conn.Stats()
+		s.Pool = PoolStats{
+			Open:  ds.Open,
+			Idle:  ds.Idle,
+			InUse: ds.Open - ds.Idle,
+		}
+	}
+	return s
 }
 
 // Close 关闭 ClickHouse 连接。
@@ -169,16 +183,7 @@ var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
 func normalizeQuery(query string) string {
-	// 去除末尾空白
-	for len(query) > 0 {
-		last := query[len(query)-1]
-		if last == ' ' || last == '\t' || last == '\n' || last == '\r' || last == ';' {
-			query = query[:len(query)-1]
-		} else {
-			break
-		}
-	}
-	return query
+	return strings.TrimRight(query, " \t\n\r;")
 }
 
 // validateQuerySyntax 校验查询语法，检测不支持的子句。
@@ -193,10 +198,10 @@ func validateQuerySyntax(query string) (string, error) {
 	// 检测 FORMAT 和 SETTINGS 子句
 	matches := queryClausePattern.FindAllString(normalized, -1)
 	for _, match := range matches {
-		switch {
-		case len(match) >= 6 && (match[0] == 'F' || match[0] == 'f'):
+		if strings.EqualFold(match, "FORMAT") {
 			return "", ErrQueryContainsFormat
-		case len(match) >= 8 && (match[0] == 'S' || match[0] == 's'):
+		}
+		if strings.EqualFold(match, "SETTINGS") {
 			return "", ErrQueryContainsSettings
 		}
 	}
@@ -215,16 +220,14 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	// 使用通用分页验证，包含溢出检查
 	offset, validateErr := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if validateErr != nil {
-		// 转换为包级别错误
+		// 转换为包级别错误（storageopt 只返回这三种错误）
 		switch validateErr {
 		case storageopt.ErrInvalidPage:
 			return "", 0, ErrInvalidPage
 		case storageopt.ErrInvalidPageSize:
 			return "", 0, ErrInvalidPageSize
-		case storageopt.ErrPageOverflow:
-			return "", 0, ErrPageOverflow
 		default:
-			return "", 0, validateErr
+			return "", 0, ErrPageOverflow
 		}
 	}
 
@@ -326,7 +329,10 @@ func calculateTotalPages(total, pageSize int64) int64 {
 // tableNamePattern 用于校验表名的合法性。
 // 支持格式：table_name、database.table_name、`database`.`table_name`
 // 允许字母、数字、下划线、点号和反引号。
-var tableNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$|^` + "`[^`]+`" + `(\.` + "`[^`]+`" + `)?$`)
+//
+// 设计决策: 反引号内禁止控制字符（\x00-\x1f）以防止换行符注入风险。
+// 不支持混合引用风格（如 db.`table`），这是有意的安全限制。
+var tableNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$|^` + "`[^`\\x00-\\x1f]+`" + `(\.` + "`[^`\\x00-\\x1f]+`" + `)?$`)
 
 // validateTableName 校验表名是否合法，防止 SQL 注入。
 func validateTableName(table string) error {
@@ -350,7 +356,7 @@ func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows 
 
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
-		batchSize = 10000 // 默认批次大小
+		batchSize = DefaultBatchSize
 	}
 
 	start := time.Now()
@@ -407,10 +413,7 @@ func (w *clickhouseWrapper) insertBatches(ctx context.Context, table string, row
 			break
 		}
 
-		end := i + batchSize
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(i+batchSize, len(rows))
 
 		batch := rows[i:end]
 		count, batchErrs := w.insertBatch(ctx, table, batch)

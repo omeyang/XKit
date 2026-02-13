@@ -15,6 +15,9 @@ type KeyFunc func(ctx context.Context) string
 
 // KeyBasedSampler 基于 key 的一致性采样策略
 //
+// 设计决策: 工厂函数返回具体类型而非 Sampler 接口，因为 Rate() 方法提供了
+// 有用的自省能力（如日志、调试），这些无法通过 Sampler 接口获得。
+//
 // 对于相同的 key，在相同的 rate 下总是产生相同的采样决策。
 // 这对于需要采样一致性的场景非常有用，例如：
 //   - 按 trace_id 采样，确保同一条链路的所有 span 都被采样或都不被采样
@@ -27,30 +30,31 @@ type KeyBasedSampler struct {
 
 // NewKeyBasedSampler 创建基于 key 的一致性采样器
 //
-// rate 表示采样比率，范围 [0.0, 1.0]，超出范围时会被夹紧。
-// keyFunc 用于从 context 中提取采样 key。
+// rate 表示采样比率，范围 [0.0, 1.0]，超出范围或为 NaN 时返回 ErrInvalidRate。
+// keyFunc 用于从 context 中提取采样 key，不能为 nil（为 nil 时返回 ErrNilKeyFunc）。
 //
 // 示例：
 //
 //	// 按 trace_id 采样
-//	sampler := NewKeyBasedSampler(0.1, func(ctx context.Context) string {
+//	sampler, err := NewKeyBasedSampler(0.1, func(ctx context.Context) string {
 //	    return xctx.TraceID(ctx)
 //	})
 //
 //	// 按 tenant_id 采样
-//	sampler := NewKeyBasedSampler(0.05, func(ctx context.Context) string {
+//	sampler, err := NewKeyBasedSampler(0.05, func(ctx context.Context) string {
 //	    return getTenantID(ctx)
 //	})
-func NewKeyBasedSampler(rate float64, keyFunc KeyFunc) *KeyBasedSampler {
-	if rate < 0 {
-		rate = 0
-	} else if rate > 1 {
-		rate = 1
+func NewKeyBasedSampler(rate float64, keyFunc KeyFunc) (*KeyBasedSampler, error) {
+	if math.IsNaN(rate) || rate < 0 || rate > 1 {
+		return nil, ErrInvalidRate
+	}
+	if keyFunc == nil {
+		return nil, ErrNilKeyFunc
 	}
 	return &KeyBasedSampler{
 		rate:    rate,
 		keyFunc: keyFunc,
-	}
+	}, nil
 }
 
 func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
@@ -62,12 +66,11 @@ func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
 	}
 
 	// 获取 key
-	var key string
-	if s.keyFunc != nil {
-		key = s.keyFunc(ctx)
-	}
+	key := s.keyFunc(ctx)
 
-	// 空 key 回退到随机采样
+	// 设计决策: 空 key 回退到随机采样而非 fail-fast，因为采样器应保持弹性——
+	// key 提取失败（如缺少 trace ID）不应导致采样功能完全失效。
+	// 随机采样保持了近似的采样率语义，只是失去了跨进程一致性。
 	if key == "" {
 		return randomFloat64() < s.rate
 	}

@@ -32,8 +32,8 @@
 //
 // # 延迟求值
 //
-// 避免不必要的计算开销：
-// [Lazy]、[LazyString]、[LazyInt]、[LazyError]、[LazyDuration]、[LazyGroup]。
+// 避免日志级别禁用时执行昂贵计算（注意：接口装箱的 1 次分配仍然存在）：
+// [Lazy]、[LazyString]、[LazyInt]、[LazyError]、[LazyErr]、[LazyDuration]、[LazyGroup]。
 //
 // # 便捷属性
 //

@@ -232,6 +232,57 @@ func TestJobWrapper_Run(t *testing.T) {
 	})
 }
 
+func TestJobWrapper_PanicRecovery(t *testing.T) {
+	t.Run("recovers from panic", func(t *testing.T) {
+		job := JobFunc(func(ctx context.Context) error {
+			panic("test panic")
+		})
+
+		stats := newStats()
+		opts := defaultJobOptions()
+		opts.name = "panic-job"
+		wrapper := newJobWrapper(job, NoopLocker(), nil, stats, opts)
+
+		// 不应 panic
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// panic 应被记录为失败
+		assert.Equal(t, int64(1), stats.TotalExecutions())
+		assert.Equal(t, int64(1), stats.FailureCount())
+		assert.Contains(t, stats.LastError().Error(), "panicked")
+	})
+
+	t.Run("recovers from panic with hooks", func(t *testing.T) {
+		var afterCalled bool
+		var afterErr error
+		hook := HookFunc{
+			After: func(ctx context.Context, name string, d time.Duration, err error) {
+				afterCalled = true
+				afterErr = err
+			},
+		}
+
+		job := JobFunc(func(ctx context.Context) error {
+			panic("hook panic test")
+		})
+
+		opts := defaultJobOptions()
+		opts.name = "panic-hook-job"
+		opts.hooks = []Hook{hook}
+		wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// AfterJob 应被调用，且 err 应包含 panic 信息
+		assert.True(t, afterCalled)
+		assert.Contains(t, afterErr.Error(), "panicked")
+	})
+}
+
 func TestJobWrapper_ConcurrentExecution(t *testing.T) {
 	// 测试多个 wrapper 并发执行时，使用锁的情况
 	locker := newMockLocker()

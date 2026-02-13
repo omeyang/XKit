@@ -13,7 +13,7 @@ import (
 
 // Server 调试服务器。
 type Server struct {
-	opts     *Options
+	opts     *options
 	registry *CommandRegistry
 
 	state           atomic.Int32
@@ -36,6 +36,10 @@ type Server struct {
 }
 
 // New 创建调试服务器。
+//
+// 设计决策: 返回具体类型 *Server 而非接口。xdbg 通过构建标签（!windows/windows）
+// 在编译期选择平台实现，不需要运行时多态。测试可通过 WithTransport 注入自定义传输层。
+// 这与 xpool、xbreaker、xlru 等包的构造函数签名一致。
 func New(opts ...Option) (*Server, error) {
 	options := defaultOptions()
 	for _, opt := range opts {

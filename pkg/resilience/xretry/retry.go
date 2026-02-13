@@ -8,22 +8,16 @@ import (
 // RetryPolicy 定义重试策略接口
 // 判断是否应该继续重试
 //
-// 注意：当通过 Retryer 使用时，由于底层 retry-go 库的限制：
-//   - MaxAttempts() 会被正确使用
-//   - ShouldRetry() 的 ctx 和 attempt 参数无法传递（retry-go 的 RetryIf 不提供）
-//   - 错误判断通过 IsRetryable() 和 IsRecoverable() 函数实现
-//
-// 如需基于 ctx/attempt 的复杂重试逻辑，建议直接使用 retry-go 的原生 API。
+// 通过 Retryer 使用时：
+//   - MaxAttempts() 设置 retry-go 的 Attempts 上限
+//   - ShouldRetry() 在每次失败后被调用，可实现自定义的重试判断逻辑
+//   - Unrecoverable 错误会在 ShouldRetry 之前被短路拦截
 type RetryPolicy interface {
 	// MaxAttempts 返回最大尝试次数（包含首次尝试）
 	// 返回 0 表示无限重试
 	MaxAttempts() int
 
 	// ShouldRetry 判断是否应该重试
-	//
-	// 注意：通过 Retryer 使用时，此方法不会被直接调用。
-	// 错误判断改为使用 IsRetryable()/IsRecoverable() 函数。
-	// 此方法主要用于直接使用 RetryPolicy 接口的场景。
 	//
 	// ctx: 上下文，可用于取消
 	// attempt: 当前尝试次数（从 1 开始）
@@ -39,8 +33,19 @@ type BackoffPolicy interface {
 	NextDelay(attempt int) time.Duration
 }
 
-// ResettableBackoff 可重置的退避策略
+// ResettableBackoff 可重置的退避策略接口。
+// 实现此接口的 BackoffPolicy 在成功消费后可被重置内部状态。
+// 例如 ExponentialBackoff 实现了此接口。
 type ResettableBackoff interface {
 	BackoffPolicy
 	Reset()
+}
+
+// Executor 重试执行器接口
+//
+// 设计决策: NewRetryer 返回 *Retryer 而非 Executor 接口，因为泛型函数
+// DoWithResult 需要访问 *Retryer 的内部方法。调用方如需 mock 重试执行器，
+// 可在自身代码中使用此接口作为函数参数类型。
+type Executor interface {
+	Do(ctx context.Context, fn func(ctx context.Context) error) error
 }

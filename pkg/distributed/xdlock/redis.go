@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"sync"
 	"sync/atomic"
 
 	"github.com/go-redsync/redsync/v4"
@@ -21,9 +20,7 @@ import (
 type redisFactory struct {
 	clients []redis.UniversalClient
 	rs      *redsync.Redsync
-	pools   []rsredis.Pool
 	closed  atomic.Bool
-	mu      sync.RWMutex
 }
 
 // NewRedisFactory 创建 Redis 锁工厂。
@@ -51,7 +48,6 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 	return &redisFactory{
 		clients: clients,
 		rs:      rs,
-		pools:   pools,
 	}, nil
 }
 
@@ -59,6 +55,9 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
 	}
 
 	mutex, fullKey := f.createMutex(key, opts...)
@@ -82,6 +81,9 @@ func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOpt
 func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
 	}
 
 	mutex, fullKey := f.createMutex(key, opts...)
@@ -150,9 +152,6 @@ func (f *redisFactory) Close() error {
 // Health 健康检查。
 // 对所有 Redis 节点执行 PING 命令。
 func (f *redisFactory) Health(ctx context.Context) error {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
 	if f.closed.Load() {
 		return ErrFactoryClosed
 	}
@@ -185,43 +184,41 @@ type redisLockHandle struct {
 }
 
 // Unlock 释放锁。
+//
+// 设计决策: 允许在 factory 关闭后解锁，避免锁悬挂等待 TTL 过期。
+// factory.Close() 仅设置逻辑标志，Redis 连接仍由调用者管理，解锁操作可正常执行。
 func (h *redisLockHandle) Unlock(ctx context.Context) error {
-	if h.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
 	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
 		// 锁过期也视为"未持有锁"
 		if errors.Is(wrappedErr, ErrLockExpired) {
-			return ErrLockNotHeld
+			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
-		return ErrLockNotHeld
+		return ErrNotLocked
 	}
 	return nil
 }
 
 // Extend 续期锁。
+//
+// 设计决策: 允许在 factory 关闭后续期，与 Unlock 保持一致。
+// factory.Close() 不影响已持有锁的操作，仅阻止创建新锁。
 func (h *redisLockHandle) Extend(ctx context.Context) error {
-	if h.factory.closed.Load() {
-		return ErrFactoryClosed
-	}
-
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
 		// 续期失败视为"未持有锁"
 		if errors.Is(wrappedErr, ErrExtendFailed) || errors.Is(wrappedErr, ErrLockExpired) {
-			return ErrLockNotHeld
+			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
-		return ErrLockNotHeld
+		return ErrNotLocked
 	}
 	return nil
 }

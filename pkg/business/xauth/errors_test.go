@@ -3,6 +3,8 @@ package xauth
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIsRetryable(t *testing.T) {
@@ -170,75 +172,53 @@ func TestAPIError(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
 		err := NewAPIError(500, 1001, "internal server error")
 		expected := "xauth: api error: status=500, code=1001, message=internal server error"
-		if err.Error() != expected {
-			t.Errorf("Error() = %q, expected %q", err.Error(), expected)
-		}
+		assert.Equal(t, expected, err.Error())
 	})
 
 	t.Run("empty message", func(t *testing.T) {
 		err := NewAPIError(404, 0, "")
 		expected := "xauth: api error: status=404, code=0"
-		if err.Error() != expected {
-			t.Errorf("Error() = %q, expected %q", err.Error(), expected)
-		}
+		assert.Equal(t, expected, err.Error())
 	})
 
 	t.Run("retryable - 5xx", func(t *testing.T) {
 		err := NewAPIError(500, 0, "")
-		if !err.Retryable() {
-			t.Error("5xx error should be retryable")
-		}
+		assert.True(t, err.Retryable(), "5xx error should be retryable")
 	})
 
 	t.Run("not retryable - 4xx", func(t *testing.T) {
 		err := NewAPIError(400, 0, "")
-		if err.Retryable() {
-			t.Error("4xx error should not be retryable")
-		}
+		assert.False(t, err.Retryable(), "4xx error should not be retryable")
 	})
 
 	t.Run("Is - unauthorized", func(t *testing.T) {
 		err := NewAPIError(401, 0, "")
-		if !errors.Is(err, ErrUnauthorized) {
-			t.Error("401 error should match ErrUnauthorized")
-		}
+		assert.ErrorIs(t, err, ErrUnauthorized, "401 error should match ErrUnauthorized")
 	})
 
 	t.Run("Is - forbidden", func(t *testing.T) {
 		err := NewAPIError(403, 0, "")
-		if !errors.Is(err, ErrForbidden) {
-			t.Error("403 error should match ErrForbidden")
-		}
+		assert.ErrorIs(t, err, ErrForbidden, "403 error should match ErrForbidden")
 	})
 
 	t.Run("Is - not found", func(t *testing.T) {
 		err := NewAPIError(404, 0, "")
-		if !errors.Is(err, ErrNotFound) {
-			t.Error("404 error should match ErrNotFound")
-		}
+		assert.ErrorIs(t, err, ErrNotFound, "404 error should match ErrNotFound")
 	})
 
 	t.Run("Is - server error", func(t *testing.T) {
 		err := NewAPIError(503, 0, "")
-		if !errors.Is(err, ErrServerError) {
-			t.Error("5xx error should match ErrServerError")
-		}
+		assert.ErrorIs(t, err, ErrServerError, "5xx error should match ErrServerError")
 	})
 
 	t.Run("Is - no match for other status codes", func(t *testing.T) {
 		err := NewAPIError(400, 0, "")
-		if errors.Is(err, ErrUnauthorized) {
-			t.Error("400 error should not match ErrUnauthorized")
-		}
-		if errors.Is(err, ErrServerError) {
-			t.Error("400 error should not match ErrServerError")
-		}
+		assert.NotErrorIs(t, err, ErrUnauthorized, "400 error should not match ErrUnauthorized")
+		assert.NotErrorIs(t, err, ErrServerError, "400 error should not match ErrServerError")
 	})
 
 	t.Run("Unwrap returns nil", func(t *testing.T) {
 		err := NewAPIError(500, 0, "")
-		if err.Unwrap() != nil {
-			t.Error("Unwrap should return nil")
-		}
+		assert.Nil(t, err.Unwrap(), "Unwrap should return nil")
 	})
 }

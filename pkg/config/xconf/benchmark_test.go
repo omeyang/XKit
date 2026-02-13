@@ -38,7 +38,7 @@ database:
   port: 5432
   name: testdb
   user: testuser
-  password: testpass
+  sslMode: disable
   maxIdleConns: 10
   maxOpenConns: 100
 logging:
@@ -231,7 +231,7 @@ type BenchFullConfig struct {
 		Port         int    `koanf:"port"`
 		Name         string `koanf:"name"`
 		User         string `koanf:"user"`
-		Password     string `koanf:"password"`
+		SSLMode      string `koanf:"sslMode"`
 		MaxIdleConns int    `koanf:"maxIdleConns"`
 		MaxOpenConns int    `koanf:"maxOpenConns"`
 	} `koanf:"database"`

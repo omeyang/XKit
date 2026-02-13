@@ -104,7 +104,7 @@ func New(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
 		opt(cfg)
 	}
 
-	if err := cfg.config.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
@@ -141,7 +141,7 @@ func NewLocal(opts ...Option) (Limiter, error) {
 		opt(cfg)
 	}
 
-	if err := cfg.config.Validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 

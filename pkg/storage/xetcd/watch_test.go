@@ -16,7 +16,7 @@ func TestEventType_String(t *testing.T) {
 		{EventPut, "PUT"},
 		{EventDelete, "DELETE"},
 		{EventType(99), "UNKNOWN(99)"},
-		{EventType(-1), "UNKNOWN(-1)"},
+		{EventUnknown, "UNKNOWN(-1)"},
 		{EventType(100), "UNKNOWN(100)"},
 	}
 
@@ -82,7 +82,7 @@ func TestConvertEvent_Delete(t *testing.T) {
 }
 
 func TestConvertEvent_UnknownType(t *testing.T) {
-	// 测试未知事件类型（默认行为）
+	// 测试未知事件类型，应标记为 EventUnknown
 	etcdEvent := &clientv3.Event{
 		Type: mvccpb.Event_EventType(99), // 未知类型
 		Kv: &mvccpb.KeyValue{
@@ -94,7 +94,9 @@ func TestConvertEvent_UnknownType(t *testing.T) {
 
 	event := convertEvent(etcdEvent)
 
-	// 未知类型不会匹配任何 case，所以 Type 保持默认值 0 (EventPut)
+	if event.Type != EventUnknown {
+		t.Errorf("convertEvent() Type = %v, want EventUnknown", event.Type)
+	}
 	if event.Key != "unknown-key" {
 		t.Errorf("convertEvent() Key = %v, want %v", event.Key, "unknown-key")
 	}
@@ -174,6 +176,30 @@ func TestWithRevision(t *testing.T) {
 
 	if o.revision != 100 {
 		t.Errorf("WithRevision() revision = %v, want %v", o.revision, 100)
+	}
+}
+
+// TestWithBufferSize 测试 WithBufferSize 选项函数。
+func TestWithBufferSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int
+		wantSize int
+	}{
+		{"positive size", 512, 512},
+		{"zero size keeps default", 0, 0},
+		{"negative size keeps default", -1, 0},
+		{"large size", 10000, 10000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := &watchOptions{}
+			WithBufferSize(tt.size)(o)
+			if o.bufferSize != tt.wantSize {
+				t.Errorf("bufferSize = %d, want %d", o.bufferSize, tt.wantSize)
+			}
+		})
 	}
 }
 

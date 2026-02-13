@@ -2,9 +2,10 @@ package xdbg
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/omeyang/xkit/pkg/util/xjson"
 )
 
 // 注册 xkit 集成命令。
@@ -294,11 +295,10 @@ func (c *configCommand) Execute(_ context.Context, _ []string) (string, error) {
 		return "配置为空", nil
 	}
 
-	// 格式化输出 JSON
-	data, err := json.MarshalIndent(config, "", "  ")
+	s, err := xjson.PrettyE(config)
 	if err != nil {
 		return "", fmt.Errorf("序列化配置失败: %w", err)
 	}
 
-	return string(data), nil
+	return s, nil
 }

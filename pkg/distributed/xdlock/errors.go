@@ -9,8 +9,9 @@ import "errors"
 //	    // 锁被占用
 //	}
 var (
-	// ErrLockHeld 锁被其他持有者占用。
-	// TryLock 失败时返回此错误。
+	// ErrLockHeld 锁被其他持有者占用（内部使用）。
+	// 在 wrapEtcdError/wrapRedisError 中作为中间值，TryLock 在检测到此错误后
+	// 返回 (nil, nil) 表示锁被占用，因此外部代码不会直接看到此错误。
 	ErrLockHeld = errors.New("xdlock: lock is held by another owner")
 
 	// ErrLockFailed 获取锁失败。
@@ -24,10 +25,6 @@ var (
 	// ErrExtendFailed 续期失败。
 	// Redis 锁续期失败时返回此错误。
 	ErrExtendFailed = errors.New("xdlock: failed to extend lock")
-
-	// ErrExtendNotSupported 后端不支持手动续期。
-	// etcd 使用 Session 自动续期，调用 Extend() 返回此错误。
-	ErrExtendNotSupported = errors.New("xdlock: extend not supported by backend")
 
 	// ErrNilClient 客户端为空。
 	// 传入 nil 客户端时返回此错误。
@@ -44,6 +41,10 @@ var (
 	// ErrNotLocked 锁未被持有。
 	// 尝试 Unlock 或 Extend 未持有的锁时返回此错误。
 	ErrNotLocked = errors.New("xdlock: not locked")
+
+	// ErrEmptyKey 锁 key 为空。
+	// key 为空字符串或仅含空白时返回此错误。
+	ErrEmptyKey = errors.New("xdlock: key must not be empty")
 
 	// ErrNilConfig 配置为空。
 	// 传入 nil 配置时返回此错误。

@@ -16,6 +16,7 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	// 设置值
 	cache.Set("user:123", 42)
@@ -51,6 +52,9 @@ func Example_withEvictionCallback() {
 	if err != nil {
 		panic(err)
 	}
+	// 注意：此示例不调用 defer cache.Close()，
+	// 因为 Close 会 Purge 剩余条目并触发回调，干扰输出。
+	// 实际使用中，不带 fmt 副作用的回调应正常搭配 Close。
 
 	// 填满缓存
 	cache.Set("key1", 100)
@@ -80,6 +84,7 @@ func Example_pointerValues() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	// 存储指针
 	cache.Set("user:1", &UserData{Name: "Alice", Age: 30})
@@ -93,6 +98,27 @@ func Example_pointerValues() {
 	// User: Alice, Age: 30
 }
 
+func Example_peek() {
+	cache, err := xlru.New[string, int](xlru.Config{
+		Size: 10,
+		TTL:  time.Minute,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer cache.Close()
+
+	cache.Set("key1", 100)
+
+	// Peek 获取值但不更新 LRU 顺序
+	if val, ok := cache.Peek("key1"); ok {
+		fmt.Println("Peeked:", val)
+	}
+
+	// Output:
+	// Peeked: 100
+}
+
 func Example_keys() {
 	cache, err := xlru.New[string, int](xlru.Config{
 		Size: 10,
@@ -101,6 +127,7 @@ func Example_keys() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	cache.Set("a", 1)
 	cache.Set("b", 2)

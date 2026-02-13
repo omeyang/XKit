@@ -122,7 +122,7 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 	err := h.handle.Unlock(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) {
+		if errors.Is(err, xdlock.ErrNotLocked) {
 			return ErrLockNotHeld
 		}
 		return err
@@ -138,7 +138,7 @@ func (h *xdlockHandle) Renew(ctx context.Context, _ time.Duration) error {
 	err := h.handle.Extend(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) || errors.Is(err, xdlock.ErrExtendFailed) {
+		if errors.Is(err, xdlock.ErrNotLocked) || errors.Is(err, xdlock.ErrExtendFailed) {
 			return ErrLockNotHeld
 		}
 		return err

@@ -19,6 +19,11 @@ func DefaultSignals() []os.Signal {
 	}
 }
 
+// 设计决策: testSigChanKey/testSigChan/withTestSigChan 定义在非测试文件中，
+// 因为 runGroup（生产代码）调用 testSigChan 从 context 获取测试通道。
+// 这避免了测试中发送真实系统信号（可能影响进程或被 CI 拦截），
+// 代价是生产代码包含少量测试辅助逻辑（仅 context.Value 查找，零开销）。
+
 // testSigChanKey 用于在测试中通过 context 注入信号通道。
 type testSigChanKey struct{}
 
@@ -42,6 +47,7 @@ func withTestSigChan(ctx context.Context, c <-chan os.Signal) context.Context {
 
 // Ticker 返回周期性执行任务的服务函数。
 //
+// interval 必须为正数，否则返回的服务函数会返回 ErrInvalidInterval。
 // fn 会在每个周期执行。当 ctx 被取消时，返回 ctx.Err()。
 // immediate 为 true 时，会在启动时立即执行一次。
 //
@@ -52,6 +58,10 @@ func withTestSigChan(ctx context.Context, c <-chan os.Signal) context.Context {
 //	}))
 func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		if interval <= 0 {
+			return ErrInvalidInterval
+		}
+
 		// 立即执行一次
 		if immediate {
 			if err := fn(ctx); err != nil {
@@ -77,7 +87,9 @@ func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context)
 
 // Timer 返回延迟执行一次任务的服务函数。
 //
-// 在指定延迟后执行 fn。当 ctx 被取消时，返回 ctx.Err()。
+// delay 不能为负数，否则返回的服务函数会返回 ErrInvalidDelay。
+// delay 为 0 时表示立即执行（等效于直接调用 fn）。
+// 当 ctx 被取消时，返回 ctx.Err()。
 //
 // 示例：
 //
@@ -86,6 +98,12 @@ func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context)
 //	}))
 func Timer(delay time.Duration, fn func(ctx context.Context) error) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		// 设计决策: delay < 0 校验与 Ticker 的 interval <= 0 校验保持一致性。
+		// delay == 0 是有效用例（立即触发），而 Ticker 的 interval == 0
+		// 会导致 time.NewTicker panic，所以两者的边界值不同。
+		if delay < 0 {
+			return ErrInvalidDelay
+		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 

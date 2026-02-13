@@ -2,6 +2,7 @@ package xbreaker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/sony/gobreaker/v2"
@@ -62,6 +63,10 @@ func WithTripPolicy(p TripPolicy) BreakerOption {
 //
 // 默认情况下，err == nil 即为成功。
 // 某些场景下可能需要自定义成功判定，例如 HTTP 5xx 算失败但 4xx 算成功。
+//
+// 此策略也可用于从熔断统计中排除特定错误（如 context.Canceled、
+// context.DeadlineExceeded），只需在 IsSuccessful 中对这些错误返回 true，
+// 即可避免它们污染失败计数。
 func WithSuccessPolicy(p SuccessPolicy) BreakerOption {
 	return func(b *Breaker) {
 		b.successPolicy = p
@@ -100,7 +105,9 @@ func WithTimeout(d time.Duration) BreakerOption {
 //	)
 func WithInterval(d time.Duration) BreakerOption {
 	return func(b *Breaker) {
-		b.interval = d
+		if d >= 0 {
+			b.interval = d
+		}
 	}
 }
 
@@ -247,8 +254,13 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 // 注意：
 //   - 此函数是包级函数而非方法，因为 Go 不支持方法的类型参数
 //   - 熔断器错误会被包装为 BreakerError，实现 Retryable() 返回 false
+//   - b 不能为 nil，否则返回 ErrNilBreaker
 func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, error) {
 	var zero T
+
+	if b == nil {
+		return zero, ErrNilBreaker
+	}
 
 	// 检查 context 是否已取消
 	if err := ctx.Err(); err != nil {
@@ -262,14 +274,17 @@ func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, e
 		// 包装熔断器错误，使其实现 Retryable() 返回 false
 		return zero, wrapBreakerError(err, b.name, b.State())
 	}
+	// result 来自 fn()，类型始终为 T；nil 对应 T 的零值
 	if result == nil {
 		return zero, nil
 	}
-	if typed, ok := result.(T); ok {
-		return typed, nil
+	// 设计决策: result 来自 fn() 返回的 T 类型值，类型断言理论上不可达失败路径；
+	// 为安全起见返回错误而非静默返回零值，防止未来 gobreaker 内部变化导致数据丢失
+	typed, ok := result.(T)
+	if !ok {
+		return zero, fmt.Errorf("xbreaker: unexpected result type %T", result)
 	}
-	// 类型断言失败，返回零值（理论上不会走到这里）
-	return zero, nil
+	return typed, nil
 }
 
 // State 返回熔断器当前状态
@@ -330,14 +345,24 @@ type ManagedBreaker[T any] struct {
 //
 // 使用已有的 Breaker 配置创建泛型熔断器。
 // 适用于需要高性能且返回值类型固定的场景。
-func NewManagedBreaker[T any](b *Breaker) *ManagedBreaker[T] {
+//
+// 设计决策: ManagedBreaker 维护独立的熔断器状态，与传入的 Breaker 不共享计数和状态转换。
+// 两者的 State()/Counts() 互不影响。这是因为 gobreaker 不支持跨类型参数共享状态，
+// 传入的 Breaker 仅用于复用配置（TripPolicy、SuccessPolicy、Timeout 等）。
+//
+// 如果 b 为 nil，返回 ErrNilBreaker。
+func NewManagedBreaker[T any](b *Breaker) (*ManagedBreaker[T], error) {
+	if b == nil {
+		return nil, ErrNilBreaker
+	}
+
 	// 复用 Breaker 的配置
 	st := b.buildSettings()
 
 	return &ManagedBreaker[T]{
 		breaker: b,
 		cb:      gobreaker.NewCircuitBreaker[T](st),
-	}
+	}, nil
 }
 
 // Execute 执行受熔断器保护的操作

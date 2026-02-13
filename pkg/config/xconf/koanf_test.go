@@ -149,6 +149,34 @@ func TestNew_InvalidJSON(t *testing.T) {
 	assert.ErrorIs(t, err, ErrParseFailed)
 }
 
+func TestNew_EmptyDelim(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNew_EmptyTag(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
+func TestNewFromBytes_EmptyDelim(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNewFromBytes_EmptyTag(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
 func TestNew_WithOptions(t *testing.T) {
 	content := `
 app:
@@ -248,6 +276,13 @@ func TestNewFromBytes_UnsupportedFormat(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnsupportedFormat)
 }
 
+func TestNewFromBytes_InvalidData(t *testing.T) {
+	// 非空但格式错误的数据应返回 ErrParseFailed
+	cfg, err := NewFromBytes([]byte("{invalid json}"), FormatJSON)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrParseFailed)
+}
+
 // =============================================================================
 // Unmarshal 测试
 // =============================================================================
@@ -305,7 +340,7 @@ func TestMustUnmarshal_Success(t *testing.T) {
 
 	var appCfg AppConfig
 	assert.NotPanics(t, func() {
-		cfg.MustUnmarshal("", &appCfg)
+		MustUnmarshal(cfg, "", &appCfg)
 	})
 
 	assert.Equal(t, "test-app", appCfg.App.Name)
@@ -320,7 +355,7 @@ func TestMustUnmarshal_Panic(t *testing.T) {
 	// 传入非指针会导致反序列化失败
 	var appCfg AppConfig
 	assert.Panics(t, func() {
-		cfg.MustUnmarshal("", appCfg) // 注意：没有 &
+		MustUnmarshal(cfg, "", appCfg) // 注意：没有 &
 	})
 }
 
@@ -365,8 +400,25 @@ func TestReload_FromBytes_Error(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cfg.Reload()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot reload config created from bytes")
+	assert.ErrorIs(t, err, ErrNotFromFile)
+}
+
+func TestReload_InvalidContent(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	// 写入无效内容
+	err = os.WriteFile(path, []byte("invalid: yaml: content: ::::"), 0600)
+	require.NoError(t, err)
+
+	// 重载应失败但保留旧配置
+	err = cfg.Reload()
+	assert.ErrorIs(t, err, ErrParseFailed)
+
+	// 旧配置仍可访问
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
 }
 
 func TestReload_FileDeleted(t *testing.T) {
@@ -394,13 +446,13 @@ func TestReload_Concurrent(t *testing.T) {
 	const goroutines = 10
 
 	// 并发读取和重载
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		wg.Add(2)
 
 		// 读取 goroutine
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				_ = cfg.Client().String("app.name")
 			}
 		}()
@@ -408,7 +460,7 @@ func TestReload_Concurrent(t *testing.T) {
 		// 重载 goroutine
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for range 10 {
 				// 忽略重载错误，仅测试并发安全性
 				_ = cfg.Reload() //nolint:errcheck
 			}

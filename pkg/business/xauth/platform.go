@@ -36,12 +36,12 @@ type PlatformManager struct {
 
 // PlatformManagerConfig PlatformManager 配置。
 type PlatformManagerConfig struct {
-	HTTP      *HTTPClient
-	Cache     CacheStore
-	TokenMgr  *TokenManager
-	Logger    *slog.Logger
-	Observer  xmetrics.Observer
-	CacheTTL  time.Duration
+	HTTP     *HTTPClient
+	Cache    CacheStore
+	TokenMgr *TokenManager
+	Logger   *slog.Logger
+	Observer xmetrics.Observer
+	CacheTTL time.Duration
 
 	// LocalCacheSize 本地缓存最大条目数。
 	// 默认 1000。
@@ -126,11 +126,11 @@ func (m *PlatformManager) getField(
 ) (string, error) {
 	// 开始观测
 	ctx, span := xmetrics.Start(ctx, m.observer, xmetrics.SpanOptions{
-		Component: "xauth",
-		Operation: "GetPlatformData",
+		Component: MetricsComponent,
+		Operation: MetricsOpGetPlatformData,
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			{Key: "tenant_id", Value: tenantID},
+			{Key: MetricsAttrTenantID, Value: tenantID},
 			{Key: "field", Value: field},
 		},
 	})
@@ -172,6 +172,9 @@ func (m *PlatformManager) getFromRemoteCache(ctx context.Context, tenantID, fiel
 }
 
 // fetchWithSingleflight 使用 singleflight 从 API 获取数据。
+// 设计决策: singleflight.Do 使用第一个调用方的 ctx 发起请求，后续共享结果。
+// 若首个 ctx 被取消，所有等待者均收到错误。这是 singleflight 的已知限制，
+// 但对平台数据查询场景可接受——请求超时一致，取消概率低。
 func (m *PlatformManager) fetchWithSingleflight(
 	ctx context.Context,
 	tenantID, field string,

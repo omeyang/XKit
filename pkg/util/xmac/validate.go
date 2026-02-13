@@ -17,7 +17,7 @@ func (a Addr) IsMulticast() bool {
 
 // IsBroadcast 报告 a 是否为广播地址（ff:ff:ff:ff:ff:ff）。
 func (a Addr) IsBroadcast() bool {
-	return a == Broadcast
+	return a == broadcastAddr()
 }
 
 // IsLocallyAdministered 报告 a 是否为本地管理地址（LAA）。

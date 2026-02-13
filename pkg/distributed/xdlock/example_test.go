@@ -12,24 +12,58 @@ import (
 	"github.com/omeyang/xkit/pkg/distributed/xdlock"
 )
 
-// Example_redisBasic 演示 Redis 分布式锁的基本用法。
-func Example_redisBasic() {
-	// 使用 miniredis 模拟 Redis（实际使用时换成真实 Redis）
+// exampleRedisSetup 创建 miniredis + client + factory 用于示例测试。
+// 调用方必须 defer 返回的 cleanup 函数。
+func exampleRedisSetup() (xdlock.RedisFactory, func()) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer mr.Close()
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { _ = client.Close() }()
 
-	// 创建锁工厂
 	factory, err := xdlock.NewRedisFactory(client)
+	if err != nil {
+		_ = client.Close()
+		mr.Close()
+		log.Fatal(err)
+	}
+
+	cleanup := func() {
+		_ = factory.Close()
+		_ = client.Close()
+		mr.Close()
+	}
+
+	return factory, cleanup
+}
+
+// mustTryLock 调用 TryLock 并在出错时 fatal。
+func mustTryLock(
+	ctx context.Context,
+	factory xdlock.RedisFactory,
+	key string,
+	opts ...xdlock.MutexOption,
+) xdlock.LockHandle {
+	handle, err := factory.TryLock(ctx, key, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	return handle
+}
+
+// mustUnlock 调用 Unlock 并在出错时 fatal。
+func mustUnlock(ctx context.Context, handle xdlock.LockHandle) {
+	if err := handle.Unlock(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Example_redisBasic 演示 Redis 分布式锁的基本用法。
+func Example_redisBasic() {
+	// 使用 miniredis 模拟 Redis（实际使用时换成真实 Redis）
+	factory, cleanup := exampleRedisSetup()
+	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -46,9 +80,7 @@ func Example_redisBasic() {
 	// doWork()
 
 	// 释放锁
-	if err := handle.Unlock(ctx); err != nil {
-		log.Fatal(err)
-	}
+	mustUnlock(ctx, handle)
 
 	fmt.Println("Lock released")
 
@@ -59,58 +91,33 @@ func Example_redisBasic() {
 
 // Example_redisTryLock 演示非阻塞式获取锁。
 func Example_redisTryLock() {
-	mr, err := miniredis.Run()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer mr.Close()
-
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { _ = client.Close() }()
-
-	factory, err := xdlock.NewRedisFactory(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() { _ = factory.Close() }()
+	factory, cleanup := exampleRedisSetup()
+	defer cleanup()
 
 	ctx := context.Background()
 
 	// 第一个锁获取成功
-	handle1, err := factory.TryLock(ctx, "shared-resource")
-	if err != nil {
-		log.Fatal(err)
-	}
+	handle1 := mustTryLock(ctx, factory, "shared-resource")
 	if handle1 == nil {
 		log.Fatal("expected to acquire lock")
 	}
 	fmt.Println("First TryLock: acquired lock")
 
 	// 第二个 TryLock 返回 (nil, nil) 表示锁被占用
-	handle2, err := factory.TryLock(ctx, "shared-resource")
-	if err != nil {
-		log.Fatal(err)
-	}
+	handle2 := mustTryLock(ctx, factory, "shared-resource")
 	if handle2 == nil {
 		fmt.Println("Second TryLock: lock is held by another owner")
 	}
 
 	// 释放第一个锁
-	if err := handle1.Unlock(ctx); err != nil {
-		log.Fatal(err)
-	}
+	mustUnlock(ctx, handle1)
 	fmt.Println("First lock released")
 
 	// 现在第三个 TryLock 可以获取
-	handle3, err := factory.TryLock(ctx, "shared-resource")
-	if err != nil {
-		log.Fatal(err)
-	}
+	handle3 := mustTryLock(ctx, factory, "shared-resource")
 	if handle3 != nil {
 		fmt.Println("Third TryLock: acquired lock")
-		if err := handle3.Unlock(ctx); err != nil {
-			log.Fatal(err)
-		}
+		mustUnlock(ctx, handle3)
 	}
 
 	// Output:

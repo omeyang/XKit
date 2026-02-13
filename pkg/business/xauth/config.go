@@ -131,8 +131,8 @@ type Config struct {
 	PlatformDataCacheTTL time.Duration
 
 	// TLS TLS 配置。
-	// 为 nil 时使用默认配置（跳过证书验证）。
-	// 生产环境强烈建议显式配置 TLS 选项。
+	// 为 nil 时使用默认配置（启用证书验证）。
+	// 开发/测试环境可设置 InsecureSkipVerify: true 跳过证书验证。
 	TLS *TLSConfig
 }
 
@@ -191,7 +191,9 @@ func (c *Config) ApplyDefaults() {
 		c.ClientID = getDefaultClientID()
 	}
 
-	// ClientSecret 默认与 ClientID 相同
+	// 设计决策: ClientSecret 默认与 ClientID 相同，这是认证服务的约定——
+	// 内部 client_credentials 模式下 secret 与 id 一致，简化配置。
+	// 外部调用方如需独立 secret，通过 Config.ClientSecret 显式指定。
 	if c.ClientSecret == "" {
 		c.ClientSecret = c.ClientID
 	}

@@ -57,13 +57,16 @@ func TestFilterProducerConfig_FiltersConsumerOnlyKeys(t *testing.T) {
 	assert.Equal(t, "localhost:9092", val)
 
 	// 验证 consumer-only 配置被过滤（Get 返回 nil 表示不存在）
-	val, _ = producerConfig.Get("group.id", nil) //nolint:errcheck // testing Get returns nil
+	val, err = producerConfig.Get("group.id", nil)
+	require.NoError(t, err)
 	assert.Nil(t, val, "group.id should be filtered")
 
-	val, _ = producerConfig.Get("auto.offset.reset", nil) //nolint:errcheck // testing Get returns nil
+	val, err = producerConfig.Get("auto.offset.reset", nil)
+	require.NoError(t, err)
 	assert.Nil(t, val, "auto.offset.reset should be filtered")
 
-	val, _ = producerConfig.Get("enable.auto.commit", nil) //nolint:errcheck // testing Get returns nil
+	val, err = producerConfig.Get("enable.auto.commit", nil)
+	require.NoError(t, err)
 	assert.Nil(t, val, "enable.auto.commit should be filtered")
 }
 
@@ -102,7 +105,8 @@ func TestFilterProducerConfig_AllConsumerOnlyKeys(t *testing.T) {
 			require.NoError(t, err)
 
 			// 验证该 key 被过滤（Get 返回 nil 表示不存在）
-			val, _ := producerConfig.Get(key, nil) //nolint:errcheck // testing Get returns nil
+			val, getErr := producerConfig.Get(key, nil)
+			require.NoError(t, getErr)
 			assert.Nil(t, val, "consumer-only key %s should be filtered", key)
 
 			// 验证公共配置被保留
@@ -289,6 +293,7 @@ func TestDLQMetadata_AllFields(t *testing.T) {
 	assert.Equal(t, "original-topic", metadata.OriginalTopic)
 	assert.Equal(t, int32(1), metadata.OriginalPartition)
 	assert.Equal(t, int64(100), metadata.OriginalOffset)
+	assert.Equal(t, now, metadata.OriginalTimestamp)
 	assert.Equal(t, "test error", metadata.FailureReason)
 	assert.Equal(t, 3, metadata.FailureCount)
 	assert.False(t, metadata.FirstFailureTime.IsZero())

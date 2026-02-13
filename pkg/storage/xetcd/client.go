@@ -105,7 +105,8 @@ func NewClient(config *Config, opts ...Option) (*Client, error) {
 }
 
 // RawClient 返回原生 etcd 客户端。
-// 用于需要直接操作原生 API 的场景，如事务、租约等高级操作。
+// 设计决策: 暴露原生客户端用于事务（Txn）、租约续约（KeepAlive）等高级操作，
+// 这些功能不在 xetcd 的简化封装范围内。参见 doc.go 中的"设计边界"说明。
 func (c *Client) RawClient() *clientv3.Client {
 	return c.rawClient
 }

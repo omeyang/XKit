@@ -142,7 +142,7 @@ func (l *defaultAuditLogger) Log(record *AuditRecord) {
 	}
 
 	if len(record.Args) > 0 {
-		fmt.Fprintf(&sb, " args=%v", record.Args)
+		fmt.Fprintf(&sb, " args=%q", record.Args)
 	}
 
 	if record.Duration > 0 {
@@ -185,17 +185,6 @@ func (l *noopAuditLogger) Log(_ *AuditRecord) {}
 
 // Close 空操作。
 func (l *noopAuditLogger) Close() error { return nil }
-
-// AuditFormat 审计日志格式。
-type AuditFormat string
-
-const (
-	// AuditFormatText 文本格式。
-	AuditFormatText AuditFormat = "text"
-
-	// AuditFormatJSON JSON 格式。
-	AuditFormatJSON AuditFormat = "json"
-)
 
 // jsonAuditLogger JSON 格式审计日志记录器。
 // 便于日志聚合系统（如 ELK、Loki）解析。

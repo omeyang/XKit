@@ -147,7 +147,7 @@ func TestXdlockHandle_Unlock_Success(t *testing.T) {
 }
 
 func TestXdlockHandle_Unlock_LockNotHeld(t *testing.T) {
-	handle := &mockXdlockHandle{unlockErr: xdlock.ErrLockNotHeld}
+	handle := &mockXdlockHandle{unlockErr: xdlock.ErrNotLocked}
 	factory := &mockXdlockFactory{handle: handle}
 	adapter := NewXdlockAdapter(factory)
 
@@ -187,7 +187,7 @@ func TestXdlockHandle_Renew_ExtendFailed(t *testing.T) {
 }
 
 func TestXdlockHandle_Renew_LockNotHeld(t *testing.T) {
-	handle := &mockXdlockHandle{extendErr: xdlock.ErrLockNotHeld}
+	handle := &mockXdlockHandle{extendErr: xdlock.ErrNotLocked}
 	factory := &mockXdlockFactory{handle: handle}
 	adapter := NewXdlockAdapter(factory)
 

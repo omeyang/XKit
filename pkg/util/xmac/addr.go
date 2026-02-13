@@ -41,6 +41,9 @@ func (a Addr) IsValid() bool {
 // Compare 比较两个 MAC 地址的字节顺序。
 // 返回值：-1 (a < b), 0 (a == b), 1 (a > b)。
 // 按网络字节序（大端）比较。
+//
+// 设计决策: 使用手动逐字节循环而非 bytes.Compare，避免切片化导致的逃逸分析开销，
+// 使比较操作保持在栈上完成（零堆分配）。
 func (a Addr) Compare(b Addr) int {
 	for i := range 6 {
 		if a.bytes[i] < b.bytes[i] {
@@ -56,7 +59,7 @@ func (a Addr) Compare(b Addr) int {
 // Next 返回下一个 MAC 地址（当前地址 +1）。
 // 如果 a 是 ff:ff:ff:ff:ff:ff，返回 [ErrOverflow]。
 func (a Addr) Next() (Addr, error) {
-	if a == Broadcast {
+	if a == broadcastAddr() {
 		return Addr{}, ErrOverflow
 	}
 	var next Addr

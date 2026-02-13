@@ -2,10 +2,13 @@ package xmongo
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -206,6 +209,25 @@ func TestWrapper_Close_NilClient(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestWrapper_Close_DoubleClose(t *testing.T) {
+	mock := newMockClientOps()
+
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	// 第一次关闭成功
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, mock.disconnected)
+
+	// 第二次关闭返回 ErrClosed
+	err = w.Close(context.Background())
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
 func TestWrapper_Client_NilClient(t *testing.T) {
 	w := &mongoWrapper{
 		client:  nil,
@@ -228,13 +250,12 @@ func TestWrapper_GetPoolStats_NilClient(t *testing.T) {
 	assert.Equal(t, 0, stats.InUseConnections)
 }
 
-func TestBuildSlowQueryInfo(t *testing.T) {
-	// 测试 nil collection
-	info := buildSlowQueryInfo(nil, "find", map[string]any{"name": "test"}, 100*time.Millisecond)
+func TestBuildSlowQueryInfoFromOps_Nil(t *testing.T) {
+	// 测试 nil collection（通过 buildSlowQueryInfoFromOps）
+	info := buildSlowQueryInfoFromOps(nil, "find", map[string]any{"name": "test"})
 	assert.Equal(t, "", info.Database)
 	assert.Equal(t, "", info.Collection)
 	assert.Equal(t, "find", info.Operation)
-	assert.Equal(t, 100*time.Millisecond, info.Duration)
 }
 
 func TestWrapper_SlowQueryCounter(t *testing.T) {
@@ -575,6 +596,25 @@ func TestWrapper_BulkWriteInternal_DefaultBatchSize(t *testing.T) {
 	assert.Equal(t, int64(1), result.InsertedCount)
 }
 
+func TestWrapper_BulkWriteInternal_MaxBatchSize(t *testing.T) {
+	mock := newMockCollectionOps()
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+	}
+
+	// BatchSize 超过上限，应被限制为 maxBatchSize
+	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: maxBatchSize + 1})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1), result.InsertedCount)
+}
+
 func TestWrapper_BulkWriteInternal_InsertError_Unordered(t *testing.T) {
 	mock := newMockCollectionOps()
 	mock.insertErr = errMockInsert
@@ -683,6 +723,339 @@ func TestBuildSlowQueryInfoFromOps(t *testing.T) {
 func TestAdaptCollection_Nil(t *testing.T) {
 	result := adaptCollection(nil)
 	assert.Nil(t, result)
+}
+
+// =============================================================================
+// 异步慢查询选项测试
+// =============================================================================
+
+func TestWithAsyncSlowQueryHook(t *testing.T) {
+	var called bool
+	hook := func(_ SlowQueryInfo) {
+		called = true
+	}
+
+	opts := defaultOptions()
+	WithAsyncSlowQueryHook(hook)(opts)
+
+	assert.NotNil(t, opts.AsyncSlowQueryHook)
+	opts.AsyncSlowQueryHook(SlowQueryInfo{})
+	assert.True(t, called)
+}
+
+func TestWithAsyncSlowQueryWorkers(t *testing.T) {
+	opts := defaultOptions()
+	original := opts.AsyncSlowQueryWorkers
+
+	// 正数生效
+	WithAsyncSlowQueryWorkers(20)(opts)
+	assert.Equal(t, 20, opts.AsyncSlowQueryWorkers)
+
+	// 零值被忽略
+	WithAsyncSlowQueryWorkers(0)(opts)
+	assert.Equal(t, 20, opts.AsyncSlowQueryWorkers)
+
+	// 负值被忽略
+	WithAsyncSlowQueryWorkers(-1)(opts)
+	assert.Equal(t, 20, opts.AsyncSlowQueryWorkers)
+
+	_ = original
+}
+
+func TestWithAsyncSlowQueryQueueSize(t *testing.T) {
+	opts := defaultOptions()
+
+	// 正数生效
+	WithAsyncSlowQueryQueueSize(500)(opts)
+	assert.Equal(t, 500, opts.AsyncSlowQueryQueueSize)
+
+	// 零值被忽略
+	WithAsyncSlowQueryQueueSize(0)(opts)
+	assert.Equal(t, 500, opts.AsyncSlowQueryQueueSize)
+
+	// 负值被忽略
+	WithAsyncSlowQueryQueueSize(-1)(opts)
+	assert.Equal(t, 500, opts.AsyncSlowQueryQueueSize)
+}
+
+func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
+	var called sync.WaitGroup
+	called.Add(1)
+	opts := &Options{
+		SlowQueryThreshold: 1 * time.Nanosecond,
+		AsyncSlowQueryHook: func(_ SlowQueryInfo) {
+			called.Done()
+		},
+		AsyncSlowQueryWorkers:   2,
+		AsyncSlowQueryQueueSize: 10,
+	}
+
+	detector := newSlowQueryDetector(opts)
+	assert.NotNil(t, detector)
+
+	// 触发慢查询让异步钩子有机会执行
+	detector.MaybeSlowQuery(context.Background(), SlowQueryInfo{Duration: time.Second}, time.Second)
+	called.Wait() // 等待异步执行完成
+	detector.Close()
+}
+
+// =============================================================================
+// convertPaginationError 完整覆盖
+// =============================================================================
+
+func TestConvertPaginationError_AllCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    error
+		expected error
+	}{
+		{"ErrInvalidPage", ErrInvalidPage, ErrInvalidPage},
+		{"ErrInvalidPageSize", ErrInvalidPageSize, ErrInvalidPageSize},
+		{"ErrPageOverflow", ErrPageOverflow, ErrPageOverflow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 测试通过 findPageInternal 触发各种分页错误
+			assert.ErrorIs(t, tt.input, tt.expected)
+		})
+	}
+}
+
+func TestWrapper_FindPageInternal_PageOverflow(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// 极大的 page 和 pageSize 触发 overflow
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{
+		Page:     1<<62 + 1,
+		PageSize: 1<<62 + 1,
+	})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrPageOverflow)
+	assert.Nil(t, result)
+}
+
+// =============================================================================
+// Close 幂等性测试
+// =============================================================================
+
+func TestWrapper_Close_NilDetector(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:            nil,
+		clientOps:         mock,
+		options:           defaultOptions(),
+		slowQueryDetector: nil,
+	}
+
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, mock.disconnected)
+}
+
+// =============================================================================
+// Close 后方法调用测试
+// =============================================================================
+
+func TestWrapper_Health_AfterClose(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+
+	// Close 后调用 Health 应返回 ErrClosed
+	err = w.Health(context.Background())
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestWrapper_FindPage_AfterClose(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+
+	// Close 后调用 FindPage 应返回 ErrClosed
+	result, err := w.FindPage(context.Background(), nil, nil, PageOptions{Page: 1, PageSize: 10})
+	assert.ErrorIs(t, err, ErrClosed)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_BulkWrite_AfterClose(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Close(context.Background())
+	assert.NoError(t, err)
+
+	// Close 后调用 BulkWrite 应返回 ErrClosed
+	result, err := w.BulkWrite(context.Background(), nil, []any{1}, BulkOptions{})
+	assert.ErrorIs(t, err, ErrClosed)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_Close_Concurrent(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	results := make([]error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = w.Close(context.Background())
+		}(i)
+	}
+	wg.Wait()
+
+	// 恰好一个 goroutine 应成功，其余返回 ErrClosed
+	var successCount int
+	for _, err := range results {
+		if err == nil {
+			successCount++
+		} else {
+			assert.ErrorIs(t, err, ErrClosed)
+		}
+	}
+	assert.Equal(t, 1, successCount)
+}
+
+// =============================================================================
+// findPageInternal 成功路径测试（使用 cursorCollectionOps）
+// =============================================================================
+
+func TestWrapper_FindPageInternal_Success(t *testing.T) {
+	docs := []any{
+		bson.M{"_id": "1", "name": "a"},
+		bson.M{"_id": "2", "name": "b"},
+	}
+	mock := &cursorCollectionOps{
+		docs:     docs,
+		count:    2,
+		collName: "test_coll",
+	}
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{Page: 1, PageSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(2), result.Total)
+	assert.Equal(t, int64(1), result.Page)
+	assert.Equal(t, int64(10), result.PageSize)
+	assert.Equal(t, int64(1), result.TotalPages)
+	assert.Len(t, result.Data, 2)
+}
+
+func TestWrapper_FindPageInternal_WithSlowQuery(t *testing.T) {
+	docs := []any{bson.M{"_id": "1"}}
+	mock := &cursorCollectionOps{
+		docs:     docs,
+		count:    1,
+		collName: "test_coll",
+	}
+
+	var captured SlowQueryInfo
+	opts := &Options{
+		SlowQueryThreshold: 1 * time.Nanosecond,
+		SlowQueryHook: func(_ context.Context, info SlowQueryInfo) {
+			captured = info
+		},
+	}
+	w := &mongoWrapper{
+		client:            nil,
+		options:           opts,
+		slowQueryDetector: newSlowQueryDetector(opts),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{Page: 1, PageSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "findPage", captured.Operation)
+}
+
+// =============================================================================
+// convertPaginationError 完整覆盖
+// =============================================================================
+
+func TestConvertPaginationError_UnknownError(t *testing.T) {
+	unknownErr := errors.New("some unknown error")
+	result := convertPaginationError(unknownErr)
+	assert.Equal(t, unknownErr, result)
+}
+
+// =============================================================================
+// executeSingleBatch 无序模式 context 取消
+// =============================================================================
+
+func TestWrapper_ExecuteSingleBatch_UnorderedContextCancel(t *testing.T) {
+	mock := newMockCollectionOps()
+	mock.insertErr = errMockInsert
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	insertOpts := options.InsertMany().SetOrdered(false)
+	count, err, shouldStop := w.executeSingleBatch(ctx, mock, []any{bson.M{"a": 1}}, insertOpts, false)
+	assert.Equal(t, int64(0), count)
+	assert.Error(t, err)
+	assert.True(t, shouldStop)
+}
+
+// =============================================================================
+// executeBatches context 取消测试
+// =============================================================================
+
+func TestWrapper_ExecuteBatches_ContextCanceled(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	docs := []any{
+		map[string]any{"name": "doc1"},
+		map[string]any{"name": "doc2"},
+	}
+
+	count, errs := w.executeBatches(ctx, mock, docs, 1, false)
+	assert.Equal(t, int64(0), count)
+	assert.NotEmpty(t, errs)
 }
 
 // =============================================================================

@@ -2,8 +2,17 @@ package xdlock
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// validateKey 验证锁 key 是否有效。
+func validateKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return ErrEmptyKey
+	}
+	return nil
+}
 
 // =============================================================================
 // etcd 工厂选项
@@ -165,10 +174,10 @@ func WithRetryDelayFunc(fn func(tries int) time.Duration) MutexOption {
 
 // WithDriftFactor 设置时钟漂移因子。
 // 用于 Redlock 算法中补偿时钟漂移。
-// 默认值：0.01。
+// 默认值：0.01。值必须 > 0，0.0 会破坏 Redlock 时钟漂移补偿。
 func WithDriftFactor(f float64) MutexOption {
 	return func(o *mutexOptions) {
-		if f >= 0 {
+		if f > 0 {
 			o.DriftFactor = f
 		}
 	}
@@ -176,10 +185,10 @@ func WithDriftFactor(f float64) MutexOption {
 
 // WithTimeoutFactor 设置超时因子。
 // 用于计算单个节点的超时时间。
-// 默认值：0.05。
+// 默认值：0.05。值必须 > 0，0.0 会导致节点超时立即触发。
 func WithTimeoutFactor(f float64) MutexOption {
 	return func(o *mutexOptions) {
-		if f >= 0 {
+		if f > 0 {
 			o.TimeoutFactor = f
 		}
 	}

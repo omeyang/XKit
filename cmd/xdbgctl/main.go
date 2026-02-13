@@ -82,7 +82,7 @@ func run() int {
 				Value:   DefaultTimeout,
 			},
 		},
-		Commands: createCommands(),
+		Commands:       createCommands(),
 		DefaultCommand: "help",
 		Authors: []any{
 			"XKit Team",

@@ -19,6 +19,11 @@
 //
 // # 已知限制
 //
+// ## OFFSET 分页
+//
+// QueryPage 使用 LIMIT/OFFSET 分页。在 ClickHouse 中，大偏移量会导致
+// 扫描放大和性能下降。如需大数据量分页，请使用 Conn() 实现游标分页。
+//
 // ## FORMAT/SETTINGS 检测
 //
 // QueryPage 使用正则表达式检测 FORMAT 和 SETTINGS 子句。

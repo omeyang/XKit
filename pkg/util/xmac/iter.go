@@ -119,8 +119,10 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 }
 
 // Collect 将迭代器中的所有地址收集到切片中。
-// 注意：对于大范围，这可能消耗大量内存。
-// 建议对于小范围使用，或设置合理的 maxCount。
+// maxCount 限制最多收集的地址数量；≤0 表示不限制。
+//
+// 性能提示：maxCount > 0 时会预分配切片容量；maxCount ≤ 0 时切片从零开始增长，
+// 对于已知大小的范围，建议传入 maxCount 或使用 [RangeCount] 估算后传入。
 //
 // 示例：
 //
@@ -129,6 +131,9 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 //	addrs := xmac.Collect(xmac.Range(from, to), 100)
 func Collect(seq iter.Seq[Addr], maxCount int) []Addr {
 	var result []Addr
+	if maxCount > 0 {
+		result = make([]Addr, 0, maxCount)
+	}
 	count := 0
 	for addr := range seq {
 		if maxCount > 0 && count >= maxCount {
@@ -151,12 +156,13 @@ func Count(seq iter.Seq[Addr]) int {
 	return count
 }
 
-// RangeCount 计算从 from 到 to（包含）的地址数量。
+// RangeCount 计算从 from 到 to（包含两端）的地址数量。
 // 如果 from > to，返回 0。
 // 返回 uint64 以支持大范围（最大 2^48 个地址）。
 //
 // 零值地址可以参与计算（视为 00:00:00:00:00:00）。
-// 例如 RangeCount(Addr{}, Addr{}) 返回 1。
+// 注意：RangeCount(Addr{}, Addr{}) 返回 1——零值地址虽然 [Addr.IsValid] 返回 false，
+// 但作为 48 位地址空间中的合法数值（0x000000000000）参与数学运算。
 func RangeCount(from, to Addr) uint64 {
 	if from.Compare(to) > 0 {
 		return 0

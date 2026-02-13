@@ -194,7 +194,7 @@ func TestAttrsIntegration(t *testing.T) {
 	}
 }
 
-// testBuffer 用于测试的线程安全 buffer
+// testBuffer 用于测试的简单 buffer（非线程安全，仅用于单 goroutine 测试）
 type testBuffer struct {
 	data []byte
 }

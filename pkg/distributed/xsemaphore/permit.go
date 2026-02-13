@@ -2,7 +2,6 @@ package xsemaphore
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -198,6 +197,10 @@ type loggerForExtend interface {
 //   - logger: 日志记录器（可为 nil）
 //   - doRelease: 实际执行释放的函数
 func (b *permitBase) releaseCommon(ctx context.Context, tracer trace.Tracer, semType string, logger xlog.Logger, doRelease func(context.Context) error) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
 	// 检查是否已释放，防止重复释放
 	if b.isReleased() {
 		return nil // 已释放，静默返回
@@ -222,7 +225,7 @@ func (b *permitBase) releaseCommon(ctx context.Context, tracer trace.Tracer, sem
 				logger.Warn(ctx, "permit already expired or released externally",
 					AttrPermitID(b.id),
 					AttrResource(b.resource),
-					slog.String("sem_type", semType),
+					AttrSemType(semType),
 				)
 			}
 			setSpanOK(span)
@@ -246,6 +249,9 @@ func (b *permitBase) releaseCommon(ctx context.Context, tracer trace.Tracer, sem
 //   - semType: 信号量类型（distributed/local）
 //   - doExtend: 实际执行续期的函数，接收新的过期时间
 func (b *permitBase) extendCommon(ctx context.Context, tracer trace.Tracer, semType string, doExtend func(context.Context, time.Time) error) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if b.isReleased() {
 		return ErrPermitNotHeld
 	}

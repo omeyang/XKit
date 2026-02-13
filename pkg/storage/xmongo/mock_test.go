@@ -105,6 +105,41 @@ func newMockCollectionOps() *mockCollectionOps {
 // 对于成功路径，需要集成测试或使用 mtest
 
 // =============================================================================
+// cursorCollectionOps - 返回真实 Cursor 的 mock（用于 findPageInternal 成功路径）
+// =============================================================================
+
+// cursorCollectionOps 使用 mongo.NewCursorFromDocuments 返回可解码的 cursor。
+type cursorCollectionOps struct {
+	docs     []any
+	count    int64
+	collName string
+}
+
+func (c *cursorCollectionOps) CountDocuments(_ context.Context, _ any, _ ...options.Lister[options.CountOptions]) (int64, error) {
+	return c.count, nil
+}
+
+func (c *cursorCollectionOps) Find(_ context.Context, _ any, _ ...options.Lister[options.FindOptions]) (*mongo.Cursor, error) {
+	return mongo.NewCursorFromDocuments(c.docs, nil, nil)
+}
+
+func (c *cursorCollectionOps) InsertMany(_ context.Context, documents []any, _ ...options.Lister[options.InsertManyOptions]) (*mongo.InsertManyResult, error) {
+	ids := make([]any, len(documents))
+	for i := range documents {
+		ids[i] = bson.NewObjectID()
+	}
+	return &mongo.InsertManyResult{InsertedIDs: ids}, nil
+}
+
+func (c *cursorCollectionOps) Database() *mongo.Database {
+	return nil
+}
+
+func (c *cursorCollectionOps) Name() string {
+	return c.collName
+}
+
+// =============================================================================
 // 错误定义
 // =============================================================================
 

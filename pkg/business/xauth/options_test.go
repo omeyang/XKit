@@ -247,3 +247,26 @@ func TestDefaultOptions(t *testing.T) {
 		t.Error("EnableAutoRetryOn401 should be false by default")
 	}
 }
+
+func TestWithLocalCacheTTL(t *testing.T) {
+	t.Run("positive duration", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(10 * time.Minute)})
+		if options.LocalCacheTTL != 10*time.Minute {
+			t.Errorf("LocalCacheTTL = %v, expected 10m", options.LocalCacheTTL)
+		}
+	})
+
+	t.Run("zero duration ignored", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(0)})
+		if options.LocalCacheTTL != 0 {
+			t.Errorf("LocalCacheTTL = %v, expected 0", options.LocalCacheTTL)
+		}
+	})
+
+	t.Run("negative duration ignored", func(t *testing.T) {
+		options := applyOptions([]Option{WithLocalCacheTTL(-1 * time.Second)})
+		if options.LocalCacheTTL != 0 {
+			t.Errorf("LocalCacheTTL = %v, expected 0", options.LocalCacheTTL)
+		}
+	})
+}

@@ -18,7 +18,7 @@
 //   - trace_id     : 追踪标识（W3C 规范，128-bit）
 //   - span_id      : 跨度标识（W3C 规范，64-bit）
 //   - request_id   : 请求标识
-//   - trace_flags  : 追踪标志（W3C 规范，采样决策）
+//   - trace_flags  : 追踪标志（W3C 规范，采样决策；可选字段，不参与 IsComplete 检查）
 //
 // 部署类型（Deployment）- 运行环境：
 //   - LOCAL : 本地/私有化部署
@@ -29,18 +29,27 @@
 //	WithXxx(ctx, value)    - 注入：将 value 写入 context
 //	Xxx(ctx)               - 读取：从 context 读取值，缺失时返回零值
 //	RequireXxx(ctx)        - 强制读取：值必须存在，缺失时返回错误
+//	MustXxx(ctx)           - 简化读取：值缺失时返回零值（不返回 ok/error）
 //	EnsureXxx(ctx)         - 确保存在：若已存在则返回，否则自动生成
 //	GetXxx(ctx)            - 批量读取：返回结构体
 //
+// 设计决策: 不同字段族根据语义需要提供不同的 API 子集，并非所有字段都具备完整的六件套：
+//   - Identity (string 字段): With/Xxx/Require/GetIdentity — 无需 Must（零值即空字符串）
+//   - HasParent (bool 字段): With/HasParent(value,ok)/Must/Require — 需要 ok 区分"未设置"
+//   - Trace (string 字段): With/Xxx/Ensure — 支持自动生成，无需 Require（入口保证存在）
+//   - DeploymentType: With/DeploymentTypeRaw/GetDeploymentType — 需要验证，命名见各函数注释
+//
 // # 哨兵错误
 //
-//	ErrNilContext            - context 为 nil
-//	ErrMissingPlatformID     - platform_id 缺失
-//	ErrMissingTenantID       - tenant_id 缺失
-//	ErrMissingTenantName     - tenant_name 缺失
-//	ErrMissingHasParent      - has_parent 缺失
-//	ErrMissingDeploymentType - deployment_type 缺失
-//	ErrInvalidDeploymentType - deployment_type 非法
+//	ErrNilContext                - context 为 nil
+//	ErrMissingPlatformID         - platform_id 缺失
+//	ErrMissingTenantID           - tenant_id 缺失
+//	ErrMissingTenantName         - tenant_name 缺失
+//	ErrMissingHasParent          - has_parent 缺失
+//	ErrMissingDeploymentType     - deployment_type 缺失
+//	ErrMissingDeploymentTypeValue - deployment_type 值为空（ParseDeploymentType 用）
+//	ErrMissingDeploymentTypeEnv  - 环境变量 DEPLOYMENT_TYPE 缺失
+//	ErrInvalidDeploymentType     - deployment_type 非法
 //
 // # 校验策略
 //

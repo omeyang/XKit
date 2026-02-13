@@ -265,6 +265,36 @@ func ExampleClient_Watch_withReconnect() {
 	cancel()
 }
 
+// ExampleClient_WatchWithRetry 演示带自动重连的 Watch。
+func ExampleClient_WatchWithRetry() {
+	config := &xetcd.Config{
+		Endpoints: []string{"localhost:2379"},
+	}
+
+	client, err := xetcd.NewClient(config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 使用带自动重连的 Watch
+	events, err := client.WatchWithRetry(ctx, "/app/config/",
+		xetcd.DefaultRetryConfig(),
+		xetcd.WithPrefix(),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 处理事件（不需要手动处理重连）
+	for event := range events {
+		fmt.Printf("%s: %s = %s\n", event.Type, event.Key, event.Value)
+	}
+}
+
 // ExampleIsKeyNotFound 演示错误处理。
 func ExampleIsKeyNotFound() {
 	err := xetcd.ErrKeyNotFound

@@ -144,11 +144,15 @@ func ExampleNewBreakerRetryer() {
 	)
 
 	// 组合熔断器和重试器
-	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
+	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	var attempts int
-	err := combo.DoWithRetry(ctx, func(_ context.Context) error {
+	err = combo.DoWithRetry(ctx, func(_ context.Context) error {
 		attempts++
 		if attempts < 2 {
 			return errors.New("temporary failure")
@@ -171,7 +175,11 @@ func ExampleExecuteWithRetry() {
 		xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
 		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
 	)
-	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
+	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	result, err := xbreaker.ExecuteWithRetry(ctx, combo, func() (int, error) {
@@ -197,7 +205,11 @@ func ExampleNewRetryThenBreak() {
 		xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(2)),
 	)
 
-	rtb := xbreaker.NewRetryThenBreak(retryer, breaker)
+	rtb, err := xbreaker.NewRetryThenBreak(retryer, breaker)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	// 第一次调用：重试3次都失败 -> 熔断器记录1次失败
@@ -220,7 +232,11 @@ func ExampleNewManagedBreaker() {
 	breaker := xbreaker.NewBreaker("typed-service")
 
 	// 包装为特定类型的托管熔断器
-	managed := xbreaker.NewManagedBreaker[string](breaker)
+	managed, err := xbreaker.NewManagedBreaker[string](breaker)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 
 	// 直接执行，无需传入 context
 	result, err := managed.Execute(func() (string, error) {

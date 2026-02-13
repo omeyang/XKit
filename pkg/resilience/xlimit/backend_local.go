@@ -8,6 +8,12 @@ import (
 
 // localBackend 本地令牌桶后端
 // 使用内存存储，适用于单 Pod 场景或作为分布式限流的降级方案
+//
+// 设计决策: buckets 使用 sync.Map 存储，当前无自动过期清理。
+// 理由：(1) 本地后端主要用于降级场景，非常驻存储；
+// (2) 高基数场景应使用分布式后端（Redis 自带 TTL）；
+// (3) 可通过 Reset 方法手动清理特定键。
+// 如需定期清理，由调用方通过重建 limiter 实例实现。
 type localBackend struct {
 	buckets          sync.Map // map[string]*tokenBucket
 	podCount         int

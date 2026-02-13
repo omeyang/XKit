@@ -714,6 +714,39 @@ func TestKV_Count_Error(t *testing.T) {
 	}
 }
 
+// TestKV_PutWithTTL_PutError_RevokeError 测试 PutWithTTL 写入失败且租约撤销也失败时，错误被优雅忽略。
+func TestKV_PutWithTTL_PutError_RevokeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	ttl := 10 * time.Second
+	leaseID := clientv3.LeaseID(123456)
+
+	mockClient.EXPECT().
+		Grant(ctx, int64(10)).
+		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
+
+	mockClient.EXPECT().
+		Put(ctx, key, string(value), gomock.Any()).
+		Return(nil, errors.New("put failed"))
+
+	// Revoke 也失败，tryRevokeLease 应优雅处理
+	mockClient.EXPECT().
+		Revoke(gomock.Any(), leaseID).
+		Return(nil, errors.New("revoke failed"))
+
+	err := c.PutWithTTL(ctx, key, value, ttl)
+	if err == nil {
+		t.Fatal("PutWithTTL() error = nil, want error")
+	}
+}
+
 // TestClient_RawClient 测试 RawClient 返回 nil（使用 mock 时）。
 func TestClient_RawClient(t *testing.T) {
 	ctrl := gomock.NewController(t)

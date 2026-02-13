@@ -438,6 +438,34 @@ func TestUpdateRetryHeaders_SubsequentRetry(t *testing.T) {
 // DLQ Header Constants Tests
 // =============================================================================
 
+// =============================================================================
+// parseOriginalPartition / parseOriginalOffset Tests
+// =============================================================================
+
+func TestParseOriginalPartition_InvalidValue(t *testing.T) {
+	msg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{Partition: 5},
+		Headers: []kafka.Header{
+			{Key: HeaderOriginalPartition, Value: []byte("not-a-number")},
+		},
+	}
+
+	// 无效值应回退到当前消息的分区号
+	assert.Equal(t, int32(5), parseOriginalPartition(msg))
+}
+
+func TestParseOriginalOffset_InvalidValue(t *testing.T) {
+	msg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{Offset: 99},
+		Headers: []kafka.Header{
+			{Key: HeaderOriginalOffset, Value: []byte("not-a-number")},
+		},
+	}
+
+	// 无效值应回退到当前消息的偏移量
+	assert.Equal(t, int64(99), parseOriginalOffset(msg))
+}
+
 func TestDLQHeaderConstants(t *testing.T) {
 	assert.Equal(t, "x-retry-count", HeaderRetryCount)
 	assert.Equal(t, "x-original-topic", HeaderOriginalTopic)

@@ -73,16 +73,6 @@ func ExtractTraceFromHTTPHeader(h http.Header) xctx.Trace {
 	}
 }
 
-// ExtractTraceFromHTTPRequest 从 HTTP Request 提取追踪信息
-//
-// 等价于 ExtractTraceFromHTTPHeader(r.Header)。
-func ExtractTraceFromHTTPRequest(r *http.Request) xctx.Trace {
-	if r == nil {
-		return xctx.Trace{}
-	}
-	return ExtractTraceFromHTTPHeader(r.Header)
-}
-
 // ExtractFromHTTPRequest 从 HTTP Request 提取租户信息
 //
 // 等价于 ExtractFromHTTPHeader(r.Header)。
@@ -91,6 +81,16 @@ func ExtractFromHTTPRequest(r *http.Request) TenantInfo {
 		return TenantInfo{}
 	}
 	return ExtractFromHTTPHeader(r.Header)
+}
+
+// ExtractTraceFromHTTPRequest 从 HTTP Request 提取追踪信息
+//
+// 等价于 ExtractTraceFromHTTPHeader(r.Header)。
+func ExtractTraceFromHTTPRequest(r *http.Request) xctx.Trace {
+	if r == nil {
+		return xctx.Trace{}
+	}
+	return ExtractTraceFromHTTPHeader(r.Header)
 }
 
 // =============================================================================
@@ -104,6 +104,9 @@ func HTTPMiddleware() func(http.Handler) http.Handler {
 }
 
 // MiddlewareOption 中间件选项
+//
+// 设计决策: middlewareConfig 与 grpcInterceptorConfig 字段相同但独立定义，
+// 保持 HTTP 和 gRPC 协议选项的类型独立，允许各自独立演进。
 type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
@@ -184,8 +187,8 @@ func injectTenantToHTTPContext(r *http.Request, cfg *middlewareConfig) (context.
 		return nil, http.StatusBadRequest, err
 	}
 
-	// 注入租户信息到 context
-	ctx, err := injectTenantInfoToContext(ctx, info)
+	// 注入租户信息到 context（复用公开 API）
+	ctx, err := WithTenantInfo(ctx, info)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -209,24 +212,6 @@ func validateHTTPTenantInfo(info TenantInfo, cfg *middlewareConfig) error {
 		return ErrEmptyTenantID
 	}
 	return nil
-}
-
-// injectTenantInfoToContext 将租户信息注入 context
-func injectTenantInfoToContext(ctx context.Context, info TenantInfo) (context.Context, error) {
-	var err error
-	if info.TenantID != "" {
-		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if info.TenantName != "" {
-		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return ctx, nil
 }
 
 // injectHTTPTraceToContext 处理追踪信息并注入 context
@@ -281,28 +266,45 @@ func injectPlatformHeaders(h http.Header) {
 }
 
 // injectTenantHeaders 注入请求级租户信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 Del。
+// 防止请求对象复用时旧租户信息泄漏到下游。
 func injectTenantHeaders(ctx context.Context, h http.Header) {
 	if tid := TenantID(ctx); tid != "" {
 		h.Set(HeaderTenantID, tid)
+	} else {
+		h.Del(HeaderTenantID)
 	}
 	if tname := TenantName(ctx); tname != "" {
 		h.Set(HeaderTenantName, tname)
+	} else {
+		h.Del(HeaderTenantName)
 	}
 }
 
 // injectTraceHeaders 注入追踪信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 Del。
 func injectTraceHeaders(ctx context.Context, h http.Header) {
 	if tid := xctx.TraceID(ctx); tid != "" {
 		h.Set(HeaderTraceID, tid)
+	} else {
+		h.Del(HeaderTraceID)
 	}
 	if sid := xctx.SpanID(ctx); sid != "" {
 		h.Set(HeaderSpanID, sid)
+	} else {
+		h.Del(HeaderSpanID)
 	}
 	if rid := xctx.RequestID(ctx); rid != "" {
 		h.Set(HeaderRequestID, rid)
+	} else {
+		h.Del(HeaderRequestID)
 	}
 	if flags := xctx.TraceFlags(ctx); flags != "" {
 		h.Set(HeaderTraceFlags, flags)
+	} else {
+		h.Del(HeaderTraceFlags)
 	}
 }
 

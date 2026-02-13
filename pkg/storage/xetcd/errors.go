@@ -22,6 +22,9 @@ var (
 
 	// ErrEmptyKey 键名为空。
 	ErrEmptyKey = errors.New("xetcd: key is empty")
+
+	// ErrInvalidConfig 配置值无效。
+	ErrInvalidConfig = errors.New("xetcd: invalid config")
 )
 
 // IsKeyNotFound 检查错误是否为键不存在。

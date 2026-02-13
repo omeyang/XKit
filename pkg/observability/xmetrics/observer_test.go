@@ -163,10 +163,10 @@ func TestNoopObserver_Start_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	observer := NoopObserver{}
 
-	// NoopObserver 对 nil ctx 也应该安全
+	// NoopObserver 对 nil ctx 也应该安全，返回 context.Background()
 	newCtx, span := observer.Start(nilCtx, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 
@@ -291,10 +291,10 @@ func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
 	var nilCtx context.Context
-	// nil context + nil observer
+	// nil context + nil observer → ctx 归一化为 context.Background()
 	newCtx, span := Start(nilCtx, nil, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 

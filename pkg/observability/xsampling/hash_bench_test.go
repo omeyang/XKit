@@ -97,10 +97,10 @@ func TestHashDistribution(t *testing.T) {
 	// 生成真实场景的 key（模拟 trace_id、tenant_id 等）
 	// 使用伪随机方式生成，模拟真实的 trace_id 分布
 	keys := make([]string, numKeys)
-	for i := 0; i < numKeys; i++ {
+	for i := range uint64(numKeys) {
 		// 使用 FNV 混合生成伪随机的 hex 字符串，模拟真实 trace_id
 		// 这比纯顺序数字更接近真实场景
-		h := uint64(i) * 0x9e3779b97f4a7c15 //nolint:gosec // G115: i 是非负循环变量，转换安全
+		h := i * 0x9e3779b97f4a7c15
 		keys[i] = fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
 	}
 

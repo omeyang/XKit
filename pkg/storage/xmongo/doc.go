@@ -16,5 +16,8 @@
 //   - Stats()：统计信息
 //   - FindPage()：分页查询
 //   - BulkWrite()：批量写入（支持 context 取消）
+//   - 慢查询检测：支持同步（SlowQueryHook）和异步（AsyncSlowQueryHook）回调
 //
+// Close() 可安全重复调用，首次关闭执行断连，后续调用返回 ErrClosed。
+// 所有方法在 Close() 后调用均返回 ErrClosed。并发安全。
 package xmongo

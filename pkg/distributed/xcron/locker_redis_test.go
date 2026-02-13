@@ -27,7 +27,8 @@ func TestNewRedisLocker(t *testing.T) {
 	defer client.Close()
 
 	t.Run("default options", func(t *testing.T) {
-		locker := NewRedisLocker(client)
+		locker, err := NewRedisLocker(client)
+		require.NoError(t, err)
 
 		require.NotNil(t, locker)
 		assert.Equal(t, "xcron:lock:", locker.prefix)
@@ -35,31 +36,35 @@ func TestNewRedisLocker(t *testing.T) {
 	})
 
 	t.Run("with custom prefix", func(t *testing.T) {
-		locker := NewRedisLocker(client, WithRedisKeyPrefix("myapp:lock:"))
+		locker, err := NewRedisLocker(client, WithRedisKeyPrefix("myapp:lock:"))
+		require.NoError(t, err)
 
 		assert.Equal(t, "myapp:lock:", locker.prefix)
 	})
 
 	t.Run("with custom identity", func(t *testing.T) {
-		locker := NewRedisLocker(client, WithRedisIdentity("custom-identity"))
+		locker, err := NewRedisLocker(client, WithRedisIdentity("custom-identity"))
+		require.NoError(t, err)
 
 		assert.Equal(t, "custom-identity", locker.identity)
 	})
 
 	t.Run("with multiple options", func(t *testing.T) {
-		locker := NewRedisLocker(client,
+		locker, err := NewRedisLocker(client,
 			WithRedisKeyPrefix("test:"),
 			WithRedisIdentity("test-id"),
 		)
+		require.NoError(t, err)
 
 		assert.Equal(t, "test:", locker.prefix)
 		assert.Equal(t, "test-id", locker.identity)
 	})
 
-	t.Run("nil client panics", func(t *testing.T) {
-		assert.Panics(t, func() {
-			NewRedisLocker(nil)
-		})
+	t.Run("nil client returns error", func(t *testing.T) {
+		locker, err := NewRedisLocker(nil)
+
+		assert.Nil(t, locker)
+		assert.ErrorIs(t, err, ErrNilRedisClient)
 	})
 }
 
@@ -73,7 +78,8 @@ func TestRedisLocker_Identity(t *testing.T) {
 	})
 	defer client.Close()
 
-	locker := NewRedisLocker(client, WithRedisIdentity("my-identity"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("my-identity"))
+	require.NoError(t, err)
 
 	assert.Equal(t, "my-identity", locker.Identity())
 }
@@ -88,7 +94,8 @@ func TestRedisLocker_Client(t *testing.T) {
 	})
 	defer client.Close()
 
-	locker := NewRedisLocker(client)
+	locker, err := NewRedisLocker(client)
+	require.NoError(t, err)
 	assert.Equal(t, client, locker.Client())
 }
 
@@ -153,7 +160,8 @@ func setupRedisLocker(t *testing.T) (*RedisLocker, *miniredis.Miniredis) {
 		Addr: mr.Addr(),
 	})
 
-	locker := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		client.Close()
@@ -266,7 +274,8 @@ func TestRedisLockHandle_Unlock(t *testing.T) {
 			Addr: mr.Addr(),
 		})
 		defer client.Close()
-		locker2 := NewRedisLocker(client, WithRedisIdentity("another-instance"))
+		locker2, err := NewRedisLocker(client, WithRedisIdentity("another-instance"))
+		require.NoError(t, err)
 
 		ctx := context.Background()
 
@@ -359,12 +368,14 @@ func TestRedisLocker_WithPrefix(t *testing.T) {
 	ctx := context.Background()
 
 	// 创建两个不同前缀的 locker
-	locker1 := NewRedisLocker(client,
+	locker1, err := NewRedisLocker(client,
 		WithRedisKeyPrefix("app1:lock:"),
 		WithRedisIdentity("instance-1"))
-	locker2 := NewRedisLocker(client,
+	require.NoError(t, err)
+	locker2, err := NewRedisLocker(client,
 		WithRedisKeyPrefix("app2:lock:"),
 		WithRedisIdentity("instance-2"))
+	require.NoError(t, err)
 
 	// 两个 locker 可以独立获取同名锁（因为前缀不同）
 	handle1, err := locker1.TryLock(ctx, "job-1", 30*time.Second)

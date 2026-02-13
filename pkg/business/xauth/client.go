@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync/atomic"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -189,12 +190,10 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 }
 
 // defaultTLSConfig 返回默认 TLS 配置。
-// 默认跳过证书验证，生产环境建议通过 Config.TLS 配置安全的 TLS 选项。
+// 默认启用证书验证（安全优先），开发环境可通过 Config.TLS 配置跳过验证。
 func defaultTLSConfig() *tls.Config {
-	//nolint:gosec // G402: 默认跳过证书验证以简化开发环境配置，生产环境应配置 TLS
 	return &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
+		MinVersion: tls.VersionTLS12,
 	}
 }
 
@@ -303,14 +302,13 @@ func (c *client) doAuthRequest(ctx context.Context, tenantID string, req *AuthRe
 		return fmt.Errorf("xauth: get token failed: %w", err)
 	}
 
-	// 构建请求
-	if req.Headers == nil {
-		req.Headers = make(map[string]string)
-	}
-	req.Headers["Authorization"] = "Bearer " + token
+	// 克隆 Headers，避免修改调用方的原始 map
+	headers := make(map[string]string, len(req.Headers)+1)
+	maps.Copy(headers, req.Headers)
+	headers["Authorization"] = "Bearer " + token
 
 	// 发送请求
-	return c.httpClient.request(ctx, req.Method, req.URL, req.Headers, req.Body, req.Response)
+	return c.httpClient.request(ctx, req.Method, req.URL, headers, req.Body, req.Response)
 }
 
 // isUnauthorizedError 检查是否是 401 未授权错误。

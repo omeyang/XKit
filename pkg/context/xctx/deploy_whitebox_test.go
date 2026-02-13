@@ -7,6 +7,31 @@ import (
 )
 
 // =============================================================================
+// DeploymentTypeRaw 私有分支测试
+// =============================================================================
+
+// TestDeploymentTypeRaw_TypeSwitch 测试 DeploymentTypeRaw 中的 type switch 分支
+func TestDeploymentTypeRaw_TypeSwitch(t *testing.T) {
+	t.Run("string stored directly", func(t *testing.T) {
+		// 直接存储 string（非 DeploymentType），覆盖 case string: 分支
+		ctx := context.WithValue(context.Background(), keyDeploymentType, "LOCAL")
+		got := DeploymentTypeRaw(ctx)
+		if got != DeploymentLocal {
+			t.Errorf("DeploymentTypeRaw() = %q, want %q", got, DeploymentLocal)
+		}
+	})
+
+	t.Run("other type stored directly", func(t *testing.T) {
+		// 直接存储非字符串类型，覆盖 default 分支
+		ctx := context.WithValue(context.Background(), keyDeploymentType, 123)
+		got := DeploymentTypeRaw(ctx)
+		if got != "" {
+			t.Errorf("DeploymentTypeRaw() = %q, want empty", got)
+		}
+	})
+}
+
+// =============================================================================
 // GetDeploymentType 私有分支测试
 // =============================================================================
 

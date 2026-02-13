@@ -35,6 +35,8 @@ var (
 	ErrConnectionClosed = errors.New("xdbg: connection closed")
 
 	// ErrOutputTruncated 表示输出被截断。
+	// 设计决策: 此错误供客户端代码使用（如 xdbgctl 判断响应是否被截断），
+	// 服务端通过 Response.Truncated 布尔字段传递截断状态，不直接使用此错误。
 	ErrOutputTruncated = errors.New("xdbg: output truncated")
 
 	// ErrInvalidState 表示服务器状态无效，无法执行此操作。

@@ -36,9 +36,6 @@ var (
 
 	// ErrMissingAPIKey 表示 API Key 未配置。
 	ErrMissingAPIKey = errors.New("xauth: missing api_key")
-
-	// ErrMissingCredentials 表示认证凭据未配置（client_id/client_secret 或 api_key）。
-	ErrMissingCredentials = errors.New("xauth: missing credentials (client_id/client_secret or api_key)")
 )
 
 // =============================================================================
@@ -48,9 +45,6 @@ var (
 var (
 	// ErrTokenNotFound 表示缓存中未找到 Token。
 	ErrTokenNotFound = errors.New("xauth: token not found")
-
-	// ErrTokenExpired 表示 Token 已过期。
-	ErrTokenExpired = errors.New("xauth: token expired")
 
 	// ErrTokenInvalid 表示 Token 无效（验证失败）。
 	ErrTokenInvalid = errors.New("xauth: token invalid")
@@ -106,9 +100,6 @@ var (
 var (
 	// ErrCacheMiss 表示缓存未命中。
 	ErrCacheMiss = errors.New("xauth: cache miss")
-
-	// ErrCacheSetFailed 表示缓存写入失败。
-	ErrCacheSetFailed = errors.New("xauth: cache set failed")
 )
 
 // =============================================================================
@@ -255,16 +246,18 @@ func (e *APIError) Retryable() bool {
 }
 
 // Is 实现 errors.Is 接口。
+// 设计决策: 使用直接 == 比较而非 errors.Is，因为 target 参数是调用方传入的哨兵错误，
+// 而 ErrUnauthorized 等均为 errors.New 创建的简单值，无需递归 Unwrap。
 func (e *APIError) Is(target error) bool {
 	switch {
 	case e.StatusCode == 401:
-		return errors.Is(target, ErrUnauthorized)
+		return target == ErrUnauthorized
 	case e.StatusCode == 403:
-		return errors.Is(target, ErrForbidden)
+		return target == ErrForbidden
 	case e.StatusCode == 404:
-		return errors.Is(target, ErrNotFound)
+		return target == ErrNotFound
 	case e.StatusCode >= 500:
-		return errors.Is(target, ErrServerError)
+		return target == ErrServerError
 	}
 	return false
 }

@@ -43,11 +43,11 @@ var (
 // 用法：
 //
 //	// 方式 1：直接创建
-//	locker := xcron.NewRedisLocker(redisClient)
+//	locker, err := xcron.NewRedisLocker(redisClient)
 //
 //	// 方式 2：复用 xcache 的客户端
 //	cache := xcache.NewRedis(cfg)
-//	locker := xcron.NewRedisLocker(cache.Client())
+//	locker, err := xcron.NewRedisLocker(cache.Client())
 //
 //	scheduler := xcron.New(xcron.WithLocker(locker))
 type RedisLocker struct {
@@ -85,13 +85,16 @@ func WithRedisIdentity(identity string) RedisLockerOption {
 	}
 }
 
+// ErrNilRedisClient 表示 Redis 客户端为 nil。
+var ErrNilRedisClient = fmt.Errorf("xcron: redis client cannot be nil")
+
 // NewRedisLocker 创建基于 Redis 的分布式锁。
 //
 // client 可以是 *redis.Client、*redis.ClusterClient 或 xcache.Client() 返回值。
-// 如果 client 为 nil，会 panic。
-func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) *RedisLocker {
+// 如果 client 为 nil，返回 [ErrNilRedisClient]。
+func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) (*RedisLocker, error) {
 	if client == nil {
-		panic("xcron: redis client cannot be nil")
+		return nil, ErrNilRedisClient
 	}
 
 	l := &RedisLocker{
@@ -104,7 +107,7 @@ func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) *Re
 		opt(l)
 	}
 
-	return l
+	return l, nil
 }
 
 // TryLock 尝试获取锁（非阻塞）。

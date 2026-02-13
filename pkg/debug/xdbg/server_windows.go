@@ -26,7 +26,7 @@ func (s ServerState) String() string {
 
 // Server 调试服务器（Windows stub）。
 type Server struct {
-	opts     *Options
+	opts     *options
 	registry *CommandRegistry
 }
 

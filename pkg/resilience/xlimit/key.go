@@ -105,6 +105,11 @@ func (k Key) Render(template string) string {
 }
 
 // resolveVar 解析变量值
+//
+// 设计决策: 未解析的变量保持原样返回（如 "${tenant_id}"），而非返回错误。
+// 这是限流键渲染的标准行为：当某个维度缺失时，不同请求会共享同一个桶，
+// 相当于该维度不参与限流。如需强制要求所有维度必须存在，
+// 应在 KeyExtractor 层做前置校验，而非在模板渲染层。
 func (k Key) resolveVar(varName string) string {
 	switch varName {
 	case varTenantID:

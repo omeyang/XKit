@@ -140,6 +140,11 @@ linters:
         linters:
           - errcheck
         text: "tp\\.Shutdown|mp\\.Shutdown"  # TracerProvider/MeterProvider shutdown in defer
+      # Test files: annotated intentional error ignoring (Chinese comments as documentation)
+      - path: _test\.go
+        linters:
+          - errcheck
+        source: "压力测试|测试中忽略|并发关闭测试|并发压力测试|Shutdown 后|nil ctx panic"
       # Benchmark tests - error handling is intentionally skipped for performance measurement
       - path: benchmark_test\.go
         linters:
@@ -176,6 +181,11 @@ linters:
         linters:
           - errcheck
         source: "Parse"  # fuzz test Parse calls
+      # xid benchmark/test files: Init/New/sonyflake errors intentionally ignored for perf measurement
+      - path: xid/.*_test\.go
+        linters:
+          - errcheck
+        source: "// benchmark"
       # xdlock factory/locker/handle cleanup in tests
       - path: _test\.go
         linters:
@@ -197,6 +207,11 @@ linters:
         linters:
           - errcheck
         source: "config\\.Validate"  # config validation in benchmarks
+      # xconf test files: watcher stop in test cleanup
+      - path: xconf/.*_test\.go
+        linters:
+          - errcheck
+        source: "w\\.Stop"  # watcher stop in test cleanup
       # Trace ID/Span ID parsing in tests (known valid values)
       - path: _test\.go
         linters:
@@ -211,6 +226,26 @@ linters:
       - linters:
           - gosec
         text: "G304"    # Potential file inclusion via variable - acceptable for logging library
+      # xsampling: CountSampler.n validated >= 1 in NewCountSampler; int→uint64 safe
+      - path: xsampling/basic\.go
+        linters:
+          - gosec
+        source: "uint64\\(s\\.n\\)"
+      # xkeylock: shardMask conversion safe — sc validated as positive power of 2 in [1, maxShardCount]
+      - path: xkeylock/options\.go
+        linters:
+          - gosec
+        source: "shardMask = uint64"
+      # xid: sonyflake guarantees machine ID in 0-65535 range; uint16 cast is safe
+      - path: xid/xid\.go
+        linters:
+          - gosec
+        source: "cfg\\.checkMachineID\\(uint16\\(id\\)\\)"
+      # xid: intentional FNV-1a hash truncation to 16-bit machine ID
+      - path: xid/machine\.go
+        linters:
+          - gosec
+        source: "return uint16\\(h\\.Sum32\\(\\)\\)"
       # xrotate: chmod errors are non-critical for log rotation (write succeeded, permission is best-effort)
       - path: xrotate/lumberjack\.go
         linters:
@@ -229,6 +264,10 @@ linters:
         linters:
           - errcheck
         source: "findBackups"  # Helper function error in tests
+      - path: xrotate/example_test\.go
+        linters:
+          - errcheck
+        source: "os\\.RemoveAll"  # Temp dir cleanup in examples is best-effort
       # xrotate fuzz tests: full errcheck exclusion (fuzz tests focus on panic detection, not error handling)
       - path: fuzz_test\.go
         linters:

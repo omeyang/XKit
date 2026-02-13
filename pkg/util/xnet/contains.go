@@ -59,14 +59,11 @@ func MergeRanges(ranges []netipx.IPRange) ([]netipx.IPRange, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
-	// 显式校验每个范围的有效性
+	var b netipx.IPSetBuilder
 	for i, r := range ranges {
 		if !r.IsValid() {
 			return nil, fmt.Errorf("%w: range [%d] %s-%s is invalid", ErrInvalidRange, i, r.From(), r.To())
 		}
-	}
-	var b netipx.IPSetBuilder
-	for _, r := range ranges {
 		b.AddRange(r)
 	}
 	set, err := b.IPSet()

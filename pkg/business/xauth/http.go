@@ -133,8 +133,8 @@ func (c *HTTPClient) request(
 	// 开始 HTTP 请求观测
 	// 使用 sanitizeURL 去除查询参数，避免高基数问题
 	ctx, span := xmetrics.Start(ctx, c.observer, xmetrics.SpanOptions{
-		Component: "xauth",
-		Operation: "HTTP",
+		Component: MetricsComponent,
+		Operation: MetricsOpHTTPRequest,
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
 			{Key: "http.method", Value: method},
@@ -171,6 +171,9 @@ func (c *HTTPClient) request(
 }
 
 // buildURL 构建请求 URL。
+// 设计决策: 支持绝对 URL 是有意为之——同一认证域内可能需要跨主机请求。
+// 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
+// baseURL 与 path 拼接时约定：baseURL 不含尾部斜杠，path 以斜杠开头。
 func (c *HTTPClient) buildURL(path string) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
@@ -187,15 +190,30 @@ func sanitizeURL(rawURL string) string {
 }
 
 // buildRequestBody 构建请求体。
+// 支持以下类型：
+//   - nil: 无请求体
+//   - string: 直接作为请求体（用于 form-encoded 数据）
+//   - []byte: 直接作为请求体
+//   - io.Reader: 直接使用
+//   - 其他: JSON 序列化
 func (c *HTTPClient) buildRequestBody(body any) (io.Reader, error) {
 	if body == nil {
 		return nil, nil
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("xauth: marshal request body failed: %w", err)
+	switch v := body.(type) {
+	case string:
+		return strings.NewReader(v), nil
+	case []byte:
+		return bytes.NewReader(v), nil
+	case io.Reader:
+		return v, nil
+	default:
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("xauth: marshal request body failed: %w", err)
+		}
+		return bytes.NewReader(data), nil
 	}
-	return bytes.NewReader(data), nil
 }
 
 // setHeaders 设置请求头。

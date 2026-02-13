@@ -34,6 +34,17 @@ type options struct {
 	onFallback       func(key Key, strategy FallbackStrategy, err error)
 	customFallback   FallbackFunc
 	podCountProvider PodCountProvider
+	initErr          error // 配置加载阶段的错误，延迟到 New/NewLocal 时返回
+}
+
+// validate 验证选项并返回初始化阶段收集的错误
+// 设计决策: Option 函数签名不支持返回错误，因此将配置加载错误
+// 暂存在 initErr 中，在 New/NewLocal 构造时统一检查。
+func (o *options) validate() error {
+	if o.initErr != nil {
+		return o.initErr
+	}
+	return o.config.Validate()
 }
 
 // Option 配置选项函数

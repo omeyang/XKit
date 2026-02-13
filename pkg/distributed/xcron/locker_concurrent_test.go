@@ -31,7 +31,8 @@ func TestRedisLocker_ConcurrentAcquire(t *testing.T) {
 	defer client.Close()
 
 	// 使用同一个 locker（同一个 identity）
-	locker := NewRedisLocker(client, WithRedisIdentity("same-instance"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("same-instance"))
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	const numGoroutines = 10
@@ -93,7 +94,8 @@ func TestRedisLocker_UnlockDoesNotAffectOther(t *testing.T) {
 	})
 	defer client.Close()
 
-	locker := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	// Goroutine 1 获取锁
@@ -142,7 +144,8 @@ func TestRedisLocker_TokenUniqueness(t *testing.T) {
 	})
 	defer client.Close()
 
-	locker := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	const numAcquires = 100
@@ -179,7 +182,8 @@ func TestRedisLocker_RenewOnlyAffectsOwnHandle(t *testing.T) {
 	})
 	defer client.Close()
 
-	locker := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	locker, err := NewRedisLocker(client, WithRedisIdentity("test-instance"))
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	// 获取锁

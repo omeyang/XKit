@@ -202,7 +202,10 @@ func BenchmarkLoader_Load_CacheHit(b *testing.B) {
 	ctx := context.Background()
 	_ = cache.Client().Set(ctx, "benchmark_key", "cached_value", 0).Err()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -232,7 +235,10 @@ func BenchmarkLoader_Load_CacheMiss(b *testing.B) {
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -263,7 +269,10 @@ func BenchmarkLoader_LoadHash_CacheHit(b *testing.B) {
 	ctx := context.Background()
 	_ = cache.Client().HSet(ctx, "benchmark_hash", "field", "cached_value").Err()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -438,7 +447,10 @@ func BenchmarkLoader_Load_WithSingleflight_Parallel(b *testing.B) {
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
@@ -473,7 +485,10 @@ func BenchmarkLoader_LoadHash_WithSingleflight_Parallel(b *testing.B) {
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}

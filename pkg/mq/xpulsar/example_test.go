@@ -15,8 +15,8 @@ import (
 func ExampleDLQBuilder() {
 	// 创建 DLQ 配置
 	dlqPolicy := xpulsar.NewDLQBuilder().
-		WithMaxDeliveries(5).                // 最多投递 5 次
-		WithDeadLetterTopic("orders.dlq").   // 自定义死信 Topic
+		WithMaxDeliveries(5).                 // 最多投递 5 次
+		WithDeadLetterTopic("orders.dlq").    // 自定义死信 Topic
 		WithRetryLetterTopic("orders.retry"). // 自定义重试 Topic
 		Build()
 
@@ -139,11 +139,17 @@ func Example_errors() {
 	fmt.Println("空消息错误:", xpulsar.ErrNilMessage)
 	fmt.Println("空处理器错误:", xpulsar.ErrNilHandler)
 	fmt.Println("空 URL 错误:", xpulsar.ErrEmptyURL)
+	fmt.Println("空生产者错误:", xpulsar.ErrNilProducer)
+	fmt.Println("空消费者错误:", xpulsar.ErrNilConsumer)
+	fmt.Println("客户端已关闭:", xpulsar.ErrClosed)
 	// Output:
 	// 空客户端错误: mq: nil client
 	// 空消息错误: mq: nil message
 	// 空处理器错误: mq: nil handler
 	// 空 URL 错误: xpulsar: empty URL
+	// 空生产者错误: xpulsar: nil producer
+	// 空消费者错误: xpulsar: nil consumer
+	// 客户端已关闭: xpulsar: client closed
 }
 
 // ExampleNoopTracer 演示空追踪器

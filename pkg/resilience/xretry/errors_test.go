@@ -1,7 +1,9 @@
 package xretry
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +73,24 @@ func TestIsRetryable(t *testing.T) {
 	t.Run("RegularError", func(t *testing.T) {
 		err := errors.New("regular error")
 		assert.True(t, IsRetryable(err)) // 默认可重试
+	})
+
+	t.Run("ContextCanceled", func(t *testing.T) {
+		assert.False(t, IsRetryable(context.Canceled))
+	})
+
+	t.Run("ContextDeadlineExceeded", func(t *testing.T) {
+		assert.False(t, IsRetryable(context.DeadlineExceeded))
+	})
+
+	t.Run("WrappedContextCanceled", func(t *testing.T) {
+		wrapped := fmt.Errorf("operation failed: %w", context.Canceled)
+		assert.False(t, IsRetryable(wrapped))
+	})
+
+	t.Run("WrappedContextDeadlineExceeded", func(t *testing.T) {
+		wrapped := fmt.Errorf("operation failed: %w", context.DeadlineExceeded)
+		assert.False(t, IsRetryable(wrapped))
 	})
 
 	t.Run("WrappedPermanentError", func(t *testing.T) {

@@ -175,6 +175,24 @@ func FuzzTemporaryError(f *testing.F) {
 	})
 }
 
+// clampFuzzRetryParams 限制 fuzz 参数范围避免测试过慢。
+func clampFuzzRetryParams(maxAttempts int, delayNs int64) (int, int64) {
+	if maxAttempts < 0 {
+		maxAttempts = 0
+	}
+	if maxAttempts > 10 {
+		maxAttempts = 10
+	}
+	if delayNs < 0 {
+		delayNs = 0
+	}
+	if delayNs > int64(time.Millisecond) {
+		delayNs = int64(time.Millisecond)
+	}
+
+	return maxAttempts, delayNs
+}
+
 // FuzzRetryer 测试 Retryer 的健壮性
 func FuzzRetryer(f *testing.F) {
 	f.Add(3, int64(100), true)
@@ -183,19 +201,7 @@ func FuzzRetryer(f *testing.F) {
 	f.Add(100, int64(1), false)
 
 	f.Fuzz(func(t *testing.T, maxAttempts int, delayNs int64, shouldSucceed bool) {
-		// 限制参数范围避免测试过慢
-		if maxAttempts < 0 {
-			maxAttempts = 0
-		}
-		if maxAttempts > 10 {
-			maxAttempts = 10
-		}
-		if delayNs < 0 {
-			delayNs = 0
-		}
-		if delayNs > int64(time.Millisecond) {
-			delayNs = int64(time.Millisecond)
-		}
+		maxAttempts, delayNs = clampFuzzRetryParams(maxAttempts, delayNs)
 
 		r := NewRetryer(
 			WithRetryPolicy(NewFixedRetry(maxAttempts)),

@@ -32,8 +32,9 @@ func HTTPMiddleware(limiter Limiter, opts ...MiddlewareOption) func(http.Handler
 			// 执行限流检查
 			result, err := limiter.Allow(r.Context(), key)
 			if err != nil {
-				// 限流器错误，可以选择放行或拒绝
-				// 默认放行以避免限流器故障影响业务
+				// 设计决策: 限流器内部错误（如 Redis 故障）时默认 fail-open。
+				// 理由：限流器故障不应阻塞业务请求，这是行业标准做法。
+				// 如需 fail-close 行为，应在 fallback 策略中配置 FallbackClose。
 				next.ServeHTTP(w, r)
 				return
 			}

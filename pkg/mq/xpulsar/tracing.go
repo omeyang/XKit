@@ -13,6 +13,9 @@ import (
 type MessageHandler func(ctx context.Context, msg pulsar.Message) error
 
 // TracingProducer 是带追踪注入能力的 Producer。
+//
+// 设计决策: 返回具体类型而非接口，因为 TracingProducer 嵌入了 pulsar.Producer，
+// 用户需要直接访问所有原生 Producer 方法。返回接口会丢失嵌入类型的方法集。
 type TracingProducer struct {
 	pulsar.Producer
 	tracer   Tracer
@@ -21,19 +24,27 @@ type TracingProducer struct {
 }
 
 // WrapProducer 包装 Producer 以注入追踪信息。
-func WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) *TracingProducer {
+// producer 不能为 nil，否则返回 ErrNilProducer。
+// topic 为空时自动从 producer.Topic() 获取。
+func WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error) {
+	if producer == nil {
+		return nil, ErrNilProducer
+	}
 	if observer == nil {
 		observer = xmetrics.NoopObserver{}
 	}
 	if tracer == nil {
 		tracer = NoopTracer{}
 	}
+	if topic == "" {
+		topic = producer.Topic()
+	}
 	return &TracingProducer{
 		Producer: producer,
 		tracer:   tracer,
 		observer: observer,
 		topic:    topic,
-	}
+	}, nil
 }
 
 // NewTracingProducer 创建带追踪注入能力的 Producer。
@@ -45,7 +56,7 @@ func NewTracingProducer(client Client, options pulsar.ProducerOptions, tracer Tr
 	if err != nil {
 		return nil, err
 	}
-	return WrapProducer(producer, options.Topic, tracer, observer), nil
+	return WrapProducer(producer, options.Topic, tracer, observer)
 }
 
 // Send 发送消息并注入追踪信息。
@@ -105,6 +116,9 @@ func (p *TracingProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMes
 }
 
 // TracingConsumer 是带追踪提取能力的 Consumer。
+//
+// 设计决策: 返回具体类型而非接口，因为 TracingConsumer 嵌入了 pulsar.Consumer，
+// 用户需要直接访问所有原生 Consumer 方法。返回接口会丢失嵌入类型的方法集。
 type TracingConsumer struct {
 	pulsar.Consumer
 	tracer   Tracer
@@ -113,7 +127,11 @@ type TracingConsumer struct {
 }
 
 // WrapConsumer 包装 Consumer 以提取追踪信息。
-func WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) *TracingConsumer {
+// consumer 不能为 nil，否则返回 ErrNilConsumer。
+func WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error) {
+	if consumer == nil {
+		return nil, ErrNilConsumer
+	}
 	if observer == nil {
 		observer = xmetrics.NoopObserver{}
 	}
@@ -125,7 +143,7 @@ func WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observe
 		tracer:   tracer,
 		observer: observer,
 		topic:    topic,
-	}
+	}, nil
 }
 
 // NewTracingConsumer 创建带追踪提取能力的 Consumer。
@@ -139,7 +157,7 @@ func NewTracingConsumer(client Client, options pulsar.ConsumerOptions, tracer Tr
 	}
 
 	topic := topicFromConsumerOptions(options)
-	return WrapConsumer(consumer, topic, tracer, observer), nil
+	return WrapConsumer(consumer, topic, tracer, observer)
 }
 
 // ReceiveWithContext 接收消息并提取追踪信息。
@@ -167,15 +185,22 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	if err != nil {
 		return err
 	}
+	// 设计决策: 防御性检查。正常情况下 Receive 要么返回消息要么返回错误，
+	// msg == nil && err == nil 不应出现。此分支仅作为安全兜底。
 	if msg == nil {
 		return nil
+	}
+
+	attrs := pulsarAttrs(c.topic)
+	if sub := c.Subscription(); sub != "" {
+		attrs = append(attrs, xmetrics.String("messaging.consumer.group.name", sub))
 	}
 
 	msgCtx, span := xmetrics.Start(msgCtx, c.observer, xmetrics.SpanOptions{
 		Component: componentName,
 		Operation: "consume",
 		Kind:      xmetrics.KindConsumer,
-		Attrs:     pulsarAttrs(c.topic),
+		Attrs:     attrs,
 	})
 	defer func() {
 		span.End(xmetrics.Result{Err: err})
@@ -188,10 +213,13 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 		return err
 	}
 
-	// 处理成功，Ack 消息
-	// 注意：Ack 错误通常不应阻止业务流程，因为消息已成功处理。
-	// Pulsar 客户端会在后台重试 Ack。返回 Ack 错误会导致消息被重复处理。
-	_ = c.Ack(msg) //nolint:errcheck // Ack failure should not affect successfully processed message
+	// 设计决策: Ack 失败不应阻止已成功处理的消息。消息已被 handler 成功消费，
+	// 返回 Ack 错误会导致调用方误认为处理失败而重复处理。
+	// Pulsar 客户端会在后台重试 Ack。
+	if ackErr := c.Ack(msg); ackErr != nil {
+		// Ack 错误仅做防御性检查，不影响返回值
+		_ = ackErr
+	}
 	return nil
 }
 
@@ -213,7 +241,7 @@ func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Mes
 		return c.Consume(ctx, handler)
 	}
 
-	opts := []mqcore.ConsumeLoopOption{}
+	var opts []mqcore.ConsumeLoopOption
 	if backoff != nil {
 		opts = append(opts, mqcore.WithBackoff(backoff))
 	}

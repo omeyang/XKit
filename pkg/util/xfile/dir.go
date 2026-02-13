@@ -1,6 +1,7 @@
 package xfile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -26,11 +27,18 @@ func EnsureDir(filename string) error {
 // EnsureDirWithPerm 确保文件的父目录存在，使用指定权限
 //
 // 参数：
-//   - filename: 文件路径（不是目录路径）
-//   - perm: 目录权限
+//   - filename: 文件路径（不是目录路径），不能为空
+//   - perm: 目录权限，必须包含所有者执行位（0100），否则目录无法遍历
 //
 // 如果目录已存在，不会修改其权限。
 func EnsureDirWithPerm(filename string, perm os.FileMode) error {
+	if filename == "" {
+		return fmt.Errorf("filename is required: %w", ErrEmptyPath)
+	}
+	// 目录必须包含所有者执行位（0100），否则无法进入和遍历
+	if perm&0100 == 0 {
+		return fmt.Errorf("directory permission %04o missing owner execute bit: %w", perm, ErrInvalidPerm)
+	}
 	dir := filepath.Dir(filename)
 	if dir == "" || dir == "." {
 		return nil

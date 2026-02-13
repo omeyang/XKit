@@ -5,6 +5,92 @@ import (
 	"testing"
 )
 
+// parseFuzzMAC 验证字节切片长度为 6 并解析为 MAC 地址。
+// 返回 ok=false 表示输入无效（长度不为 6 或解析失败）。
+func parseFuzzMAC(b []byte) (Addr, bool) {
+	if len(b) != 6 {
+		return Addr{}, false
+	}
+
+	addr, err := ParseBytes(b)
+	if err != nil {
+		return Addr{}, false
+	}
+
+	return addr, true
+}
+
+// parseTwoFuzzMACs 解析两个字节切片为 MAC 地址对。
+func parseTwoFuzzMACs(b1, b2 []byte) (a, b Addr, ok bool) {
+	a, ok = parseFuzzMAC(b1)
+	if !ok {
+		return a, b, false
+	}
+
+	b, ok = parseFuzzMAC(b2)
+	if !ok {
+		return a, b, false
+	}
+
+	return a, b, true
+}
+
+// assertCastExclusivity 验证 IsUnicast 和 IsMulticast 对有效地址互斥。
+func assertCastExclusivity(t *testing.T, addr Addr) {
+	t.Helper()
+
+	if !addr.IsValid() {
+		return
+	}
+
+	if addr.IsUnicast() && addr.IsMulticast() {
+		t.Errorf("addr is both unicast and multicast: %v", addr)
+	}
+	if !addr.IsUnicast() && !addr.IsMulticast() {
+		t.Errorf("addr is neither unicast nor multicast: %v", addr)
+	}
+}
+
+// assertOUIReconstructed 验证 OUI+NIC 拼接等于原地址。
+func assertOUIReconstructed(t *testing.T, addr Addr) {
+	t.Helper()
+
+	if !addr.IsValid() {
+		return
+	}
+
+	oui := addr.OUI()
+	nic := addr.NIC()
+	reconstructed := AddrFrom6([6]byte{oui[0], oui[1], oui[2], nic[0], nic[1], nic[2]})
+	if reconstructed != addr {
+		t.Errorf("OUI+NIC reconstruction failed: %v -> OUI=%v NIC=%v -> %v",
+			addr, oui, nic, reconstructed)
+	}
+}
+
+// assertValidationConsistency 验证 MAC 地址的各属性之间的一致性。
+func assertValidationConsistency(t *testing.T, addr Addr) {
+	t.Helper()
+
+	assertCastExclusivity(t, addr)
+
+	// IsUsable == IsValid && !IsSpecial
+	expectedUsable := addr.IsValid() && !addr.IsSpecial()
+	if addr.IsUsable() != expectedUsable {
+		t.Errorf("IsUsable inconsistent: IsValid=%v, IsSpecial=%v, IsUsable=%v",
+			addr.IsValid(), addr.IsSpecial(), addr.IsUsable())
+	}
+
+	// IsSpecial == IsZero || IsBroadcast
+	expectedSpecial := addr.IsZero() || addr.IsBroadcast()
+	if addr.IsSpecial() != expectedSpecial {
+		t.Errorf("IsSpecial inconsistent: IsZero=%v, IsBroadcast=%v, IsSpecial=%v",
+			addr.IsZero(), addr.IsBroadcast(), addr.IsSpecial())
+	}
+
+	assertOUIReconstructed(t, addr)
+}
+
 func FuzzParse(f *testing.F) {
 	// 添加种子语料
 	seeds := []string{
@@ -253,12 +339,8 @@ func FuzzNextPrevInverse(f *testing.F) {
 	f.Add([]byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00})
 
 	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) != 6 {
-			return
-		}
-
-		addr, err := ParseBytes(b)
-		if err != nil {
+		addr, ok := parseFuzzMAC(b)
+		if !ok {
 			return
 		}
 
@@ -314,6 +396,8 @@ func FuzzFormatParseRoundTrip(f *testing.F) {
 		FormatBare,
 		FormatColonUpper,
 		FormatDashUpper,
+		FormatDotUpper,
+		FormatBareUpper,
 	}
 
 	f.Fuzz(func(t *testing.T, b []byte) {
@@ -374,16 +458,8 @@ func FuzzCompareProperties(f *testing.F) {
 	)
 
 	f.Fuzz(func(t *testing.T, b1, b2 []byte) {
-		if len(b1) != 6 || len(b2) != 6 {
-			return
-		}
-
-		a, err := ParseBytes(b1)
-		if err != nil {
-			return
-		}
-		b, err := ParseBytes(b2)
-		if err != nil {
+		a, b, ok := parseTwoFuzzMACs(b1, b2)
+		if !ok {
 			return
 		}
 
@@ -426,49 +502,12 @@ func FuzzValidationConsistency(f *testing.F) {
 	f.Add([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}) // LAA
 
 	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) != 6 {
+		addr, ok := parseFuzzMAC(b)
+		if !ok {
 			return
 		}
 
-		addr, err := ParseBytes(b)
-		if err != nil {
-			return
-		}
-
-		// IsUnicast 和 IsMulticast 互斥（对于有效地址）
-		if addr.IsValid() {
-			if addr.IsUnicast() && addr.IsMulticast() {
-				t.Errorf("addr is both unicast and multicast: %v", addr)
-			}
-			if !addr.IsUnicast() && !addr.IsMulticast() {
-				t.Errorf("addr is neither unicast nor multicast: %v", addr)
-			}
-		}
-
-		// IsUsable == IsValid && !IsSpecial
-		expectedUsable := addr.IsValid() && !addr.IsSpecial()
-		if addr.IsUsable() != expectedUsable {
-			t.Errorf("IsUsable inconsistent: IsValid=%v, IsSpecial=%v, IsUsable=%v",
-				addr.IsValid(), addr.IsSpecial(), addr.IsUsable())
-		}
-
-		// IsSpecial == IsZero || IsBroadcast
-		expectedSpecial := addr.IsZero() || addr.IsBroadcast()
-		if addr.IsSpecial() != expectedSpecial {
-			t.Errorf("IsSpecial inconsistent: IsZero=%v, IsBroadcast=%v, IsSpecial=%v",
-				addr.IsZero(), addr.IsBroadcast(), addr.IsSpecial())
-		}
-
-		// OUI 和 NIC 拼接应等于原地址
-		if addr.IsValid() {
-			oui := addr.OUI()
-			nic := addr.NIC()
-			reconstructed := AddrFrom6([6]byte{oui[0], oui[1], oui[2], nic[0], nic[1], nic[2]})
-			if reconstructed != addr {
-				t.Errorf("OUI+NIC reconstruction failed: %v -> OUI=%v NIC=%v -> %v",
-					addr, oui, nic, reconstructed)
-			}
-		}
+		assertValidationConsistency(t, addr)
 	})
 }
 
@@ -537,16 +576,8 @@ func FuzzRangeReverseConsistency(f *testing.F) {
 	)
 
 	f.Fuzz(func(t *testing.T, b1, b2 []byte) {
-		if len(b1) != 6 || len(b2) != 6 {
-			return
-		}
-
-		from, err := ParseBytes(b1)
-		if err != nil {
-			return
-		}
-		to, err := ParseBytes(b2)
-		if err != nil {
+		from, to, ok := parseTwoFuzzMACs(b1, b2)
+		if !ok {
 			return
 		}
 

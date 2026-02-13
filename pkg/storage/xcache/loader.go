@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 )
@@ -143,6 +144,17 @@ type LoaderOptions struct {
 
 // LoaderOption 定义配置 Loader 的函数类型。
 type LoaderOption func(*LoaderOptions)
+
+// validate 校验配置一致性，在 NewLoader 构造期调用实现 fail-fast。
+func (o *LoaderOptions) validate() error {
+	if o.ExternalLock != nil && !o.EnableDistributedLock {
+		return fmt.Errorf("%w: ExternalLock is set but EnableDistributedLock is false", ErrInvalidConfig)
+	}
+	if o.EnableDistributedLock && o.DistributedLockTTL <= 0 {
+		return fmt.Errorf("%w: %w", ErrInvalidConfig, ErrInvalidLockTTL)
+	}
+	return nil
+}
 
 // defaultLoaderOptions 返回默认的 Loader 配置。
 func defaultLoaderOptions() *LoaderOptions {

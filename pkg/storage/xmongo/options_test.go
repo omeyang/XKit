@@ -36,9 +36,14 @@ func TestWithHealthTimeout(t *testing.T) {
 			expected: 30 * time.Second,
 		},
 		{
-			name:     "设置零值应保持原值",
+			name:     "设置零值应保持默认值",
 			timeout:  0,
-			expected: 0,
+			expected: 5 * time.Second,
+		},
+		{
+			name:     "设置负值应保持默认值",
+			timeout:  -1 * time.Second,
+			expected: 5 * time.Second,
 		},
 	}
 

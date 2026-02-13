@@ -1,6 +1,7 @@
 package xfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,6 +167,57 @@ func TestEnsureDirWithPerm(t *testing.T) {
 				t.Errorf("%q 不是目录", dir)
 			}
 		})
+	}
+}
+
+func TestEnsureDirWithPermInvalidPerm(t *testing.T) {
+	tests := []struct {
+		name    string
+		perm    os.FileMode
+		wantErr bool
+	}{
+		{"零权限", 0o000, true},
+		{"缺少执行位 0644", 0o644, true},
+		{"缺少执行位 0060", 0o060, true},
+		{"最小有效权限 0100", 0o100, false},
+		{"标准权限 0700", 0o700, false},
+		{"标准权限 0750", 0o750, false},
+		{"标准权限 0755", 0o755, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			filename := filepath.Join(tmpDir, "permcheck", "app.log")
+			err := EnsureDirWithPerm(filename, tt.perm)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("EnsureDirWithPerm(perm=%04o) 期望错误，但没有返回错误", tt.perm)
+				} else if !errors.Is(err, ErrInvalidPerm) {
+					t.Errorf("EnsureDirWithPerm(perm=%04o) 错误 = %v, errors.Is(ErrInvalidPerm) = false", tt.perm, err)
+				}
+			} else if err != nil {
+				t.Errorf("EnsureDirWithPerm(perm=%04o) 意外错误: %v", tt.perm, err)
+			}
+		})
+	}
+}
+
+func TestEnsureDirWithPermEmptyFilename(t *testing.T) {
+	err := EnsureDirWithPerm("", 0755)
+	if err == nil {
+		t.Fatal("EnsureDirWithPerm(\"\") 期望错误，但没有返回错误")
+	}
+	if !errors.Is(err, ErrEmptyPath) {
+		t.Errorf("EnsureDirWithPerm(\"\") 错误 = %v, errors.Is(ErrEmptyPath) = false", err)
+	}
+
+	err = EnsureDir("")
+	if err == nil {
+		t.Fatal("EnsureDir(\"\") 期望错误，但没有返回错误")
+	}
+	if !errors.Is(err, ErrEmptyPath) {
+		t.Errorf("EnsureDir(\"\") 错误 = %v, errors.Is(ErrEmptyPath) = false", err)
 	}
 }
 

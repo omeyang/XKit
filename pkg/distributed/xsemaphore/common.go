@@ -57,13 +57,21 @@ func resolveTenantID(ctx context.Context, explicitID string) string {
 	return xtenant.TenantID(ctx)
 }
 
+// validateCommonParams 校验公共参数：context、closed 状态和资源名
+func validateCommonParams(ctx context.Context, resource string, closed bool) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if closed {
+		return ErrSemaphoreClosed
+	}
+	return validateResource(resource)
+}
+
 // prepareAcquireCommon 准备获取许可的公共逻辑
 // 返回：配置、租户ID、错误
 func prepareAcquireCommon(ctx context.Context, resource string, opts []AcquireOption, closed bool) (*acquireOptions, string, error) {
-	if closed {
-		return nil, "", ErrSemaphoreClosed
-	}
-	if err := validateResource(resource); err != nil {
+	if err := validateCommonParams(ctx, resource, closed); err != nil {
 		return nil, "", err
 	}
 
@@ -92,10 +100,7 @@ func applyQueryOptions(opts []QueryOption) *queryOptions {
 
 // prepareQueryCommon 准备查询的公共逻辑
 func prepareQueryCommon(ctx context.Context, resource string, opts []QueryOption, closed bool) (*queryOptions, string, error) {
-	if closed {
-		return nil, "", ErrSemaphoreClosed
-	}
-	if err := validateResource(resource); err != nil {
+	if err := validateCommonParams(ctx, resource, closed); err != nil {
 		return nil, "", err
 	}
 

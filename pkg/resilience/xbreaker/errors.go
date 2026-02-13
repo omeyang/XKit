@@ -7,6 +7,19 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// errFailedByPolicy 当 SuccessPolicy 判定 nil error 为失败时使用的占位错误。
+// 这是一个极端情况：操作未返回错误，但 SuccessPolicy 仍判定为失败。
+var errFailedByPolicy = errors.New("xbreaker: operation marked as failed by success policy")
+
+// 参数校验错误
+var (
+	// ErrNilBreaker 传入的 Breaker 为 nil
+	ErrNilBreaker = errors.New("xbreaker: breaker cannot be nil")
+
+	// ErrNilRetryer 传入的 Retryer 为 nil
+	ErrNilRetryer = errors.New("xbreaker: retryer cannot be nil")
+)
+
 // BreakerError 熔断器错误包装类型
 //
 // 包装 gobreaker 的错误（ErrOpenState、ErrTooManyRequests），

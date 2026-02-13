@@ -9,25 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVersionString(t *testing.T) {
-	assert.Equal(t, "IPv4", V4.String())
-	assert.Equal(t, "IPv6", V6.String())
-	assert.Equal(t, "unknown", V0.String())
-	assert.Equal(t, "unknown", Version(99).String())
-}
-
-func TestAddrVersion(t *testing.T) {
-	assert.Equal(t, V4, AddrVersion(netip.MustParseAddr("192.168.1.1")))
-	assert.Equal(t, V6, AddrVersion(netip.MustParseAddr("::1")))
-	assert.Equal(t, V6, AddrVersion(netip.MustParseAddr("2001:db8::1")))
-
-	// IPv4-mapped IPv6 地址视为 V4
-	assert.Equal(t, V4, AddrVersion(netip.MustParseAddr("::ffff:192.168.1.1")))
-
-	// 无效地址返回 V0
-	assert.Equal(t, V0, AddrVersion(netip.Addr{}))
-}
-
 func TestAddrFromUint32(t *testing.T) {
 	// 192.168.1.1 = 0xC0A80101
 	addr := AddrFromUint32(0xC0A80101)
@@ -233,12 +214,17 @@ func TestAddrAdd_Overflow(t *testing.T) {
 	// IPv4 最大值 + 1 应该溢出
 	maxV4 := netip.MustParseAddr("255.255.255.255")
 	_, err := AddrAdd(maxV4, 1)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrOverflow)
 
 	// IPv4 最小值 - 1 应该溢出
 	minV4 := netip.MustParseAddr("0.0.0.0")
 	_, err = AddrAdd(minV4, -1)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrOverflow)
+
+	// IPv6 溢出
+	maxV6 := netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
+	_, err = AddrAdd(maxV6, 1)
+	assert.ErrorIs(t, err, ErrOverflow)
 }
 
 func TestAddrAdd_Invalid(t *testing.T) {

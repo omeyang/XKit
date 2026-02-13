@@ -83,6 +83,23 @@ func TestMockLocker(t *testing.T) {
 	})
 }
 
+func TestNoopLockHandle_Key(t *testing.T) {
+	locker := NoopLocker()
+	handle, err := locker.TryLock(context.Background(), "my-key", time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, "my-key", handle.Key())
+}
+
+func TestRedisLockHandle_Key(t *testing.T) {
+	h := &redisLockHandle{key: "xcron:lock:test-job"}
+	assert.Equal(t, "xcron:lock:test-job", h.Key())
+}
+
+func TestK8sLockHandle_Key(t *testing.T) {
+	h := &k8sLockHandle{key: "test-job"}
+	assert.Equal(t, "test-job", h.Key())
+}
+
 func TestSanitizeK8sName(t *testing.T) {
 	tests := []struct {
 		input    string

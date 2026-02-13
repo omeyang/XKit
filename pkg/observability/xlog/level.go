@@ -18,6 +18,9 @@ const (
 )
 
 // String 返回级别的字符串表示
+//
+// 对于标准级别返回大写名称（DEBUG/INFO/WARN/ERROR），
+// 非标准级别委托给 slog.Level.String()（如 "INFO+2"）。
 func (l Level) String() string {
 	switch l {
 	case LevelDebug:
@@ -29,14 +32,15 @@ func (l Level) String() string {
 	case LevelError:
 		return "ERROR"
 	default:
-		return fmt.Sprintf("LEVEL(%d)", l)
+		return slog.Level(l).String()
 	}
 }
 
 // ParseLevel 解析字符串为日志级别
 // 支持 debug/info/warn/warning/error（大小写不敏感）
+// 输入会自动 TrimSpace，与 SetFormat 行为一致
 func ParseLevel(s string) (Level, error) {
-	switch strings.ToLower(s) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug":
 		return LevelDebug, nil
 	case "info":

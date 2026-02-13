@@ -91,8 +91,11 @@ func (s *localSemaphore) backgroundCleanupLoop() {
 // 写入的许可会进入已从 sync.Map 脱链的 bucket，导致许可丢失。
 func (s *localSemaphore) cleanupAllExpired() {
 	now := time.Now()
-	s.permits.Range(func(key, value any) bool {
-		rp := value.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	s.permits.Range(func(_, value any) bool {
+		rp, ok := value.(*resourcePermits)
+		if !ok {
+			return true // 设计决策: sync.Map 中仅存储 *resourcePermits，此分支不可达
+		}
 		rp.mu.Lock()
 		s.cleanupExpiredLocked(rp, now)
 		rp.mu.Unlock()
@@ -102,20 +105,28 @@ func (s *localSemaphore) cleanupAllExpired() {
 
 // getResourcePermits 获取或创建资源的许可集合
 func (s *localSemaphore) getResourcePermits(resource string) *resourcePermits {
-	if rp, ok := s.permits.Load(resource); ok {
-		return rp.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if v, ok := s.permits.Load(resource); ok {
+		if rp, ok := v.(*resourcePermits); ok {
+			return rp
+		}
 	}
 
 	rp := newResourcePermits()
 	actual, _ := s.permits.LoadOrStore(resource, rp)
-	return actual.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if typed, ok := actual.(*resourcePermits); ok {
+		return typed
+	}
+	// 设计决策: sync.Map 中仅存储 *resourcePermits，此路径不可达
+	return rp
 }
 
 // tryGetResourcePermits 尝试获取资源许可集合，不存在时返回 nil
 // 用于 release/extend/count 等不应创建空 bucket 的操作
 func (s *localSemaphore) tryGetResourcePermits(resource string) *resourcePermits {
-	if rp, ok := s.permits.Load(resource); ok {
-		return rp.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if v, ok := s.permits.Load(resource); ok {
+		if rp, ok := v.(*resourcePermits); ok {
+			return rp
+		}
 	}
 	return nil
 }

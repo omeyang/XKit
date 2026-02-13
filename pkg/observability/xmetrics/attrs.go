@@ -33,12 +33,14 @@ func Float64(key string, value float64) Attr {
 }
 
 // Duration 创建时间间隔属性。
-// 建议显式使用带单位的 key，例如 "duration_ms"。
+// OTel 转换时存储为纳秒（int64）。建议使用带单位的 key，例如 "latency_ns"。
 func Duration(key string, value time.Duration) Attr {
 	return Attr{Key: key, Value: value}
 }
 
 // Any 创建任意类型属性。
+// 对于非标准类型（非 string/bool/int/int64/uint64/float64/float32/time.Duration），
+// OTel 转换时会调用 fmt.Sprint 字符串化。推荐优先使用 [String]、[Int] 等类型安全函数。
 func Any(key string, value any) Attr {
 	return Attr{Key: key, Value: value}
 }

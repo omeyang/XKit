@@ -29,3 +29,23 @@ func TestErrEmptyURL(t *testing.T) {
 		"error should have 'xpulsar:' prefix")
 	assert.Contains(t, ErrEmptyURL.Error(), "empty URL")
 }
+
+func TestPulsarSpecificErrors(t *testing.T) {
+	errors := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"ErrNilProducer", ErrNilProducer, "nil producer"},
+		{"ErrNilConsumer", ErrNilConsumer, "nil consumer"},
+		{"ErrClosed", ErrClosed, "client closed"},
+	}
+
+	for _, tc := range errors {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.True(t, strings.HasPrefix(tc.err.Error(), "xpulsar:"),
+				"error should have 'xpulsar:' prefix")
+			assert.Contains(t, tc.err.Error(), tc.want)
+		})
+	}
+}

@@ -27,10 +27,50 @@ const (
 )
 
 // =============================================================================
+// 选项配置（HTTP 和 gRPC 共用）
+// =============================================================================
+
+// Option 中间件/拦截器选项。
+// HTTP 和 gRPC 共用同一套选项类型，避免重复定义。
+type Option func(*config)
+
+type config struct {
+	autoGenerate bool // 是否自动生成缺失的追踪 ID
+}
+
+// WithAutoGenerate 设置是否自动生成缺失的追踪 ID。
+//
+// 默认为 true。设置为 false 时，不会自动生成追踪 ID。
+// 适用于 HTTPMiddleware 和 GRPCUnaryServerInterceptor/GRPCStreamServerInterceptor。
+func WithAutoGenerate(enabled bool) Option {
+	return func(cfg *config) {
+		cfg.autoGenerate = enabled
+	}
+}
+
+func applyOptions(opts []Option) *config {
+	cfg := &config{
+		autoGenerate: true, // 默认自动生成
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return cfg
+}
+
+// =============================================================================
 // HTTP Header 提取
 // =============================================================================
 
-// TraceInfo 链路追踪信息
+// TraceInfo 链路追踪信息。
+//
+// 包含两层信息：
+//   - 解析后的字段（TraceID、SpanID、TraceFlags）：用于业务逻辑和 context 注入
+//   - 原始传输层字段（Traceparent、Tracestate）：用于透传和手动注入
+//
+// 设计决策: 当 traceparent 解析成功时，TraceID/SpanID/TraceFlags 来自 traceparent 解析结果，
+// Traceparent 保留原始字符串用于透传场景（如 InjectTraceToHeader）。
+// 两层字段服务于不同用途，不构成真正的不一致。
 type TraceInfo struct {
 	TraceID    string
 	SpanID     string
@@ -38,7 +78,7 @@ type TraceInfo struct {
 	TraceFlags string // W3C trace-flags（如 "01" 表示已采样）
 
 	// W3C Trace Context 扩展
-	Traceparent string
+	Traceparent string // 原始 traceparent 头，用于透传
 	Tracestate  string
 }
 
@@ -98,34 +138,11 @@ func ExtractFromHTTPRequest(r *http.Request) TraceInfo {
 
 // HTTPMiddleware 返回 HTTP 中间件。
 // 自动从 HTTP Header 提取追踪信息并注入 context，缺失时自动生成。
-func HTTPMiddleware() func(http.Handler) http.Handler {
-	return HTTPMiddlewareWithOptions()
-}
-
-// MiddlewareOption 中间件选项
-type MiddlewareOption func(*middlewareConfig)
-
-type middlewareConfig struct {
-	autoGenerate bool // 是否自动生成缺失的追踪 ID
-}
-
-// WithAutoGenerate 设置是否自动生成缺失的追踪 ID
 //
-// 默认为 true。设置为 false 时，不会自动生成追踪 ID。
-func WithAutoGenerate(enabled bool) MiddlewareOption {
-	return func(cfg *middlewareConfig) {
-		cfg.autoGenerate = enabled
-	}
-}
-
-// HTTPMiddlewareWithOptions 返回带选项的 HTTP 中间件
-func HTTPMiddlewareWithOptions(opts ...MiddlewareOption) func(http.Handler) http.Handler {
-	cfg := &middlewareConfig{
-		autoGenerate: true, // 默认自动生成
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
+// 设计决策: xtrace 只做传输层适配（提取/注入追踪标识），不创建 OTel Span。
+// Span 生命周期管理由 OTel SDK 的 otelhttp 中间件负责。
+func HTTPMiddleware(opts ...Option) func(http.Handler) http.Handler {
+	cfg := applyOptions(opts)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,10 +221,10 @@ func InjectTraceToHeader(h http.Header, info TraceInfo) {
 		h.Set(HeaderRequestID, info.RequestID)
 	}
 
-	// 如果已有 Traceparent，验证后再透传，避免传播无效 traceparent
+	// 如果已有 Traceparent，验证后规范化为小写再透传，确保符合 W3C 规范
 	if info.Traceparent != "" {
 		if _, _, _, ok := parseTraceparent(info.Traceparent); ok {
-			h.Set(HeaderTraceparent, info.Traceparent)
+			h.Set(HeaderTraceparent, strings.ToLower(info.Traceparent))
 		}
 		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
 	}
@@ -228,6 +245,9 @@ func InjectTraceToHeader(h http.Header, info TraceInfo) {
 // Context 辅助函数
 // =============================================================================
 
+// 设计决策: TraceID/SpanID/RequestID/TraceFlags 代理函数让用户只需 import xtrace，
+// 无需同时 import xctx。xctx 是底层存储层，xtrace 是面向用户的传播层。
+
 // TraceID 从 context 获取 TraceID（代理到 xctx）
 func TraceID(ctx context.Context) string {
 	return xctx.TraceID(ctx)
@@ -241,6 +261,11 @@ func SpanID(ctx context.Context) string {
 // RequestID 从 context 获取 RequestID（代理到 xctx）
 func RequestID(ctx context.Context) string {
 	return xctx.RequestID(ctx)
+}
+
+// TraceFlags 从 context 获取 TraceFlags（代理到 xctx）
+func TraceFlags(ctx context.Context) string {
+	return xctx.TraceFlags(ctx)
 }
 
 // =============================================================================
@@ -309,6 +334,15 @@ var spanIDInjector = idInjector{
 	ensure:   xctx.EnsureSpanID,
 }
 
+// requestIDInjector RequestID 注入器。
+// RequestID 没有格式限制，validate 始终返回 true。
+var requestIDInjector = idInjector{
+	name:     "request_id",
+	validate: func(string) bool { return true },
+	inject:   xctx.WithRequestID,
+	ensure:   xctx.EnsureRequestID,
+}
+
 // injectTraceID 注入或生成 TraceID
 func injectTraceID(ctx context.Context, traceID string, autoGenerate bool) context.Context {
 	return injectID(ctx, traceID, autoGenerate, traceIDInjector)
@@ -321,20 +355,7 @@ func injectSpanID(ctx context.Context, spanID string, autoGenerate bool) context
 
 // injectRequestID 注入或生成 RequestID
 func injectRequestID(ctx context.Context, requestID string, autoGenerate bool) context.Context {
-	var err error
-	if requestID != "" {
-		ctx, err = xctx.WithRequestID(ctx, requestID)
-		if err != nil {
-			xlog.Warn(ctx, "xtrace: failed to inject request_id",
-				slog.String("request_id", requestID), slog.Any("error", err))
-		}
-	} else if autoGenerate {
-		ctx, err = xctx.EnsureRequestID(ctx)
-		if err != nil {
-			xlog.Warn(ctx, "xtrace: failed to ensure request_id", slog.Any("error", err))
-		}
-	}
-	return ctx
+	return injectID(ctx, requestID, autoGenerate, requestIDInjector)
 }
 
 // injectTraceFlags 注入 TraceFlags
@@ -418,7 +439,9 @@ func isValidTraceFlags(flags string) bool {
 	return len(flags) == 2 && isValidHex(flags)
 }
 
-// isValidHex 验证字符串是否为有效的十六进制
+// isValidHex 验证字符串是否为有效的十六进制。
+// 解析端容错：同时接受大写和小写，确保与不同实现的互操作性。
+// 输出端（formatTraceparent）会统一转换为小写，确保符合 W3C 规范。
 func isValidHex(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -448,31 +471,33 @@ func isValidSpanID(id string) bool {
 	return id != "0000000000000000"
 }
 
+// traceparentLen W3C traceparent 固定长度：00-{32}-{16}-{2} = 55 字符
+const traceparentLen = 55
+
 // formatTraceparent 生成 W3C traceparent 格式
 // 注意：仅在 traceID 和 spanID 都有效时才生成
 // traceFlags 为空时默认使用 "00"（未采样）
 //
 // W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
-// 本函数会自动将输入转换为小写，确保输出符合规范。
+// 本函数使用固定大小的字节数组减少内存分配。
 func formatTraceparent(traceID, spanID, traceFlags string) string {
-	// trace-id 必须是 32 位十六进制且非全零
-	if len(traceID) != 32 || !isValidHex(traceID) {
-		return ""
-	}
-	if traceID == "00000000000000000000000000000000" {
-		return ""
-	}
-
-	// span-id 必须是 16 位十六进制且非全零
-	if len(spanID) != 16 || !isValidHex(spanID) || spanID == "0000000000000000" {
+	if !isValidTraceID(traceID) || !isValidSpanID(spanID) {
 		return ""
 	}
 
 	// trace-flags 默认为 "00"（未采样）
-	if traceFlags == "" || len(traceFlags) != 2 || !isValidHex(traceFlags) {
+	if traceFlags == "" || !isValidTraceFlags(traceFlags) {
 		traceFlags = "00"
 	}
 
-	// W3C 规范要求小写，统一转换确保兼容性
-	return "00-" + strings.ToLower(traceID) + "-" + strings.ToLower(spanID) + "-" + strings.ToLower(traceFlags)
+	// traceparent 格式：00-{trace-id}-{span-id}-{trace-flags}
+	// 使用 copy 将各部分写入固定大小的缓冲区
+	var buf [traceparentLen]byte
+	copy(buf[0:3], "00-")
+	copy(buf[3:35], strings.ToLower(traceID))
+	copy(buf[35:36], "-")
+	copy(buf[36:52], strings.ToLower(spanID))
+	copy(buf[52:53], "-")
+	copy(buf[53:55], strings.ToLower(traceFlags))
+	return string(buf[:])
 }

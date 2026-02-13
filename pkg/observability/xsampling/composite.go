@@ -19,6 +19,18 @@ const (
 	ModeOR
 )
 
+// String 返回组合模式的字符串表示
+func (m CompositeMode) String() string {
+	switch m {
+	case ModeAND:
+		return "AND"
+	case ModeOR:
+		return "OR"
+	default:
+		return "Unknown"
+	}
+}
+
 // CompositeSampler 组合采样策略
 //
 // 将多个采样器组合在一起，支持 AND/OR 逻辑：
@@ -38,22 +50,33 @@ type CompositeSampler struct {
 //
 // 示例：
 //
+//	rateSampler, _ := NewRateSampler(0.1)
+//	countSampler, _ := NewCountSampler(10)
+//
 //	// 同时满足比率采样和计数采样
 //	sampler := NewCompositeSampler(ModeAND,
-//	    NewRateSampler(0.1),
-//	    NewCountSampler(10),
+//	    rateSampler,
+//	    countSampler,
 //	)
 //
+//	lowRateSampler, _ := NewRateSampler(0.01)
+//
 //	// 满足任一条件即采样
-//	sampler := NewCompositeSampler(ModeOR,
-//	    NewRateSampler(0.01),  // 1% 随机采样
+//	sampler = NewCompositeSampler(ModeOR,
+//	    lowRateSampler,        // 1% 随机采样
 //	    debugSampler,          // 或者调试模式采样
 //	)
 func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) *CompositeSampler {
-	// 校验 mode，只接受 ModeAND 和 ModeOR
-	// 非法值属于编程错误，立即 panic 以便快速发现
+	// 设计决策: 非法 mode 和 nil 子采样器均使用 panic 而非返回 error，
+	// 因为这些属于编程错误（类似传入非法枚举值或 nil 指针），应在开发期快速暴露。
 	if mode != ModeAND && mode != ModeOR {
 		panic("xsampling: invalid CompositeMode, must be ModeAND or ModeOR")
+	}
+
+	for _, s := range samplers {
+		if s == nil {
+			panic("xsampling: sampler must not be nil")
+		}
 	}
 
 	// 复制切片以防止外部修改
@@ -113,10 +136,9 @@ func (s *CompositeSampler) Samplers() []Sampler {
 //
 // 示例：
 //
-//	sampler := All(
-//	    NewRateSampler(0.1),
-//	    NewCountSampler(10),
-//	)
+//	rateSampler, _ := NewRateSampler(0.1)
+//	countSampler, _ := NewCountSampler(10)
+//	sampler := All(rateSampler, countSampler)
 func All(samplers ...Sampler) *CompositeSampler {
 	return NewCompositeSampler(ModeAND, samplers...)
 }
@@ -127,10 +149,8 @@ func All(samplers ...Sampler) *CompositeSampler {
 //
 // 示例：
 //
-//	sampler := Any(
-//	    NewRateSampler(0.01),
-//	    debugSampler,
-//	)
+//	lowRateSampler, _ := NewRateSampler(0.01)
+//	sampler := Any(lowRateSampler, debugSampler)
 func Any(samplers ...Sampler) *CompositeSampler {
 	return NewCompositeSampler(ModeOR, samplers...)
 }

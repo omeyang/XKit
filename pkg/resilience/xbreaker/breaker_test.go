@@ -215,7 +215,8 @@ func TestBreaker_CircuitBreaker(t *testing.T) {
 func TestManagedBreaker(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		b := NewBreaker("test")
-		m := NewManagedBreaker[string](b)
+		m, err := NewManagedBreaker[string](b)
+		require.NoError(t, err)
 
 		result, err := m.Execute(func() (string, error) {
 			return "hello", nil
@@ -227,7 +228,8 @@ func TestManagedBreaker(t *testing.T) {
 
 	t.Run("failure", func(t *testing.T) {
 		b := NewBreaker("test")
-		m := NewManagedBreaker[string](b)
+		m, err := NewManagedBreaker[string](b)
+		require.NoError(t, err)
 
 		result, err := m.Execute(func() (string, error) {
 			return "", errTest
@@ -239,7 +241,8 @@ func TestManagedBreaker(t *testing.T) {
 
 	t.Run("state and counts", func(t *testing.T) {
 		b := NewBreaker("test")
-		m := NewManagedBreaker[int](b)
+		m, err := NewManagedBreaker[int](b)
+		require.NoError(t, err)
 
 		assert.Equal(t, StateClosed, m.State())
 
@@ -250,7 +253,8 @@ func TestManagedBreaker(t *testing.T) {
 
 	t.Run("circuit breaker", func(t *testing.T) {
 		b := NewBreaker("test")
-		m := NewManagedBreaker[string](b)
+		m, err := NewManagedBreaker[string](b)
+		require.NoError(t, err)
 
 		cb := m.CircuitBreaker()
 		require.NotNil(t, cb)
@@ -258,9 +262,15 @@ func TestManagedBreaker(t *testing.T) {
 
 	t.Run("name", func(t *testing.T) {
 		b := NewBreaker("my-service")
-		m := NewManagedBreaker[string](b)
+		m, err := NewManagedBreaker[string](b)
+		require.NoError(t, err)
 
 		assert.Equal(t, "my-service", m.Name())
+	})
+
+	t.Run("nil breaker returns error", func(t *testing.T) {
+		_, err := NewManagedBreaker[string](nil)
+		assert.ErrorIs(t, err, ErrNilBreaker)
 	})
 
 	t.Run("open state returns BreakerError", func(t *testing.T) {
@@ -268,7 +278,8 @@ func TestManagedBreaker(t *testing.T) {
 		b := NewBreaker("test-breaker",
 			WithTripPolicy(NewConsecutiveFailures(1)),
 		)
-		m := NewManagedBreaker[string](b)
+		m, err := NewManagedBreaker[string](b)
+		require.NoError(t, err)
 
 		// 触发熔断
 		_, _ = m.Execute(func() (string, error) {
@@ -279,7 +290,7 @@ func TestManagedBreaker(t *testing.T) {
 		assert.Equal(t, StateOpen, m.State())
 
 		// 再次执行，应该返回 BreakerError
-		_, err := m.Execute(func() (string, error) {
+		_, err = m.Execute(func() (string, error) {
 			return "should not reach", nil
 		})
 
@@ -332,6 +343,86 @@ func (p *customSuccessPolicy) IsSuccessful(err error) bool {
 	return false
 }
 
+func TestWithBucketPeriod(t *testing.T) {
+	b := NewBreaker("test",
+		WithInterval(60*time.Millisecond),
+		WithBucketPeriod(10*time.Millisecond),
+		WithTripPolicy(NewFailureCount(3)),
+	)
+	assert.NotNil(t, b)
+	assert.Equal(t, StateClosed, b.State())
+}
+
+func TestWithBucketPeriod_NegativeIgnored(t *testing.T) {
+	b := NewBreaker("test",
+		WithBucketPeriod(-1*time.Millisecond),
+	)
+	assert.NotNil(t, b)
+}
+
+func TestWithTripPolicy_NilIgnored(t *testing.T) {
+	b := NewBreaker("test", WithTripPolicy(nil))
+	// 默认策略仍然生效
+	assert.NotNil(t, b.TripPolicy())
+}
+
+func TestWithTimeout_NegativeIgnored(t *testing.T) {
+	b := NewBreaker("test", WithTimeout(-1*time.Second))
+	assert.NotNil(t, b)
+}
+
+func TestWithMaxRequests_ZeroIgnored(t *testing.T) {
+	b := NewBreaker("test", WithMaxRequests(0))
+	assert.NotNil(t, b)
+}
+
+func TestWithInterval_NegativeIgnored(t *testing.T) {
+	b := NewBreaker("test", WithInterval(-1*time.Second))
+	assert.NotNil(t, b)
+	assert.Equal(t, StateClosed, b.State())
+}
+
+func TestBreaker_SuccessPolicy(t *testing.T) {
+	t.Run("nil when not set", func(t *testing.T) {
+		b := NewBreaker("test")
+		assert.Nil(t, b.SuccessPolicy())
+	})
+
+	t.Run("returns custom policy", func(t *testing.T) {
+		policy := &customSuccessPolicy{}
+		b := NewBreaker("test", WithSuccessPolicy(policy))
+		assert.Equal(t, policy, b.SuccessPolicy())
+	})
+}
+
+func TestBreaker_Do_ContextCancelled(t *testing.T) {
+	b := NewBreaker("test")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := b.Do(ctx, func() error {
+		return nil
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestExecute_ContextCancelled(t *testing.T) {
+	b := NewBreaker("test")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Execute(ctx, b, func() (string, error) {
+		return "hello", nil
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestStateString(t *testing.T) {
+	assert.Equal(t, "closed", StateString(StateClosed))
+	assert.Equal(t, "open", StateString(StateOpen))
+	assert.Equal(t, "half-open", StateString(StateHalfOpen))
+}
+
 func TestWithInterval(t *testing.T) {
 	b := NewBreaker("test",
 		WithInterval(50*time.Millisecond),
@@ -357,4 +448,62 @@ func TestWithInterval(t *testing.T) {
 
 	// 仍然是 Closed（因为只有 1 次失败）
 	assert.Equal(t, StateClosed, b.State())
+}
+
+// TestBreaker_HalfOpen_Concurrent 验证 HalfOpen 状态下的并发行为：
+// 只有 maxRequests 个请求能通过，其余返回 ErrTooManyRequests
+func TestBreaker_HalfOpen_Concurrent(t *testing.T) {
+	const maxRequests = 2
+	b := NewBreaker("test",
+		WithTripPolicy(NewConsecutiveFailures(1)),
+		WithTimeout(50*time.Millisecond),
+		WithMaxRequests(maxRequests),
+	)
+	ctx := context.Background()
+
+	// 触发熔断
+	_ = b.Do(ctx, func() error { return errTest })
+	require.Equal(t, StateOpen, b.State())
+
+	// 等待进入 HalfOpen
+	time.Sleep(60 * time.Millisecond)
+	require.Equal(t, StateHalfOpen, b.State())
+
+	// 并发发起多个请求
+	const goroutines = 10
+	results := make(chan error, goroutines)
+	for range goroutines {
+		go func() {
+			results <- b.Do(ctx, func() error {
+				time.Sleep(10 * time.Millisecond) // 模拟操作耗时
+				return nil
+			})
+		}()
+	}
+
+	var passed, rejected int
+	for range goroutines {
+		err := <-results
+		if err == nil {
+			passed++
+		} else if IsTooManyRequests(err) {
+			rejected++
+			// 验证 ErrTooManyRequests 被包装为不可重试的 BreakerError
+			var be *BreakerError
+			assert.True(t, errors.As(err, &be))
+			assert.False(t, be.Retryable())
+		}
+	}
+
+	// 至少有部分通过，其余被拒绝
+	assert.LessOrEqual(t, passed, int(maxRequests), "should not exceed maxRequests")
+	assert.Greater(t, rejected, 0, "some requests should be rejected")
+	assert.Equal(t, goroutines, passed+rejected, "all goroutines should complete")
+}
+
+func TestExecute_NilBreaker(t *testing.T) {
+	_, err := Execute(context.Background(), nil, func() (string, error) {
+		return "hello", nil
+	})
+	assert.ErrorIs(t, err, ErrNilBreaker)
 }

@@ -33,6 +33,30 @@ func TestResolveIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveIdentity_Nil(t *testing.T) {
+	info := ResolveIdentity(nil)
+	if info == nil {
+		t.Fatal("ResolveIdentity(nil) should return non-nil")
+	}
+	if info.PeerIdentity != nil {
+		t.Error("PeerIdentity should be nil")
+	}
+}
+
+func TestIdentityInfo_String_Nil(t *testing.T) {
+	// Nil IdentityInfo
+	var info *IdentityInfo
+	if got := info.String(); got != "unknown" {
+		t.Errorf("nil IdentityInfo.String() = %q, want %q", got, "unknown")
+	}
+
+	// Non-nil but nil PeerIdentity
+	info2 := &IdentityInfo{}
+	if got := info2.String(); got != "unknown" {
+		t.Errorf("nil PeerIdentity.String() = %q, want %q", got, "unknown")
+	}
+}
+
 func TestIdentityInfo_String(t *testing.T) {
 	tests := []struct {
 		name string

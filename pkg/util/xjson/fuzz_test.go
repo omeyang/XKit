@@ -14,12 +14,12 @@ func FuzzPretty(f *testing.F) {
 	f.Add("a\nb\tc")      // 含换行和 tab
 
 	f.Fuzz(func(t *testing.T, s string) {
-		// Pretty should never panic
+		// Pretty 不应 panic
 		result := Pretty(s)
 		if result == "" {
 			t.Error("Pretty returned empty string")
 		}
-		// 对 string 类型，Pretty 应该返回合法的 JSON
+		// 对 string 类型，Pretty 应返回合法的 JSON
 		if !json.Valid([]byte(result)) {
 			t.Errorf("Pretty(%q) produced invalid JSON: %s", s, result)
 		}
@@ -32,7 +32,7 @@ func FuzzPrettyBytes(f *testing.F) {
 	f.Add([]byte(nil))
 
 	f.Fuzz(func(t *testing.T, b []byte) {
-		// Pretty should never panic for []byte input
+		// Pretty 对 []byte 输入不应 panic
 		result := Pretty(b)
 		if result == "" {
 			t.Error("Pretty returned empty string for []byte")

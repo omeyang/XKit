@@ -195,6 +195,50 @@ func TestParseRangeWhitespace(t *testing.T) {
 	assert.Equal(t, "192.168.1.1", r.From().String())
 }
 
+func TestParseRangeWhitespaceAroundSlash(t *testing.T) {
+	// 与 "-" 分隔符一致，"/" 分隔符两侧的空白也应被处理
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "CIDR 斜杠前后有空白",
+			input:     "192.168.1.0 / 24",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "掩码格式斜杠前后有空白",
+			input:     "192.168.1.0 / 255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "CIDR 斜杠前有空白",
+			input:     "10.0.0.0 /8",
+			wantStart: "10.0.0.0",
+			wantEnd:   "10.255.255.255",
+		},
+		{
+			name:      "CIDR 斜杠后有空白",
+			input:     "172.16.0.0/ 16",
+			wantStart: "172.16.0.0",
+			wantEnd:   "172.16.255.255",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
 func TestParseRangeIPv6Range(t *testing.T) {
 	r, err := ParseRange("::1-::ff")
 	require.NoError(t, err)
@@ -226,6 +270,12 @@ func TestParseRangeInvalidRangeEnd(t *testing.T) {
 func TestParseRangeInvertedRange(t *testing.T) {
 	// start > end
 	_, err := ParseRange("10.0.0.100-10.0.0.1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeBothSidesInvalid(t *testing.T) {
+	// 两侧都不是合法 IP 地址，回退到 CIDR/单 IP 分支后仍然失败
+	_, err := ParseRange("abc-def")
 	assert.ErrorIs(t, err, ErrInvalidRange)
 }
 
@@ -276,6 +326,87 @@ func TestParseRangeMixedAddressFamilies(t *testing.T) {
 	// IPv4 范围开始，IPv6 范围结束
 	_, err := ParseRange("192.168.1.1-2001:db8::1")
 	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeIPv6ZoneWithDash(t *testing.T) {
+	// IPv6 zone ID 包含 '-' 时不应被误拆为范围，应正确解析为单 IP
+	// 注意：netipx.IPRange 不保留 zone ID，因此 From/To 返回无 zone 的地址
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "zone ID 含单个 -",
+			input:     "fe80::1%eth-0",
+			wantStart: "fe80::1",
+			wantEnd:   "fe80::1",
+		},
+		{
+			name:      "zone ID 含多个 -",
+			input:     "fe80::1%br-lan-0",
+			wantStart: "fe80::1",
+			wantEnd:   "fe80::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
+func TestParseRangeIPv6ZoneWithoutDash(t *testing.T) {
+	// 不含 '-' 的 zone ID 地址应正常解析为单 IP
+	r, err := ParseRange("fe80::1%eth0")
+	require.NoError(t, err)
+	assert.Equal(t, "fe80::1", r.From().String())
+	assert.Equal(t, "fe80::1", r.To().String())
+}
+
+func TestParseRangeIPv6ZoneWithDashLong(t *testing.T) {
+	// zone ID 包含 '-' 且后缀看似无效，但 netip.ParseAddr 将整体视为带长 zone 的合法地址。
+	// 设计决策: 这是正确行为 — zone ID 由操作系统定义，可包含任意字符。
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "zone 含 -garbage 后缀",
+			input:     "fe80::1%eth-0-garbage",
+			wantStart: "fe80::1",
+			wantEnd:   "fe80::1",
+		},
+		{
+			name:      "zone 含多段 dash",
+			input:     "fe80::1%br-lan-0-test",
+			wantStart: "fe80::1",
+			wantEnd:   "fe80::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
+func TestParseRangeIPv6ZoneInvalidEnd(t *testing.T) {
+	// start 有效、end 无效、且整体也无法解析为单地址 → 应返回错误
+	_, err := ParseRange("fe80::1-not_an_ip")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "invalid range end")
 }
 
 func TestParseRangeIPv4MappedMask(t *testing.T) {

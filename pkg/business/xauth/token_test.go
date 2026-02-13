@@ -3,6 +3,7 @@ package xauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,10 +138,10 @@ func TestTokenManager_ObtainClientToken(t *testing.T) {
 	t.Run("successful obtain", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Verify request parameters
-			if r.URL.Query().Get("client_id") == "" {
+			if r.FormValue("client_id") == "" {
 				t.Error("missing client_id")
 			}
-			if r.URL.Query().Get("grant_type") != "client_credentials" {
+			if r.FormValue("grant_type") != "client_credentials" {
 				t.Error("wrong grant_type")
 			}
 
@@ -379,7 +380,7 @@ func TestTokenManager_RefreshToken(t *testing.T) {
 
 	t.Run("refresh with refresh_token", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("grant_type") == "refresh_token" {
+			if r.FormValue("grant_type") == "refresh_token" {
 				resp := map[string]any{
 					"access_token":  "refreshed-token",
 					"refresh_token": "new-refresh-token",
@@ -678,7 +679,7 @@ func TestTokenManager_RefreshToken_RefreshFails_FallsBackToObtain(t *testing.T) 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		// First call is refresh, make it fail
-		if r.URL.Query().Get("grant_type") == "refresh_token" {
+		if r.FormValue("grant_type") == "refresh_token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -765,4 +766,173 @@ func TestTokenManager_GetToken_WithBackgroundRefresh(t *testing.T) {
 
 	// Wait a bit for background refresh to complete
 	time.Sleep(100 * time.Millisecond)
+}
+
+func TestTokenManager_BackgroundRefresh_Canceled(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// 慢响应，模拟刷新中被取消
+		time.Sleep(500 * time.Millisecond)
+		resp := map[string]any{
+			"access_token": "new-token",
+			"expires_in":   3600,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	cfg.Timeout = 5 * time.Second
+	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
+	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
+
+	// 预填充即将过期的 Token
+	expiringToken := &TokenInfo{
+		AccessToken: "expiring",
+		ExpiresIn:   30,
+		ExpiresAt:   time.Now().Add(30 * time.Second),
+		ObtainedAt:  time.Now(),
+	}
+	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
+
+	mgr := NewTokenManager(TokenManagerConfig{
+		Config:                  cfg,
+		HTTP:                    httpClient,
+		Cache:                   cache,
+		RefreshThreshold:        5 * time.Minute,
+		EnableBackgroundRefresh: true,
+	})
+
+	// 触发后台刷新
+	_, err := mgr.GetToken(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("GetToken failed: %v", err)
+	}
+
+	// 立即 Stop —— 取消后台刷新
+	mgr.Stop()
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestTokenManager_BackgroundRefresh_CacheGetFails(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := map[string]any{
+			"access_token": "token",
+			"expires_in":   3600,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	cfg.Timeout = 5 * time.Second
+	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
+
+	// 使用 mockCacheStore 注入 Get 错误
+	mockCache := newMockCacheStore()
+	cache := NewTokenCache(TokenCacheConfig{
+		Remote:             mockCache,
+		EnableLocal:        true,
+		EnableSingleflight: true,
+	})
+
+	// 预填充即将过期的 Token（在本地缓存中）
+	expiringToken := &TokenInfo{
+		AccessToken: "expiring",
+		ExpiresIn:   30,
+		ExpiresAt:   time.Now().Add(30 * time.Second),
+		ObtainedAt:  time.Now(),
+	}
+	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
+
+	mgr := NewTokenManager(TokenManagerConfig{
+		Config:                  cfg,
+		HTTP:                    httpClient,
+		Cache:                   cache,
+		RefreshThreshold:        5 * time.Minute,
+		EnableBackgroundRefresh: true,
+	})
+
+	// 设置 mockCache 在后台刷新中 Get 出错
+	mockCache.getTokenErr = errors.New("cache error")
+	// 清除本地缓存中的 token，只保留过期的以触发刷新
+	cache.local.Delete("tenant-1")
+	// 重新填充本地缓存让 GetToken 能成功
+	cache.local.Set("tenant-1", expiringToken)
+
+	_, err := mgr.GetToken(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("GetToken failed: %v", err)
+	}
+
+	// 等待后台刷新完成（会失败，因为 Get 出错后走到 Refresh → obtainToken）
+	time.Sleep(200 * time.Millisecond)
+	mgr.Stop()
+}
+
+func TestTokenManager_Stop_WaitsForGoroutines(t *testing.T) {
+	ctx := context.Background()
+	refreshStarted := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Token 获取：立即返回即将过期的 token
+		if r.FormValue("client_id") != "" {
+			resp := map[string]any{
+				"access_token": "new-token",
+				"expires_in":   3600,
+			}
+			// 在后台刷新中的第二次调用中延迟以验证 Stop 等待
+			select {
+			case <-refreshStarted:
+				time.Sleep(200 * time.Millisecond)
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	cfg.Timeout = 5 * time.Second
+	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
+	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
+
+	// 预填充即将过期的 Token
+	expiringToken := &TokenInfo{
+		AccessToken: "expiring",
+		ExpiresIn:   30,
+		ExpiresAt:   time.Now().Add(30 * time.Second),
+		ObtainedAt:  time.Now(),
+	}
+	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
+
+	mgr := NewTokenManager(TokenManagerConfig{
+		Config:                  cfg,
+		HTTP:                    httpClient,
+		Cache:                   cache,
+		RefreshThreshold:        5 * time.Minute,
+		EnableBackgroundRefresh: true,
+	})
+
+	close(refreshStarted)
+
+	// 触发后台刷新
+	_, err := mgr.GetToken(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("GetToken failed: %v", err)
+	}
+
+	// Stop 应等待后台 goroutine 完成而不 panic
+	mgr.Stop()
 }

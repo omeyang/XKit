@@ -20,33 +20,28 @@ func ParseRange(s string) (netipx.IPRange, error) {
 	s = strings.TrimSpace(s)
 
 	// 格式 4: 显式范围 "start-end"
+	// 注意：IPv6 zone ID 可能包含 '-'（如 "fe80::1%eth-0"），
+	// 需要验证两侧都能解析为地址后才按范围处理，否则回退到后续分支。
 	if idx := strings.Index(s, "-"); idx >= 0 {
-		startStr := strings.TrimSpace(s[:idx])
-		endStr := strings.TrimSpace(s[idx+1:])
-		start, err := netip.ParseAddr(startStr)
-		if err != nil {
-			return netipx.IPRange{}, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr)
+		r, err, handled := parseExplicitRange(s, idx)
+		if handled {
+			return r, err
 		}
-		end, err := netip.ParseAddr(endStr)
-		if err != nil {
-			return netipx.IPRange{}, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr)
-		}
-		r := netipx.IPRangeFrom(start, end)
-		if !r.IsValid() {
-			return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s)
-		}
-		return r, nil
+		// 两侧都无效 → 回退到 CIDR / 单 IP 分支
 	}
 
 	// 格式 2/3: CIDR 或掩码 "addr/bits" 或 "addr/mask"
 	if idx := strings.Index(s, "/"); idx >= 0 {
-		maskStr := s[idx+1:]
+		addrPart := strings.TrimSpace(s[:idx])
+		maskStr := strings.TrimSpace(s[idx+1:])
 
 		if strings.Contains(maskStr, ".") {
-			return parseRangeWithMask(s[:idx], maskStr)
+			return parseRangeWithMask(addrPart, maskStr)
 		}
 
-		prefix, err := netip.ParsePrefix(s)
+		// 重新组装去除空白后的 CIDR 字符串
+		cidr := addrPart + "/" + maskStr
+		prefix, err := netip.ParsePrefix(cidr)
 		if err != nil {
 			return netipx.IPRange{}, fmt.Errorf("%w: invalid CIDR: %s", ErrInvalidRange, s)
 		}
@@ -59,6 +54,41 @@ func ParseRange(s string) (netipx.IPRange, error) {
 		return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s)
 	}
 	return netipx.IPRangeFrom(addr, addr), nil
+}
+
+// parseExplicitRange 尝试将 s 按位置 idx 处的 '-' 拆分为起止地址。
+// 返回 (range, err, handled)：handled=true 时结果已确定，handled=false 时调用方应回退。
+func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
+	startStr := strings.TrimSpace(s[:idx])
+	endStr := strings.TrimSpace(s[idx+1:])
+	start, startErr := netip.ParseAddr(startStr)
+	end, endErr := netip.ParseAddr(endStr)
+	if startErr == nil && endErr == nil {
+		r := netipx.IPRangeFrom(start, end)
+		if !r.IsValid() {
+			return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s), true
+		}
+		return r, nil, true
+	}
+	// 仅一侧解析成功 → 明确是范围格式但另一端无效，返回具体错误
+	if startErr == nil {
+		// start 有效但 end 无效 — 可能是 zone ID 含 '-' 的单地址，先尝试整体解析。
+		//
+		// 设计决策: IPv6 zone ID 可包含任意字符（包括 '-'），例如 "fe80::1%eth-0" 或
+		// "fe80::1%br-lan-0" 都是合法地址。当输入形如 "fe80::1%eth-0-garbage" 时，
+		// 拆分后 start="fe80::1%eth" 可解析，end="0-garbage" 不可解析，
+		// 但整体字符串会被 netip.ParseAddr 解析为 zone="eth-0-garbage" 的合法地址。
+		// 此行为是正确的：zone ID 由操作系统/接口定义，无法在解析器层面限制其内容。
+		if addr, err := netip.ParseAddr(s); err == nil {
+			return netipx.IPRangeFrom(addr, addr), nil, true
+		}
+		return netipx.IPRange{}, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr), true
+	}
+	if endErr == nil {
+		return netipx.IPRange{}, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr), true
+	}
+	// 两侧都无效 → 不处理，让调用方回退
+	return netipx.IPRange{}, nil, false
 }
 
 // parseRangeWithMask 解析掩码格式的 IP 范围（仅 IPv4），包含掩码连续性校验。

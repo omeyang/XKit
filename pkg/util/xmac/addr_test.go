@@ -13,7 +13,7 @@ func TestAddr_IsValid(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), true},
 		{"zero", Addr{}, false},
-		{"broadcast", Broadcast, true},
+		{"broadcast", Broadcast(), true},
 		{"min_nonzero", Addr{bytes: [6]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}, true},
 	}
 
@@ -62,8 +62,8 @@ func TestAddr_Next(t *testing.T) {
 		{"carry", MustParse("aa:bb:cc:dd:ee:ff"), MustParse("aa:bb:cc:dd:ef:00"), nil},
 		{"multi_carry", MustParse("aa:bb:cc:ff:ff:ff"), MustParse("aa:bb:cd:00:00:00"), nil},
 		{"from_zero", Addr{}, MustParse("00:00:00:00:00:01"), nil},
-		{"overflow", Broadcast, Addr{}, ErrOverflow},
-		{"before_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), Broadcast, nil},
+		{"overflow", Broadcast(), Addr{}, ErrOverflow},
+		{"before_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), Broadcast(), nil},
 	}
 
 	for _, tt := range tests {
@@ -98,7 +98,7 @@ func TestAddr_Prev(t *testing.T) {
 		{"multi_borrow", MustParse("aa:bb:cd:00:00:00"), MustParse("aa:bb:cc:ff:ff:ff"), nil},
 		{"from_one", MustParse("00:00:00:00:00:01"), Addr{}, nil},
 		{"underflow", Addr{}, Addr{}, ErrUnderflow},
-		{"from_broadcast", Broadcast, MustParse("ff:ff:ff:ff:ff:fe"), nil},
+		{"from_broadcast", Broadcast(), MustParse("ff:ff:ff:ff:ff:fe"), nil},
 	}
 
 	for _, tt := range tests {

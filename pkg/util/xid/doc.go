@@ -7,7 +7,7 @@
 //   - 单例模式，全局共享一个生成器实例
 //   - 智能机器 ID 获取策略，支持离线 K8s 等多种环境
 //   - 生成的 ID 具有时序性，便于调试和排查
-//   - 比 UUID 更高效（~50ns vs ~500ns）且更短（13字符 vs 36字符）
+//   - 比 UUID 更短（12-13 字符 vs 36 字符）且具有时序性（可排序）
 //
 // # ID 结构
 //
@@ -21,20 +21,19 @@
 //
 // 基本用法（推荐）：
 //
-//	// 生成 ID（字符串格式，base36 编码，推荐用法）
-//	id := xid.MustNewStringWithRetry()  // 例如: "1a2b3c4d5e6f7"
-//
-//	// 生成 ID（int64 格式）
-//	id, err := xid.New()
+//	// 生成 ID（字符串格式，base36 编码，生产环境推荐）
+//	id, err := xid.NewStringWithRetry(ctx)  // 例如: "1a2b3c4d5e6f7"
 //	if err != nil {
 //	    return err
 //	}
 //
-// 带错误处理：
+//	// 或一行式（失败时 panic，仅适用于 crash-fast 场景）
+//	id := xid.MustNewStringWithRetry()
+//
+// 不带重试（遇到错误时立即返回）：
 //
 //	id, err := xid.NewString()
 //	if err != nil {
-//	    // 处理错误（通常是时钟回拨）
 //	    return err
 //	}
 //
@@ -139,16 +138,22 @@
 //
 // # 时钟回拨处理
 //
-// Sonyflake 在检测到时钟回拨时会返回错误。xid 包提供了自动重试机制：
+// Sonyflake v2 在内部处理短暂的时钟回拨（等待时钟追上）。
+// 当前版本的 NextID 仅返回 [sonyflake.ErrOverTimeLimit]（时间分量溢出，不可恢复）。
+// xid 的 WithRetry 系列方法为前向兼容预留了通用重试逻辑：
+// ErrOverTimeLimit 立即返回，其余错误按配置间隔重试直到超时。
 //
 // ## 推荐用法（生产环境）
 //
-// 使用 WithRetry 后缀的方法，自动处理短暂的时钟回拨：
+// 使用 WithRetry 后缀的方法，自动处理潜在的可重试错误：
 //
-//	id := xid.MustNewStringWithRetry()  // 推荐
+//	id, err := xid.NewStringWithRetry(ctx)  // 推荐
+//	if err != nil {
+//	    return err
+//	}
 //
-// 这些方法在检测到时钟回拨时会自动等待并重试（默认最多 500ms），
-// 能够容忍 NTP 同步等场景导致的短暂时钟回拨。
+// 这些方法在遇到可重试错误时会自动等待并重试（默认最多 500ms）。
+// Must* 变体在失败时 panic，仅适用于明确接受 crash-fast 策略的场景。
 //
 // ## 配置等待参数
 //
@@ -163,13 +168,12 @@
 //
 // 如果不希望等待，可以使用不带 WithRetry 后缀的方法：
 //
-//	id, err := xid.NewString()  // 时钟回拨时立即返回错误
-//	id := xid.MustNewString()   // 时钟回拨时 panic
+//	id, err := xid.NewString()  // 遇到错误时立即返回
 //
 // ## 最佳实践
 //
 //   - 生产环境确保 NTP 配置正确
-//   - 使用 MustNewStringWithRetry 作为默认选择
+//   - 使用 NewStringWithRetry 作为默认选择，Must* 仅用于 crash-fast 场景
 //   - 监控 ErrClockBackwardTimeout 错误，及时发现时钟问题
 //
 // # 线程安全
@@ -178,11 +182,14 @@
 //
 // # 与 UUID 对比
 //
-//	| 特性       | xid (Sonyflake)     | UUID v4            |
-//	|------------|---------------------|--------------------|
-//	| 生成速度   | ~50ns               | ~500ns             |
-//	| 字符串长度 | 13 字符 (base36)    | 36 字符            |
-//	| 时序性     | 有（可排序）        | 无                 |
-//	| 唯一性保证 | 时间+机器+序列      | 随机数             |
-//	| 配置需求   | 可选                | 无                 |
+//	| 特性       | xid (Sonyflake)        | UUID v4            |
+//	|------------|------------------------|--------------------|
+//	| 持续吞吐   | ~25,600 IDs/s/节点     | 无上限             |
+//	| 字符串长度 | 12-13 字符 (base36)    | 36 字符            |
+//	| 时序性     | 有（可排序）           | 无                 |
+//	| 唯一性保证 | 时间+机器+序列         | 随机数             |
+//	| 配置需求   | 可选                   | 无                 |
+//
+// 注意：Sonyflake 使用 10ms 时间精度 + 8-bit 序列号，每 10ms 最多生成 256 个 ID。
+// 持续高频生成时受限于时间窗口，benchmark 约 ~39µs/op（即 ~25,600 IDs/s/节点）。
 package xid

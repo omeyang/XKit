@@ -18,6 +18,9 @@ const (
 	metricNameFallbackTotal = "xlimit.fallback.total"
 	// metricNameCheckDuration 限流检查耗时直方图
 	metricNameCheckDuration = "xlimit.check.duration"
+
+	// instrumentationVersion 指标库版本号
+	instrumentationVersion = "1.0.0"
 )
 
 // Metrics 限流指标收集器
@@ -38,7 +41,7 @@ func NewMetrics(meterProvider metric.MeterProvider) (*Metrics, error) {
 	}
 
 	meter := meterProvider.Meter("xlimit",
-		metric.WithInstrumentationVersion("1.0.0"),
+		metric.WithInstrumentationVersion(instrumentationVersion),
 	)
 
 	requestsTotal, err := meter.Int64Counter(
@@ -119,8 +122,8 @@ func (m *Metrics) RecordAllow(ctx context.Context, limiterType, rule string, all
 // RecordFallback 记录降级事件
 // ctx: 上下文
 // strategy: 降级策略（"local", "open", "close"）
-// reason: 降级原因（错误信息）
-func (m *Metrics) RecordFallback(ctx context.Context, strategy FallbackStrategy, reason string) {
+// errorType: 错误分类（由 classifyError 生成的低基数标签）
+func (m *Metrics) RecordFallback(ctx context.Context, strategy FallbackStrategy, errorType string) {
 	if m == nil {
 		return
 	}
@@ -129,7 +132,7 @@ func (m *Metrics) RecordFallback(ctx context.Context, strategy FallbackStrategy,
 
 	attrs := []attribute.KeyValue{
 		attribute.String("strategy", string(strategy)),
-		attribute.String("reason", reason),
+		attribute.String("error_type", errorType),
 	}
 
 	m.fallbackTotal.Add(metricsCtx, 1, metric.WithAttributes(attrs...))

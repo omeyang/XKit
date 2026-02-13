@@ -210,11 +210,19 @@ func (c *Client) Count(ctx context.Context, prefix string) (int64, error) {
 	return resp.Count, nil
 }
 
+// revokeLeaseTimeout 租约撤销的超时时间。
+// 设计决策: 使用 3 秒超时而非无限等待，因为租约最终会自动过期，
+// 撤销仅是 best-effort 清理，不应阻塞调用方。
+const revokeLeaseTimeout = 3 * time.Second
+
 // tryRevokeLease 尝试撤销租约，用于清理场景。
 // 撤销失败时不返回错误，因为租约最终会自动过期。
-// 使用 Background context 确保即使原 context 已取消也能执行。
+// 使用独立的带超时 context，确保即使原 context 已取消也能执行，
+// 同时避免 etcd 不可达时无限阻塞。
 func (c *Client) tryRevokeLease(leaseID clientv3.LeaseID) {
-	_, err := c.client.Revoke(context.Background(), leaseID)
+	ctx, cancel := context.WithTimeout(context.Background(), revokeLeaseTimeout)
+	defer cancel()
+	_, err := c.client.Revoke(ctx, leaseID)
 	if err != nil {
 		// 租约撤销失败不影响主流程，租约会自动过期
 		// 这里显式处理错误而非忽略，满足 errcheck 要求

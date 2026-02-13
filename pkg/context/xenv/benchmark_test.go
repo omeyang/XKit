@@ -140,6 +140,30 @@ func BenchmarkRequireType(b *testing.B) {
 	xenv.Reset()
 }
 
+func BenchmarkType_NotInitialized(b *testing.B) {
+	xenv.Reset()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = xenv.Type()
+	}
+}
+
+func BenchmarkRequireType_NotInitialized(b *testing.B) {
+	xenv.Reset()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.RequireType()
+	}
+}
+
+func BenchmarkParse_Empty(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = xenv.Parse("")
+	}
+}
+
 // =============================================================================
 // 并发访问 Benchmark
 // =============================================================================

@@ -12,9 +12,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// errUnexpectedScriptResult Lua 脚本返回结果不符合预期
-var errUnexpectedScriptResult = fmt.Errorf("xsemaphore: unexpected script result")
-
 // validateScriptResult 校验 Lua 脚本返回值长度
 func validateScriptResult(result []int64, minLen int) error {
 	if len(result) < minLen {
@@ -573,6 +570,9 @@ func (s *redisSemaphore) Close(_ context.Context) error {
 
 // Health 健康检查
 func (s *redisSemaphore) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if s.closed.Load() {
 		return ErrSemaphoreClosed
 	}

@@ -38,9 +38,6 @@ var (
 
 // Kafka 特有错误
 var (
-	// ErrNoPartitionAssigned 表示 Consumer 没有分配到任何分区。
-	ErrNoPartitionAssigned = errors.New("xkafka: no partition assigned")
-
 	// ErrFlushTimeout 表示消息刷新超时。
 	ErrFlushTimeout = errors.New("xkafka: flush timeout")
 

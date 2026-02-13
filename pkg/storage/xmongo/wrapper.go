@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/omeyang/xkit/internal/storageopt"
@@ -31,9 +32,22 @@ type mongoWrapper struct {
 	// 统计计数器（使用 storageopt 通用实现）
 	healthCounter    storageopt.HealthCounter
 	slowQueryCounter storageopt.SlowQueryCounter
+
+	// 设计决策: 使用 atomic.Bool 保护 closed 状态，
+	// 确保并发调用 Close() 和其他方法时的线程安全。
+	closed atomic.Bool
 }
 
-const mongoComponent = "xmongo"
+const (
+	mongoComponent = "xmongo"
+
+	// defaultBatchSize 批量写入默认每批文档数。
+	defaultBatchSize = 1000
+
+	// maxBatchSize 批量写入每批文档数上限。
+	// 避免单次 InsertMany 请求过大导致 MongoDB 16MB BSON 限制或内存问题。
+	maxBatchSize = 10000
+)
 
 // Client 返回底层 MongoDB 客户端。
 func (w *mongoWrapper) Client() *mongo.Client {
@@ -42,6 +56,10 @@ func (w *mongoWrapper) Client() *mongo.Client {
 
 // Health 执行健康检查。
 func (w *mongoWrapper) Health(ctx context.Context) (err error) {
+	if w.closed.Load() {
+		return ErrClosed
+	}
+
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: mongoComponent,
 		Operation: "health",
@@ -109,7 +127,12 @@ func (w *mongoWrapper) getPoolStats() PoolStats {
 }
 
 // Close 关闭 MongoDB 连接。
+// 重复调用返回 ErrClosed。并发安全。
 func (w *mongoWrapper) Close(ctx context.Context) error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
+
 	// 关闭慢查询检测器
 	if w.slowQueryDetector != nil {
 		w.slowQueryDetector.Close()
@@ -122,14 +145,18 @@ func (w *mongoWrapper) Close(ctx context.Context) error {
 }
 
 // FindPage 分页查询。
-// 实现在 pagination.go 中。
 func (w *mongoWrapper) FindPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
 	return w.findPage(ctx, coll, filter, opts)
 }
 
 // BulkWrite 批量写入。
-// 实现在 batch.go 中。
 func (w *mongoWrapper) BulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
 	return w.bulkWrite(ctx, coll, docs, opts)
 }
 
@@ -152,28 +179,7 @@ func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) b
 }
 
 // =============================================================================
-// 辅助函数
-// =============================================================================
-
-// buildSlowQueryInfo 构建慢查询信息。
-func buildSlowQueryInfo(coll *mongo.Collection, operation string, filter any, duration time.Duration) SlowQueryInfo {
-	var dbName, collName string
-	if coll != nil {
-		dbName = coll.Database().Name()
-		collName = coll.Name()
-	}
-
-	return SlowQueryInfo{
-		Database:   dbName,
-		Collection: collName,
-		Operation:  operation,
-		Filter:     filter,
-		Duration:   duration,
-	}
-}
-
-// =============================================================================
-// 占位实现 - 将在对应文件中实现
+// 内部实现
 // =============================================================================
 
 // findPage 分页查询实现。
@@ -191,12 +197,12 @@ func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, fil
 // convertPaginationError 将 storageopt 的分页错误转换为 xmongo 的错误类型。
 // 由于 xmongo 的分页错误已包装 storageopt 的错误，errors.Is 可以匹配任一错误。
 func convertPaginationError(err error) error {
-	switch err {
-	case storageopt.ErrInvalidPage:
+	switch {
+	case errors.Is(err, storageopt.ErrInvalidPage):
 		return ErrInvalidPage
-	case storageopt.ErrInvalidPageSize:
+	case errors.Is(err, storageopt.ErrInvalidPageSize):
 		return ErrInvalidPageSize
-	case storageopt.ErrPageOverflow:
+	case errors.Is(err, storageopt.ErrPageOverflow):
 		return ErrPageOverflow
 	default:
 		return err
@@ -296,7 +302,9 @@ func (w *mongoWrapper) bulkWrite(ctx context.Context, coll *mongo.Collection, do
 func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
-		batchSize = 1000 // 默认批次大小
+		batchSize = defaultBatchSize
+	} else if batchSize > maxBatchSize {
+		batchSize = maxBatchSize
 	}
 
 	info := buildSlowQueryInfoFromOps(coll, "bulkWrite", nil)

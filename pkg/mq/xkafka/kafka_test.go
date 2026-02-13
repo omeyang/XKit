@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"github.com/stretchr/testify/assert"
@@ -32,10 +33,19 @@ func TestNewConsumer_NilConfig(t *testing.T) {
 }
 
 func TestNewConsumer_EmptyTopics(t *testing.T) {
-	// 注意：由于我们使用 nil config 测试 topics 验证，
-	// 实际上 NilConfig 错误会先返回
-	// 这个测试验证错误定义正确
-	assert.NotNil(t, ErrEmptyTopics)
+	// 使用有效 config 测试空 topics 验证
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	consumer, err := NewConsumer(config, nil)
+	assert.Nil(t, consumer)
+	assert.ErrorIs(t, err, ErrEmptyTopics)
+
+	consumer, err = NewConsumer(config, []string{})
+	assert.Nil(t, consumer)
+	assert.ErrorIs(t, err, ErrEmptyTopics)
 }
 
 // =============================================================================

@@ -118,6 +118,9 @@ func GRPCUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 }
 
 // GRPCInterceptorOption gRPC 拦截器选项
+//
+// 设计决策: grpcInterceptorConfig 与 middlewareConfig 字段相同但独立定义，
+// 保持 HTTP 和 gRPC 协议选项的类型独立，允许各自独立演进。
 type GRPCInterceptorOption func(*grpcInterceptorConfig)
 
 type grpcInterceptorConfig struct {
@@ -234,15 +237,13 @@ func (w *wrappedServerStream) Context() context.Context {
 // InjectToOutgoingContext 将租户信息注入 outgoing context。
 // 从 context 提取租户信息并设置到 outgoing metadata，用于跨服务调用时传播租户信息。
 // 同时也会注入服务级的平台信息（从 xplatform 获取）。
-// 使用 Set 语义覆盖已存在的同名 key，防止租户信息串联（tenant leakage）。
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete，防止租户信息串联（tenant leakage）。
+//
+// ctx 不能为 nil，否则会 panic（与 Go 标准库 context 行为一致）。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	// 获取已有的 outgoing metadata（如果存在）
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
+	md, hadExisting := metadata.FromOutgoingContext(ctx)
+	if !hadExisting {
 		md = metadata.MD{}
 	} else {
 		// 复制一份，避免修改原始 metadata
@@ -253,7 +254,8 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 	injectTenantMetadata(ctx, md)
 	injectTraceMetadata(ctx, md)
 
-	if len(md) == 0 {
+	// 没有新信息且之前也没有 metadata 时，直接返回原 context
+	if len(md) == 0 && !hadExisting {
 		return ctx
 	}
 
@@ -279,28 +281,45 @@ func injectPlatformMetadata(md metadata.MD) {
 }
 
 // injectTenantMetadata 注入请求级租户信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete。
+// 防止 metadata 复用时旧租户信息泄漏到下游。
 func injectTenantMetadata(ctx context.Context, md metadata.MD) {
 	if tid := TenantID(ctx); tid != "" {
 		md.Set(MetaTenantID, tid)
+	} else {
+		delete(md, MetaTenantID)
 	}
 	if tname := TenantName(ctx); tname != "" {
 		md.Set(MetaTenantName, tname)
+	} else {
+		delete(md, MetaTenantName)
 	}
 }
 
 // injectTraceMetadata 注入追踪信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete。
 func injectTraceMetadata(ctx context.Context, md metadata.MD) {
 	if tid := xctx.TraceID(ctx); tid != "" {
 		md.Set(MetaTraceID, tid)
+	} else {
+		delete(md, MetaTraceID)
 	}
 	if sid := xctx.SpanID(ctx); sid != "" {
 		md.Set(MetaSpanID, sid)
+	} else {
+		delete(md, MetaSpanID)
 	}
 	if rid := xctx.RequestID(ctx); rid != "" {
 		md.Set(MetaRequestID, rid)
+	} else {
+		delete(md, MetaRequestID)
 	}
 	if flags := xctx.TraceFlags(ctx); flags != "" {
 		md.Set(MetaTraceFlags, flags)
+	} else {
+		delete(md, MetaTraceFlags)
 	}
 }
 
@@ -361,6 +380,9 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // =============================================================================
 
 // getMetadataValue 获取 metadata 中的值（取第一个，去除空白）
+//
+// 设计决策: 租户字段为单值语义，多值时取第一个。
+// 多值检测/拒绝应由 API 网关层负责，不在库层面强制。
 func getMetadataValue(md metadata.MD, key string) string {
 	values := md.Get(key)
 	if len(values) == 0 {

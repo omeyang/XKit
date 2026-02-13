@@ -14,7 +14,7 @@ func TestAddr_MarshalText(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), "aa:bb:cc:dd:ee:ff"},
 		{"zero", Addr{}, ""},
-		{"broadcast", Broadcast, "ff:ff:ff:ff:ff:ff"},
+		{"broadcast", Broadcast(), "ff:ff:ff:ff:ff:ff"},
 	}
 
 	for _, tt := range tests {
@@ -67,7 +67,7 @@ func TestAddr_MarshalJSON(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), `"aa:bb:cc:dd:ee:ff"`},
 		{"zero", Addr{}, `""`},
-		{"broadcast", Broadcast, `"ff:ff:ff:ff:ff:ff"`},
+		{"broadcast", Broadcast(), `"ff:ff:ff:ff:ff:ff"`},
 	}
 
 	for _, tt := range tests {
@@ -150,7 +150,7 @@ func TestAddr_JSON_RoundTrip(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff")},
 		{"zero", Addr{}},
-		{"broadcast", Broadcast},
+		{"broadcast", Broadcast()},
 	}
 
 	for _, tt := range tests {
@@ -184,7 +184,7 @@ func TestAddr_Value(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), "aa:bb:cc:dd:ee:ff"},
 		{"zero", Addr{}, nil},
-		{"broadcast", Broadcast, "ff:ff:ff:ff:ff:ff"},
+		{"broadcast", Broadcast(), "ff:ff:ff:ff:ff:ff"},
 	}
 
 	for _, tt := range tests {
@@ -218,8 +218,12 @@ func TestAddr_Scan(t *testing.T) {
 		{"bytes_string", []byte("aa:bb:cc:dd:ee:ff"), MustParse("aa:bb:cc:dd:ee:ff"), nil},
 		{"bytes_empty", []byte{}, Addr{}, nil},
 
+		// []byte 无效字符串格式
+		{"bytes_invalid_string", []byte("not-a-mac"), Addr{}, ErrInvalidFormat},
+
 		// []byte 二进制格式
 		{"bytes_binary", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}, MustParse("aa:bb:cc:dd:ee:ff"), nil},
+		{"bytes_binary_zero", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, Addr{}, nil},
 
 		// nil 输入
 		{"nil", nil, Addr{}, nil},
@@ -255,7 +259,7 @@ func TestAddr_SQL_RoundTrip(t *testing.T) {
 	addrs := []Addr{
 		MustParse("aa:bb:cc:dd:ee:ff"),
 		{},
-		Broadcast,
+		Broadcast(),
 	}
 
 	for _, original := range addrs {
@@ -277,4 +281,30 @@ func TestAddr_SQL_RoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddr_NilReceiver(t *testing.T) {
+	t.Run("UnmarshalText", func(t *testing.T) {
+		var p *Addr
+		err := p.UnmarshalText([]byte("aa:bb:cc:dd:ee:ff"))
+		if !errors.Is(err, ErrNilReceiver) {
+			t.Errorf("UnmarshalText(nil) error = %v, want ErrNilReceiver", err)
+		}
+	})
+
+	t.Run("UnmarshalJSON", func(t *testing.T) {
+		var p *Addr
+		err := p.UnmarshalJSON([]byte(`"aa:bb:cc:dd:ee:ff"`))
+		if !errors.Is(err, ErrNilReceiver) {
+			t.Errorf("UnmarshalJSON(nil) error = %v, want ErrNilReceiver", err)
+		}
+	})
+
+	t.Run("Scan", func(t *testing.T) {
+		var p *Addr
+		err := p.Scan("aa:bb:cc:dd:ee:ff")
+		if !errors.Is(err, ErrNilReceiver) {
+			t.Errorf("Scan(nil) error = %v, want ErrNilReceiver", err)
+		}
+	})
 }

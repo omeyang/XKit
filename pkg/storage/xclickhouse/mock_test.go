@@ -31,6 +31,7 @@ type mockConn struct {
 	queryFunc       func(ctx context.Context, query string, args ...any) (driver.Rows, error)
 	prepareBatchErr error
 	batchFunc       func(ctx context.Context, query string) driver.Batch
+	stats           driver.Stats
 }
 
 func (m *mockConn) Contributors() []string {
@@ -83,7 +84,7 @@ func (m *mockConn) Ping(_ context.Context) error {
 }
 
 func (m *mockConn) Stats() driver.Stats {
-	return driver.Stats{}
+	return m.stats
 }
 
 func (m *mockConn) Close() error {
@@ -194,7 +195,7 @@ func (m *mockColumnType) ScanType() reflect.Type {
 	if m.scanType != nil {
 		return m.scanType
 	}
-	return reflect.TypeOf((*any)(nil)).Elem()
+	return reflect.TypeFor[any]()
 }
 
 func (m *mockColumnType) DatabaseTypeName() string {
@@ -216,12 +217,13 @@ func (m *mockBatchColumn) AppendRow(_ any) error {
 type mockBatch struct {
 	appendErr error
 	sendErr   error
+	abortErr  error
 	sent      bool
 	rows      int
 }
 
 func (m *mockBatch) Abort() error {
-	return nil
+	return m.abortErr
 }
 
 func (m *mockBatch) Append(_ ...any) error {

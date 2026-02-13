@@ -9,6 +9,9 @@ import (
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
 
+// benchSink 防止编译器将基准测试结果优化掉。
+var benchSink any
+
 // =============================================================================
 // DLQBuilder Benchmarks
 // =============================================================================
@@ -17,9 +20,11 @@ func BenchmarkNewDLQBuilder(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sink *DLQBuilder
 	for i := 0; i < b.N; i++ {
-		_ = NewDLQBuilder()
+		sink = NewDLQBuilder()
 	}
+	benchSink = sink
 }
 
 func BenchmarkDLQBuilder_Chaining(b *testing.B) {
@@ -45,9 +50,11 @@ func BenchmarkDLQBuilder_Build(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sink *pulsar.DLQPolicy
 	for i := 0; i < b.N; i++ {
-		_ = builder.Build()
+		sink = builder.Build()
 	}
+	benchSink = sink
 }
 
 func BenchmarkDLQBuilder_WithProducerOptions(b *testing.B) {
@@ -313,9 +320,11 @@ func BenchmarkDefaultOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sink *clientOptions
 	for i := 0; i < b.N; i++ {
-		_ = defaultOptions()
+		sink = defaultOptions()
 	}
+	benchSink = sink
 }
 
 func BenchmarkWithConnectionTimeout(b *testing.B) {
@@ -449,13 +458,15 @@ func BenchmarkStats_Create(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sink Stats
 	for i := 0; i < b.N; i++ {
-		_ = Stats{
+		sink = Stats{
 			Connected:      true,
 			ProducersCount: 5,
 			ConsumersCount: 3,
 		}
 	}
+	benchSink = sink
 }
 
 func BenchmarkStats_Copy(b *testing.B) {
@@ -468,10 +479,11 @@ func BenchmarkStats_Copy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var sink Stats
 	for i := 0; i < b.N; i++ {
-		copyStats := stats
-		_ = copyStats
+		sink = stats
 	}
+	benchSink = sink
 }
 
 // =============================================================================

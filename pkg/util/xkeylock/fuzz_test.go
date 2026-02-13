@@ -14,10 +14,16 @@ func FuzzAcquireUnlock(f *testing.F) {
 	f.Add("中文key")
 
 	f.Fuzz(func(t *testing.T, key string) {
-		kl := New()
+		kl := newForTest(t)
 		defer kl.Close()
 
 		h, err := kl.Acquire(context.Background(), key)
+		if key == "" {
+			if err != ErrInvalidKey {
+				t.Fatalf("Acquire with empty key: want ErrInvalidKey, got %v", err)
+			}
+			return
+		}
 		if err != nil {
 			t.Fatalf("Acquire failed for key %q: %v", key, err)
 		}
@@ -37,10 +43,16 @@ func FuzzTryAcquireUnlock(f *testing.F) {
 	f.Add("中文key")
 
 	f.Fuzz(func(t *testing.T, key string) {
-		kl := New()
+		kl := newForTest(t)
 		defer kl.Close()
 
 		h, err := kl.TryAcquire(key)
+		if key == "" {
+			if err != ErrInvalidKey {
+				t.Fatalf("TryAcquire with empty key: want ErrInvalidKey, got %v", err)
+			}
+			return
+		}
 		if err != nil {
 			t.Fatalf("TryAcquire failed for key %q: %v", key, err)
 		}
@@ -51,14 +63,10 @@ func FuzzTryAcquireUnlock(f *testing.F) {
 			t.Fatalf("Key mismatch: got %q, want %q", h.Key(), key)
 		}
 
-		// 再次 TryAcquire 同一 key 应返回 nil（锁被占用）
-		h2, err := kl.TryAcquire(key)
-		if err != nil {
-			t.Fatalf("second TryAcquire failed: %v", err)
-		}
-		if h2 != nil {
-			h2.Unlock()
-			t.Fatalf("second TryAcquire should return nil for held key %q", key)
+		// 再次 TryAcquire 同一 key 应返回 ErrLockOccupied（锁被占用）
+		_, err = kl.TryAcquire(key)
+		if err != ErrLockOccupied {
+			t.Fatalf("second TryAcquire for held key %q: want ErrLockOccupied, got %v", key, err)
 		}
 
 		if err := h.Unlock(); err != nil {

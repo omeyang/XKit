@@ -17,7 +17,7 @@ func TestAddr_IsUnicast(t *testing.T) {
 		{"multicast_01", MustParse("01:11:22:33:44:55"), false},
 		{"multicast_03", MustParse("03:11:22:33:44:55"), false},
 		{"multicast_ff", MustParse("ff:11:22:33:44:55"), false},
-		{"broadcast", Broadcast, false},
+		{"broadcast", Broadcast(), false},
 
 		// 无效地址
 		{"invalid", Addr{}, false},
@@ -41,7 +41,7 @@ func TestAddr_IsMulticast(t *testing.T) {
 		// 多播地址（第一字节最低位为 1）
 		{"multicast_01", MustParse("01:00:5e:00:00:01"), true},
 		{"multicast_33", MustParse("33:33:00:00:00:01"), true}, // IPv6 multicast
-		{"broadcast", Broadcast, true},
+		{"broadcast", Broadcast(), true},
 
 		// 单播地址（第一字节最低位为 0）
 		{"unicast_00", MustParse("00:11:22:33:44:55"), false},
@@ -66,7 +66,7 @@ func TestAddr_IsBroadcast(t *testing.T) {
 		addr Addr
 		want bool
 	}{
-		{"broadcast", Broadcast, true},
+		{"broadcast", Broadcast(), true},
 		{"not_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), false},
 		{"zero", Addr{}, false},
 		{"normal", MustParse("aa:bb:cc:dd:ee:ff"), false},
@@ -149,7 +149,7 @@ func TestAddr_IsZero(t *testing.T) {
 		{"zero", Addr{}, true},
 		{"zero_explicit", MustParse("00:00:00:00:00:00"), true},
 		{"not_zero", MustParse("00:00:00:00:00:01"), false},
-		{"broadcast", Broadcast, false},
+		{"broadcast", Broadcast(), false},
 	}
 
 	for _, tt := range tests {
@@ -208,7 +208,7 @@ func TestAddr_UnicastMulticast_Mutual_Exclusive(t *testing.T) {
 		MustParse("01:11:22:33:44:55"),
 		MustParse("02:11:22:33:44:55"),
 		MustParse("03:11:22:33:44:55"),
-		Broadcast,
+		Broadcast(),
 	}
 
 	for _, addr := range addrs {

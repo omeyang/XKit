@@ -83,7 +83,11 @@ func (c *exitCommand) Help() string {
 }
 
 func (c *exitCommand) Execute(_ context.Context, _ []string) (string, error) {
+	// 设计决策: goroutine 纳入 WaitGroup 管理，确保 Stop() 的 waitForGoroutines
+	// 能等待此 goroutine 完成，避免 Disable 在 Stop 之后执行产生非预期状态。
+	c.server.wg.Add(1)
 	go func() {
+		defer c.server.wg.Done()
 		time.Sleep(100 * time.Millisecond)
 		if err := c.server.Disable(); err != nil {
 			c.server.audit(AuditEventCommandFailed, nil, "exit:disable", nil, 0, err)
@@ -166,23 +170,20 @@ func (c *stackCommand) Execute(ctx context.Context, _ []string) (string, error) 
 	// 使用渐进式缓冲区扩展，避免一开始就分配 1MB
 	// 从 64KB 开始，每次翻倍，最大 1MB
 	const (
-		initialSize = 64 * 1024  // 64KB
+		initialSize = 64 * 1024   // 64KB
 		maxSize     = 1024 * 1024 // 1MB
 	)
 
-	for size := initialSize; size <= maxSize; size *= 2 {
+	for size := initialSize; ; size *= 2 {
+		if size > maxSize {
+			size = maxSize
+		}
 		buf := make([]byte, size)
 		n := runtime.Stack(buf, true) // true 表示获取所有 goroutine
-		if n < size {
-			// 缓冲区足够，返回结果
+		if n < size || size >= maxSize {
 			return string(buf[:n]), nil
 		}
 	}
-
-	// 最后尝试最大缓冲区
-	buf := make([]byte, maxSize)
-	n := runtime.Stack(buf, true)
-	return string(buf[:n]), nil
 }
 
 // freememCommand freemem 命令。

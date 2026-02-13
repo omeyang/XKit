@@ -71,8 +71,11 @@ type Observer interface {
 // NoopObserver 是空实现。
 type NoopObserver struct{}
 
-// Start 返回原始 ctx 和空跨度。
+// Start 返回 ctx 和空跨度。若 ctx 为 nil，返回 context.Background()。
 func (NoopObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return ctx, NoopSpan{}
 }
 
@@ -83,8 +86,12 @@ type NoopSpan struct{}
 func (NoopSpan) End(_ Result) {}
 
 // Start 使用 observer 开始观测，nil observer 时返回空跨度。
+// Start 保证返回非 nil 的 context.Context（nil ctx 会被替换为 context.Background()）。
 func Start(ctx context.Context, observer Observer, opts SpanOptions) (context.Context, Span) {
 	if observer == nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		return ctx, NoopSpan{}
 	}
 	return observer.Start(ctx, opts)

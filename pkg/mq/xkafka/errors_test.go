@@ -30,12 +30,6 @@ func TestSharedErrors_AreAliases(t *testing.T) {
 // Kafka Specific Error Tests
 // =============================================================================
 
-func TestErrNoPartitionAssigned(t *testing.T) {
-	assert.True(t, strings.HasPrefix(ErrNoPartitionAssigned.Error(), "xkafka:"),
-		"error should have 'xkafka:' prefix")
-	assert.Contains(t, ErrNoPartitionAssigned.Error(), "partition")
-}
-
 func TestErrFlushTimeout(t *testing.T) {
 	assert.True(t, strings.HasPrefix(ErrFlushTimeout.Error(), "xkafka:"),
 		"error should have 'xkafka:' prefix")

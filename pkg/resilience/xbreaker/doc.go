@@ -18,7 +18,21 @@
 //   - FailureRatioPolicy：失败率超过阈值后熔断
 //   - FailureCountPolicy：失败次数超过阈值后熔断
 //   - CompositePolicy：组合多个策略
-//   - SlowCallRatioPolicy：慢调用熔断
+//   - SlowCallRatioPolicy：慢调用熔断（基于 FailureRatioPolicy，需配合 SuccessPolicy 使用）
+//
+// # 组合模式
+//
+// 提供两种熔断器+重试的组合模式：
+//   - BreakerRetryer：每次重试都经过熔断器检查和记录
+//   - RetryThenBreak：重试期间不影响熔断器统计，只有最终结果才记录
+//
+// 组合构造函数（NewBreakerRetryer、NewRetryThenBreak、NewRetryThenBreakWithConfig）
+// 对 nil 参数返回错误（ErrNilBreaker、ErrNilRetryer），不会 panic。
+//
+// # 错误排除
+//
+// 若需将特定错误（如 context.Canceled）从熔断统计中排除，
+// 可通过 WithSuccessPolicy 设置自定义成功判定策略。
 //
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

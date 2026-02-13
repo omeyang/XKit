@@ -56,6 +56,10 @@ func TestParseLevel(t *testing.T) {
 		{"warning", xlog.LevelWarn, false},
 		{"WARNING", xlog.LevelWarn, false},
 
+		// TrimSpace
+		{" info ", xlog.LevelInfo, false},
+		{"\tdebug\n", xlog.LevelDebug, false},
+
 		// 无效输入
 		{"", xlog.LevelInfo, true},
 		{"invalid", xlog.LevelInfo, true},
@@ -91,7 +95,8 @@ func TestLevel_String(t *testing.T) {
 		{xlog.LevelInfo, "INFO"},
 		{xlog.LevelWarn, "WARN"},
 		{xlog.LevelError, "ERROR"},
-		{xlog.Level(-100), "LEVEL(-100)"}, // 未知级别
+		{xlog.Level(-100), "DEBUG-96"}, // 非标准级别委托 slog.Level.String()
+		{xlog.Level(2), "INFO+2"},      // 非标准级别委托 slog.Level.String()
 	}
 
 	for _, tt := range tests {

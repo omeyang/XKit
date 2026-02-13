@@ -23,6 +23,10 @@ func FormatFullIP(s string) (string, error) {
 // IPv4: 每段 3 位十进制，带前导零（如 "192.168.001.001"）。
 // IPv6: 32 字符十六进制，无分隔符。
 // 无效地址返回空字符串。
+//
+// 注意：IPv4-mapped IPv6 地址（如 ::ffff:192.168.1.1）会被 Unmap 为纯 IPv4 格式化，
+// 因此 FormatFullIPAddr(mapped) 与 FormatFullIPAddr(unmapped) 输出相同。
+// 如需保留 IPv6 表示，请先判断 [netip.Addr.Is4In6]。
 func FormatFullIPAddr(addr netip.Addr) string {
 	if !addr.IsValid() {
 		return ""
@@ -49,7 +53,10 @@ func FormatFullIPAddr(addr netip.Addr) string {
 // ParseFullIP 解析完整长度的 IP 地址字符串。
 // IPv4: "192.168.001.001" → netip.Addr
 // IPv6: 32 字符十六进制 → netip.Addr
-// 同时也接受标准格式作为回退。
+//
+// 设计决策: 同时也接受标准格式（如 "::1"、"192.168.1.1"）作为回退，以便
+// 作为通用解析入口使用（兼容旧系统中的 FullIP2IP）。如需严格匹配
+// [FormatFullIPAddr] 的输出格式，请先检查字符串长度/格式再调用。
 func ParseFullIP(s string) (netip.Addr, error) {
 	// 尝试 IPv6 全长格式（32 个十六进制字符，无分隔符）
 	if len(s) == 32 && !strings.Contains(s, ".") && !strings.Contains(s, ":") {

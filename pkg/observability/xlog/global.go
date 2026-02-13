@@ -24,6 +24,11 @@ var globalMu sync.Mutex
 var globalOnce sync.Once
 
 // defaultLogger 创建默认 Logger（惰性初始化）
+//
+// 设计决策: 先获取 once 指针再释放锁，然后在锁外执行 once.Do。
+// 即使 ResetDefault 在 once.Do 执行期间重置了 globalOnce，当前 goroutine
+// 持有的旧 once 指针仍然有效（sync.Once 是值语义），不会有功能问题。
+// ResetDefault 仅用于测试，生产环境不存在此竞争。
 func defaultLogger() LoggerWithLevel {
 	globalMu.Lock()
 	once := &globalOnce
@@ -129,5 +134,12 @@ func Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 
 // Stack 使用全局 Logger 记录带堆栈的错误日志
 func Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
-	Default().Stack(ctx, msg, attrs...)
+	l := Default()
+	if xl, ok := l.(*xlogger); ok {
+		// 使用内部方法，正确跳过栈帧（与 globalLog 一致）
+		xl.stackWithSkip(ctx, msg, attrs, 1)
+		return
+	}
+	// fallback：非 xlogger 实现
+	l.Stack(ctx, msg, attrs...)
 }

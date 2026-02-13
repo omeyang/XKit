@@ -132,10 +132,15 @@ func FuzzEnsureDir(f *testing.F) {
 			return
 		}
 
-		// 如果成功，验证目录存在（对于有效路径）
+		// 如果成功，验证父目录确实存在
 		dir := filepath.Dir(testPath)
-		if dir != "" && dir != "." && dir != tmpDir {
-			// 可以选择验证目录确实存在，但由于路径可能很奇怪，这里不做强制验证
+		if dir != "" && dir != "." {
+			info, statErr := os.Stat(dir)
+			if statErr != nil {
+				t.Errorf("EnsureDir(%q) 成功但目录 %q 不存在: %v", testPath, dir, statErr)
+			} else if !info.IsDir() {
+				t.Errorf("EnsureDir(%q) 成功但 %q 不是目录", testPath, dir)
+			}
 		}
 	})
 }
@@ -151,8 +156,9 @@ func FuzzEnsureDirWithPerm(f *testing.F) {
 	f.Add("logs/app.log", uint32(0700))
 	f.Add("a/b/c/app.log", uint32(0750))
 	f.Add("test.log", uint32(0777))
-	f.Add("test.log", uint32(0000))
-	f.Add("test.log", uint32(0644))
+	f.Add("test.log", uint32(0000)) // 会返回 ErrInvalidPerm（缺少所有者执行位）
+	f.Add("test.log", uint32(0644)) // 会返回 ErrInvalidPerm（缺少所有者执行位）
+	f.Add("test.log", uint32(0100)) // 最小有效权限
 
 	tmpDir := f.TempDir()
 

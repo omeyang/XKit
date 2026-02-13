@@ -118,9 +118,12 @@ func defaultOptions() *Options {
 }
 
 // WithHealthTimeout 设置健康检查超时时间。
+// 非正值被忽略（保持默认值），与 storageopt.WithHealthTimeout 行为一致。
 func WithHealthTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		o.HealthTimeout = timeout
+		if timeout > 0 {
+			o.HealthTimeout = timeout
+		}
 	}
 }
 

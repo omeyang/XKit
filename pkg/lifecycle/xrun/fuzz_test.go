@@ -71,37 +71,44 @@ func FuzzTicker_Interval(f *testing.F) {
 
 // FuzzTimer_Delay 测试不同的 timer 延迟
 func FuzzTimer_Delay(f *testing.F) {
-	f.Add(int64(0))       // 0 纳秒
-	f.Add(int64(1))       // 1 纳秒
-	f.Add(int64(1000))    // 1 微秒
-	f.Add(int64(1000000)) // 1 毫秒
+	f.Add(int64(-1000000)) // -1 毫秒（负延迟）
+	f.Add(int64(0))        // 0 纳秒
+	f.Add(int64(1))        // 1 纳秒
+	f.Add(int64(1000))     // 1 微秒
+	f.Add(int64(1000000))  // 1 毫秒
 
 	f.Fuzz(func(t *testing.T, delayNs int64) {
 		// 限制最大延迟为 10 毫秒，避免测试太慢
 		if delayNs > 10_000_000 {
 			delayNs = 10_000_000
 		}
-		// 确保非负
-		if delayNs < 0 {
-			delayNs = 0
-		}
+
+		delay := time.Duration(delayNs)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
 		g, _ := NewGroup(ctx)
 		executed := false
-		g.Go(Timer(time.Duration(delayNs), func(ctx context.Context) error {
+		g.Go(Timer(delay, func(ctx context.Context) error {
 			executed = true
 			return nil
 		}))
 
-		if err := g.Wait(); err != nil {
-			t.Errorf("unexpected error with delay %d ns: %v", delayNs, err)
-		}
+		err := g.Wait()
 
-		if !executed {
-			t.Errorf("timer was not executed with delay %d ns", delayNs)
+		if delay < 0 {
+			// 负延迟应返回 ErrInvalidDelay
+			if !errors.Is(err, ErrInvalidDelay) {
+				t.Errorf("expected ErrInvalidDelay with delay %d ns, got %v", delayNs, err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("unexpected error with delay %d ns: %v", delayNs, err)
+			}
+			if !executed {
+				t.Errorf("timer was not executed with delay %d ns", delayNs)
+			}
 		}
 	})
 }

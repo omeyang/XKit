@@ -146,6 +146,9 @@ $RECYCLE.BIN/
 # Claude Code / AI 相关
 # -----------------------------------------------------------------------------
 
+# Claude Code 本地设置（含 MCP 凭证，不提交）
+.claude/settings.local.json
+
 # CoSpec 规格文件（私有，不提交）
 .cospec/
 COSTRICT.md

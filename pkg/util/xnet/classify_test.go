@@ -574,31 +574,37 @@ func FuzzClassify(f *testing.F) {
 			t.Errorf("IsValid mismatch: addr=%v, c.IsValid=%v", addr.IsValid(), c.IsValid)
 		}
 
-		// 分类结果应该与直接调用函数一致
 		if c.IsValid {
-			if c.IsPrivate != addr.IsPrivate() {
-				t.Errorf("IsPrivate mismatch")
-			}
-			if c.IsLoopback != addr.IsLoopback() {
-				t.Errorf("IsLoopback mismatch")
-			}
-			if c.IsMulticast != addr.IsMulticast() {
-				t.Errorf("IsMulticast mismatch")
-			}
-			if c.IsRoutable != IsRoutable(addr) {
-				t.Errorf("IsRoutable mismatch")
-			}
-			if c.IsDocumentation != IsDocumentation(addr) {
-				t.Errorf("IsDocumentation mismatch")
-			}
-			if c.IsSharedAddress != IsSharedAddress(addr) {
-				t.Errorf("IsSharedAddress mismatch")
-			}
-			if c.IsBenchmark != IsBenchmark(addr) {
-				t.Errorf("IsBenchmark mismatch")
-			}
+			assertClassifyFields(t, addr, c)
 		}
 	})
+}
+
+// assertClassifyFields 验证分类结果与直接调用函数的一致性。
+func assertClassifyFields(t *testing.T, addr netip.Addr, c Classification) {
+	t.Helper()
+
+	if c.IsPrivate != addr.IsPrivate() {
+		t.Errorf("IsPrivate mismatch")
+	}
+	if c.IsLoopback != addr.IsLoopback() {
+		t.Errorf("IsLoopback mismatch")
+	}
+	if c.IsMulticast != addr.IsMulticast() {
+		t.Errorf("IsMulticast mismatch")
+	}
+	if c.IsRoutable != IsRoutable(addr) {
+		t.Errorf("IsRoutable mismatch")
+	}
+	if c.IsDocumentation != IsDocumentation(addr) {
+		t.Errorf("IsDocumentation mismatch")
+	}
+	if c.IsSharedAddress != IsSharedAddress(addr) {
+		t.Errorf("IsSharedAddress mismatch")
+	}
+	if c.IsBenchmark != IsBenchmark(addr) {
+		t.Errorf("IsBenchmark mismatch")
+	}
 }
 
 // expectedDocumentation 根据 IPv4 uint32 范围判断地址是否为文档地址。

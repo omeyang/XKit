@@ -492,3 +492,54 @@ func TestNew_NilOption(t *testing.T) {
 		t.Error("OnEvicted callback should have been called")
 	}
 }
+
+func TestCache_Close(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 10, TTL: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Set("key2", 200)
+
+	// Close should purge and stop goroutine
+	cache.Close()
+
+	if cache.Len() != 0 {
+		t.Errorf("len = %d, expected 0 after close", cache.Len())
+	}
+}
+
+func TestCache_Close_Idempotent(t *testing.T) {
+	cache, err := New[string, int](Config{Size: 10, TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// 多次 Close 不应 panic
+	cache.Close()
+	cache.Close()
+	cache.Close()
+}
+
+func TestCache_Close_ZeroTTL(t *testing.T) {
+	// TTL=0 时无清理 goroutine，Close 仍应正常工作
+	cache, err := New[string, int](Config{Size: 10, TTL: 0})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cache.Set("key1", 100)
+	cache.Close()
+
+	if cache.Len() != 0 {
+		t.Errorf("len = %d, expected 0 after close", cache.Len())
+	}
+}
+
+func TestNew_NegativeTTL(t *testing.T) {
+	_, err := New[string, int](Config{Size: 10, TTL: -1 * time.Second})
+	if err != ErrInvalidTTL {
+		t.Errorf("expected ErrInvalidTTL, got %v", err)
+	}
+}

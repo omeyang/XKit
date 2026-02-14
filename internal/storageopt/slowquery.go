@@ -106,7 +106,7 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 		d.ensurePoolStarted()
 		d.mu.RLock()
 		if !d.closed && d.pool != nil {
-			d.pool.Submit(info)
+			d.pool.Submit(info) //nolint:errcheck,gosec // 队列满时 Submit 内部已记录日志
 		}
 		d.mu.RUnlock()
 	}
@@ -135,12 +135,15 @@ func (d *SlowQueryDetector[T]) ensurePoolStarted() {
 	}
 
 	if d.options.AsyncHook != nil {
-		d.pool = xpool.NewWorkerPool(
+		pool, err := xpool.NewWorkerPool(
 			d.options.AsyncWorkerPoolSize,
 			d.options.AsyncQueueSize,
 			d.options.AsyncHook,
 		)
-		d.pool.Start()
+		if err != nil {
+			return
+		}
+		d.pool = pool
 	}
 }
 

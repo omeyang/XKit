@@ -195,6 +195,50 @@ func TestParseRangeWhitespace(t *testing.T) {
 	assert.Equal(t, "192.168.1.1", r.From().String())
 }
 
+func TestParseRangeWhitespaceAroundSlash(t *testing.T) {
+	// 与 "-" 分隔符一致，"/" 分隔符两侧的空白也应被处理
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "CIDR 斜杠前后有空白",
+			input:     "192.168.1.0 / 24",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "掩码格式斜杠前后有空白",
+			input:     "192.168.1.0 / 255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "CIDR 斜杠前有空白",
+			input:     "10.0.0.0 /8",
+			wantStart: "10.0.0.0",
+			wantEnd:   "10.255.255.255",
+		},
+		{
+			name:      "CIDR 斜杠后有空白",
+			input:     "172.16.0.0/ 16",
+			wantStart: "172.16.0.0",
+			wantEnd:   "172.16.255.255",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
 func TestParseRangeIPv6Range(t *testing.T) {
 	r, err := ParseRange("::1-::ff")
 	require.NoError(t, err)

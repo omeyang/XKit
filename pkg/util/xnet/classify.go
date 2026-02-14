@@ -115,6 +115,10 @@ func Classify(addr netip.Addr) Classification {
 		IsGlobalUnicast:           addr.IsGlobalUnicast(),
 		IsMulticast:               addr.IsMulticast(),
 		IsUnspecified:             addr.IsUnspecified(),
+		IsRoutable:                IsRoutable(addr),
+		IsDocumentation:           IsDocumentation(addr),
+		IsSharedAddress:           IsSharedAddress(addr),
+		IsBenchmark:               IsBenchmark(addr),
 	}
 }
 
@@ -149,42 +153,61 @@ type Classification struct {
 
 	// IsUnspecified 表示是否为未指定地址。
 	IsUnspecified bool
+
+	// IsRoutable 表示是否为可路由的单播地址。
+	IsRoutable bool
+
+	// IsDocumentation 表示是否为文档专用地址（TEST-NET/2001:db8::）。
+	IsDocumentation bool
+
+	// IsSharedAddress 表示是否为共享地址空间（100.64.0.0/10, CGNAT）。
+	IsSharedAddress bool
+
+	// IsBenchmark 表示是否为基准测试地址（198.18.0.0/15）。
+	IsBenchmark bool
 }
 
 // String 返回分类信息的字符串表示。
+// 优先级：越特殊的分类越靠前（如 loopback > private > global-unicast）。
 func (c Classification) String() string {
 	if !c.IsValid {
 		return "invalid"
 	}
 
-	switch {
-	case c.IsLoopback:
-		return "loopback"
-	case c.IsUnspecified:
-		return "unspecified"
-	case c.IsPrivate:
-		return "private"
-	case c.IsLinkLocalUnicast:
-		return "link-local-unicast"
-	case c.IsLinkLocalMulticast:
-		return "link-local-multicast"
-	case c.IsInterfaceLocalMulticast:
-		return "interface-local-multicast"
-	case c.IsMulticast:
-		return "multicast"
-	case c.IsGlobalUnicast:
-		return "global-unicast"
-	default:
-		return "unknown"
+	// 按优先级排列，第一个匹配的即为结果
+	labels := [...]struct {
+		flag  bool
+		label string
+	}{
+		{c.IsLoopback, "loopback"},
+		{c.IsUnspecified, "unspecified"},
+		{c.IsPrivate, "private"},
+		{c.IsLinkLocalUnicast, "link-local-unicast"},
+		{c.IsLinkLocalMulticast, "link-local-multicast"},
+		{c.IsInterfaceLocalMulticast, "interface-local-multicast"},
+		{c.IsDocumentation, "documentation"},
+		{c.IsSharedAddress, "shared-address"},
+		{c.IsBenchmark, "benchmark"},
+		{c.IsMulticast, "multicast"},
+		{c.IsGlobalUnicast, "global-unicast"},
 	}
+
+	for _, e := range labels {
+		if e.flag {
+			return e.label
+		}
+	}
+	return "unknown"
 }
 
-// IsRoutable 报告 addr 是否为可路由地址。
+// IsRoutable 报告 addr 是否为可路由的单播地址。
 // 可路由地址是指：
 //   - 有效
 //   - 非环回
-//   - 非链路本地
+//   - 非链路本地单播
 //   - 非未指定
+//   - 非多播（多播使用独立的组播路由机制，不属于常规单播路由）
+//   - 非有限广播（255.255.255.255，仅本地链路广播，不可被路由器转发）
 //
 // 注意：私有地址虽然不可在公网路由，但在局域网内可路由，
 // 因此 IsRoutable 返回 true。如需判断公网可路由，请使用 IsGlobalUnicast。
@@ -192,9 +215,14 @@ func IsRoutable(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
 	}
+	// 排除 IPv4 有限广播地址 (255.255.255.255)
+	if (addr.Is4() || addr.Is4In6()) && ipv4ToUint32(addr) == 0xFFFFFFFF {
+		return false
+	}
 	return !addr.IsLoopback() &&
 		!addr.IsLinkLocalUnicast() &&
-		!addr.IsUnspecified()
+		!addr.IsUnspecified() &&
+		!addr.IsMulticast()
 }
 
 // IsDocumentation 报告 addr 是否为文档专用地址。

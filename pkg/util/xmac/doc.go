@@ -14,7 +14,7 @@
 //
 //	addr, err := xmac.Parse("AA:BB:CC:DD:EE:FF")
 //	fmt.Println(addr.String())                 // aa:bb:cc:dd:ee:ff
-//	fmt.Println(addr.Format(xmac.FormatDash))  // aa-bb-cc-dd-ee-ff
+//	fmt.Println(addr.FormatString(xmac.FormatDash))  // aa-bb-cc-dd-ee-ff
 //
 // 验证地址类型：
 //

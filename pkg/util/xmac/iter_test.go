@@ -95,7 +95,7 @@ func TestRange_EarlyBreak(t *testing.T) {
 func TestRange_Overflow(t *testing.T) {
 	// 从广播地址前一个开始
 	from := MustParse("ff:ff:ff:ff:ff:fe")
-	to := Broadcast
+	to := Broadcast()
 
 	collected := slices.Collect(Range(from, to))
 
@@ -147,7 +147,7 @@ func TestRangeN(t *testing.T) {
 			n:         10,
 			wantCount: 2, // 只能迭代 fe, ff
 			wantFirst: MustParse("ff:ff:ff:ff:ff:fe"),
-			wantLast:  Broadcast,
+			wantLast:  Broadcast(),
 		},
 	}
 
@@ -168,6 +168,22 @@ func TestRangeN(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRangeN_EarlyBreak(t *testing.T) {
+	start := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeN(start, 100) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
 	}
 }
 
@@ -482,6 +498,68 @@ func TestRangeReverseWithIndex(t *testing.T) {
 	// 验证索引 4 对应 from
 	if indexToAddr[4] != from {
 		t.Errorf("index 4 should be %v, got %v", from, indexToAddr[4])
+	}
+}
+
+func TestRangeWithIndex_EarlyBreak(t *testing.T) {
+	from := MustParse("00:00:00:00:00:01")
+	to := MustParse("00:00:00:00:00:ff")
+
+	count := 0
+	for range RangeWithIndex(from, to) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
+	}
+}
+
+func TestRangeWithIndex_EmptyRange(t *testing.T) {
+	from := MustParse("00:00:00:00:00:05")
+	to := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeWithIndex(from, to) {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("empty range: got %d iterations, want 0", count)
+	}
+}
+
+func TestRangeReverseWithIndex_EarlyBreak(t *testing.T) {
+	from := MustParse("00:00:00:00:00:01")
+	to := MustParse("00:00:00:00:00:ff")
+
+	count := 0
+	for range RangeReverseWithIndex(from, to) {
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+
+	if count != 5 {
+		t.Errorf("early break: got %d iterations, want 5", count)
+	}
+}
+
+func TestRangeReverseWithIndex_EmptyRange(t *testing.T) {
+	from := MustParse("00:00:00:00:00:05")
+	to := MustParse("00:00:00:00:00:01")
+
+	count := 0
+	for range RangeReverseWithIndex(from, to) {
+		count++
+	}
+
+	if count != 0 {
+		t.Errorf("empty range: got %d iterations, want 0", count)
 	}
 }
 

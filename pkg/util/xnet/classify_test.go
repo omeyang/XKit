@@ -249,13 +249,18 @@ func TestClassify(t *testing.T) {
 		wantLoopback  bool
 		wantMulticast bool
 		wantGlobal    bool
+		wantRoutable  bool
+		wantDoc       bool
+		wantShared    bool
+		wantBenchmark bool
 	}{
 		{
-			addr:        "192.168.1.1",
-			wantVersion: V4,
-			wantString:  "private",
-			wantPrivate: true,
-			wantGlobal:  true, // 私有地址也是全局单播
+			addr:         "192.168.1.1",
+			wantVersion:  V4,
+			wantString:   "private",
+			wantPrivate:  true,
+			wantGlobal:   true, // 私有地址也是全局单播
+			wantRoutable: true,
 		},
 		{
 			addr:         "127.0.0.1",
@@ -270,16 +275,18 @@ func TestClassify(t *testing.T) {
 			wantMulticast: true,
 		},
 		{
-			addr:        "8.8.8.8",
-			wantVersion: V4,
-			wantString:  "global-unicast",
-			wantGlobal:  true,
+			addr:         "8.8.8.8",
+			wantVersion:  V4,
+			wantString:   "global-unicast",
+			wantGlobal:   true,
+			wantRoutable: true,
 		},
 		{
-			addr:        "2001:4860:4860::8888",
-			wantVersion: V6,
-			wantString:  "global-unicast",
-			wantGlobal:  true,
+			addr:         "2001:4860:4860::8888",
+			wantVersion:  V6,
+			wantString:   "global-unicast",
+			wantGlobal:   true,
+			wantRoutable: true,
 		},
 		{
 			addr:         "::1",
@@ -310,6 +317,31 @@ func TestClassify(t *testing.T) {
 			wantString:    "multicast",
 			wantMulticast: true,
 		},
+		// 新增分类字段覆盖
+		{
+			addr:         "192.0.2.1",
+			wantVersion:  V4,
+			wantString:   "documentation",
+			wantGlobal:   true,
+			wantRoutable: true,
+			wantDoc:      true,
+		},
+		{
+			addr:         "100.64.0.1",
+			wantVersion:  V4,
+			wantString:   "shared-address",
+			wantGlobal:   true,
+			wantRoutable: true,
+			wantShared:   true,
+		},
+		{
+			addr:          "198.18.0.1",
+			wantVersion:   V4,
+			wantString:    "benchmark",
+			wantGlobal:    true,
+			wantRoutable:  true,
+			wantBenchmark: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -324,6 +356,10 @@ func TestClassify(t *testing.T) {
 			assert.Equal(t, tt.wantLoopback, c.IsLoopback)
 			assert.Equal(t, tt.wantMulticast, c.IsMulticast)
 			assert.Equal(t, tt.wantGlobal, c.IsGlobalUnicast)
+			assert.Equal(t, tt.wantRoutable, c.IsRoutable)
+			assert.Equal(t, tt.wantDoc, c.IsDocumentation)
+			assert.Equal(t, tt.wantShared, c.IsSharedAddress)
+			assert.Equal(t, tt.wantBenchmark, c.IsBenchmark)
 		})
 	}
 
@@ -347,12 +383,17 @@ func TestIsRoutable(t *testing.T) {
 		{"2001:db8::1", true},
 
 		// 不可路由
-		{"127.0.0.1", false},   // 环回
-		{"::1", false},         // 环回
-		{"169.254.0.1", false}, // 链路本地
-		{"fe80::1", false},     // 链路本地
-		{"0.0.0.0", false},     // 未指定
-		{"::", false},          // 未指定
+		{"127.0.0.1", false},              // 环回
+		{"::1", false},                    // 环回
+		{"169.254.0.1", false},            // 链路本地
+		{"fe80::1", false},                // 链路本地
+		{"0.0.0.0", false},                // 未指定
+		{"::", false},                     // 未指定
+		{"224.0.0.1", false},              // 链路本地多播
+		{"ff02::1", false},                // IPv6 链路本地多播
+		{"239.255.255.250", false},        // IPv4 多播
+		{"255.255.255.255", false},        // IPv4 有限广播
+		{"::ffff:255.255.255.255", false}, // IPv4-mapped 广播
 	}
 
 	for _, tt := range tests {
@@ -543,6 +584,18 @@ func FuzzClassify(f *testing.F) {
 			}
 			if c.IsMulticast != addr.IsMulticast() {
 				t.Errorf("IsMulticast mismatch")
+			}
+			if c.IsRoutable != IsRoutable(addr) {
+				t.Errorf("IsRoutable mismatch")
+			}
+			if c.IsDocumentation != IsDocumentation(addr) {
+				t.Errorf("IsDocumentation mismatch")
+			}
+			if c.IsSharedAddress != IsSharedAddress(addr) {
+				t.Errorf("IsSharedAddress mismatch")
+			}
+			if c.IsBenchmark != IsBenchmark(addr) {
+				t.Errorf("IsBenchmark mismatch")
 			}
 		}
 	})

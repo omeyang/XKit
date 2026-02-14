@@ -33,8 +33,9 @@ func WithMaxKeys(n int) Option {
 }
 
 // WithShardCount 设置分片数量。
-// 更多分片减少争用，但增加内存占用。
+// 更多分片减少争用，但增加内存占用和 cache 开销。
 // n 必须为正整数且为 2 的幂，否则 New 返回错误。默认 32。
+// 建议设置为 2×GOMAXPROCS 左右；过多分片在 CPU 核数较少时无额外收益。
 // 使用 uint 类型：负数在编译期即报错，比运行时错误更安全。
 func WithShardCount(n uint) Option {
 	return func(o *options) {

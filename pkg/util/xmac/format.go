@@ -24,6 +24,26 @@ const (
 	hexUpper = "0123456789ABCDEF"
 )
 
+// String 返回格式名称（用于调试和日志输出）。
+func (f Format) String() string {
+	switch f {
+	case FormatColon:
+		return "colon"
+	case FormatDash:
+		return "dash"
+	case FormatDot:
+		return "dot"
+	case FormatBare:
+		return "bare"
+	case FormatColonUpper:
+		return "colon_upper"
+	case FormatDashUpper:
+		return "dash_upper"
+	default:
+		return "unknown"
+	}
+}
+
 // String 返回默认格式（小写冒号）的字符串表示。
 // 无效地址返回空字符串。
 func (a Addr) String() string {

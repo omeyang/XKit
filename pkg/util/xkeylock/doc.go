@@ -22,4 +22,6 @@
 //   - 关闭语义：Close() 拒绝新请求，已持有锁不受影响
 //   - Close() 唤醒所有等待中的 Acquire，使其返回 ErrClosed
 //   - 非可重入：同一 goroutine 对同一 key 重复 Acquire 会死锁
+//   - 近似公平：等待者按 Go channel 内部队列顺序唤醒（近似 FIFO），
+//     但不提供严格公平性保证；极端高并发下可能存在微弱的唤醒不均
 package xkeylock

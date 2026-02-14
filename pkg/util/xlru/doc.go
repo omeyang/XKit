@@ -3,10 +3,6 @@
 // xlru 基于 github.com/hashicorp/golang-lru/v2/expirable 封装，
 // 提供简洁的泛型 API，适合作为本地缓存层使用。
 //
-// # 要求
-//
-// Go 1.22+ 是必须的。测试代码使用 sync.WaitGroup.Go（Go 1.22 新增）。
-//
 // # 核心特性
 //
 //   - 泛型支持：支持任意 comparable 的键类型和任意值类型
@@ -57,4 +53,5 @@
 //   - Get 不会刷新 TTL（与某些缓存库的行为不同）
 //   - Size 是条目数量，不是内存大小
 //   - 淘汰回调在锁内执行，应避免耗时操作
+//   - 使用完毕后应调用 Close() 释放清理 goroutine，避免泄漏
 package xlru

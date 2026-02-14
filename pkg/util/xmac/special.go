@@ -1,16 +1,17 @@
 package xmac
 
-// 预定义的特殊 MAC 地址。
-var (
-	// Zero 是全零地址 00:00:00:00:00:00。
-	// 通常表示"未知"或"无效"。
-	// 注意：与零值 Addr{} 相同。
-	Zero = Addr{}
+// broadcastAddr 是内部使用的广播地址常量。
+// 使用 unexported 变量避免外部篡改影响包内逻辑（IsBroadcast, Next 等）。
+var broadcastAddr = Addr{bytes: [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}
 
-	// Broadcast 是广播地址 ff:ff:ff:ff:ff:ff。
-	// 用于向局域网内所有设备发送数据。
-	Broadcast = Addr{bytes: [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}
-)
+// Zero 返回全零地址 00:00:00:00:00:00。
+// 通常表示"未知"或"无效"。
+// 与零值 Addr{} 相同。
+func Zero() Addr { return Addr{} }
+
+// Broadcast 返回广播地址 ff:ff:ff:ff:ff:ff。
+// 用于向局域网内所有设备发送数据。
+func Broadcast() Addr { return broadcastAddr }
 
 // IsSpecial 报告 a 是否为特殊地址（零地址或广播地址）。
 // 特殊地址通常不应用于资产识别等业务场景。

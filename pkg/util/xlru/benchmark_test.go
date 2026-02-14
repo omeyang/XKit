@@ -90,13 +90,13 @@ func BenchmarkCache_Delete(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	cache.Set("del_key", 42)
+
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		b.StopTimer()
-		cache.Set("del_key", 42)
-		b.StartTimer()
 		cache.Delete("del_key")
+		cache.Set("del_key", 42)
 	}
 }
 

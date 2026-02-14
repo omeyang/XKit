@@ -70,11 +70,11 @@ const (
 type Components struct {
 	// ID 原始 ID 值
 	ID int64
-	// Time 时间戳部分（10ms 为单位，自 Sonyflake epoch 起）
+	// Time 时间戳部分（10ms 为单位，自 Sonyflake epoch 起，39 位，有效范围 0-549,755,813,887）
 	Time int64
-	// Sequence 序列号部分（同一时间单位内的递增序号）
+	// Sequence 序列号部分（同一时间单位内的递增序号，8 位，有效范围 0-255）
 	Sequence int64
-	// Machine 机器 ID 部分
+	// Machine 机器 ID 部分（16 位，有效范围 0-65535）
 	Machine int64
 }
 
@@ -172,13 +172,14 @@ func (g *Generator) New() (int64, error) {
 	return g.generateID()
 }
 
-// NewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试。
+// NewWithRetry 生成新的唯一 ID，遇到可重试错误时自动等待重试。
 //
-// 仅对可重试错误（如时钟回拨）进行等待重试。
-// 不可恢复的错误（如 sonyflake 时间溢出）会立即返回，不会浪费等待时间。
+// 重试策略：
+//   - [sonyflake.ErrOverTimeLimit]（时间分量溢出）不可恢复，立即返回 [ErrOverTimeLimit]
+//   - 其余错误视为可重试（Sonyflake v2 实际只返回 ErrOverTimeLimit，此策略为前向兼容预留）
 //
 // 支持通过 context 取消等待。如果等待超过 maxWaitDuration（默认 500ms）
-// 仍无法生成，返回 ErrClockBackwardTimeout。
+// 仍无法生成，返回 [ErrClockBackwardTimeout]。
 func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 	if ctx == nil {
 		panic("xid: nil Context")
@@ -254,7 +255,8 @@ func (g *Generator) MustNewWithRetry() int64 {
 
 // MustNewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试，失败时 panic。
 //
-// 这是生产环境推荐的默认方法。
+// 适用于明确接受 crash-fast 策略的场景（如启动时预生成 ID）。
+// 生产环境建议使用 [Generator.NewStringWithRetry] 以便自定义错误处理。
 // 内部使用 context.Background()。如需自定义 context，请使用 NewStringWithRetry。
 func (g *Generator) MustNewStringWithRetry() string {
 	s, err := g.NewStringWithRetry(context.Background())
@@ -349,11 +351,11 @@ func New() (int64, error) {
 	return gen.New()
 }
 
-// NewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试。
+// NewWithRetry 生成新的唯一 ID，遇到可重试错误时自动等待重试。
 //
-// 这是生产环境推荐使用的方法，能够容忍短暂的时钟回拨（NTP 同步等）。
+// 这是生产环境推荐使用的方法，能够容忍短暂的时钟异常（NTP 同步等）。
 // 支持通过 context 取消等待。
-// 如果等待超过 maxWaitDuration（默认 500ms）仍无法生成，返回 ErrClockBackwardTimeout。
+// 如果等待超过 maxWaitDuration（默认 500ms）仍无法生成，返回 [ErrClockBackwardTimeout]。
 func NewWithRetry(ctx context.Context) (int64, error) {
 	gen, err := ensureInitialized()
 	if err != nil {
@@ -374,9 +376,9 @@ func NewString() (string, error) {
 	return gen.NewString()
 }
 
-// NewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试。
+// NewStringWithRetry 生成新的唯一 ID（字符串格式），遇到可重试错误时自动等待重试。
 //
-// 这是生产环境推荐使用的方法。支持通过 context 取消等待。详见 NewWithRetry。
+// 这是生产环境推荐使用的方法。支持通过 context 取消等待。详见 [NewWithRetry]。
 func NewStringWithRetry(ctx context.Context) (string, error) {
 	gen, err := ensureInitialized()
 	if err != nil {
@@ -385,9 +387,10 @@ func NewStringWithRetry(ctx context.Context) (string, error) {
 	return gen.NewStringWithRetry(ctx)
 }
 
-// MustNewWithRetry 生成新的唯一 ID，遇到时钟回拨时自动等待重试，失败时 panic。
+// MustNewWithRetry 生成新的唯一 ID，遇到可重试错误时自动等待重试，失败时 panic。
 //
-// 这是生产环境推荐使用的方法，自动处理短暂的时钟回拨。
+// 适用于明确接受 crash-fast 策略的场景。
+// 生产环境建议使用 [NewWithRetry] 以便自定义错误处理。
 // 内部使用 context.Background()。如需自定义 context，请使用 NewWithRetry。
 func MustNewWithRetry() int64 {
 	gen, err := ensureInitialized()
@@ -397,9 +400,10 @@ func MustNewWithRetry() int64 {
 	return gen.MustNewWithRetry()
 }
 
-// MustNewStringWithRetry 生成新的唯一 ID（字符串格式），遇到时钟回拨时自动等待重试，失败时 panic。
+// MustNewStringWithRetry 生成新的唯一 ID（字符串格式），遇到可重试错误时自动等待重试，失败时 panic。
 //
-// 这是生产环境推荐的默认方法，自动处理短暂的时钟回拨。
+// 适用于明确接受 crash-fast 策略的场景。
+// 生产环境建议使用 [NewStringWithRetry] 以便自定义错误处理。
 // 内部使用 context.Background()。如需自定义 context，请使用 NewStringWithRetry。
 func MustNewStringWithRetry() string {
 	gen, err := ensureInitialized()
@@ -426,7 +430,9 @@ func Parse(s string) (int64, error) {
 	if id <= 0 {
 		return 0, fmt.Errorf("%w: value must be positive, got %d", ErrInvalidID, id)
 	}
-	// 校验时间分量是否在 39 位范围内
+	// 防御性检查：校验时间分量是否在 39 位范围内。
+	// 在 int64 正数范围内数学上不可达（最大正 int64 的时间分量恰好等于 maxTimeValue），
+	// 但保留以防未来位布局变化。
 	if id>>(sequenceBits+machineBits) > maxTimeValue {
 		return 0, fmt.Errorf("%w: time component exceeds %d-bit range", ErrInvalidID, timeBits)
 	}

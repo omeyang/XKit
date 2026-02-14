@@ -104,6 +104,9 @@ func UnmapToIPv4(addr netip.Addr) netip.Addr {
 //
 // 对于 IPv4 地址，使用 uint64 快速路径（零分配）。
 // 对于 IPv6 地址，使用 big.Int 运算。
+//
+// 注意：IPv4-mapped IPv6 地址（如 ::ffff:192.168.1.1）走 IPv4 快速路径，
+// 返回结果为纯 IPv4 地址（如 192.168.1.2），不再是 IPv4-mapped 形式。
 func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 	if !addr.IsValid() {
 		return netip.Addr{}, ErrInvalidAddress

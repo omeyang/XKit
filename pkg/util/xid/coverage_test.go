@@ -56,14 +56,14 @@ func newRetryableFailGenerator(t *testing.T) *Generator {
 // =============================================================================
 
 func TestMachineIDFromPrivateIP(t *testing.T) {
-	// 在有网络接口的环境中，应该能获取到私有 IP
+	// 环境依赖测试：结果取决于运行环境是否有私有 IP 地址。
+	// 有私有 IP（大多数开发/CI 环境）→ 走成功路径
+	// 无私有 IP（隔离容器、无网络）→ 走错误路径
+	// 两条路径均有断言。纯函数 isPrivateIPv4 的确定性测试见 TestIsPrivateIPv4。
 	id, err := machineIDFromPrivateIP()
-	// 如果有私有 IP，应该成功
-	// 如果没有私有 IP（如在隔离容器中），会返回错误
 	if err == nil {
 		assert.NotZero(t, id)
 	} else {
-		// 验证是正确的错误类型
 		assert.ErrorIs(t, err, ErrNoPrivateAddress)
 	}
 }
@@ -73,13 +73,14 @@ func TestMachineIDFromPrivateIP(t *testing.T) {
 // =============================================================================
 
 func TestPrivateIPv4(t *testing.T) {
+	// 环境依赖测试：结果取决于运行环境的网络配置。
+	// 纯函数 isPrivateIPv4 的确定性测试见 TestIsPrivateIPv4 和 TestIsPrivateIPv4_EdgeCases。
 	ip, err := privateIPv4()
 	if err == nil {
 		assert.NotNil(t, ip)
 		assert.Len(t, ip, 4) // IPv4 should be 4 bytes
 		assert.True(t, isPrivateIPv4(ip), "returned IP should be private")
 	}
-	// Error case is acceptable in some environments
 }
 
 // =============================================================================
@@ -160,6 +161,20 @@ func TestNew_InitFailure(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 
 	// 重置以避免影响其他测试
+	resetGlobal()
+}
+
+func TestNew_AutoInitFailure(t *testing.T) {
+	resetGlobal()
+
+	// 设置无效的 XID_MACHINE_ID 使 DefaultMachineID 返回错误，
+	// 覆盖 ensureInitialized 中 NewGenerator() 失败的路径
+	t.Setenv(EnvMachineID, "invalid")
+
+	_, err := New()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid")
+
 	resetGlobal()
 }
 
@@ -390,77 +405,6 @@ func TestParse_EdgeCases(t *testing.T) {
 			}
 		})
 	}
-}
-
-// =============================================================================
-// Decompose 测试
-// =============================================================================
-
-func TestDecompose_ValidID(t *testing.T) {
-	resetGlobal()
-	require.NoError(t, Init())
-
-	// 生成一个 ID
-	id, err := New()
-	require.NoError(t, err)
-
-	// 分解 ID（纯函数，无需初始化）
-	result, err := Decompose(id)
-	require.NoError(t, err)
-
-	// 验证值
-	assert.Equal(t, id, result.ID)
-	assert.NotZero(t, result.Time)
-
-	resetGlobal()
-}
-
-// =============================================================================
-// 并发安全测试
-// =============================================================================
-
-func TestConcurrentNew_NoCollision(t *testing.T) {
-	resetGlobal()
-	require.NoError(t, Init())
-
-	const goroutines = 10
-	const idsPerGoroutine = 100
-
-	ids := make(chan int64, goroutines*idsPerGoroutine)
-	done := make(chan struct{})
-
-	// 启动多个 goroutine 并发生成 ID
-	for i := 0; i < goroutines; i++ {
-		go func() {
-			for j := 0; j < idsPerGoroutine; j++ {
-				id, err := New()
-				if err != nil {
-					t.Errorf("New() error: %v", err)
-					return
-				}
-				ids <- id
-			}
-			done <- struct{}{}
-		}()
-	}
-
-	// 等待所有 goroutine 完成
-	for i := 0; i < goroutines; i++ {
-		<-done
-	}
-	close(ids)
-
-	// 检查是否有重复
-	seen := make(map[int64]bool)
-	for id := range ids {
-		if seen[id] {
-			t.Errorf("Duplicate ID found: %d", id)
-		}
-		seen[id] = true
-	}
-
-	assert.Equal(t, goroutines*idsPerGoroutine, len(seen), "Expected %d unique IDs", goroutines*idsPerGoroutine)
-	resetGlobal()
 }
 
 // =============================================================================

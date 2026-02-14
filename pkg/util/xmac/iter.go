@@ -129,6 +129,9 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 //	addrs := xmac.Collect(xmac.Range(from, to), 100)
 func Collect(seq iter.Seq[Addr], maxCount int) []Addr {
 	var result []Addr
+	if maxCount > 0 {
+		result = make([]Addr, 0, maxCount)
+	}
 	count := 0
 	for addr := range seq {
 		if maxCount > 0 && count >= maxCount {

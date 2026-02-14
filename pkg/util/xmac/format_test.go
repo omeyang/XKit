@@ -10,7 +10,7 @@ func TestAddr_String(t *testing.T) {
 	}{
 		{"valid", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}, "aa:bb:cc:dd:ee:ff"},
 		{"zero", Addr{}, ""},
-		{"broadcast", Broadcast, "ff:ff:ff:ff:ff:ff"},
+		{"broadcast", Broadcast(), "ff:ff:ff:ff:ff:ff"},
 		{"leading_zeros", Addr{bytes: [6]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}}, "01:02:03:04:05:06"},
 	}
 
@@ -57,6 +57,29 @@ func TestAddr_FormatString(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFormat_String(t *testing.T) {
+	tests := []struct {
+		format Format
+		want   string
+	}{
+		{FormatColon, "colon"},
+		{FormatDash, "dash"},
+		{FormatDot, "dot"},
+		{FormatBare, "bare"},
+		{FormatColonUpper, "colon_upper"},
+		{FormatDashUpper, "dash_upper"},
+		{Format(255), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := tt.format.String(); got != tt.want {
+				t.Errorf("Format(%d).String() = %q, want %q", tt.format, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestFormatAllBytes(t *testing.T) {

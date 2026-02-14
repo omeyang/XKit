@@ -1,6 +1,7 @@
 package xfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,6 +167,24 @@ func TestEnsureDirWithPerm(t *testing.T) {
 				t.Errorf("%q 不是目录", dir)
 			}
 		})
+	}
+}
+
+func TestEnsureDirWithPermEmptyFilename(t *testing.T) {
+	err := EnsureDirWithPerm("", 0755)
+	if err == nil {
+		t.Fatal("EnsureDirWithPerm(\"\") 期望错误，但没有返回错误")
+	}
+	if !errors.Is(err, ErrEmptyPath) {
+		t.Errorf("EnsureDirWithPerm(\"\") 错误 = %v, errors.Is(ErrEmptyPath) = false", err)
+	}
+
+	err = EnsureDir("")
+	if err == nil {
+		t.Fatal("EnsureDir(\"\") 期望错误，但没有返回错误")
+	}
+	if !errors.Is(err, ErrEmptyPath) {
+		t.Errorf("EnsureDir(\"\") 错误 = %v, errors.Is(ErrEmptyPath) = false", err)
 	}
 }
 

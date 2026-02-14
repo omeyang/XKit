@@ -46,13 +46,13 @@ func Example_parseAndDecompose() {
 		log.Fatal(err)
 	}
 	fmt.Printf("Has time component: %v\n", parts.Time > 0)
-	fmt.Printf("Has machine: %v\n", parts.Machine >= 0)
-	fmt.Printf("Has sequence: %v\n", parts.Sequence >= 0)
+	fmt.Printf("Machine in range: %v\n", parts.Machine >= 0 && parts.Machine <= 65535)
+	fmt.Printf("Sequence in range: %v\n", parts.Sequence >= 0 && parts.Sequence <= 255)
 
 	// Output:
 	// Has time component: true
-	// Has machine: true
-	// Has sequence: true
+	// Machine in range: true
+	// Sequence in range: true
 }
 
 func Example_concurrent() {

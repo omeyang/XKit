@@ -344,26 +344,21 @@ func BenchmarkNewString(b *testing.B) {
 // BenchmarkComparison 对比不同 ID 生成方案的性能
 func BenchmarkComparison(b *testing.B) {
 	resetGlobal()
+	_ = Init() //nolint:errcheck // benchmark init
 
 	b.Run("xid/New", func(b *testing.B) {
-		_ = Init() //nolint:errcheck // benchmark init
-		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, _ = New() //nolint:errcheck // benchmark
 		}
 	})
 
 	b.Run("xid/NewString", func(b *testing.B) {
-		_ = Init() //nolint:errcheck // benchmark init
-		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, _ = NewString() //nolint:errcheck // benchmark
 		}
 	})
 
 	b.Run("xid/MustNewStringWithRetry", func(b *testing.B) {
-		_ = Init() //nolint:errcheck // benchmark init
-		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_ = MustNewStringWithRetry()
 		}

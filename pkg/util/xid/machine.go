@@ -114,8 +114,12 @@ func machineIDFromOSHostname() (uint16, bool) {
 	return hashToMachineID(hostname), true
 }
 
-// machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID
-// 这是 sonyflake 的默认方式
+// machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID。
+// 这是 sonyflake 的默认方式。
+//
+// 注意：net.InterfaceAddrs 的枚举顺序依赖于操作系统，多网卡环境下
+// 重启后可能选到不同的 IP，导致 machine ID 变化。
+// 生产环境建议通过 XID_MACHINE_ID 环境变量显式分配。
 func machineIDFromPrivateIP() (uint16, error) {
 	ip, err := privateIPv4()
 	if err != nil {

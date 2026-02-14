@@ -160,6 +160,11 @@ func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	default: // 锁被占用
 		kl.releaseRef(key, entry)
+		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
+		// 避免将"已关闭"误报为"锁被占用"。
+		if kl.closed.Load() {
+			return nil, ErrClosed
+		}
 		return nil, nil
 	}
 }

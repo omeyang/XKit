@@ -15,6 +15,9 @@ import (
 //   - 无分隔：aabbccddeeff, AABBCCDDEEFF
 //
 // 输入会自动去除首尾空白。大小写不敏感，结果统一小写存储。
+//
+// 注意：全零 MAC "00:00:00:00:00:00" 返回零值 Addr{} 且无错误，
+// 零值 [Addr.IsValid] 返回 false。如需验证业务可用性，请使用 [Addr.IsUsable]。
 func Parse(s string) (Addr, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

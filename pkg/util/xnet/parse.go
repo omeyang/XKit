@@ -40,13 +40,16 @@ func ParseRange(s string) (netipx.IPRange, error) {
 
 	// 格式 2/3: CIDR 或掩码 "addr/bits" 或 "addr/mask"
 	if idx := strings.Index(s, "/"); idx >= 0 {
-		maskStr := s[idx+1:]
+		addrPart := strings.TrimSpace(s[:idx])
+		maskStr := strings.TrimSpace(s[idx+1:])
 
 		if strings.Contains(maskStr, ".") {
-			return parseRangeWithMask(s[:idx], maskStr)
+			return parseRangeWithMask(addrPart, maskStr)
 		}
 
-		prefix, err := netip.ParsePrefix(s)
+		// 重新组装去除空白后的 CIDR 字符串
+		cidr := addrPart + "/" + maskStr
+		prefix, err := netip.ParsePrefix(cidr)
 		if err != nil {
 			return netipx.IPRange{}, fmt.Errorf("%w: invalid CIDR: %s", ErrInvalidRange, s)
 		}

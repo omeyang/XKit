@@ -56,7 +56,7 @@ func (a Addr) Compare(b Addr) int {
 // Next 返回下一个 MAC 地址（当前地址 +1）。
 // 如果 a 是 ff:ff:ff:ff:ff:ff，返回 [ErrOverflow]。
 func (a Addr) Next() (Addr, error) {
-	if a == Broadcast {
+	if a == broadcastAddr {
 		return Addr{}, ErrOverflow
 	}
 	var next Addr

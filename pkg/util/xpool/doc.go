@@ -6,15 +6,16 @@
 //   - 可配置的 worker 数量和队列大小
 //   - 优雅关闭（处理完队列中的任务后退出）
 //   - panic 恢复（单个任务失败不影响 pool）
-//   - 队列满时丢弃任务并记录日志
+//   - 队列满时丢弃任务并返回 ErrQueueFull
+//   - 可注入自定义日志记录器
 //
 // # 注意事项
 //
-//   - Submit 是非阻塞的，队列满时会丢弃任务
+//   - Submit 是非阻塞的，队列满时返回 ErrQueueFull
 //   - Stop 会等待所有队列中的任务处理完成
 //   - 任务处理器应该是幂等的或可安全重试的
-//   - Start 是幂等的，多次调用只会启动一次
-//   - handler 参数不能为 nil，否则会 panic
+//   - NewWorkerPool 创建后自动启动 worker，无需手动 Start
+//   - handler 参数不能为 nil，否则返回 ErrNilHandler
 //
 // # 设计选择说明
 //

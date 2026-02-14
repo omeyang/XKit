@@ -1,12 +1,14 @@
 package xpool
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorkerPool_Basic(t *testing.T) {
@@ -14,16 +16,16 @@ func TestWorkerPool_Basic(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(5)
 
-	pool := NewWorkerPool(2, 10, func(n int) {
+	pool, err := NewWorkerPool(2, 10, func(n int) {
 		processed.Add(1)
 		wg.Done()
 	})
-	pool.Start()
+	require.NoError(t, err)
 	defer pool.Stop()
 
-	for i := 0; i < 5; i++ {
-		submitted := pool.Submit(i)
-		assert.True(t, submitted)
+	for i := range 5 {
+		err := pool.Submit(i)
+		assert.NoError(t, err)
 	}
 
 	wg.Wait()
@@ -31,32 +33,29 @@ func TestWorkerPool_Basic(t *testing.T) {
 }
 
 func TestWorkerPool_QueueFull(t *testing.T) {
-	// 创建一个小队列和慢处理器
 	var processed atomic.Int32
 
-	pool := NewWorkerPool(1, 2, func(_ int) {
+	pool, err := NewWorkerPool(1, 2, func(_ int) {
 		time.Sleep(50 * time.Millisecond)
 		processed.Add(1)
 	})
-	pool.Start()
+	require.NoError(t, err)
 	defer pool.Stop()
 
-	// 提交多个任务
 	var submitted, dropped int
-	for i := 0; i < 10; i++ {
-		if pool.Submit(i) {
+	for i := range 10 {
+		if err := pool.Submit(i); err == nil {
 			submitted++
 		} else {
+			assert.ErrorIs(t, err, ErrQueueFull)
 			dropped++
 		}
 	}
 
-	// 应该有一些任务被丢弃
 	t.Logf("submitted: %d, dropped: %d", submitted, dropped)
 	assert.Greater(t, submitted, 0)
-	// 队列可能满导致部分任务被丢弃
+	assert.Greater(t, dropped, 0)
 
-	// 等待处理完成
 	time.Sleep(200 * time.Millisecond)
 	assert.Greater(t, processed.Load(), int32(0))
 }
@@ -64,22 +63,20 @@ func TestWorkerPool_QueueFull(t *testing.T) {
 func TestWorkerPool_Stop(t *testing.T) {
 	var processed atomic.Int32
 
-	pool := NewWorkerPool(2, 10, func(_ int) {
+	pool, err := NewWorkerPool(2, 10, func(_ int) {
 		processed.Add(1)
 	})
-	pool.Start()
+	require.NoError(t, err)
 
-	// 提交一些任务
-	for i := 0; i < 5; i++ {
-		pool.Submit(i)
+	for i := range 5 {
+		pool.Submit(i) //nolint:errcheck // 测试中忽略提交错误
 	}
 
-	// 立即停止
 	pool.Stop()
 
-	// 再次提交应该失败
-	submitted := pool.Submit(100)
-	assert.False(t, submitted)
+	// 停止后提交应返回 ErrPoolStopped
+	err = pool.Submit(100)
+	assert.ErrorIs(t, err, ErrPoolStopped)
 
 	// 多次 Stop 应该是安全的
 	pool.Stop()
@@ -91,109 +88,135 @@ func TestWorkerPool_PanicRecovery(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 
-	pool := NewWorkerPool(1, 10, func(n int) {
+	pool, err := NewWorkerPool(1, 10, func(n int) {
 		defer wg.Done()
 		if n == 1 {
 			panic("test panic")
 		}
 		processed.Add(1)
 	})
-	pool.Start()
+	require.NoError(t, err)
 	defer pool.Stop()
 
-	// 第一个任务正常
-	pool.Submit(0)
-	// 第二个任务 panic
-	pool.Submit(1)
-	// 第三个任务应该仍然能执行
-	pool.Submit(2)
+	pool.Submit(0) //nolint:errcheck // 测试中忽略提交错误
+	pool.Submit(1) //nolint:errcheck // 测试中忽略提交错误
+	pool.Submit(2) //nolint:errcheck // 测试中忽略提交错误
 
 	wg.Wait()
-	// 只有 2 个任务实际处理成功
 	assert.Equal(t, int32(2), processed.Load())
 }
 
 func TestWorkerPool_DefaultValues(t *testing.T) {
-	// 测试默认值处理
-	pool := NewWorkerPool(0, 0, func(_ int) {})
+	pool, err := NewWorkerPool(0, 0, func(_ int) {})
+	require.NoError(t, err)
+	defer pool.Stop()
+
 	assert.Equal(t, 1, pool.Workers())
 	assert.Equal(t, 100, pool.QueueSize())
 }
 
 func TestWorkerPool_Concurrent(t *testing.T) {
 	var processed atomic.Int64
-	pool := NewWorkerPool(4, 100, func(n int) {
+	pool, err := NewWorkerPool(4, 100, func(n int) {
 		processed.Add(int64(n))
 	})
-	pool.Start()
+	require.NoError(t, err)
 	defer pool.Stop()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 10; j++ {
-				pool.Submit(1)
+	for range 10 {
+		wg.Go(func() {
+			for range 10 {
+				pool.Submit(1) //nolint:errcheck // 测试中忽略提交错误
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
 	time.Sleep(100 * time.Millisecond)
 
-	// 应该处理了大部分任务（可能有些被丢弃）
 	assert.Greater(t, processed.Load(), int64(0))
 }
 
 func TestWorkerPool_GracefulShutdown(t *testing.T) {
 	var processed atomic.Int32
 
-	pool := NewWorkerPool(1, 100, func(_ int) {
+	pool, err := NewWorkerPool(1, 100, func(_ int) {
 		time.Sleep(10 * time.Millisecond)
 		processed.Add(1)
 	})
-	pool.Start()
+	require.NoError(t, err)
 
-	// 提交 10 个任务
-	for i := 0; i < 10; i++ {
-		pool.Submit(i)
+	for i := range 10 {
+		pool.Submit(i) //nolint:errcheck // 测试中忽略提交错误
 	}
 
-	// 停止并等待
 	pool.Stop()
 
-	// 由于优雅关闭，所有任务应该都被处理了
 	assert.Equal(t, int32(10), processed.Load())
 }
 
-func TestWorkerPool_StartIdempotent(t *testing.T) {
-	var processed atomic.Int32
-
-	pool := NewWorkerPool(2, 10, func(_ int) {
-		processed.Add(1)
-	})
-
-	// 多次调用 Start
-	pool.Start()
-	pool.Start()
-	pool.Start()
-
-	// 提交任务
-	for i := 0; i < 5; i++ {
-		pool.Submit(i)
-	}
-
-	// 等待任务处理
-	time.Sleep(100 * time.Millisecond)
-	pool.Stop()
-
-	// 应该只有 2 个 worker（不是 6 个），所有任务都被处理
-	assert.Equal(t, int32(5), processed.Load())
+func TestWorkerPool_NilHandler(t *testing.T) {
+	_, err := NewWorkerPool[int](2, 10, nil)
+	assert.ErrorIs(t, err, ErrNilHandler)
 }
 
-func TestWorkerPool_NilHandler(t *testing.T) {
-	assert.Panics(t, func() {
-		NewWorkerPool[int](2, 10, nil)
+func TestWorkerPool_WithLogger(t *testing.T) {
+	logger := slog.Default()
+	pool, err := NewWorkerPool(1, 10, func(_ int) {},
+		WithLogger[int](logger),
+	)
+	require.NoError(t, err)
+	defer pool.Stop()
+}
+
+func TestWorkerPool_WithNilLogger(t *testing.T) {
+	// nil logger 不应覆盖默认值
+	pool, err := NewWorkerPool(1, 10, func(_ int) {},
+		WithLogger[int](nil),
+	)
+	require.NoError(t, err)
+	defer pool.Stop()
+}
+
+func TestWorkerPool_NilOption(t *testing.T) {
+	pool, err := NewWorkerPool(1, 10, func(_ int) {}, nil)
+	require.NoError(t, err)
+	defer pool.Stop()
+}
+
+func TestWorkerPool_SubmitAfterStop(t *testing.T) {
+	pool, err := NewWorkerPool(2, 10, func(_ int) {})
+	require.NoError(t, err)
+
+	pool.Stop()
+
+	err = pool.Submit(42)
+	assert.ErrorIs(t, err, ErrPoolStopped)
+}
+
+func TestWorkerPool_ConcurrentSubmitAndStop(t *testing.T) {
+	pool, err := NewWorkerPool(4, 100, func(_ int) {
+		time.Sleep(time.Millisecond)
 	})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// 并发提交
+	for range 10 {
+		wg.Go(func() {
+			for j := range 100 {
+				pool.Submit(j) //nolint:errcheck // 测试中忽略提交错误
+			}
+		})
+	}
+
+	// 并发停止
+	wg.Go(func() {
+		time.Sleep(10 * time.Millisecond)
+		pool.Stop()
+	})
+
+	wg.Wait()
 }

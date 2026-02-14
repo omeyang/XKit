@@ -32,11 +32,20 @@ func (a *Addr) UnmarshalText(text []byte) error {
 // MarshalJSON 实现 [json.Marshaler]。
 // 输出带引号的小写冒号格式字符串（"aa:bb:cc:dd:ee:ff"）。
 // 无效地址输出空字符串（""）。
+//
+// MAC 地址字符串仅包含 [0-9a-f:] 字符，无需 JSON 转义，
+// 因此直接构造带引号的字节切片，避免 [json.Marshal] 的反射开销。
 func (a Addr) MarshalJSON() ([]byte, error) {
 	if !a.IsValid() {
 		return []byte(`""`), nil
 	}
-	return json.Marshal(a.String())
+	s := a.String()
+	// len(`"`) + 17 + len(`"`) = 19
+	buf := make([]byte, 0, len(s)+2)
+	buf = append(buf, '"')
+	buf = append(buf, s...)
+	buf = append(buf, '"')
+	return buf, nil
 }
 
 // UnmarshalJSON 实现 [json.Unmarshaler]。
@@ -99,7 +108,8 @@ func (a *Addr) Scan(src any) error {
 			*a = Addr{}
 			return nil
 		}
-		// 6 字节视为二进制格式
+		// 6 字节视为二进制格式，适用于 BINARY(6) 列存储的原始 MAC 字节。
+		// 文本格式 MAC 最短 12 字符（如 "aabbccddeeff"），不会与 6 字节二进制冲突。
 		if len(v) == 6 {
 			copy(a.bytes[:], v)
 			return nil

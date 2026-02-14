@@ -112,3 +112,25 @@ func Example_keys() {
 	// Output:
 	// Number of keys: 3
 }
+
+func Example_withClose() {
+	// 创建带 TTL 的缓存
+	cache, err := xlru.New[string, int](xlru.Config{
+		Size: 100,
+		TTL:  5 * time.Minute,
+	})
+	if err != nil {
+		panic(err)
+	}
+	// 使用完毕后关闭，释放清理 goroutine
+	defer cache.Close()
+
+	cache.Set("key1", 100)
+
+	if val, ok := cache.Get("key1"); ok {
+		fmt.Println("Found:", val)
+	}
+
+	// Output:
+	// Found: 100
+}

@@ -1,7 +1,9 @@
 package xfile
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -195,14 +197,16 @@ func ExampleSanitizePath() {
 	if err != nil {
 		panic(err)
 	}
-	println(path)
+	fmt.Println(path)
 
 	// 路径穿越会被拒绝
 	_, err = SanitizePath("../../../etc/passwd")
 	if err != nil {
-		println("路径穿越被阻止")
+		fmt.Println("路径穿越被阻止")
 	}
 	// Output:
+	// /var/log/app.log
+	// 路径穿越被阻止
 }
 
 func ExampleSanitizePath_normalize() {
@@ -212,8 +216,7 @@ func ExampleSanitizePath_normalize() {
 		panic(err)
 	}
 	fmt.Println(path)
-	_ = path
-	// 结果: /var/log/app.log
+	// Output: /var/log/app.log
 }
 
 // =============================================================================
@@ -456,6 +459,60 @@ func TestSafeJoinWithOptionsSymlinks(t *testing.T) {
 	})
 }
 
+// TestSafeJoinSymlinkEscape 测试符号链接逃逸检测
+func TestSafeJoinSymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 在 tmpDir 内创建子目录作为 base
+	baseDir := filepath.Join(tmpDir, "base")
+	if err := os.MkdirAll(baseDir, 0750); err != nil {
+		t.Fatalf("创建 base 目录失败: %v", err)
+	}
+
+	// 在 base 内创建指向 base 外部的符号链接
+	outsideDir := filepath.Join(tmpDir, "outside")
+	if err := os.MkdirAll(outsideDir, 0750); err != nil {
+		t.Fatalf("创建 outside 目录失败: %v", err)
+	}
+	secretFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(secretFile, []byte("secret"), 0600); err != nil {
+		t.Fatalf("创建 secret 文件失败: %v", err)
+	}
+
+	// 创建符号链接: base/evil -> outside
+	evilLink := filepath.Join(baseDir, "evil")
+	if err := os.Symlink(outsideDir, evilLink); err != nil {
+		t.Fatalf("创建符号链接失败: %v", err)
+	}
+
+	t.Run("无符号链接解析时允许通过", func(t *testing.T) {
+		// 不启用 ResolveSymlinks 时，路径检查不感知符号链接
+		result, err := SafeJoinWithOptions(baseDir, "evil/secret.txt", SafeJoinOptions{
+			ResolveSymlinks: false,
+		})
+		if err != nil {
+			t.Errorf("期望不启用符号链接解析时通过，但得到错误: %v", err)
+		}
+		expected := filepath.Join(baseDir, "evil/secret.txt")
+		if result != expected {
+			t.Errorf("结果 = %q, 期望 %q", result, expected)
+		}
+	})
+
+	t.Run("启用符号链接解析时检测逃逸", func(t *testing.T) {
+		// 启用 ResolveSymlinks 时，应检测到路径逃逸
+		_, err := SafeJoinWithOptions(baseDir, "evil/secret.txt", SafeJoinOptions{
+			ResolveSymlinks: true,
+		})
+		if err == nil {
+			t.Error("期望检测到符号链接逃逸，但没有报错")
+		}
+		if !errors.Is(err, ErrPathEscaped) {
+			t.Errorf("期望 ErrPathEscaped 错误，但得到: %v", err)
+		}
+	})
+}
+
 // =============================================================================
 // SafeJoin 示例测试
 // =============================================================================
@@ -486,4 +543,60 @@ func ExampleSafeJoin_absolutePath() {
 		fmt.Println("绝对路径被拒绝")
 	}
 	// Output: 绝对路径被拒绝
+}
+
+// =============================================================================
+// 错误类型测试（errors.Is 语义）
+// =============================================================================
+
+func TestSanitizePathErrorTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr error
+	}{
+		{"空路径", "", ErrEmptyPath},
+		{"目录路径", "/var/log/", ErrInvalidPath},
+		{"路径穿越", "../etc/passwd", ErrPathTraversal},
+		{"纯点", ".", ErrInvalidPath},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SanitizePath(tt.input)
+			if err == nil {
+				t.Fatalf("SanitizePath(%q) 期望错误，但没有返回错误", tt.input)
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("SanitizePath(%q) 错误 = %v, errors.Is(%v) = false", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSafeJoinErrorTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    string
+		path    string
+		wantErr error
+	}{
+		{"空 base", "", "app.log", ErrEmptyPath},
+		{"空 path", "/var/log", "", ErrEmptyPath},
+		{"base 非绝对路径", "var/log", "app.log", ErrInvalidPath},
+		{"绝对路径拒绝", "/var/log", "/etc/passwd", ErrInvalidPath},
+		{"路径穿越", "/var/log", "../etc/passwd", ErrPathTraversal},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SafeJoin(tt.base, tt.path)
+			if err == nil {
+				t.Fatalf("SafeJoin(%q, %q) 期望错误，但没有返回错误", tt.base, tt.path)
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("SafeJoin(%q, %q) 错误 = %v, errors.Is(%v) = false", tt.base, tt.path, err, tt.wantErr)
+			}
+		})
+	}
 }

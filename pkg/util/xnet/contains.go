@@ -10,7 +10,8 @@ import (
 
 // RangeContainsV4 使用 uint32 比较优化 IPv4 范围查询。
 // 对于 IPv4 地址，直接比较 uint32 值比通过 netip.Addr.Compare 更高效。
-// 非 IPv4 地址返回 false。
+// 支持纯 IPv4 和 IPv4-mapped IPv6 地址（通过 [AddrToUint32] 转换）。
+// 非 IPv4 兼容地址返回 false。
 func RangeContainsV4(from, to, addr netip.Addr) bool {
 	fromU, ok1 := AddrToUint32(from)
 	toU, ok2 := AddrToUint32(to)
@@ -23,15 +24,19 @@ func RangeContainsV4(from, to, addr netip.Addr) bool {
 
 // IPSetFromRanges 从 IPRange 切片构建 IPSet。
 // 自动合并重叠和相邻的范围。
-// 无效范围（From > To 或混合地址族）会导致 IPSet() 返回错误。
-// 如需显式校验每个范围，请使用 [IPSetFromRangesStrict]。
+// 无效范围（From > To 或混合地址族）返回包装了 [ErrInvalidRange] 的错误。
+// 如需逐个校验范围并获得具体索引信息，请使用 [IPSetFromRangesStrict]。
 // 空切片返回空的 IPSet（非 nil）。
 func IPSetFromRanges(ranges []netipx.IPRange) (*netipx.IPSet, error) {
 	var b netipx.IPSetBuilder
 	for _, r := range ranges {
 		b.AddRange(r)
 	}
-	return b.IPSet()
+	set, err := b.IPSet()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidRange, err)
+	}
+	return set, nil
 }
 
 // IPSetFromRangesStrict 从 IPRange 切片构建 IPSet，严格校验每个范围。
@@ -76,9 +81,15 @@ func MergeRanges(ranges []netipx.IPRange) ([]netipx.IPRange, error) {
 // RangeSize 计算 IP 范围包含的地址数量。
 // 返回的 big.Int 值为 To - From + 1。
 // 无效范围返回 nil。
+//
+// 对于 IPv4 范围，使用 uint64 快速路径（1 次 big.Int 分配而非 3 次）。
 func RangeSize(r netipx.IPRange) *big.Int {
 	if !r.IsValid() {
 		return nil
+	}
+	// IPv4 快速路径：复用 RangeSizeUint64 避免多余的 big.Int 堆分配。
+	if size, ok := RangeSizeUint64(r); ok {
+		return new(big.Int).SetUint64(size)
 	}
 	from := AddrToBigInt(r.From())
 	to := AddrToBigInt(r.To())

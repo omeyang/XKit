@@ -20,16 +20,11 @@ func validateScriptResult(result []int64, minLen int) error {
 	return nil
 }
 
-// evalScriptInt64Slice 执行 Lua 脚本并安全转换返回值为 []int64
-// 防止 Redis 返回非预期类型时 panic（修复 #6）
-func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis.Script, keys []string, args ...any) ([]int64, error) {
-	val, err := script.Run(ctx, s.client, keys, args...).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	// Redis Lua 脚本返回数组时，go-redis 会解析为 []interface{}
-	arr, ok := val.([]interface{})
+// convertScriptResult 将 Lua 脚本返回值安全转换为 []int64
+// 提取为纯函数，便于直接测试各种输入类型（int64、int、float64、未知类型）
+func convertScriptResult(val any) ([]int64, error) {
+	// Redis Lua 脚本返回数组时，go-redis 会解析为 []any
+	arr, ok := val.([]any)
 	if !ok {
 		return nil, fmt.Errorf("%w: expected array, got %T", errUnexpectedScriptResult, val)
 	}
@@ -52,6 +47,16 @@ func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis
 	}
 
 	return result, nil
+}
+
+// evalScriptInt64Slice 执行 Lua 脚本并安全转换返回值为 []int64
+// 防止 Redis 返回非预期类型时 panic（修复 #6）
+func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis.Script, keys []string, args ...any) ([]int64, error) {
+	val, err := script.Run(ctx, s.client, keys, args...).Result()
+	if err != nil {
+		return nil, err
+	}
+	return convertScriptResult(val)
 }
 
 // =============================================================================
@@ -174,6 +179,11 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		return nil, err
 	}
 
+	// 校验重试参数（仅 Acquire 需要，TryAcquire 不使用重试）
+	if err := cfg.validateRetryParams(); err != nil {
+		return nil, err
+	}
+
 	// 创建 span
 	ctx, span := startSpan(ctx, s.opts.tracer, spanNameAcquire)
 	defer span.End()
@@ -190,6 +200,7 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 	if err != nil {
 		// 记录失败指标（只在最终失败时记录一次）
 		s.recordAcquireMetrics(ctx, resource, false, lastReason, totalDuration)
+		span.SetAttributes(attribute.Int(attrRetryCount, retryCount))
 		setSpanError(span, err)
 		return nil, err
 	}
@@ -308,6 +319,8 @@ func (s *redisSemaphore) doAcquire(
 	// 生成许可 ID（通过注入的生成器，默认使用 xid.NewStringWithRetry）
 	permitID, err := s.opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
+		// 消费者只需通过 errors.Is(err, ErrIDGenerationFailed) 判断，无需区分具体原因。
 		return nil, ReasonUnknown, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 

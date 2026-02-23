@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
@@ -106,9 +107,10 @@ func (k Key) Render(template string) string {
 
 // resolveVar 解析变量值
 //
-// 设计决策: 未解析的变量保持原样返回（如 "${tenant_id}"），而非返回错误。
-// 这是限流键渲染的标准行为：当某个维度缺失时，不同请求会共享同一个桶，
-// 相当于该维度不参与限流。如需强制要求所有维度必须存在，
+// 设计决策: 所有缺失的变量统一返回空字符串，包括内置字段和 Extra 自定义字段。
+// 空字符串使该维度不参与限流键区分，所有缺少该维度的请求共享同一个桶。
+// 这确保了内置字段（如空 Tenant → ""）和 Extra 字段（如缺失 key → ""）
+// 的行为一致。如需强制要求所有维度必须存在，
 // 应在 KeyExtractor 层做前置校验，而非在模板渲染层。
 func (k Key) resolveVar(varName string) string {
 	switch varName {
@@ -131,8 +133,8 @@ func (k Key) resolveVar(varName string) string {
 				return value
 			}
 		}
-		// 未找到的变量保持原样
-		return varName
+		// 设计决策: 未找到的 Extra 变量返回空字符串，与内置字段缺失时的行为一致。
+		return ""
 	}
 }
 
@@ -209,10 +211,14 @@ func (k Key) WithResource(resource string) Key {
 }
 
 // WithExtra 返回添加了自定义维度的新 Key
+//
+// 设计决策: 始终深拷贝 Extra map，确保返回的 Key 与原 Key 完全独立。
+// Key 是值类型但 map 是引用类型，浅拷贝会导致多个 Key 共享同一 map，
+// 并发修改时触发 concurrent map write panic。
 func (k Key) WithExtra(key, value string) Key {
-	if k.Extra == nil {
-		k.Extra = make(map[string]string)
-	}
-	k.Extra[key] = value
+	newExtra := make(map[string]string, len(k.Extra)+1)
+	maps.Copy(newExtra, k.Extra)
+	newExtra[key] = value
+	k.Extra = newExtra
 	return k
 }

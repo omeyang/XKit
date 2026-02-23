@@ -194,6 +194,9 @@ func TestAddrAdd(t *testing.T) {
 		{"IPv4 boundary", "255.255.255.254", 1, "255.255.255.255", false},
 		{"IPv6 add", "::1", 1, "::2", false},
 		{"IPv6 subtract", "::ff", -1, "::fe", false},
+		// IPv4-mapped IPv6 走 IPv4 快速路径，返回纯 IPv4（回归用例）
+		{"IPv4-mapped add", "::ffff:192.168.1.100", 1, "192.168.1.101", false},
+		{"IPv4-mapped subtract", "::ffff:10.0.0.1", -1, "10.0.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -224,6 +227,11 @@ func TestAddrAdd_Overflow(t *testing.T) {
 	// IPv6 溢出
 	maxV6 := netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
 	_, err = AddrAdd(maxV6, 1)
+	assert.ErrorIs(t, err, ErrOverflow)
+
+	// IPv6 下溢
+	minV6 := netip.MustParseAddr("::")
+	_, err = AddrAdd(minV6, -1)
 	assert.ErrorIs(t, err, ErrOverflow)
 }
 

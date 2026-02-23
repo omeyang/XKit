@@ -13,6 +13,9 @@ import (
 
 // cmdInteractive 交互模式（REPL）。
 func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	// 测试连接
@@ -27,23 +30,40 @@ func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duratio
 	return runREPL(ctx, client)
 }
 
-// runREPL 运行 REPL 循环。
-// 使用 goroutine + channel 实现可取消的输入读取，确保 Ctrl+C 能立即退出。
-func runREPL(ctx context.Context, client *Client) error {
+// startInputReader 启动输入读取 goroutine。
+// 设计决策: inputCh 无缓冲，使用 select 保护发送，
+// 防止 context 取消后 goroutine 在 inputCh 发送端永久阻塞。
+// 注意: scanner.Scan() 阻塞在 os.Stdin.Read() 上，不可被 context 取消。
+// 该 goroutine 在进程退出时由 OS 回收，对 CLI 工具而言这是可接受的权衡。
+func startInputReader(ctx context.Context) (<-chan string, <-chan error) {
 	inputCh := make(chan string)
 	errCh := make(chan error, 1) // 缓冲区为 1，避免读取 goroutine 在 context 取消后泄漏
 
-	// 在单独的 goroutine 中读取输入，避免阻塞 context 取消
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
-			inputCh <- scanner.Text()
+			select {
+			case inputCh <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
 		}
 		if err := scanner.Err(); err != nil {
-			errCh <- err
+			select {
+			case errCh <- err:
+			default:
+			}
 		}
 		close(inputCh)
 	}()
+
+	return inputCh, errCh
+}
+
+// runREPL 运行 REPL 循环。
+// 使用 goroutine + channel 实现可取消的输入读取，确保 Ctrl+C 能立即退出。
+func runREPL(ctx context.Context, exec executor) error {
+	inputCh, errCh := startInputReader(ctx)
 
 	for {
 		fmt.Print("xdbg> ")
@@ -61,7 +81,7 @@ func runREPL(ctx context.Context, client *Client) error {
 				return nil
 			}
 			line = strings.TrimSpace(line)
-			if shouldExit := processLine(ctx, client, line); shouldExit {
+			if shouldExit := processLine(ctx, exec, line); shouldExit {
 				return nil
 			}
 		}
@@ -69,7 +89,7 @@ func runREPL(ctx context.Context, client *Client) error {
 }
 
 // processLine 处理单行输入，返回 true 表示应该退出。
-func processLine(ctx context.Context, client *Client, line string) bool {
+func processLine(ctx context.Context, exec executor, line string) bool {
 	if line == "" {
 		return false
 	}
@@ -81,18 +101,22 @@ func processLine(ctx context.Context, client *Client, line string) bool {
 	}
 
 	// 解析命令和参数
-	parts := parseCommandLine(line)
+	parts, err := parseCommandLine(line)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "语法错误: %v\n", err)
+		return false
+	}
 	if len(parts) == 0 {
 		return false
 	}
 
-	executeAndPrint(ctx, client, parts[0], parts[1:])
+	executeAndPrint(ctx, exec, parts[0], parts[1:])
 	return false
 }
 
 // executeAndPrint 执行命令并打印结果。
-func executeAndPrint(ctx context.Context, client *Client, command string, args []string) {
-	resp, err := client.Execute(ctx, command, args)
+func executeAndPrint(ctx context.Context, exec executor, command string, args []string) {
+	resp, err := exec.Execute(ctx, command, args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		return
@@ -115,7 +139,8 @@ func executeAndPrint(ctx context.Context, client *Client, command string, args [
 }
 
 // parseCommandLine 解析命令行，支持引号和反斜杠转义。
-func parseCommandLine(line string) []string {
+// 未闭合的引号或尾部转义符返回错误。
+func parseCommandLine(line string) ([]string, error) {
 	var parts []string
 	var current strings.Builder
 	var inQuote bool
@@ -151,11 +176,26 @@ func parseCommandLine(line string) []string {
 		}
 	}
 
+	if err := validateParseState(escaped, inQuote, quoteChar); err != nil {
+		return nil, err
+	}
+
 	if current.Len() > 0 {
 		parts = append(parts, current.String())
 	}
 
-	return parts
+	return parts, nil
+}
+
+// validateParseState 校验解析结束状态。
+func validateParseState(escaped, inQuote bool, quoteChar rune) error {
+	if escaped {
+		return fmt.Errorf("尾部转义符未完成")
+	}
+	if inQuote {
+		return fmt.Errorf("引号未闭合（%c）", quoteChar)
+	}
+	return nil
 }
 
 func isQuoteStart(r rune, inQuote bool) bool {
@@ -166,6 +206,9 @@ func isQuoteEnd(r, quoteChar rune, inQuote bool) bool {
 	return r == quoteChar && inQuote
 }
 
+// 设计决策: 仅空格作为分词符，Tab 不分词。
+// 交互式终端中 Tab 通常被解释为补全，不作为参数分隔。
+// 管道输入场景（echo -e "cmd\targ" | xdbgctl interactive）Tab 会被视为参数的一部分。
 func isWordSeparator(r rune, inQuote bool) bool {
 	return r == ' ' && !inQuote
 }

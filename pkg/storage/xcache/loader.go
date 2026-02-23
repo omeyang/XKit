@@ -36,6 +36,17 @@ type Loader interface {
 	//
 	// 空 key 会返回 ErrEmptyKey（fail-fast），空字符串在 Redis 中合法但几乎总是使用错误。
 	//
+	// loader 返回值说明：
+	//   - (nil, nil): nil 值会被写入 Redis（存储为空字符串），后续 Get 返回 []byte("")，
+	//     视为缓存命中。这等效于空值缓存，可防止缓存穿透。
+	//   - (data, nil): 正常写入缓存。
+	//   - (_, err): 不写入缓存，直接返回错误。
+	//
+	// ttl 说明（与 LoadHash 语义一致）：
+	//   - ttl > 0: 设置指定过期时间。
+	//   - ttl == 0: 不设置过期（key 永不过期）。
+	//   - ttl < 0: 不写入缓存（仅回源，等同于不缓存）。
+	//
 	// 注意：singleflight 去重仅基于 key，不包含 ttl。
 	// 同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
 	// 最终缓存的 TTL 取决于首个请求的配置。
@@ -47,6 +58,13 @@ type Loader interface {
 	// 默认行为是每次写入时刷新 TTL，可通过 WithHashTTLRefresh(false) 改为仅首次写入时设置。
 	//
 	// 空 key 或空 field 会返回 ErrEmptyKey（fail-fast）。
+	//
+	// loader 返回值说明与 Load 相同：nil 值存储为空字符串，等效于空值缓存。
+	//
+	// ttl 说明（与 Load 语义一致）：
+	//   - ttl > 0: 设置指定过期时间。
+	//   - ttl == 0: 不设置过期（Hash key 永不过期）。
+	//   - ttl < 0: 不写入缓存（仅回源，等同于不缓存）。
 	//
 	// 注意：singleflight 去重基于 key+field 组合，不包含 ttl。
 	// 同一 key+field 的并发请求（即使 ttl 不同）只会触发一次回源。
@@ -132,6 +150,12 @@ type LoaderOptions struct {
 	// 默认为 10。
 	MaxRetryAttempts int
 
+	// TTLJitter 控制写入缓存时 TTL 的随机抖动比例 (0.0-1.0)。
+	// 启用后，实际 TTL 为 ttl * (1 + jitter * (rand - 0.5))，避免大量 key 同时过期（缓存雪崩）。
+	// 例如 TTLJitter=0.1 时，1 小时 TTL 会被随机化到约 57-63 分钟。
+	// 默认为 0（不抖动）。
+	TTLJitter float64
+
 	// HashTTLRefresh 控制 LoadHash 时是否刷新 Hash key 的 TTL。
 	// 默认为 true（滑动过期）。
 	HashTTLRefresh bool
@@ -215,14 +239,20 @@ func WithDistributedLockKeyPrefix(prefix string) LoaderOption {
 // 重要：设置此选项后会自动启用分布式锁（无需额外调用 WithDistributedLock(true)）。
 // 当 ExternalLock 非 nil 时，将优先使用外部锁，忽略内置的 Redis.Lock() 实现。
 //
+// 传入 nil 仅清除外部锁函数，不修改 EnableDistributedLock 标志。
+// 这确保 WithDistributedLock(true) + WithExternalLock(nil) 仍使用内置锁，
+// 而非意外禁用分布式锁。
+//
 // 锁函数签名与 Redis.Lock() 相同，便于适配各种锁实现：
 //
 //	func(ctx context.Context, key string, ttl time.Duration) (Unlocker, error)
 func WithExternalLock(fn LockFunc) LoaderOption {
 	return func(o *LoaderOptions) {
 		o.ExternalLock = fn
-		// 设置外部锁时自动启用分布式锁
 		if fn != nil {
+			// 设计决策: 设置外部锁时自动启用分布式锁，减少配置负担。
+			// 传入 nil 时仅清除外部锁函数，不修改 EnableDistributedLock 标志，
+			// 避免 WithDistributedLock(true) + WithExternalLock(nil) 意外禁用分布式锁。
 			o.EnableDistributedLock = true
 		}
 	}
@@ -235,13 +265,42 @@ func WithLoadTimeout(timeout time.Duration) LoaderOption {
 	}
 }
 
+// MaxMaxRetryAttempts 是 MaxRetryAttempts 的上界，防止误配导致密集重试。
+// 实际等待时间还受 DistributedLockTTL 约束，此上界仅作额外防御。
+const MaxMaxRetryAttempts = 1000
+
 // WithMaxRetryAttempts 设置等待锁释放时的最大重试次数。
 // 超过此次数后直接回源，避免无限等待。
+// n 会被钳位到 [1, MaxMaxRetryAttempts] 范围内；非正值被忽略（保持默认值）。
 func WithMaxRetryAttempts(n int) LoaderOption {
 	return func(o *LoaderOptions) {
 		if n > 0 {
+			if n > MaxMaxRetryAttempts {
+				n = MaxMaxRetryAttempts
+			}
 			o.MaxRetryAttempts = n
 		}
+	}
+}
+
+// WithTTLJitter 设置缓存 TTL 的随机抖动比例，用于防止缓存雪崩。
+// factor 范围为 [0.0, 1.0]，超出范围会被钳位。
+//
+// 实际 TTL 范围为 [ttl * (1 - factor/2), ttl * (1 + factor/2)]：
+//   - factor=0.1 → TTL ±5%（例如 1h → 57~63min）
+//   - factor=0.3 → TTL ±15%（例如 1h → 51~69min）
+//   - factor=1.0 → TTL ±50%（例如 1h → 30~90min，极端值慎用）
+//
+// 默认为 0（不抖动）。
+func WithTTLJitter(factor float64) LoaderOption {
+	return func(o *LoaderOptions) {
+		if factor < 0 {
+			factor = 0
+		}
+		if factor > 1 {
+			factor = 1
+		}
+		o.TTLJitter = factor
 	}
 }
 

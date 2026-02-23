@@ -38,8 +38,9 @@ type Backend interface {
 	Query(ctx context.Context, key string, limit, burst int, window time.Duration) (
 		effectiveLimit, remaining int, resetAt time.Time, err error)
 
-	// Close 关闭后端连接
-	Close() error
+	// Close 释放后端自有资源（不关闭注入的外部客户端）
+	// 设计决策: 保留 ctx 参数（D-02），当前未使用但预留用于未来超时控制。
+	Close(ctx context.Context) error
 
 	// Type 返回后端类型标识，用于日志和指标
 	Type() string

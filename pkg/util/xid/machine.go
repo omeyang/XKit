@@ -1,11 +1,20 @@
 package xid
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
+)
+
+// 测试注入点：允许测试替换系统调用以覆盖所有错误分支。
+// 参照 xproc 包的 osExecutable 模式（FG-M2）。
+var (
+	osHostname        = os.Hostname        // machineIDFromOSHostname
+	netInterfaceAddrs = net.InterfaceAddrs // privateIPv4
 )
 
 // =============================================================================
@@ -35,7 +44,8 @@ const (
 //  4. os.Hostname() 的哈希值
 //  5. 私有 IP 地址的低 16 位（sonyflake 默认方式）
 //
-// 这种多层回退策略确保在各种环境下都能获取到唯一的机器 ID：
+// 这种多层回退策略确保在各种环境下都能获取到可用机器 ID，
+// 但仅 XID_MACHINE_ID 的显式分配能提供可控唯一性：
 //   - 在线/离线 K8s 集群
 //   - HostNetwork 模式
 //   - 虚拟机、物理机、容器
@@ -68,15 +78,20 @@ func DefaultMachineID() (uint16, error) {
 	}
 
 	// 策略 4：从 os.Hostname() 哈希
-	if id, ok := machineIDFromOSHostname(); ok {
-		return id, nil
+	// 设计决策: 策略 2-3 使用 (id, bool) 因为失败原因总是"环境变量未设置"。
+	// 策略 4 使用 (id, error)，因为 os.Hostname() 可能产生有诊断价值的系统错误
+	// （如容器内内核限制），在全链路失败时聚合到最终错误中帮助排障（FG-S1）。
+	hostnameID, hostnameErr := machineIDFromOSHostname()
+	if hostnameErr == nil {
+		return hostnameID, nil
 	}
 
 	// 策略 5：从私有 IP 地址
-	// 设计决策: 策略 2-4 使用 (id, bool) 而非 (id, error)，
-	// 因为失败原因总是"环境变量未设置"或"主机名为空"，不需要聚合中间错误。
-	// 只有策略 5 可能产生有意义的系统级错误（如 net.InterfaceAddrs 失败）。
-	return machineIDFromPrivateIP()
+	id, err := machineIDFromPrivateIP()
+	if err != nil {
+		return 0, fmt.Errorf("xid: all machine ID strategies exhausted (os-hostname: %v): %w", hostnameErr, err)
+	}
+	return id, nil
 }
 
 // machineIDFromPodName 从 POD_NAME 环境变量的哈希值获取机器 ID
@@ -106,14 +121,21 @@ func machineIDFromHostnameEnv() (uint16, bool) {
 	return hashToMachineID(hostname), true
 }
 
-// machineIDFromOSHostname 从 os.Hostname() 的哈希值获取机器 ID
-func machineIDFromOSHostname() (uint16, bool) {
-	hostname, err := os.Hostname()
-	if err != nil || hostname == "" {
-		return 0, false
+// machineIDFromOSHostname 从 os.Hostname() 的哈希值获取机器 ID。
+//
+// 设计决策: 与策略 2-3 的 (id, bool) 签名不同，策略 4 返回 error，
+// 因为 os.Hostname() 可能产生有诊断价值的系统错误（如容器内内核限制），
+// 在全链路失败时需要聚合到最终错误信息中帮助排障。
+func machineIDFromOSHostname() (uint16, error) {
+	hostname, err := osHostname()
+	if err != nil {
+		return 0, err
+	}
+	if hostname == "" {
+		return 0, errors.New("os.Hostname returned empty string")
 	}
 
-	return hashToMachineID(hostname), true
+	return hashToMachineID(hostname), nil
 }
 
 // machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID。
@@ -127,58 +149,66 @@ func machineIDFromPrivateIP() (uint16, error) {
 	if err != nil {
 		return 0, err
 	}
-	return uint16(ip[2])<<8 + uint16(ip[3]), nil
+	b := ip.As4()
+	return uint16(b[2])<<8 + uint16(b[3]), nil
 }
 
-// hashToMachineID 将字符串哈希为 16 位机器 ID
-// 使用 FNV-1a 哈希算法，具有良好的分布性
+// hashToMachineID 将字符串哈希为 16 位机器 ID。
+// 使用 FNV-1a 哈希算法，通过 XOR 折叠将 32 位哈希压缩为 16 位，
+// 比简单截断（仅取低 16 位）更充分利用完整哈希值，分布性更优。
 func hashToMachineID(s string) uint16 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(s)) // hash.Hash.Write never returns error
-	// 取低 16 位，这是有意的截断以适配机器 ID 范围
-	return uint16(h.Sum32())
+	// XOR 折叠：通过字节级操作避免 uint32→uint16 直接转换
+	b := h.Sum(nil) // FNV-32 返回 4 字节大端序
+	hi := uint16(b[0])<<8 | uint16(b[1])
+	lo := uint16(b[2])<<8 | uint16(b[3])
+	return hi ^ lo
 }
 
 // =============================================================================
 // 私有 IP 获取（参考 sonyflake 实现）
 // =============================================================================
 
-// privateIPv4 获取私有 IPv4 地址
-func privateIPv4() (net.IP, error) {
-	addrs, err := net.InterfaceAddrs()
+// privateIPv4 获取私有 IPv4 地址。
+func privateIPv4() (netip.Addr, error) {
+	addrs, err := netInterfaceAddrs()
 	if err != nil {
-		return nil, err
+		return netip.Addr{}, err
 	}
 
 	for _, addr := range addrs {
 		ipnet, ok := addr.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() {
+		if !ok {
 			continue
 		}
 
-		ip := ipnet.IP.To4()
+		ip, ok := netip.AddrFromSlice(ipnet.IP)
+		if !ok {
+			continue
+		}
+		ip = ip.Unmap()
+		if ip.IsLoopback() || !ip.Is4() {
+			continue
+		}
+
 		if isPrivateIPv4(ip) {
 			return ip, nil
 		}
 	}
 
-	return nil, ErrNoPrivateAddress
+	return netip.Addr{}, ErrNoPrivateAddress
 }
 
 // isPrivateIPv4 判断是否为私有 IPv4 地址
 // 包括 RFC1918 私有地址和 RFC3927 链路本地地址
-// 自动将 16 字节 IPv4-mapped IPv6 转换为 4 字节 IPv4 格式
-func isPrivateIPv4(ip net.IP) bool {
-	ip = ip.To4()
-	if ip == nil {
+//
+// 设计决策: Unmap() 是为独立调用场景的防御性处理——当调用方已调用过 Unmap
+// 时（如 privateIPv4），此处的 Unmap 是幂等无开销的冗余调用（FG-L1）。
+func isPrivateIPv4(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.Is4() {
 		return false
 	}
-	// 10.0.0.0/8
-	// 172.16.0.0/12
-	// 192.168.0.0/16
-	// 169.254.0.0/16 (link-local)
-	return ip[0] == 10 ||
-		(ip[0] == 172 && ip[1] >= 16 && ip[1] < 32) ||
-		(ip[0] == 192 && ip[1] == 168) ||
-		(ip[0] == 169 && ip[1] == 254)
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }

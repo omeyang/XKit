@@ -2,6 +2,13 @@ package xmac
 
 import "iter"
 
+// 设计决策: Range/RangeWithIndex/RangeReverse/RangeReverseWithIndex 四个函数存在
+// 结构性重复（约 100 行），未提取公共迭代核心。原因：
+// 1. Go 的 iter.Seq[Addr] 和 iter.Seq2[int, Addr] 是不同类型，无法统一 yield 签名
+// 2. 正向/反向的步进逻辑（Next/Prev）和终止条件不同
+// 3. 保持各函数独立可内联，避免间接调用的性能开销
+// 如需修改迭代行为，需同步更新四处。
+
 // Range 返回从 from 到 to（包含）的 MAC 地址迭代器。
 // 如果 from > to，返回空迭代器。
 // 如果迭代过程中发生溢出（到达 ff:ff:ff:ff:ff:ff），自动终止。
@@ -32,10 +39,11 @@ func Range(from, to Addr) iter.Seq[Addr] {
 			if current == to {
 				return
 			}
-			// 获取下一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Next() 不会返回 ErrOverflow，
+			// 因为 from<=to 且 current==to 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入溢出风险。
 			next, err := current.Next()
 			if err != nil {
-				// 溢出，终止迭代
 				return
 			}
 			current = next
@@ -80,7 +88,7 @@ func RangeN(start Addr, n int) iter.Seq[Addr] {
 }
 
 // RangeWithIndex 返回带索引的 MAC 地址范围迭代器。
-// 索引从 0 开始。
+// 索引从 0 开始。索引类型为 int，与 [slices.All] 保持一致（参见 doc.go 平台要求）。
 //
 // 示例：
 //
@@ -106,10 +114,11 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 			if current == to {
 				return
 			}
-			// 获取下一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Next() 不会返回 ErrOverflow，
+			// 因为 from<=to 且 current==to 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入溢出风险。
 			next, err := current.Next()
 			if err != nil {
-				// 溢出，终止迭代
 				return
 			}
 			current = next
@@ -120,6 +129,7 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 
 // CollectN 将迭代器中的地址收集到切片中，最多收集 maxCount 个。
 // maxCount ≤ 0 表示不限制数量。
+// nil 迭代器返回 nil（不会 panic）。
 //
 // 设计决策: 命名为 CollectN 而非 Collect，避免与 Go 1.23+ 标准库 [slices.Collect] 混淆。
 // 不限制数量时建议直接使用 [slices.Collect]。
@@ -134,6 +144,9 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 //	to := xmac.MustParse("00:00:00:00:00:05")
 //	addrs := xmac.CollectN(xmac.Range(from, to), 100)
 func CollectN(seq iter.Seq[Addr], maxCount int) []Addr {
+	if seq == nil {
+		return nil
+	}
 	var result []Addr
 	if maxCount > 0 {
 		// 设计决策: 限制预分配上限为 1<<20（约 100 万），防止极端 maxCount 导致 OOM。
@@ -153,8 +166,12 @@ func CollectN(seq iter.Seq[Addr], maxCount int) []Addr {
 
 // Count 返回迭代器中的地址数量。
 // 注意：这会消耗整个迭代器。
-// 对于大范围，考虑使用 RangeCount 函数直接计算。
+// nil 迭代器返回 0（不会 panic）。
+// 对于大范围，考虑使用 [RangeCount] 函数直接计算（返回 uint64，无溢出风险）。
 func Count(seq iter.Seq[Addr]) int {
+	if seq == nil {
+		return 0
+	}
 	count := 0
 	for range seq {
 		count++
@@ -216,10 +233,11 @@ func RangeReverse(from, to Addr) iter.Seq[Addr] {
 			if current == from {
 				return
 			}
-			// 获取前一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Prev() 不会返回 ErrUnderflow，
+			// 因为 from<=to 且 current==from 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入下溢风险。
 			prev, err := current.Prev()
 			if err != nil {
-				// 下溢，终止迭代
 				return
 			}
 			current = prev
@@ -254,10 +272,11 @@ func RangeReverseWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 			if current == from {
 				return
 			}
-			// 获取前一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Prev() 不会返回 ErrUnderflow，
+			// 因为 from<=to 且 current==from 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入下溢风险。
 			prev, err := current.Prev()
 			if err != nil {
-				// 下溢，终止迭代
 				return
 			}
 			current = prev

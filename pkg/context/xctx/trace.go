@@ -7,6 +7,57 @@ import (
 )
 
 // =============================================================================
+// Require 函数：强制获取模式
+// 追踪信息通常由 EnsureXxx 自动生成，但在需要确认特定字段存在的场景下
+// 提供单字段级的强制获取。如需批量校验，可使用 Trace.Validate()。
+// =============================================================================
+
+// RequireTraceID 从 context 获取 trace ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingTraceID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireTraceID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := TraceID(ctx)
+	if v == "" {
+		return "", ErrMissingTraceID
+	}
+	return v, nil
+}
+
+// RequireSpanID 从 context 获取 span ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingSpanID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireSpanID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := SpanID(ctx)
+	if v == "" {
+		return "", ErrMissingSpanID
+	}
+	return v, nil
+}
+
+// RequireRequestID 从 context 获取 request ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingRequestID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireRequestID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := RequestID(ctx)
+	if v == "" {
+		return "", ErrMissingRequestID
+	}
+	return v, nil
+}
+
+// =============================================================================
 // ID 格式常量（遵循 W3C Trace Context 规范）
 // =============================================================================
 
@@ -183,8 +234,8 @@ func isAllZeros(buf []byte) bool {
 // W3C 规范要求 trace-id 不能为全零，虽然概率极低（2^-128），但本函数
 // 遵循规范进行检查，若出现全零则重新生成。
 //
-// Panic 策略说明：如果底层熵源不可用（极罕见的系统级错误），函数会 panic。
-// 这是有意的设计选择，原因如下：
+// 设计决策: Panic 策略 — 如果底层熵源不可用（极罕见的系统级错误），函数会 panic。
+// 原因如下：
 //  1. crypto/rand 失败意味着系统无法提供安全随机数，继续运行会导致安全隐患
 //  2. 这与 OpenTelemetry 等标准库采用相同的策略
 //  3. 此错误在正常运行环境中几乎不可能发生（需要内核级故障）
@@ -211,7 +262,7 @@ func GenerateTraceID() string {
 // W3C 规范要求 span-id 不能为全零，虽然概率极低（2^-64），但本函数
 // 遵循规范进行检查，若出现全零则重新生成。
 //
-// Panic 策略：与 GenerateTraceID 相同，熵源不可用时会 panic。
+// 设计决策: Panic 策略 — 与 GenerateTraceID 相同，熵源不可用时会 panic。
 // 详见 GenerateTraceID 的文档说明。
 func GenerateSpanID() string {
 	var buf [SpanIDSize]byte
@@ -325,7 +376,7 @@ func EnsureTrace(ctx context.Context) (context.Context, error) {
 
 	// 设计决策: 构建仅含缺失字段的 Trace 后调用 WithTrace 批量注入。
 	// WithTrace 内部通过 applyOptionalFields 跳过空值字段，不会覆盖已存在的值。
-	// 相比逐个调用 EnsureXxx，减少了 context 嵌套层数。
+	// 相比逐个调用 EnsureXxx，减少了重复的 nil/存在性检查和函数调用开销。
 	var trace Trace
 	if !hasTraceID {
 		trace.TraceID = GenerateTraceID()
@@ -358,6 +409,7 @@ type Trace struct {
 // GetTrace 从 context 批量获取所有追踪信息
 //
 // 返回 Trace 结构体，字段可能为空字符串。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 使用 IsComplete() 检查是否全部存在。
 func GetTrace(ctx context.Context) Trace {
 	return Trace{
@@ -369,6 +421,9 @@ func GetTrace(ctx context.Context) Trace {
 }
 
 // Validate 校验 Trace 必填字段是否完整，缺失时返回对应的哨兵错误。
+//
+// 采用 fail-fast 策略：仅返回第一个缺失字段的错误（按 TraceID → SpanID → RequestID 顺序）。
+// 如需一次性获取所有缺失字段，请逐字段调用 RequireXxx 或自行遍历检查。
 //
 // 与 IsComplete() 检查相同条件，区别在于返回类型：
 //   - Validate() 返回 error，适用于中间件/业务层的错误处理链

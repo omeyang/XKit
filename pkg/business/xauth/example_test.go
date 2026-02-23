@@ -16,7 +16,7 @@ func ExampleNewClient() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	// 使用客户端
 	_ = client
@@ -31,7 +31,7 @@ func ExampleClient_GetToken() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -54,7 +54,7 @@ func ExampleClient_GetPlatformID() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -95,7 +95,7 @@ func Example_withOptions() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	fmt.Println("client with options created")
 	// Output: client with options created

@@ -88,6 +88,18 @@
 //	mux.Handle("/api/", handler)          // 需要租户校验
 //	mux.Handle("/healthz", bizHandler)    // 跳过租户校验
 //
+// gRPC 方法级跳过（如健康检查、反射服务）通过包装拦截器实现：
+//
+//	tenantInterceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+//	    xtenant.WithGRPCRequireTenantID(),
+//	)
+//	wrapped := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+//	    if info.FullMethod == "/grpc.health.v1.Health/Check" {
+//	        return handler(ctx, req)
+//	    }
+//	    return tenantInterceptor(ctx, req, info, handler)
+//	}
+//
 // # 与 xplatform、xctx 的关系
 //
 //   - xplatform: 管理进程级别的平台信息（PlatformID、HasParent、UnclassRegionID）
@@ -100,13 +112,17 @@
 //
 // # gRPC-Gateway 集成
 //
-// 使用 gRPC-Gateway 时，需配置自定义 HeaderMatcher 以转发租户相关的 X-* 头：
+// 使用 gRPC-Gateway 时，需配置自定义 HeaderMatcher 以转发租户相关的 X-* 头。
+// 注意：key 参数是 HTTP 规范化后的形式（http.CanonicalHeaderKey），
+// 例如 "X-Request-ID" 会被规范化为 "X-Request-Id"，
+// 因此精确比较必须使用 strings.EqualFold 而非 ==。
 //
 //	gwmux := runtime.NewServeMux(
 //	    runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
 //	        if strings.HasPrefix(key, "X-Tenant-") || strings.HasPrefix(key, "X-Trace-") ||
-//	            strings.HasPrefix(key, "X-Platform-") || key == "X-Has-Parent" ||
-//	            key == "X-Unclass-Region-ID" || key == "X-Request-ID" {
+//	            strings.HasPrefix(key, "X-Platform-") || strings.EqualFold(key, "X-Has-Parent") ||
+//	            strings.EqualFold(key, "X-Unclass-Region-ID") || strings.EqualFold(key, "X-Request-ID") ||
+//	            strings.EqualFold(key, "X-Span-ID") {
 //	            return key, true
 //	        }
 //	        return runtime.DefaultHeaderMatcher(key)

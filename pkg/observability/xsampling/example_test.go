@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync/atomic"
 
 	"github.com/omeyang/xkit/pkg/observability/xsampling"
 )
@@ -177,6 +178,27 @@ func ExampleCountSampler_Reset() {
 	// 重置后第一次调用返回 true
 	fmt.Println(sampler.ShouldSample(ctx))
 	// Output: true
+}
+
+func ExampleWithOnEmptyKey() {
+	// 监控空 key 事件，帮助排查上下文传播问题
+	var emptyKeyCount atomic.Int64
+	sampler, err := xsampling.NewKeyBasedSampler(0.5, func(ctx context.Context) string {
+		if v, ok := ctx.Value(traceIDKey).(string); ok {
+			return v
+		}
+		return ""
+	}, xsampling.WithOnEmptyKey(func() {
+		emptyKeyCount.Add(1)
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 空 key 场景（context 中没有 trace_id）
+	sampler.ShouldSample(context.Background())
+	fmt.Printf("Empty key events: %d\n", emptyKeyCount.Load())
+	// Output: Empty key events: 1
 }
 
 // 演示日志采样场景

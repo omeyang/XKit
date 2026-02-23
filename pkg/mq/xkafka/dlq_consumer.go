@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -16,9 +17,14 @@ type dlqConsumer struct {
 	*consumerWrapper
 	policy      *DLQPolicy
 	dlqProducer *kafka.Producer
-	config      *kafka.ConfigMap
 
 	stats *dlqStatsCollector
+
+	// closeMu 保护 processMessage/SendToDLQ 与 Close 的并发。
+	// processMessage/SendToDLQ 持有读锁，Close 持有写锁。
+	// 确保 Close 等待所有进行中的消息处理完成后再关闭资源，
+	// 避免 DLQ 消息已投递但 offset 未提交的竞态条件。
+	closeMu sync.RWMutex
 }
 
 // NewConsumerWithDLQ 创建支持 DLQ 的消费者。
@@ -54,7 +60,6 @@ func NewConsumerWithDLQ(
 		consumerWrapper: wrapper,
 		policy:          dlqPolicy,
 		dlqProducer:     dlqProducer,
-		config:          config,
 		stats:           newDLQStatsCollector(),
 	}, nil
 }
@@ -77,6 +82,9 @@ func createDLQProducer(config *kafka.ConfigMap, dlqPolicy *DLQPolicy) (*kafka.Pr
 func (c *dlqConsumer) ConsumeWithRetry(ctx context.Context, handler MessageHandler) error {
 	if handler == nil {
 		return ErrNilHandler
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if c.closed.Load() {
 		return ErrClosed
@@ -111,14 +119,26 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 	if handler == nil {
 		return ErrNilHandler
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	consume := func(ctx context.Context) error {
 		return c.ConsumeWithRetry(ctx, handler)
 	}
 	return runConsumeLoop(ctx, consume, &c.errorsCount, backoff)
 }
 
-// processMessage 处理单条消息
-func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) error {
+// processMessage 处理单条消息。
+// 设计决策: messagesConsumed/bytesConsumed 在此处递增，而非在 ReadMessage 中，
+// 因为 dlqConsumer 直接调用底层 consumer.ReadMessage（不经过 TracingConsumer.ReadMessage），
+// 避免双重计数。如果未来重构为使用 TracingConsumer，需移除此处的统计递增。
+func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) (resultErr error) {
+	c.closeMu.RLock()
+	defer c.closeMu.RUnlock()
+	if c.closed.Load() {
+		return ErrClosed
+	}
+
 	c.stats.incTotal()
 
 	// 更新消费统计
@@ -134,12 +154,15 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		Component: componentName,
 		Operation: "consume",
 		Kind:      xmetrics.KindConsumer,
-		Attrs:     kafkaMessageAttrs(msg),
+		Attrs:     kafkaConsumerMessageAttrs(msg, c.groupID),
 	})
+	defer func() {
+		span.End(xmetrics.Result{Err: resultErr})
+	}()
+
 	// 执行处理
-	err := handler(msgCtx, msg)
-	span.End(xmetrics.Result{Err: err})
-	if err == nil {
+	resultErr = handler(msgCtx, msg)
+	if resultErr == nil {
 		// 处理成功，存储 offset
 		if retryCount > 0 {
 			c.stats.incSuccessAfterRetry()
@@ -147,38 +170,49 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		// 设计决策: 使用 StoreMessage 而非 StoreOffsets，StoreMessage 内部执行 offset+1，
 		// 表示"下次从此 offset 之后开始消费"，避免重启后重复消费已处理消息。
 		if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
-			return fmt.Errorf("store offset failed: %w", storeErr)
+			resultErr = fmt.Errorf("store offset failed: %w", storeErr)
+			return resultErr
 		}
 		return nil
 	}
 
 	// 处理失败，检查是否需要重试
-	if !c.policy.RetryPolicy.ShouldRetry(msgCtx, attempt, err) {
+	if !c.policy.RetryPolicy.ShouldRetry(msgCtx, attempt, resultErr) {
 		// 超过重试次数或遇到永久性错误，发送到 DLQ
-		return c.sendToDLQInternal(msgCtx, msg, err, retryCount)
+		resultErr = c.sendToDLQInternal(msgCtx, msg, resultErr, retryCount)
+		return resultErr
 	}
 
-	// 需要重试
+	resultErr = c.handleRetry(msgCtx, msg, attempt, resultErr)
+	return resultErr
+}
+
+// handleRetry 处理消息重试逻辑：触发回调、等待退避延迟、重新投递。
+func (c *dlqConsumer) handleRetry(ctx context.Context, msg *kafka.Message, attempt int, err error) error {
 	c.stats.incRetried()
 	if c.policy.OnRetry != nil {
 		c.policy.OnRetry(msg, attempt, err)
 	}
 
-	// 计算退避延迟
+	// 设计决策: 退避延迟同步阻塞当前 goroutine，期间不消费新消息。
+	// 这是同步重试模型的固有行为——简单可靠，适合低吞吐场景。
+	// 高吞吐场景应配置 RetryTopic 将重试消息异步投递到重试队列。
 	if c.policy.BackoffPolicy != nil {
 		delay := c.policy.BackoffPolicy.NextDelay(attempt)
 		if delay > 0 {
+			timer := time.NewTimer(delay)
 			select {
-			case <-msgCtx.Done():
-				return msgCtx.Err()
-			case <-time.After(delay):
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
 			}
 		}
 	}
 
 	// 更新 Header 并重新投递
 	c.incrementRetryCount(msg, err)
-	return c.redeliverMessage(msgCtx, msg)
+	return c.redeliverMessage(ctx, msg)
 }
 
 // SendToDLQ 手动发送消息到 DLQ
@@ -186,6 +220,11 @@ func (c *dlqConsumer) SendToDLQ(ctx context.Context, msg *kafka.Message, reason 
 	if msg == nil {
 		return ErrNilMessage
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.closeMu.RLock()
+	defer c.closeMu.RUnlock()
 	if c.closed.Load() {
 		return ErrClosed
 	}
@@ -195,11 +234,6 @@ func (c *dlqConsumer) SendToDLQ(ctx context.Context, msg *kafka.Message, reason 
 
 // sendToDLQInternal 内部发送消息到 DLQ
 func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message, reason error, retryCount int) error {
-	topic := ""
-	if msg.TopicPartition.Topic != nil {
-		topic = *msg.TopicPartition.Topic
-	}
-
 	// 构建 DLQ 消息
 	dlqMsg := c.buildDLQMessage(msg, reason, retryCount)
 
@@ -207,7 +241,7 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(dlqMsg, deliveryChan); err != nil {
-		return err
+		return fmt.Errorf("produce to DLQ topic %q: %w", c.policy.DLQTopic, err)
 	}
 
 	// 等待确认
@@ -215,13 +249,23 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	case <-ctx.Done():
 		return ctx.Err()
 	case e := <-deliveryChan:
-		if m, ok := e.(*kafka.Message); ok && m.TopicPartition.Error != nil {
-			return m.TopicPartition.Error
+		m, ok := e.(*kafka.Message)
+		if !ok {
+			return fmt.Errorf("unexpected DLQ delivery event type: %T", e)
+		}
+		if m.TopicPartition.Error != nil {
+			return fmt.Errorf("DLQ delivery failed for topic %q: %w", c.policy.DLQTopic, m.TopicPartition.Error)
 		}
 	}
 
 	// 投递成功后再递增统计，确保统计准确性
-	c.stats.incDeadLetter(topic)
+	// 设计决策: ByTopic 使用原始 topic（从 x-original-topic header 获取），
+	// 而非当前消息的 TopicPartition.Topic，避免重试队列消息污染统计归因。
+	origTopic := getHeader(msg, HeaderOriginalTopic)
+	if origTopic == "" {
+		origTopic = topicFromKafkaMessage(msg)
+	}
+	c.stats.incDeadLetter(origTopic)
 
 	// DLQ 发送成功，存储 offset（StoreMessage 内部 offset+1）
 	if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
@@ -242,27 +286,36 @@ func (c *dlqConsumer) DLQStats() DLQStats {
 	return c.stats.get()
 }
 
+// formatFailureReason 使用策略配置的格式化函数将错误转换为失败原因字符串。
+// 如果未配置 FailureReasonFormatter，使用默认的截断格式化。
+func (c *dlqConsumer) formatFailureReason(err error) string {
+	if c.policy.FailureReasonFormatter != nil {
+		return c.policy.FailureReasonFormatter(err)
+	}
+	return defaultFailureReasonFormatter(err)
+}
+
 // incrementRetryCount 增加重试次数并更新相关 Header
 func (c *dlqConsumer) incrementRetryCount(msg *kafka.Message, err error) {
-	updateRetryHeaders(msg, err)
+	updateRetryHeaders(msg, c.formatFailureReason(err))
 }
 
 // buildDLQMessage 构建 DLQ 消息
 func (c *dlqConsumer) buildDLQMessage(original *kafka.Message, reason error, retryCount int) *kafka.Message {
-	return buildDLQMessageFromPolicy(original, c.policy.DLQTopic, reason, retryCount)
+	return buildDLQMessageFromPolicy(original, c.policy.DLQTopic, c.formatFailureReason(reason), retryCount)
 }
 
 // buildDLQMetadata 构建 DLQ 元数据
 func (c *dlqConsumer) buildDLQMetadata(msg *kafka.Message, reason error, retryCount int) DLQMetadata {
-	return buildDLQMetadataFromMessage(msg, reason, retryCount)
+	return buildDLQMetadataFromMessage(msg, c.formatFailureReason(reason), retryCount)
 }
 
 // redeliverMessage 重新投递消息
 func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) error {
 	// 确定目标 Topic
 	targetTopic := c.policy.RetryTopic
-	if targetTopic == "" && msg.TopicPartition.Topic != nil {
-		targetTopic = *msg.TopicPartition.Topic
+	if targetTopic == "" {
+		targetTopic = topicFromKafkaMessage(msg)
 	}
 
 	redeliverMsg := &kafka.Message{
@@ -278,15 +331,19 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(redeliverMsg, deliveryChan); err != nil {
-		return err
+		return fmt.Errorf("redeliver to retry topic %q: %w", targetTopic, err)
 	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case e := <-deliveryChan:
-		if m, ok := e.(*kafka.Message); ok && m.TopicPartition.Error != nil {
-			return m.TopicPartition.Error
+		m, ok := e.(*kafka.Message)
+		if !ok {
+			return fmt.Errorf("unexpected redeliver delivery event type: %T", e)
+		}
+		if m.TopicPartition.Error != nil {
+			return fmt.Errorf("redeliver delivery failed for topic %q: %w", targetTopic, m.TopicPartition.Error)
 		}
 	}
 
@@ -299,16 +356,27 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 }
 
 // Close 关闭消费者和 DLQ Producer。
-// 关闭顺序：先关闭消费者（提交 offset），再刷新并关闭 DLQ Producer。
+// 关闭顺序：先获取写锁等待进行中的消息处理完成，再关闭消费者（提交 offset），
+// 最后刷新并关闭 DLQ Producer。
+// 重复调用 Close 安全返回 ErrClosed。
 func (c *dlqConsumer) Close() error {
+	// 获取写锁，等待所有进行中的 processMessage/SendToDLQ 完成
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+
 	// 先关闭消费者，确保 offset 被提交
 	consumerErr := c.consumerWrapper.Close()
+	if errors.Is(consumerErr, ErrClosed) {
+		// 已关闭过，跳过 dlqProducer 操作避免对已关闭的 producer 重复调用
+		return ErrClosed
+	}
 
 	// 刷新 DLQ Producer 队列中的消息，避免丢失
-	// 设计决策: 使用与 producerWrapper 相同的默认 FlushTimeout（10s），
-	// 而非硬编码 5s，确保在高延迟网络环境下有足够时间刷新 DLQ 消息。
-	const dlqFlushTimeoutMs = 10000
-	remaining := c.dlqProducer.Flush(dlqFlushTimeoutMs)
+	flushTimeout := c.policy.DLQFlushTimeout
+	if flushTimeout <= 0 {
+		flushTimeout = defaultFlushTimeout
+	}
+	remaining := c.dlqProducer.Flush(int(flushTimeout.Milliseconds()))
 	c.dlqProducer.Close()
 
 	if remaining > 0 {

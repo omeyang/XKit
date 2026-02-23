@@ -12,12 +12,18 @@
 // # 快速上手
 //
 //	obs, err := xmetrics.NewOTelObserver()
+//	// ... handle err ...
 //	ctx, span := xmetrics.Start(ctx, obs, xmetrics.SpanOptions{
 //	    Component: "myservice",
-//	    Operation: "DoWork",
+//	    Operation: "do_work",
 //	    Kind:      xmetrics.KindClient,
 //	})
-//	defer span.End(xmetrics.Result{Err: err})
+//	defer func() { span.End(xmetrics.Result{Err: bizErr}) }()
+//	result, bizErr = doWork(ctx)
+//
+// 注意：上述 defer 模式依赖 bizErr 在 panic 前已被赋值。
+// 若业务代码 panic 且未 recover，bizErr 仍为 nil，span 会记录为 [StatusOK]。
+// 需要 panic 感知的场景应在 defer 中 recover 并将 panic 转为 error 后再调用 End。
 //
 // # 统一指标
 //
@@ -26,7 +32,7 @@
 //
 // duration Histogram 默认桶边界为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]（秒），
 // 适用于典型 API 操作（1ms ~ 10s）。可通过 [WithHistogramBuckets] 自定义。
-// 自定义桶边界必须严格递增且不含 NaN/Inf，否则 [NewOTelObserver] 返回 [ErrInvalidBuckets]。
+// 自定义桶边界必须为非负值、严格递增且不含 NaN/Inf，否则 [NewOTelObserver] 返回 [ErrInvalidBuckets]。
 //
 // # 统一属性
 //
@@ -36,11 +42,17 @@
 // 通过 [SpanOptions.Attrs] 和 [Result.Attrs] 添加的自定义属性仅出现在 trace span 上。
 // 这避免了 metrics 因高基数自定义属性导致的时序膨胀。
 //
+// component / operation / status 是保留属性键，自定义属性中使用这些键会被静默过滤，
+// 以防止用户属性覆盖系统属性导致 trace 与 metrics 数据不一致。
+//
 // # component / operation 使用约束
 //
 // component 和 operation 应为静态的低基数字符串（如服务名、方法名），
 // 禁止将动态值（如请求 ID、用户 ID、URL 路径参数）写入。
 // 违反此约束会导致 metrics 时序爆炸和存储成本上升。
+//
+// operation 推荐使用 snake_case 命名（如 "find_page"、"produce"），
+// 与 OTel 语义约定保持一致，便于跨包查询和仪表盘维护。
 //
 // # Status 语义
 //

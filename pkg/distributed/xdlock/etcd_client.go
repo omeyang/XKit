@@ -15,10 +15,6 @@ import (
 // etcd 客户端配置
 // =============================================================================
 
-// EtcdConfig etcd 客户端配置。
-// 这是 xetcd.Config 的类型别名，支持 JSON/YAML 反序列化。
-type EtcdConfig = xetcd.Config
-
 // DefaultEtcdConfig 返回默认配置。
 //
 // 默认值：
@@ -101,14 +97,16 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 
 	options := defaultEtcdClientOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	// 构建 xetcd 选项
+	// Context 始终非 nil（defaultEtcdClientOptions 设为 context.Background()，
+	// WithEtcdClientContext 跳过 nil 赋值），因此无需条件判断。
 	var xetcdOpts []xetcd.Option
-	if options.Context != nil {
-		xetcdOpts = append(xetcdOpts, xetcd.WithContext(options.Context))
-	}
+	xetcdOpts = append(xetcdOpts, xetcd.WithContext(options.Context))
 	if options.HealthCheck {
 		xetcdOpts = append(xetcdOpts, xetcd.WithHealthCheck(true, options.HealthTimeout))
 	}
@@ -132,6 +130,20 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 // NewEtcdFactoryFromConfig 从配置创建 etcd 锁工厂。
 // 便捷函数，等同于 NewEtcdClient + NewEtcdFactory。
 // 返回的 client 需要调用方负责关闭。
+//
+// 设计决策: clientOpts 为 []EtcdClientOption 切片而非可变参数（...EtcdClientOption），
+// 因为 Go 不支持两组可变参数。factoryOpts 作为最后一个参数使用可变参数语法，
+// 使最常见的调用场景（仅传 factoryOpts）更简洁。
+//
+// 关闭顺序：必须先关闭 factory 再关闭 client，否则 factory 的 Session 会因底层连接断开
+// 而产生网络错误日志。推荐使用以下 defer 模式：
+//
+//	factory, client, err := xdlock.NewEtcdFactoryFromConfig(config, clientOpts, factoryOpts...)
+//	if err != nil {
+//	    return err
+//	}
+//	defer client.Close()          // 后关闭 client（defer 后进先出）
+//	defer factory.Close(ctx)     // 先关闭 factory
 func NewEtcdFactoryFromConfig(
 	config *EtcdConfig,
 	clientOpts []EtcdClientOption,
@@ -155,16 +167,17 @@ func NewEtcdFactoryFromConfig(
 // 内部函数
 // =============================================================================
 
-// convertXetcdError 将 xetcd 错误转换为 xdlock 错误。
+// convertXetcdError 将 xetcd 错误转换为 xdlock 错误，保留原始错误链。
+// 使用双 %w 保留原始错误，与 wrapEtcdError 风格一致。
 func convertXetcdError(err error) error {
 	if err == nil {
 		return nil
 	}
 	switch {
 	case errors.Is(err, xetcd.ErrNilConfig):
-		return ErrNilConfig
+		return fmt.Errorf("%w: %w", ErrNilConfig, err)
 	case errors.Is(err, xetcd.ErrNoEndpoints):
-		return ErrNoEndpoints
+		return fmt.Errorf("%w: %w", ErrNoEndpoints, err)
 	default:
 		return fmt.Errorf("xdlock: %w", err)
 	}

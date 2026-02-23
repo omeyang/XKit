@@ -3,6 +3,7 @@ package xdbg
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -214,6 +215,16 @@ func TestWithTransport(t *testing.T) {
 	// 验证类型正确设置
 	if _, ok := opts.Transport.(*testMockTransport); !ok {
 		t.Error("Transport not set correctly")
+	}
+}
+
+func TestWithProfileDir(t *testing.T) {
+	opts := defaultOptions()
+
+	WithProfileDir("/data/profiles")(opts)
+
+	if opts.ProfileDir != "/data/profiles" {
+		t.Errorf("ProfileDir = %q, want %q", opts.ProfileDir, "/data/profiles")
 	}
 }
 
@@ -431,7 +442,7 @@ func TestValidateOptions(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error but got nil")
-				} else if tt.errMsg != "" && err.Error()[:len(tt.errMsg)] != tt.errMsg {
+				} else if tt.errMsg != "" && !strings.HasPrefix(err.Error(), tt.errMsg) {
 					t.Errorf("error message = %q, want prefix %q", err.Error(), tt.errMsg)
 				}
 			} else {

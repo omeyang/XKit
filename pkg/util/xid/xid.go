@@ -74,6 +74,9 @@ const (
 // ID 位布局常量（Sonyflake v2）
 // =============================================================================
 
+// 设计决策: 以下常量对应 Sonyflake v2 的固定位布局（39+8+16=63 bits），
+// 不随 sonyflake.Settings 配置变化。如果升级 Sonyflake 大版本且位布局改变，
+// 需同步更新这些常量和 Decompose 函数。
 const (
 	machineBits  = 16
 	sequenceBits = 8
@@ -88,6 +91,11 @@ const (
 // =============================================================================
 
 // Components 表示 Sonyflake ID 分解后的各组成部分。
+//
+// 设计决策: 所有字段统一使用 int64 而非精确类型（如 uint8/uint16），
+// 理由：1) 简化 JSON 序列化（避免 uint 类型在某些序列化框架中的问题）；
+// 2) 避免调用方频繁的类型转换噪音；3) 作为只读返回值结构体，值域约束
+// 已由注释和 Decompose 实现保证，无需类型系统强制。
 type Components struct {
 	// ID 原始 ID 值
 	ID int64
@@ -135,6 +143,10 @@ type Generator struct {
 // 无需额外接口。返回具体类型避免过度抽象，符合 "accept interfaces, return structs" 惯例。
 func NewGenerator(opts ...Option) (*Generator, error) {
 	cfg := &options{}
+	// 设计决策: nil Option 静默跳过而非返回错误。xid 是底层工具包，
+	// 跳过 nil 便于条件式构建 Option 列表（如 append 后展开）。
+	// xconf 采用 fail-fast（ErrNilOption），两者适用场景不同，
+	// 待跨包审查（99-cross-package）统一后在 04-style-baseline.md 锁定。
 	for _, opt := range opts {
 		if opt != nil {
 			opt(cfg)
@@ -178,10 +190,12 @@ func NewGenerator(opts ...Option) (*Generator, error) {
 		retryInterval:   DefaultRetryInterval,
 	}
 	g.generateID = sf.NextID
-	if cfg.maxWaitDuration > 0 {
+	// 设计决策: 使用 maxWaitSet/retryIntervalSet 标志区分"未传入"与"显式传入 0"。
+	// 未传入 → 使用默认值；显式传入 0 → 表示"不等待/无间隔"，语义明确。
+	if cfg.maxWaitSet {
 		g.maxWaitDuration = cfg.maxWaitDuration
 	}
-	if cfg.retryInterval > 0 {
+	if cfg.retryIntervalSet {
 		g.retryInterval = cfg.retryInterval
 	}
 
@@ -239,15 +253,45 @@ func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	deadline := time.Now().Add(g.maxWaitDuration)
-	var lastErr error
+	// 快速路径：首次尝试成功则零额外分配（避免提前创建 timer）
+	id, err := g.generateID()
+	if err == nil {
+		return id, nil
+	}
 
-	// 复用 timer 减少 GC 压力（Go 1.23+ Reset 安全清空 channel）
+	return g.retryGenerateID(ctx, err)
+}
+
+// retryGenerateID 处理 NewWithRetry 的重试循环。
+// 从 NewWithRetry 中提取以降低 cyclomatic complexity（gocyclo ≤ 10）。
+func (g *Generator) retryGenerateID(ctx context.Context, firstErr error) (int64, error) {
+	// 不可恢复的溢出错误，立即返回
+	if errors.Is(firstErr, sonyflake.ErrOverTimeLimit) {
+		return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, firstErr)
+	}
+
+	// 惰性创建 timer：仅在需要重试时分配（Go 1.23+ Reset 安全清空 channel）
+	deadline := time.Now().Add(g.maxWaitDuration)
+	lastErr := firstErr
 	timer := time.NewTimer(0)
 	<-timer.C // 排空初始触发
 	defer timer.Stop()
 
 	for {
+		// 检查剩余时间，按"剩余时间"裁剪等待间隔，避免超过 maxWaitDuration
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return 0, fmt.Errorf("%w: %w", ErrClockBackwardTimeout, lastErr)
+		}
+
+		// 等待后重试，支持 context 取消
+		timer.Reset(min(g.retryInterval, remaining))
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+
 		id, err := g.generateID()
 		if err == nil {
 			return id, nil
@@ -259,19 +303,6 @@ func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 		// 因此"其余错误均重试"在实践中等价于"仅重试时钟回拨"。
 		if errors.Is(err, sonyflake.ErrOverTimeLimit) {
 			return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, err)
-		}
-
-		// 检查是否超时
-		if time.Now().After(deadline) {
-			return 0, fmt.Errorf("%w: %w", ErrClockBackwardTimeout, lastErr)
-		}
-
-		// 等待后重试，支持 context 取消
-		timer.Reset(g.retryInterval)
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-timer.C:
 		}
 	}
 }
@@ -481,12 +512,16 @@ func MustNewStringWithRetry() string {
 // 验证格式和正数约束。
 // 所有无效输入（语法错误、溢出、非正值）均返回 [ErrInvalidID]。
 //
+// 设计决策: Parse 采用宽松解析（大小写不敏感，允许前导 "+"），
+// 与 strconv.ParseInt 行为一致。NewString 的输出（小写、无前缀）是规范形式，
+// 但 Parse 不强制规范性校验，以便兼容外部系统可能引入的大小写变换。
+//
 // 注意：int64 正数范围恰好覆盖 Sonyflake 的 63 位有效位（39+8+16），
 // 因此 strconv.ParseInt 的溢出检查已隐含位范围校验，无需额外检查。
 func Parse(s string) (int64, error) {
 	id, err := strconv.ParseInt(s, 36, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrInvalidID, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalidID, err)
 	}
 	if id <= 0 {
 		return 0, fmt.Errorf("%w: value must be positive, got %d", ErrInvalidID, id)

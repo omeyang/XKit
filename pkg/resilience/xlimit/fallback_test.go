@@ -35,7 +35,7 @@ func (m *mockFailingLimiter) Reset(_ context.Context, _ Key) error {
 	return nil
 }
 
-func (m *mockFailingLimiter) Close() error {
+func (m *mockFailingLimiter) Close(_ context.Context) error {
 	return nil
 }
 
@@ -53,7 +53,7 @@ func TestFallbackLimiter_NoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -82,7 +82,7 @@ func TestFallbackLimiter_FallbackToLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -113,7 +113,7 @@ func TestFallbackLimiter_FallbackOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackOpen}})
 
@@ -145,7 +145,7 @@ func TestFallbackLimiter_FallbackClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackClose}})
 
@@ -178,7 +178,7 @@ func TestFallbackLimiter_NonRedisError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -203,7 +203,7 @@ func TestFallbackLimiter_AllowN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -226,7 +226,7 @@ func TestFallbackLimiter_Reset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -250,7 +250,7 @@ func TestFallbackLimiter_ResetWithRedisError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
@@ -273,7 +273,7 @@ func TestFallbackLimiter_Close(t *testing.T) {
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
-	err = fallback.Close()
+	err = fallback.Close(context.Background())
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -319,7 +319,7 @@ func TestFallbackLimiter_DefaultStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocal failed: %v", err)
 	}
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackStrategy("unknown")}})
 
@@ -343,7 +343,7 @@ type mockCloseLimiter struct {
 	closeErr    error
 }
 
-func (m *mockCloseLimiter) Close() error {
+func (m *mockCloseLimiter) Close(_ context.Context) error {
 	if m.failOnClose {
 		return m.closeErr
 	}
@@ -364,7 +364,7 @@ func TestFallbackLimiter_CloseWithErrors(t *testing.T) {
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
-	err := fallback.Close()
+	err := fallback.Close(context.Background())
 	if err == nil {
 		t.Fatal("expected error when both limiters fail to close")
 	}
@@ -383,7 +383,7 @@ func TestFallbackLimiter_CloseWithDistributedError(t *testing.T) {
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
-	err := fallback.Close()
+	err := fallback.Close(context.Background())
 	if err == nil {
 		t.Fatal("expected error when distributed limiter fails to close")
 	}
@@ -402,7 +402,7 @@ func TestFallbackLimiter_CloseWithLocalError(t *testing.T) {
 
 	fallback := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 
-	err := fallback.Close()
+	err := fallback.Close(context.Background())
 	if err == nil {
 		t.Fatal("expected error when local limiter fails to close")
 	}

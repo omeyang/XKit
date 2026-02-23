@@ -560,7 +560,7 @@ func TestSignalError(t *testing.T) {
 
 func TestSignalError_Error(t *testing.T) {
 	err := &SignalError{Signal: syscall.SIGINT}
-	expected := "received signal interrupt"
+	expected := "xrun: received signal interrupt"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -568,7 +568,7 @@ func TestSignalError_Error(t *testing.T) {
 
 func TestSignalError_Error_Nil(t *testing.T) {
 	err := &SignalError{Signal: nil}
-	expected := "received signal <nil>"
+	expected := "xrun: received signal <nil>"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -1053,6 +1053,62 @@ func TestWithoutSignalHandler(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
+// Fix 3: Cancel(cause) 在服务返回 nil 时保留 cause
+// ----------------------------------------------------------------------------
+
+func TestWait_CancelCauseWithNilReturn(t *testing.T) {
+	// Cancel(cause) 后服务返回 nil（而非 ctx.Err()），cause 不应丢失
+	customErr := errors.New("custom cause")
+
+	g, _ := NewGroup(context.Background())
+	g.Go(func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil // 返回 nil 而非 ctx.Err()
+	})
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		g.Cancel(customErr)
+	}()
+
+	err := g.Wait()
+	if !errors.Is(err, customErr) {
+		t.Errorf("expected custom cause, got %v", err)
+	}
+}
+
+func TestWait_CancelCauseNoServices(t *testing.T) {
+	// Cancel(cause) 但没有注册服务，cause 仍应返回
+	customErr := errors.New("custom cause")
+
+	g, _ := NewGroup(context.Background())
+	g.Cancel(customErr)
+
+	err := g.Wait()
+	if !errors.Is(err, customErr) {
+		t.Errorf("expected custom cause, got %v", err)
+	}
+}
+
+func TestWait_CancelNilWithNilReturn(t *testing.T) {
+	// Cancel(nil) 后服务返回 nil，Wait() 应返回 nil
+	g, _ := NewGroup(context.Background())
+	g.Go(func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	})
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		g.Cancel(nil)
+	}()
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------------
 // Fix 4: RunServicesWithOptions
 // ----------------------------------------------------------------------------
 
@@ -1109,5 +1165,226 @@ func TestRunServicesWithOptions_SignalError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for RunServicesWithOptions to return")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// nil 参数校验
+// ----------------------------------------------------------------------------
+
+func TestTicker_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Ticker(time.Second, false, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTicker_NilFunc_Immediate(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Ticker(time.Second, true, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTimer_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Timer(time.Second, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTimer_NilFunc_ZeroDelay(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Timer(0, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestHTTPServer_NilServer(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(HTTPServer(nil, time.Second))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilServer) {
+		t.Errorf("expected ErrNilServer, got %v", err)
+	}
+}
+
+func TestGo_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(nil)
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestGoWithName_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.GoWithName("nil-service", nil)
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestRun_NilFunc(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := RunWithOptions(ctx, []Option{WithoutSignalHandler()}, nil)
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestRunServices_NilService(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := RunServicesWithOptions(ctx, []Option{WithoutSignalHandler()}, nil)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService, got %v", err)
+	}
+}
+
+func TestRunServices_NilServiceDirect(t *testing.T) {
+	sigCh := make(chan os.Signal, 1)
+	ctx := withTestSigChan(context.Background(), sigCh)
+
+	err := RunServices(ctx, nil)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService, got %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// 已取消 context 下的 immediate/zero-delay 行为
+// ----------------------------------------------------------------------------
+
+func TestTicker_ImmediateCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	var executed atomic.Bool
+	g, _ := NewGroup(ctx)
+	g.Go(Ticker(time.Second, true, func(ctx context.Context) error {
+		executed.Store(true)
+		return nil
+	}))
+
+	// context.Canceled 会被过滤（Group 主动取消）
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if executed.Load() {
+		t.Error("fn should not be executed when context is already canceled")
+	}
+}
+
+func TestTimer_ZeroDelayCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	var executed atomic.Bool
+	g, _ := NewGroup(ctx)
+	g.Go(Timer(0, func(ctx context.Context) error {
+		executed.Store(true)
+		return nil
+	}))
+
+	// context.Canceled 会被过滤
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if executed.Load() {
+		t.Error("fn should not be executed when context is already canceled")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// nil context
+// ----------------------------------------------------------------------------
+
+func TestNewGroup_NilContext(t *testing.T) {
+	// nil context 应被归一化为 context.Background()，不 panic
+	g, ctx := NewGroup(nil) //nolint:staticcheck // 测试 nil context 归一化行为
+
+	g.Go(func(ctx context.Context) error {
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// context 应该有效
+	if ctx == nil {
+		t.Error("returned context should not be nil")
+	}
+}
+
+func TestNewGroup_NilOption(t *testing.T) {
+	// nil Option 应被静默跳过，不 panic
+	g, _ := NewGroup(context.Background(), nil, WithName("test"), nil)
+
+	g.Go(func(ctx context.Context) error {
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// WithoutSignalHandler 与 WithSignals 优先级
+// ----------------------------------------------------------------------------
+
+func TestWithoutSignalHandler_OverridesWithSignals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx,
+			[]Option{
+				WithSignals([]os.Signal{syscall.SIGINT}),
+				WithoutSignalHandler(),
+			},
+			func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		)
+	}()
+
+	// 手动取消（没有信号处理，所以只能手动取消）
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		// WithoutSignalHandler 优先，应返回 nil（正常关闭）
+		if err != nil {
+			t.Errorf("expected nil, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
 	}
 }

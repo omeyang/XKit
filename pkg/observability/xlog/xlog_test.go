@@ -298,6 +298,124 @@ func TestBuilder_SetAddSource(t *testing.T) {
 	}
 }
 
+func TestBuilder_SetAddSource_Accuracy(t *testing.T) {
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetAddSource(true).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	// 实例方法 source 应指向当前测试文件
+	logger.Info(context.Background(), "source accuracy test")
+	output := buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("instance Info source should point to xlog_test.go\noutput: %s", output)
+	}
+
+	// Stack 实例方法也应指向当前测试文件
+	buf.Reset()
+	logger.Stack(context.Background(), "stack source test")
+	output = buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("instance Stack source should point to xlog_test.go\noutput: %s", output)
+	}
+}
+
+func TestGlobal_SetAddSource_Accuracy(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetAddSource(true).
+		SetLevel(xlog.LevelDebug).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+	xlog.SetDefault(logger)
+
+	// 全局便利函数 source 应指向当前测试文件
+	xlog.Info(context.Background(), "global source test")
+	output := buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("global Info source should point to xlog_test.go\noutput: %s", output)
+	}
+
+	// 全局 Stack source 应指向当前测试文件
+	buf.Reset()
+	xlog.Stack(context.Background(), "global stack source test")
+	output = buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("global Stack source should point to xlog_test.go\noutput: %s", output)
+	}
+}
+
+// =============================================================================
+// Builder first-error-wins 测试
+// =============================================================================
+
+func TestBuilder_FirstErrorWins(t *testing.T) {
+	// 第一个错误应该被保留，后续 Set 应被跳过
+	_, _, err := xlog.New().
+		SetLevelString("invalid_first").     // 第一个错误
+		SetFormat("also_invalid").           // 应被跳过
+		SetDeploymentType("NOT_VALID_TYPE"). // 应被跳过
+		Build()
+	if err == nil {
+		t.Fatal("Build() should return error")
+	}
+	// 验证保留的是第一个错误
+	if !strings.Contains(err.Error(), "invalid_first") {
+		t.Errorf("Build() should return first error, got: %v", err)
+	}
+}
+
+func TestBuilder_FirstErrorWins_AllSetMethods(t *testing.T) {
+	// 表驱动测试：验证每个 Set 方法在 b.err != nil 时跳过执行
+	tests := []struct {
+		name  string
+		apply func(*xlog.Builder) *xlog.Builder
+	}{
+		{"SetOutput", func(b *xlog.Builder) *xlog.Builder { return b.SetOutput(&bytes.Buffer{}) }},
+		{"SetLevel", func(b *xlog.Builder) *xlog.Builder { return b.SetLevel(xlog.LevelDebug) }},
+		{"SetLevelString", func(b *xlog.Builder) *xlog.Builder { return b.SetLevelString("debug") }},
+		{"SetFormat", func(b *xlog.Builder) *xlog.Builder { return b.SetFormat("json") }},
+		{"SetAddSource", func(b *xlog.Builder) *xlog.Builder { return b.SetAddSource(true) }},
+		{"SetEnrich", func(b *xlog.Builder) *xlog.Builder { return b.SetEnrich(false) }},
+		{"SetOnError", func(b *xlog.Builder) *xlog.Builder { return b.SetOnError(func(error) {}) }},
+		{"SetReplaceAttr", func(b *xlog.Builder) *xlog.Builder {
+			return b.SetReplaceAttr(func(_ []string, a slog.Attr) slog.Attr { return a })
+		}},
+		{"SetDeploymentType", func(b *xlog.Builder) *xlog.Builder {
+			return b.SetDeploymentType(xctx.DeploymentSaaS)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 先注入错误，然后调用 Set 方法
+			builder := xlog.New().SetLevelString("INVALID_SEED_ERROR")
+			builder = tt.apply(builder)
+
+			_, _, err := builder.Build()
+			if err == nil {
+				t.Fatal("Build() should return error")
+			}
+			// 验证保留的是种子错误，而非 Set 方法的结果
+			if !strings.Contains(err.Error(), "INVALID_SEED_ERROR") {
+				t.Errorf("error should be seed error, got: %v", err)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // Cleanup 生命周期测试
 // =============================================================================
@@ -560,6 +678,58 @@ func TestBuilder_SetRotation_Error(t *testing.T) {
 		Build()
 	if err == nil {
 		t.Error("SetRotation with empty filename should return error")
+	}
+}
+
+func TestBuilder_SetRotation_DoubleCalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	file1 := tmpDir + "/first.log"
+	file2 := tmpDir + "/second.log"
+
+	// 连续调用两次 SetRotation，第一个 rotator 应被正确关闭
+	logger, cleanup, err := xlog.New().
+		SetRotation(file1).
+		SetRotation(file2). // 应关闭 file1 的 rotator
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+
+	// 写入日志
+	logger.Info(context.Background(), "second rotator message")
+
+	// 关闭
+	if err := cleanup(); err != nil {
+		t.Errorf("cleanup() error: %v", err)
+	}
+
+	// 验证第二个文件包含日志
+	data, readErr := os.ReadFile(file2)
+	if readErr != nil {
+		t.Fatalf("ReadFile(%s) error: %v", file2, readErr)
+	}
+	if !strings.Contains(string(data), "second rotator message") {
+		t.Errorf("second log file missing message\ncontent: %s", string(data))
+	}
+}
+
+func TestBuilder_Build_AlreadyBuilt(t *testing.T) {
+	builder := xlog.New()
+
+	// 第一次 Build 应该成功
+	_, cleanup, err := builder.Build()
+	if err != nil {
+		t.Fatalf("first Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	// 第二次 Build 应该返回错误
+	_, _, err = builder.Build()
+	if err == nil {
+		t.Fatal("second Build() should return error")
+	}
+	if !strings.Contains(err.Error(), "already built") {
+		t.Errorf("error should mention 'already built', got: %v", err)
 	}
 }
 

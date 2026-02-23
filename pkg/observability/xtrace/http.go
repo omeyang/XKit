@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-
-	"github.com/omeyang/xkit/pkg/context/xctx"
 )
 
 // =============================================================================
@@ -103,9 +101,24 @@ func HTTPMiddleware(opts ...Option) func(http.Handler) http.Handler {
 // HTTP Header 注入（跨服务传播）
 // =============================================================================
 
+// httpTransportKeys HTTP 传输层使用的 key 名称。
+//
+// 设计决策: 提取为包级变量，供 InjectToRequest 和 InjectTraceToHeader 共享，
+// 确保两条注入路径使用相同的 traceparent 生成逻辑（resolveTraceparent）。
+var httpTransportKeys = transportKeys{
+	traceID:     HeaderTraceID,
+	spanID:      HeaderSpanID,
+	requestID:   HeaderRequestID,
+	traceparent: HeaderTraceparent,
+	tracestate:  HeaderTracestate,
+}
+
 // InjectToRequest 将追踪信息注入 HTTP 请求。
 // 从 context 提取追踪信息并设置到请求 Header，用于跨服务调用时传播。
 // 会正确传递上游的 trace-flags（采样决策）。
+//
+// 注意：本函数不传播 tracestate（因为 context 中不存储 tracestate）。
+// 如需传播 tracestate，请使用 InjectTraceToHeader 手动设置，或使用 OpenTelemetry SDK。
 func InjectToRequest(ctx context.Context, req *http.Request) {
 	if req == nil {
 		return
@@ -116,27 +129,16 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 		req.Header = make(http.Header)
 	}
 
-	traceID := xctx.TraceID(ctx)
-	spanID := xctx.SpanID(ctx)
-	requestID := xctx.RequestID(ctx)
-	traceFlags := xctx.TraceFlags(ctx)
+	info := TraceInfoFromContext(ctx)
 
-	// 注入追踪信息
-	if traceID != "" {
-		req.Header.Set(HeaderTraceID, traceID)
-	}
-	if spanID != "" {
-		req.Header.Set(HeaderSpanID, spanID)
-	}
-	if requestID != "" {
-		req.Header.Set(HeaderRequestID, requestID)
+	// 设计决策: 如果 context 无追踪信息，直接返回，不清除请求中已有的 trace 头。
+	// InjectToRequest 仅设置非空字段，不负责清除旧值。
+	// 调用方通常使用新建的 http.Request，不存在旧值覆盖问题。
+	if info.IsEmpty() {
+		return
 	}
 
-	// 生成 W3C traceparent（仅在 traceID 和 spanID 都有效时）
-	// 使用 context 中的 traceFlags，若无则默认 "00"
-	if traceparent := formatTraceparent(traceID, spanID, traceFlags); traceparent != "" {
-		req.Header.Set(HeaderTraceparent, traceparent)
-	}
+	injectTraceInfoTo(req.Header.Set, info, httpTransportKeys)
 }
 
 // InjectTraceToHeader 将 TraceInfo 注入 HTTP Header
@@ -146,37 +148,10 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 // 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "00"）。
 //
 // 注意：如果 Traceparent 格式无效，会静默丢弃并尝试从 TraceID/SpanID 生成。
+// 如果同时设置了 TraceID 和 Traceparent，请确保两者一致以避免下游混淆。
 func InjectTraceToHeader(h http.Header, info TraceInfo) {
 	if h == nil {
 		return
 	}
-
-	if info.TraceID != "" {
-		h.Set(HeaderTraceID, info.TraceID)
-	}
-	if info.SpanID != "" {
-		h.Set(HeaderSpanID, info.SpanID)
-	}
-	if info.RequestID != "" {
-		h.Set(HeaderRequestID, info.RequestID)
-	}
-
-	// 如果已有 Traceparent，验证后规范化为小写再透传，确保符合 W3C 规范
-	if info.Traceparent != "" {
-		if _, _, _, ok := parseTraceparent(info.Traceparent); ok {
-			h.Set(HeaderTraceparent, strings.ToLower(info.Traceparent))
-		}
-		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
-	}
-
-	// 如果没有设置有效的 Traceparent，尝试从 TraceID/SpanID 生成
-	if h.Get(HeaderTraceparent) == "" {
-		if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
-			h.Set(HeaderTraceparent, traceparent)
-		}
-	}
-
-	if info.Tracestate != "" {
-		h.Set(HeaderTracestate, info.Tracestate)
-	}
+	injectTraceInfoTo(h.Set, info, httpTransportKeys)
 }

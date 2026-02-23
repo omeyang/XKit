@@ -80,7 +80,7 @@ func FuzzLocalLimiter_Allow(f *testing.F) {
 		if err != nil {
 			return // 无效配置，跳过
 		}
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		ctx := context.Background()
 		key := Key{Tenant: tenant}
@@ -115,11 +115,12 @@ func FuzzRuleMatcher(f *testing.F) {
 
 		// 所有操作都不应该 panic
 		for _, ruleName := range []string{"tenant", "global", "tenant-api", "caller", "nonexistent"} {
-			rule, found := matcher.findRule(key, ruleName)
+			rule, found := matcher.findRule(ruleName)
 			if found {
-				_, _ = matcher.getEffectiveLimit(rule, key)
-				_ = matcher.getEffectiveBurst(rule, key)
-				_ = matcher.renderKey(rule, key, "prefix:")
+				rendered := key.Render(rule.KeyTemplate)
+				_, _ = matcher.getEffectiveLimit(rule, rendered)
+				_ = matcher.getEffectiveBurst(rule, rendered)
+				_ = matcher.renderKey(rendered, "prefix:")
 			}
 		}
 

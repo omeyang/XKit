@@ -32,9 +32,9 @@ func TestMetricsConstants(t *testing.T) {
 		MetricsAttrTenantID,
 		MetricsAttrCacheHit,
 		MetricsAttrTokenType,
-		MetricsAttrPath,
-		MetricsAttrMethod,
-		MetricsAttrStatus,
+		MetricsAttrHTTPPath,
+		MetricsAttrHTTPMethod,
+		MetricsAttrHTTPStatus,
 	}
 	for _, attr := range attrs {
 		if attr == "" {

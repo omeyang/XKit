@@ -9,7 +9,7 @@
 // 全局选项:
 //
 //	-s, --socket   Unix Socket 路径 (默认: /var/run/xdbg.sock)
-//	-t, --timeout  命令超时时间 (默认: 30s)
+//	-t, --timeout  命令超时时间 (默认: 30s, 上限: 5m)
 //
 // 命令:
 //
@@ -28,10 +28,14 @@
 //	注意：socket 文件发现需要调试服务已启用（即 socket 文件已创建）。
 //	若服务未启用，需使用 --pid 或 --name 参数指定目标进程。
 //
+//	安全性：发送信号后会验证目标进程仍然存活。若进程在收到 SIGUSR1 后退出
+//	（说明目标可能不是 xdbg 服务进程），将报告错误而非静默返回成功。
+//
 // 退出码:
 //
 //	0: 命令执行成功（status 命令: 服务在线）
 //	1: 命令执行失败或服务离线（status 命令）
+//	2: 参数错误（无效 PID、缺少必需参数、未知命令等）
 //
 // 示例:
 //
@@ -51,50 +55,61 @@ import (
 	"os"
 	"time"
 
+	"github.com/omeyang/xkit/pkg/debug/xdbg"
 	"github.com/urfave/cli/v3"
 )
 
-const (
-	// DefaultSocketPath 默认 Socket 路径。
-	// 设计决策: 使用 /var/run 与 xdbg 服务端默认路径保持一致。
-	// K8s 环境中通常以 root 运行，此路径可直接使用。
-	// 非 root 用户需通过 --socket 指定自定义路径。
-	DefaultSocketPath = "/var/run/xdbg.sock"
+// defaultTimeout 默认超时时间。
+const defaultTimeout = 30 * time.Second
 
-	// DefaultTimeout 默认超时时间。
-	DefaultTimeout = 30 * time.Second
+// 版本信息（可通过 -ldflags 注入，例如:
+//
+//	go build -ldflags "-X main.Version=1.0.0 -X main.GitCommit=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// ）。
+var (
+	Version   = "0.1.0-dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
 )
-
-// Version 版本号（可通过 -ldflags "-X main.Version=x.y.z" 注入）。
-var Version = "0.1.0-dev"
 
 func main() {
 	os.Exit(run())
 }
 
-func run() int {
-	app := &cli.Command{
+// createApp 创建 CLI 应用。
+func createApp() *cli.Command {
+	return &cli.Command{
 		Name:    "xdbgctl",
 		Usage:   "xdbg 调试服务命令行客户端",
-		Version: Version,
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, GitCommit, BuildTime),
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "socket",
 				Aliases: []string{"s"},
 				Usage:   "Unix Socket 路径",
-				Value:   DefaultSocketPath,
+				Value:   xdbg.DefaultSocketPath,
 			},
 			&cli.DurationFlag{
 				Name:    "timeout",
 				Aliases: []string{"t"},
 				Usage:   "命令超时时间",
-				Value:   DefaultTimeout,
+				Value:   defaultTimeout,
 			},
 		},
 		Commands:       createCommands(),
 		DefaultCommand: "help",
 		Authors: []any{
 			"XKit Team",
+		},
+		// 设计决策: 禁止 urfave/cli 直接调用 os.Exit，
+		// 由 run() 统一处理退出码映射，确保与文档退出码契约一致。
+		ExitErrHandler: func(_ context.Context, _ *cli.Command, err error) {
+			// ExitCoder 错误（如未知命令）的消息需在此输出，
+			// 替代 HandleExitCoder 的默认 os.Exit 行为。
+			if _, ok := err.(cli.ExitCoder); ok {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		},
 		Description: `xdbgctl 是 xdbg 调试服务的命令行客户端，用于在 K8s 环境中
 对运行中的 Go 应用进行动态调试。
@@ -116,17 +131,32 @@ func run() int {
   config              查看运行时配置
   exit                关闭调试服务`,
 	}
+}
+
+func run() int {
+	app := createApp()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// 设置信号处理
-	setupSignalHandler(cancel)
+	setupSignalHandler(ctx, cancel)
 
 	if err := app.Run(ctx, os.Args); err != nil {
 		var exitErr *exitError
 		if errors.As(err, &exitErr) {
 			return exitErr.code
+		}
+		var usageErr *usageError
+		if errors.As(err, &usageErr) {
+			fmt.Fprintf(os.Stderr, "参数错误: %v\n", usageErr)
+			return 2
+		}
+		// CLI 框架产生的参数错误（如未知 flag、未知命令）也返回退出码 2，
+		// 与文档契约"参数错误 → 退出码 2"保持一致。
+		if isCLIUsageError(err) {
+			// ExitErrHandler 或 flag 解析器已向 stderr 输出错误详情，此处仅设置退出码
+			return 2
 		}
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		return 1

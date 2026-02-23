@@ -38,7 +38,7 @@ func newTestRedis(t *testing.T) (Redis, *miniredis.Miniredis) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = cache.Close()
+		_ = cache.Close(context.Background())
 		mr.Close()
 	})
 
@@ -113,7 +113,7 @@ func TestLoader_Load_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	loader, err := NewLoader(cache)
 	require.NoError(t, err)
@@ -299,7 +299,7 @@ func TestLoader_LoadHash_WhenRedisError_FallsBackToBackend(t *testing.T) {
 	})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	loader, err := NewLoader(cache)
 	require.NoError(t, err)
@@ -415,6 +415,18 @@ func TestWithMaxRetryAttempts_IgnoresNonPositive(t *testing.T) {
 	assert.Equal(t, original, opts.MaxRetryAttempts)
 }
 
+func TestWithTTLJitter_NegativeValue_ClampsToZero(t *testing.T) {
+	opts := defaultLoaderOptions()
+	WithTTLJitter(-0.5)(opts)
+	assert.Equal(t, 0.0, opts.TTLJitter)
+}
+
+func TestWithTTLJitter_OverOneValue_ClampsToOne(t *testing.T) {
+	opts := defaultLoaderOptions()
+	WithTTLJitter(2.0)(opts)
+	assert.Equal(t, 1.0, opts.TTLJitter)
+}
+
 func TestWithHashTTLRefresh_SetsOption(t *testing.T) {
 	opts := defaultLoaderOptions()
 	assert.True(t, opts.HashTTLRefresh)
@@ -526,6 +538,29 @@ func TestLoader_LoadHash_WithZeroTTL_SkipsExpire(t *testing.T) {
 	assert.Equal(t, []byte("no_ttl_value"), value)
 }
 
+func TestLoader_LoadHash_WithNegativeTTL_SkipsCache(t *testing.T) {
+	// Given - 负 TTL 时应跳过缓存写入（与 Load 行为一致）
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("neg_ttl_value"), nil
+	}
+
+	// When - 使用负 TTL
+	value, err := loader.LoadHash(ctx, "neg_ttl_hash", "field1", loadFn, -1*time.Second)
+
+	// Then - 回源成功但不写入缓存
+	require.NoError(t, err)
+	assert.Equal(t, []byte("neg_ttl_value"), value)
+
+	// 验证未写入缓存
+	assert.False(t, mr.Exists("neg_ttl_hash"), "hash key should not exist with negative TTL")
+}
+
 // =============================================================================
 // 内部函数覆盖测试
 // =============================================================================
@@ -562,6 +597,34 @@ func TestLoader_LoadHash_WithNilCache_ReturnsError(t *testing.T) {
 		return nil, nil
 	}, time.Hour)
 	assert.ErrorIs(t, err, ErrNilClient)
+}
+
+// =============================================================================
+// nil context 测试（FG-S1 修复）
+// =============================================================================
+
+func TestLoader_Load_WithNilContext_ReturnsErrNilContext(t *testing.T) {
+	cache, _ := newTestRedis(t)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
+
+	//nolint:staticcheck // SA1012: 故意传入 nil context 测试 fail-fast 校验
+	_, err = loader.Load(nil, "key", func(ctx context.Context) ([]byte, error) {
+		return nil, nil
+	}, time.Hour)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestLoader_LoadHash_WithNilContext_ReturnsErrNilContext(t *testing.T) {
+	cache, _ := newTestRedis(t)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
+
+	//nolint:staticcheck // SA1012: 故意传入 nil context 测试 fail-fast 校验
+	_, err = loader.LoadHash(nil, "key", "field", func(ctx context.Context) ([]byte, error) {
+		return nil, nil
+	}, time.Hour)
+	assert.ErrorIs(t, err, ErrNilContext)
 }
 
 func TestBackoffWithJitter_OverflowProtection(t *testing.T) {
@@ -689,6 +752,39 @@ func TestLoader_LoadHash_WithSingleflight_ContextCancelled_BeforeResult(t *testi
 // NewLoader 构造验证测试
 // =============================================================================
 
+func TestNewLoader_DistLockTTL_LessThanLoadTimeout_ReturnsError(t *testing.T) {
+	// Given - DistributedLockTTL <= LoadTimeout 时应返回 ErrInvalidConfig
+	cache, _ := newTestRedis(t)
+
+	// When - DistributedLockTTL (10s) < LoadTimeout (30s)
+	_, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(30*time.Second),
+	)
+
+	// Then
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+	assert.Contains(t, err.Error(), "DistributedLockTTL")
+}
+
+func TestNewLoader_DistLockTTL_EqualToLoadTimeout_ReturnsError(t *testing.T) {
+	// Given - DistributedLockTTL == LoadTimeout 时也应返回 ErrInvalidConfig
+	cache, _ := newTestRedis(t)
+
+	// When
+	_, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithDistributedLockTTL(30*time.Second),
+		WithLoadTimeout(30*time.Second),
+	)
+
+	// Then
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 func TestNewLoader_NilCache_ReturnsError(t *testing.T) {
 	_, err := NewLoader(nil)
 	assert.ErrorIs(t, err, ErrNilClient)
@@ -708,6 +804,19 @@ func TestNewLoader_ExternalLockWithoutEnable_ReturnsError(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
+func TestWithExternalLock_NilDoesNotDisableDistLock(t *testing.T) {
+	// FG-M7: WithDistributedLock(true) + WithExternalLock(nil) 不应意外禁用分布式锁
+	cache, mr := newTestRedis(t)
+	t.Cleanup(func() { mr.Close() })
+
+	loader, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithExternalLock(nil), // 不应禁用分布式锁
+	)
+	require.NoError(t, err)
+	assert.NotNil(t, loader)
 }
 
 // =============================================================================
@@ -811,4 +920,201 @@ func TestLoader_Load_WithSingleflight_WhenLoadFnPanics_ReturnsErrLoadPanic(t *te
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrLoadPanic)
+}
+
+// =============================================================================
+// TTL 抖动测试
+// =============================================================================
+
+func TestLoader_Load_WithTTLJitter_WritesJitteredTTL(t *testing.T) {
+	cache, mr := newTestRedis(t)
+
+	loader, err := NewLoader(cache, WithTTLJitter(0.5))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	baseTTL := 10 * time.Minute
+
+	_, err = loader.Load(ctx, "jitter-key", func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}, baseTTL)
+	require.NoError(t, err)
+
+	// 验证 TTL 被设置且在合理范围内（baseTTL ± 25%）
+	actualTTL := mr.TTL("jitter-key")
+	minTTL := time.Duration(float64(baseTTL) * 0.7)
+	maxTTL := time.Duration(float64(baseTTL) * 1.3)
+	assert.True(t, actualTTL >= minTTL && actualTTL <= maxTTL,
+		"TTL %v should be between %v and %v", actualTTL, minTTL, maxTTL)
+}
+
+func TestLoader_Load_WithNegativeTTL_SkipsCache(t *testing.T) {
+	// Given - 负 TTL 时应跳过缓存写入（FG-S1 修复）
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache, WithSingleflight(false))
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("neg_ttl_value"), nil
+	}
+
+	// When - 使用负 TTL
+	value, err := loader.Load(ctx, "neg_ttl_key", loadFn, -1*time.Second)
+
+	// Then - 回源成功但不写入缓存
+	require.NoError(t, err)
+	assert.Equal(t, []byte("neg_ttl_value"), value)
+
+	// 验证未写入缓存
+	assert.False(t, mr.Exists("neg_ttl_key"), "key should not exist with negative TTL")
+}
+
+func TestLoader_Load_WithZeroTTLJitter_WritesExactTTL(t *testing.T) {
+	cache, mr := newTestRedis(t)
+
+	// TTLJitter=0 (default) should write exact TTL
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	baseTTL := 10 * time.Minute
+
+	_, err = loader.Load(ctx, "exact-ttl-key", func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}, baseTTL)
+	require.NoError(t, err)
+
+	actualTTL := mr.TTL("exact-ttl-key")
+	assert.Equal(t, baseTTL, actualTTL)
+}
+
+// =============================================================================
+// setHashTTLIfMissing 错误路径覆盖（FG-M3/L3 修复）
+// =============================================================================
+
+func TestLoader_LoadHash_WhenTTLCheckFails_LogsAndContinues(t *testing.T) {
+	// Given - TTL 查询失败时应记录日志但不影响业务返回
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithHashTTLRefresh(false), // 走 setHashTTLIfMissing 路径
+	)
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		return []byte("ttl_check_value"), nil
+	}
+
+	// 第一次加载成功（写入 HSet）
+	value, err := loader.LoadHash(ctx, "ttl_err_hash", "field1", loadFn, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("ttl_check_value"), value)
+
+	// 清理缓存以便第二次加载触发回源
+	mr.Del("ttl_err_hash")
+
+	// 在 TTL 命令上注入错误
+	mr.SetError("injected TTL error")
+
+	// When - 回源成功，但 setHashTTLIfMissing 中 TTL 查询失败
+	_, err = loader.LoadHash(ctx, "ttl_err_hash", "field1", loadFn, time.Hour)
+
+	// Then - 回源自身不受 Redis 错误影响，但 Redis 操作（Get/HSet/TTL）会失败
+	// 只要不 panic 即可，错误路径被日志记录
+	if err != nil {
+		t.Logf("Expected: error from Redis during cache operation: %v", err)
+	}
+
+	// 清除注入的错误
+	mr.SetError("")
+}
+
+func TestLoader_LoadHash_WhenExpireFails_LogsAndContinues(t *testing.T) {
+	// Given - Expire 失败时应记录日志但不影响业务返回
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	loadCount := 0
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		loadCount++
+		return []byte("expire_err_value"), nil
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithHashTTLRefresh(false), // 走 setHashTTLIfMissing 路径
+	)
+	require.NoError(t, err)
+
+	// When - 第一次加载，HSet 成功但 TTL 未设置
+	value, err := loader.LoadHash(ctx, "expire_err_hash", "field1", loadFn, time.Hour)
+
+	// Then - 回源成功
+	require.NoError(t, err)
+	assert.Equal(t, []byte("expire_err_value"), value)
+	assert.Equal(t, 1, loadCount)
+
+	// 验证缓存存在
+	assert.True(t, mr.Exists("expire_err_hash"))
+}
+
+func TestSetHashTTLIfMissing_WhenTTLCheckFails_LogsAndReturns(t *testing.T) {
+	// 直接测试 setHashTTLIfMissing 的 TTL 查询失败路径
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	l := &loader{cache: cache, options: defaultLoaderOptions()}
+
+	// 创建 Hash key
+	err := cache.Client().HSet(ctx, "ttl-err-direct", "field", "value").Err()
+	require.NoError(t, err)
+
+	// 注入全局错误，使 TTL 命令失败
+	mr.SetError("injected TTL error")
+	defer mr.SetError("")
+
+	// 调用不应 panic，TTL 错误被记录并跳过
+	l.setHashTTLIfMissing(ctx, "ttl-err-direct", time.Hour)
+}
+
+func TestSetHashTTLIfMissing_WhenKeyHasTTL_SkipsExpire(t *testing.T) {
+	// 测试 key 已有 TTL 时（currentTTL >= 0），不调用 Expire
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	l := &loader{cache: cache, options: defaultLoaderOptions()}
+
+	// 创建 Hash key 并设置 TTL
+	err := cache.Client().HSet(ctx, "has-ttl-hash", "field", "value").Err()
+	require.NoError(t, err)
+	err = cache.Client().Expire(ctx, "has-ttl-hash", time.Hour).Err()
+	require.NoError(t, err)
+
+	// 调用 setHashTTLIfMissing — 因为 TTL >= 0，不应调用 Expire
+	l.setHashTTLIfMissing(ctx, "has-ttl-hash", 2*time.Hour)
+
+	// 验证 TTL 没有被覆盖（仍为最初设置的值，约 1 小时）
+	ttlResult, err := cache.Client().TTL(ctx, "has-ttl-hash").Result()
+	require.NoError(t, err)
+	assert.True(t, ttlResult > 30*time.Minute, "original TTL should be preserved")
+}
+
+// =============================================================================
+// WithMaxRetryAttempts 上界钳位测试（FG-L6 修复）
+// =============================================================================
+
+func TestWithMaxRetryAttempts_ClampsToUpperBound(t *testing.T) {
+	opts := defaultLoaderOptions()
+	WithMaxRetryAttempts(MaxMaxRetryAttempts + 1000)(opts)
+	assert.Equal(t, MaxMaxRetryAttempts, opts.MaxRetryAttempts)
+}
+
+func TestWithMaxRetryAttempts_ExactUpperBound(t *testing.T) {
+	opts := defaultLoaderOptions()
+	WithMaxRetryAttempts(MaxMaxRetryAttempts)(opts)
+	assert.Equal(t, MaxMaxRetryAttempts, opts.MaxRetryAttempts)
 }

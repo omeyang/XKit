@@ -27,10 +27,16 @@ type Producer interface {
 	Health(ctx context.Context) error
 
 	// Stats 返回生产者统计信息。
+	// 注意：MessagesProduced/BytesProduced/Errors 仅在使用 TracingProducer.Produce 时递增。
+	// 通过 Producer() 直接调用原生 API 的操作不计入统计。
 	Stats() ProducerStats
 
 	// Close 优雅关闭生产者。
 	// 会等待所有消息发送完成（受 FlushTimeout 限制）。
+	//
+	// 设计决策: Close() 不接受 context.Context 参数，偏离项目 L-02 规则（Close(ctx) 签名）。
+	// 原因：底层 confluent-kafka-go Producer.Flush 仅支持毫秒级超时参数，不支持 context。
+	// 关闭超时通过 WithProducerFlushTimeout 配置，默认 10s。
 	Close() error
 }
 
@@ -64,10 +70,17 @@ type Consumer interface {
 	Health(ctx context.Context) error
 
 	// Stats 返回消费者统计信息。
+	// 注意：MessagesConsumed/BytesConsumed 仅在使用 TracingConsumer 或 ConsumerWithDLQ 时递增。
+	// 通过 Consumer() 直接调用原生 API 的操作不计入统计。
+	// Lag 通过远程 RPC（Committed + QueryWatermarkOffsets）计算，分区多时可能较慢。
 	Stats() ConsumerStats
 
 	// Close 优雅关闭消费者。
 	// 会提交当前偏移量并取消订阅。
+	//
+	// 设计决策: Close() 不接受 context.Context 参数，偏离项目 L-02 规则（Close(ctx) 签名）。
+	// 原因：底层 confluent-kafka-go Consumer.Close 不支持 context；
+	// Commit + Close 是原子操作序列，不适合在中间取消。
 	Close() error
 }
 
@@ -85,6 +98,17 @@ type ConsumerStats struct {
 	Errors int64
 	// Lag 消费延迟（与最新偏移量的差值）。
 	Lag int64
+}
+
+// cloneConfigMap 复制 ConfigMap，避免修改调用方传入的原始配置。
+func cloneConfigMap(config *kafka.ConfigMap) (*kafka.ConfigMap, error) {
+	cloned := &kafka.ConfigMap{}
+	for k, v := range *config {
+		if err := cloned.SetKey(k, v); err != nil {
+			return nil, fmt.Errorf("clone config key %q: %w", k, err)
+		}
+	}
+	return cloned, nil
 }
 
 // =============================================================================
@@ -111,9 +135,15 @@ func newProducerWrapper(config *kafka.ConfigMap, opts ...ProducerOption) (*produ
 		opt(options)
 	}
 
-	producer, err := kafka.NewProducer(config)
+	// 复制配置，避免修改调用方传入的 ConfigMap
+	clonedConfig, err := cloneConfigMap(config)
 	if err != nil {
 		return nil, err
+	}
+
+	producer, err := kafka.NewProducer(clonedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("xkafka: create producer: %w", err)
 	}
 
 	return &producerWrapper{
@@ -147,11 +177,9 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 	}
 
 	// 复制配置，避免修改调用方传入的 ConfigMap
-	clonedConfig := &kafka.ConfigMap{}
-	for k, v := range *config {
-		if err := clonedConfig.SetKey(k, v); err != nil {
-			return nil, fmt.Errorf("clone config key %q: %w", k, err)
-		}
+	clonedConfig, err := cloneConfigMap(config)
+	if err != nil {
+		return nil, err
 	}
 
 	// 强制设置 enable.auto.offset.store=false 以确保 at-least-once 语义
@@ -160,11 +188,22 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 		return nil, fmt.Errorf("failed to set enable.auto.offset.store: %w", err)
 	}
 
-	consumer, err := kafka.NewConsumer(clonedConfig)
-	if err != nil {
-		return nil, err
+	// 设计决策: 强制 enable.auto.commit=true，确保 offset 提交契约一致。
+	// 本包实现只提供 StoreMessage（存储 offset），依赖 auto-commit 定期提交到 Broker。
+	// 若用户设置 enable.auto.commit=false，除 Close() 时的显式 Commit 外无其他提交路径，
+	// 重启/rebalance 后会导致大规模重复消费。
+	if err := clonedConfig.SetKey("enable.auto.commit", true); err != nil {
+		return nil, fmt.Errorf("failed to set enable.auto.commit: %w", err)
 	}
 
+	consumer, err := kafka.NewConsumer(clonedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("xkafka: create consumer: %w", err)
+	}
+
+	// 设计决策: SubscribeTopics 第二参数为 nil，未注册 rebalance 回调。
+	// 分区撤销时 offset 提交依赖 auto-commit 窗口（默认 5s）。
+	// 如需更精确的 rebalance 处理，用户可通过 Consumer() 获取底层 API 自行管理。
 	if err := consumer.SubscribeTopics(topics, nil); err != nil {
 		return nil, errors.Join(err, consumer.Close())
 	}
@@ -172,12 +211,26 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 	return &consumerWrapper{
 		consumer: consumer,
 		options:  options,
+		groupID:  extractGroupID(clonedConfig),
 	}, nil
+}
+
+// extractGroupID 从 ConfigMap 中提取 group.id，用于可观测性 span 属性。
+func extractGroupID(config *kafka.ConfigMap) string {
+	v, err := config.Get("group.id", nil)
+	if err == nil && v != nil {
+		return fmt.Sprint(v)
+	}
+	return ""
 }
 
 // =============================================================================
 // 选项
 // =============================================================================
+
+// defaultFlushTimeout 是消息刷新的默认超时时间。
+// 在 Producer Close 和 DLQ Consumer Close 中共享此默认值。
+const defaultFlushTimeout = 10 * time.Second
 
 // producerOptions 包含 Kafka Producer 的配置选项。
 type producerOptions struct {
@@ -191,7 +244,7 @@ func defaultProducerOptions() *producerOptions {
 	return &producerOptions{
 		Tracer:        NoopTracer{},
 		Observer:      xmetrics.NoopObserver{},
-		FlushTimeout:  10 * time.Second,
+		FlushTimeout:  defaultFlushTimeout,
 		HealthTimeout: 5 * time.Second,
 	}
 }

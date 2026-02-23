@@ -20,10 +20,10 @@ var (
 	// ErrMissingPlatformID 缺少 PlatformID
 	ErrMissingPlatformID = errors.New("xplatform: missing platform_id")
 
-	// ErrInvalidPlatformID PlatformID 格式非法（包含空白字符或超过最大长度）
+	// ErrInvalidPlatformID PlatformID 格式非法（包含空白字符、控制字符或超过最大长度）
 	ErrInvalidPlatformID = errors.New("xplatform: invalid platform_id format")
 
-	// ErrInvalidUnclassRegionID UnclassRegionID 格式非法（包含空白字符或超过最大长度）
+	// ErrInvalidUnclassRegionID UnclassRegionID 格式非法（包含空白字符、控制字符或超过最大长度）
 	ErrInvalidUnclassRegionID = errors.New("xplatform: invalid unclass_region_id format")
 
 	// ErrAlreadyInitialized 重复初始化
@@ -48,12 +48,18 @@ const (
 // 但用途不同：
 //   - Config: 进程级全局配置，包含 PlatformID
 //   - xctx.Platform: 请求级 context，用于批量获取平台信息
+//
+// 设计决策: 所有字段必须为值类型（string, bool, int 等），不得包含 slice/map/pointer，
+// 以确保 GetConfig() 通过 return *cfg 返回的副本与全局状态完全隔离。
+// 未提供 json/yaml 标签，因为平台信息来源多样（AUTH 服务、配置文件），
+// 调用方应自行反序列化后构造 Config 并调用 Init，确保经过 Validate 校验。
 type Config struct {
 	// PlatformID 平台 ID（必填，来自 AUTH 服务）
 	//
 	// 校验规则：
 	//   - 不能为空或纯空白字符
 	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	PlatformID string
 
@@ -63,7 +69,9 @@ type Config struct {
 	// UnclassRegionID 未分类区域 ID（可选）
 	//
 	// 校验规则（仅非空时校验）：
+	//   - 纯空白字符串归一化为空字符串（视为未设置，跳过校验）
 	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	UnclassRegionID string
 }
@@ -73,8 +81,11 @@ type Config struct {
 // 校验规则：
 //   - PlatformID 不能为空或纯空白字符 → ErrMissingPlatformID
 //   - PlatformID 不能包含空白字符 → ErrInvalidPlatformID
+//   - PlatformID 不能包含控制字符 → ErrInvalidPlatformID
 //   - PlatformID 长度不超过 128 字节 → ErrInvalidPlatformID
+//   - UnclassRegionID 纯空白字符串视为空（跳过校验）
 //   - UnclassRegionID（非空时）不能包含空白字符 → ErrInvalidUnclassRegionID
+//   - UnclassRegionID（非空时）不能包含控制字符 → ErrInvalidUnclassRegionID
 //   - UnclassRegionID（非空时）长度不超过 128 字节 → ErrInvalidUnclassRegionID
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.PlatformID) == "" {
@@ -83,15 +94,25 @@ func (c Config) Validate() error {
 	if strings.ContainsFunc(c.PlatformID, unicode.IsSpace) {
 		return fmt.Errorf("%w: contains whitespace", ErrInvalidPlatformID)
 	}
+	// 设计决策: 校验控制字符（NUL、BEL、ESC 等），因为 PlatformID 会被注入到
+	// HTTP Header（xtenant/http.go）和 gRPC Metadata（xtenant/grpc.go），
+	// 控制字符可能导致协议层错误或隐性污染。
+	if strings.ContainsFunc(c.PlatformID, unicode.IsControl) {
+		return fmt.Errorf("%w: contains control characters", ErrInvalidPlatformID)
+	}
 	if len(c.PlatformID) > maxPlatformIDLen {
 		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidPlatformID, maxPlatformIDLen)
 	}
 
 	// 设计决策: UnclassRegionID 用于 HTTP Header / gRPC Metadata 传播（xtenant 包），
 	// 必须校验空白字符和长度，防止 header 注入和溢出。允许空值（可选字段）。
-	if c.UnclassRegionID != "" {
+	// TrimSpace 归一化使纯空白输入等同于空字符串（未设置），与 PlatformID 的处理对称。
+	if strings.TrimSpace(c.UnclassRegionID) != "" {
 		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsSpace) {
 			return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
+		}
+		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsControl) {
+			return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
 		}
 		if len(c.UnclassRegionID) > maxUnclassRegionIDLen {
 			return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)
@@ -144,6 +165,11 @@ func Init(cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+
+	// 设计决策: TrimSpace 归一化使 Validate 的"纯空白视为未设置"语义在存储层真正生效。
+	// 否则调用方传入 "   " 时，Validate 通过（视为空），但存储了原始空白字符串，
+	// 下游 xtenant 的 regionID != "" 判断会将空白字符串注入 HTTP Header / gRPC Metadata。
+	cfg.UnclassRegionID = strings.TrimSpace(cfg.UnclassRegionID)
 
 	globalConfig.Store(&cfg)
 
@@ -216,6 +242,7 @@ func IsInitialized() bool {
 
 // RequirePlatformID 返回平台 ID，未初始化时返回错误
 //
+// 与 PlatformID() 的区别在于未初始化时返回 ErrNotInitialized 而非空字符串。
 // 适用于必须明确知道平台 ID 的业务场景。
 func RequirePlatformID() (string, error) {
 	cfg := globalConfig.Load()

@@ -126,7 +126,7 @@ func FuzzSignalError_Message(f *testing.F) {
 		err := &SignalError{Signal: sig}
 
 		// 验证错误消息格式
-		expected := "received signal " + signalName
+		expected := "xrun: received signal " + signalName
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}

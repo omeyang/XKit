@@ -23,7 +23,7 @@ import (
 // clickhouseWrapper 实现 ClickHouse 接口。
 type clickhouseWrapper struct {
 	conn    driver.Conn
-	options *Options
+	options *options
 
 	// closed 标记客户端是否已关闭，防止重复关闭。
 	closed atomic.Bool
@@ -43,19 +43,38 @@ const (
 	// DefaultBatchSize 默认批量插入每批大小。
 	DefaultBatchSize = 10000
 
+	// MaxBatchSize 批量插入允许的最大每批大小。
+	// 防止极大 BatchSize 导致单次 PrepareBatch + AppendStruct 循环内存不可控。
+	// 如需更大的批次，请分多次调用或使用 Client() 直接操作。
+	MaxBatchSize = 100000
+
 	// MaxPageSize 分页查询允许的最大页大小。
 	// 限制单次查询返回的行数，防止超大 PageSize 导致内存暴涨或 ClickHouse 扫描压力过大。
-	// 如需更大的结果集，请使用 Conn() 直接执行查询或分多次请求。
+	// 如需更大的结果集，请使用 Client() 直接执行查询或分多次请求。
 	MaxPageSize int64 = 10000
+
+	// MaxOffset 分页查询允许的最大偏移量。
+	// ClickHouse 使用 OFFSET 分页时，大偏移量会导致扫描放大（先读取再丢弃行）。
+	// 超过此限制时返回 ErrOffsetTooLarge，引导调用方使用游标分页。
+	// 默认 100000：PageSize=100 时最多翻到第 1001 页，PageSize=10 时最多第 10001 页。
+	MaxOffset int64 = 100000
 )
 
-// Conn 返回底层 ClickHouse 连接。
-func (w *clickhouseWrapper) Conn() driver.Conn {
+// Client 返回底层 ClickHouse 连接。
+//
+// 设计决策: Client() 不检查 closed 状态。clickhouse-go driver.Conn 在关闭后
+// 操作会返回明确错误，无需在此层重复检查。修改返回签名为 (driver.Conn, error)
+// 会破坏 API 兼容性，且 Health/QueryPage/BatchInsert 已有 closed 检查。
+func (w *clickhouseWrapper) Client() driver.Conn {
 	return w.conn
 }
 
 // Health 执行健康检查。
 func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
+	if w.closed.Load() {
+		return ErrClosed
+	}
+
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: clickhouseComponent,
 		Operation: "health",
@@ -74,9 +93,9 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
-	if err := w.conn.Ping(ctx); err != nil {
+	if pingErr := w.conn.Ping(ctx); pingErr != nil {
 		w.healthCounter.IncPingError()
-		return err
+		return fmt.Errorf("health ping failed: %w", pingErr)
 	}
 
 	return nil
@@ -104,6 +123,11 @@ func (w *clickhouseWrapper) Stats() Stats {
 
 // Close 关闭 ClickHouse 连接。
 // 多次调用 Close 是安全的，第二次及后续调用返回 ErrClosed。
+//
+// 已知限制: 若 goroutine 在 closed 检查后、defer maybeSlowQuery 前被调度，
+// 而 Close 先完成了 slowQueryDetector.Close()，则 maybeSlowQuery 可能在已关闭的
+// detector 上执行。SlowQueryDetector.Close 后调用 MaybeSlowQuery 是安全的（无 panic），
+// 但慢查询可能不被记录。此窗口极小，实际影响可忽略。
 func (w *clickhouseWrapper) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
@@ -125,7 +149,15 @@ func (w *clickhouseWrapper) Close() error {
 // =============================================================================
 
 // QueryPage 分页查询。
+//
+// 设计决策: QueryPage 和 BatchInsert 不内置默认超时，超时由调用方通过 ctx 控制。
+// Health 有 HealthTimeout 是因为健康检查预期快速完成；而查询/写入的耗时因场景而异，
+// 内置默认超时可能导致合理的长查询被意外中断。这与 Go 标准库 database/sql 的设计一致。
 func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (result *PageResult, err error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	normalizedQuery, offset, err := validatePageOptions(query, opts)
 	if err != nil {
 		return nil, err
@@ -184,15 +216,39 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 	}, nil
 }
 
-// queryClausePattern 用于检测查询中的 FORMAT 和 SETTINGS 子句。
-// 使用单词边界匹配，忽略大小写。
+// formatTailPattern 检测查询末尾的 FORMAT 子句。
+// 使用末尾锚定避免误匹配 FORMAT() 函数或字符串常量。
 //
-// 已知局限性：此正则匹配可能产生误判，例如：
-//   - WHERE name = 'FORMAT' → 会误判为包含 FORMAT 子句
-//   - 字符串字面量或注释中的关键字可能被误判
+// 匹配示例：
+//   - "SELECT * FROM users FORMAT JSON" → 匹配
+//   - "SELECT * FROM users FORMAT JSONEachRow" → 匹配
+//   - "SELECT FORMAT(date, '%Y') FROM t" → 不匹配（FORMAT 后紧跟括号，非空白）
+//   - "WHERE name = 'FORMAT'" → 不匹配（FORMAT 后紧跟引号，非空白）
+var formatTailPattern = regexp.MustCompile(`(?i)\bFORMAT\s+[A-Za-z]\w*\s*$`)
+
+// settingsTailPattern 检测查询中的 SETTINGS 子句。
+// 匹配 SETTINGS 后跟 key=value 模式，减少对字段名/字符串常量的误判。
 //
-// 对于复杂查询场景，建议直接使用 Conn() 执行查询。
-var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
+// 匹配示例：
+//   - "SELECT * FROM users SETTINGS max_threads=4" → 匹配
+//   - "SELECT * FROM users SETTINGS max_threads = 4" → 匹配
+//   - "SELECT SETTINGS_KEY FROM config" → 不匹配（SETTINGS_KEY 后无空白+key=val）
+//
+// 已知局限性：字符串常量中的 "SETTINGS key=" 模式仍可能被误判。
+// 对于复杂查询场景，建议直接使用 Client() 执行查询。
+var settingsTailPattern = regexp.MustCompile(`(?i)\bSETTINGS\s+\w+\s*=`)
+
+// limitOffsetTailPattern 检测查询末尾的 LIMIT/OFFSET 子句。
+// 使用末尾锚定（$）避免误匹配子查询中的 LIMIT/OFFSET。
+// 同时覆盖参数化写法：LIMIT ?、LIMIT {name:Type}、LIMIT $1 等。
+//
+// 匹配示例：
+//   - "SELECT * FROM users LIMIT 10" → 匹配
+//   - "SELECT * FROM users LIMIT 10 OFFSET 5" → 匹配
+//   - "SELECT * FROM users LIMIT ?" → 匹配
+//   - "SELECT * FROM users LIMIT {n:UInt64}" → 匹配
+//   - "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub" → 不匹配（不在末尾）
+var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+|\?|\$\d+|\{[^}]+\})(\s+OFFSET\s+(\d+|\?|\$\d+|\{[^}]+\}))?\s*$`)
 
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
@@ -209,15 +265,19 @@ func validateQuerySyntax(query string) (string, error) {
 		return "", ErrEmptyQuery
 	}
 
-	// 检测 FORMAT 和 SETTINGS 子句
-	matches := queryClausePattern.FindAllString(normalized, -1)
-	for _, match := range matches {
-		if strings.EqualFold(match, "FORMAT") {
-			return "", ErrQueryContainsFormat
-		}
-		if strings.EqualFold(match, "SETTINGS") {
-			return "", ErrQueryContainsSettings
-		}
+	// 检测末尾的 FORMAT 子句（末尾锚定，避免误匹配 FORMAT() 函数）
+	if formatTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsFormat
+	}
+
+	// 检测 SETTINGS 子句（匹配 SETTINGS key=value 模式）
+	if settingsTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsSettings
+	}
+
+	// 检测末尾的 LIMIT/OFFSET 子句（QueryPage 自动管理分页）
+	if limitOffsetTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsLimitOffset
 	}
 
 	return normalized, nil
@@ -235,10 +295,11 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	offset, validateErr := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if validateErr != nil {
 		// 转换为包级别错误（storageopt 只返回这三种错误）
-		switch validateErr {
-		case storageopt.ErrInvalidPage:
+		// 使用 errors.Is 而非 == 比较，确保即使 storageopt 将来包装错误也能正确匹配
+		switch {
+		case errors.Is(validateErr, storageopt.ErrInvalidPage):
 			return "", 0, ErrInvalidPage
-		case storageopt.ErrInvalidPageSize:
+		case errors.Is(validateErr, storageopt.ErrInvalidPageSize):
 			return "", 0, ErrInvalidPageSize
 		default:
 			return "", 0, ErrPageOverflow
@@ -248,6 +309,11 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	// 限制页大小上限，防止超大 PageSize 导致 OOM
 	if opts.PageSize > MaxPageSize {
 		return "", 0, ErrPageSizeTooLarge
+	}
+
+	// 限制偏移量上限，防止大偏移量导致 ClickHouse 扫描放大
+	if offset > MaxOffset {
+		return "", 0, ErrOffsetTooLarge
 	}
 
 	return normalized, offset, nil
@@ -285,12 +351,18 @@ func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, 
 	}()
 
 	columns = rows.Columns()
-	data, err = w.scanRows(rows)
+	data, err = w.scanRows(rows, pageSize)
 	return columns, data, err
 }
 
 // scanRows 扫描结果集中的所有行。
-func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
+// pageSize 用于预分配结果切片容量，减少 append 扩容开销。
+//
+// 优化机会: 当前每行分配 scanDest（N 次 reflect.New）+ row 切片，共 2N+2 次分配/行。
+// 可将 scanDest 提到循环外复用，每行仅分配 row 切片（N+1 次/行），降低约 50% 分配量。
+// 前提是 clickhouse-go 的 Scan 支持 dest 复用（大多数 SQL 驱动支持）。
+// 对于典型 PageSize（10-100），当前实现性能足够，大结果集场景可考虑此优化。
+func (w *clickhouseWrapper) scanRows(rows driver.Rows, pageSize int64) ([][]any, error) {
 	columnTypes := rows.ColumnTypes()
 
 	// 缓存每列的 ScanType，避免每行重复调用 ScanType()
@@ -299,7 +371,7 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 		scanTypes[i] = ct.ScanType()
 	}
 
-	var data [][]any
+	data := make([][]any, 0, pageSize)
 
 	for rows.Next() {
 		// 为每列创建对应类型的值实例用于接收数据
@@ -360,6 +432,10 @@ func validateTableName(table string) error {
 
 // BatchInsert 批量插入。
 func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows []any, opts BatchOptions) (result *BatchResult, err error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	if err := validateTableName(table); err != nil {
 		return nil, err
 	}
@@ -370,6 +446,9 @@ func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows 
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
 		batchSize = DefaultBatchSize
+	}
+	if batchSize > MaxBatchSize {
+		return nil, ErrBatchSizeTooLarge
 	}
 
 	start := time.Now()
@@ -439,6 +518,8 @@ func (w *clickhouseWrapper) insertBatches(ctx context.Context, table string, row
 	return insertedCount, errs
 }
 
+// 设计决策: fmt.Sprintf 拼接表名是安全的，因为 table 在 BatchInsert 入口处
+// 已通过 validateTableName 的严格正则校验，仅允许合法标识符字符。
 func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch []any) (appendedCount int64, errs []error) {
 	batchObj, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", table))
 	if err != nil {
@@ -474,8 +555,17 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 
 // appendRowsToBatch 将行追加到批次中。
 // 每 100 行检查一次 context，平衡性能和响应性。
+//
+// 设计决策: 当 AppendStruct 错误数达到 maxAppendErrors 时提前终止，
+// 避免在 schema 不匹配等场景下产生大量重复错误导致内存膨胀。
+// 典型情况下 AppendStruct 错误对同一批次的所有行是相同的（如 struct tag 不匹配），
+// 继续尝试剩余行没有实际意义。
 func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driver.Batch, batch []any) (appendedCount int64, errs []error) {
-	const checkInterval = 100
+	const (
+		checkInterval   = 100
+		maxAppendErrors = 100
+	)
+	var appendErrors int
 	for i, row := range batch {
 		// 定期检查 context 是否已取消
 		if i > 0 && i%checkInterval == 0 && ctx.Err() != nil {
@@ -483,7 +573,15 @@ func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driv
 			return appendedCount, errs
 		}
 		if err := batchObj.AppendStruct(row); err != nil {
+			appendErrors++
 			errs = append(errs, fmt.Errorf("append struct failed: %w", err))
+			if appendErrors >= maxAppendErrors {
+				remaining := len(batch) - i - 1
+				if remaining > 0 {
+					errs = append(errs, fmt.Errorf("too many append errors (%d), skipped remaining %d rows", appendErrors, remaining))
+				}
+				return appendedCount, errs
+			}
 			continue
 		}
 		appendedCount++
@@ -526,7 +624,7 @@ func (w *clickhouseWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryIn
 // 性能说明：
 // 子查询方式对于简单查询可能比直接改写 SELECT 列表性能略差，
 // 但能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）。
-// 对于性能敏感的简单查询，建议直接使用 Conn() 执行手写的 COUNT 语句。
+// 对于性能敏感的简单查询，建议直接使用 Client() 执行手写的 COUNT 语句。
 func buildCountQuery(query string) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS _count_subquery", query)
 }

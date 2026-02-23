@@ -37,4 +37,10 @@ var (
 
 	// ErrNilCallback 表示 Watch 回调函数为 nil。
 	ErrNilCallback = errors.New("xconf: nil watch callback")
+
+	// ErrNilOption 表示传入了 nil 的配置选项函数。
+	ErrNilOption = errors.New("xconf: nil option")
+
+	// ErrNilWatchOption 表示传入了 nil 的监视器配置选项函数。
+	ErrNilWatchOption = errors.New("xconf: nil watch option")
 )

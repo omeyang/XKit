@@ -19,6 +19,11 @@ const (
 	// DefaultMaxRetries Acquire 默认最大尝试次数（首次尝试 + 重试）
 	DefaultMaxRetries = 10
 
+	// MaxMaxRetries Acquire 最大尝试次数的上限
+	// 防御性上界，避免因传入极大值导致 goroutine 准无限阻塞。
+	// 建议配合 context timeout 使用以确保超时可控。
+	MaxMaxRetries = 10000
+
 	// DefaultRetryDelay Acquire 默认重试间隔
 	DefaultRetryDelay = 100 * time.Millisecond
 
@@ -44,6 +49,10 @@ const (
 	// fallbackCallbackMinInterval onFallback 回调的最小触发间隔
 	// 在 Redis 故障风暴期间，限制回调频率，避免下游雪崩
 	fallbackCallbackMinInterval = 10 * time.Second
+
+	// noopPermitIDPrefix FallbackOpen 策略下 noop 许可 ID 的前缀
+	// 用于在日志和监控中区分 noop 许可与正常许可
+	noopPermitIDPrefix = "noop-"
 )
 
 // =============================================================================

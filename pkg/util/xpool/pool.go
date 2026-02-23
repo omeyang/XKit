@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -87,21 +88,27 @@ func (p *Pool[T]) worker() {
 
 // safeHandle 安全执行 handler，捕获 panic 并记录堆栈。
 //
-// 设计决策: panic 恢复日志包含完整 task 值以便调试。
-// 若 task 包含敏感信息，调用方应通过 WithLogger 注入带脱敏的 logger，
-// 或在 handler 内部自行 recover 以控制日志内容。
+// 设计决策: panic 恢复日志默认仅记录 task 类型（如 "int"、"*MyStruct"），
+// 避免泛型 T 可能包含的敏感信息（密码、Token 等）泄露到日志系统。
+// 如需在 panic 日志中包含完整 task 值以便调试，可通过 WithLogTaskValue() 显式启用。
 func (p *Pool[T]) safeHandle(task T) {
 	defer func() {
 		if r := recover(); r != nil {
-			attrs := []any{
-				"panic", r,
-				"task", task,
-				"stack", string(debug.Stack()),
+			attrs := make([]slog.Attr, 0, 4) // 预分配：panic + stack + task/task_type + pool（可选）
+			attrs = append(attrs,
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())),
+			)
+			if p.opts.logTaskValue {
+				attrs = append(attrs, slog.Any("task", task))
+			} else {
+				attrs = append(attrs, slog.String("task_type", fmt.Sprintf("%T", task)))
 			}
 			if p.opts.name != "" {
-				attrs = append(attrs, "pool", p.opts.name)
+				attrs = append(attrs, slog.String("pool", p.opts.name))
 			}
-			p.opts.logger.Error("xpool: worker panic recovered", attrs...)
+			p.opts.logger.LogAttrs(context.Background(), slog.LevelError,
+				"xpool: worker panic recovered", attrs...)
 		}
 	}()
 	p.handler(task)
@@ -133,6 +140,9 @@ func (p *Pool[T]) Submit(task T) error {
 //
 // 注意事项：
 //   - 不可在 handler 内调用，否则会死锁
+//   - handler 不应无限阻塞；若 handler 因外部依赖永久阻塞，
+//     对应的 worker goroutine 将无法退出，导致资源泄漏。
+//     如需支持取消，可在 T 中嵌入 context.Context 或使用闭包捕获取消信号
 //   - ctx 超时返回后，残留的 worker goroutine 仍在后台运行，
 //     会继续处理队列中的剩余任务直到耗尽后自行退出；
 //     可通过 [Pool.Done] 等待所有 worker 最终完成
@@ -153,6 +163,9 @@ func (p *Pool[T]) Shutdown(ctx context.Context) error {
 	close(p.queue)
 	p.submitMu.Unlock()
 
+	// 设计决策: 监听 goroutine 的生命周期与 worker 一致——当所有 worker 退出后自动结束。
+	// 若 handler 永久阻塞导致 worker 无法退出，此 goroutine 也会阻塞，
+	// 但这是 handler 违反契约（不应永久阻塞）的结果，而非 pool 的设计缺陷。
 	go func() {
 		p.wg.Wait()
 		close(p.workersDone)

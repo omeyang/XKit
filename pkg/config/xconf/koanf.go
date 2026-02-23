@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/knadh/koanf/parsers/json"
@@ -19,26 +21,37 @@ import (
 // koanf 内部已有 sync.RWMutex，外层再加一层会导致双重加锁（cache line bouncing）。
 // atomic.Pointer 实现无锁读取，Reload 使用 Store 原子替换，性能更优。
 type koanfConfig struct {
-	k       atomic.Pointer[koanf.Koanf]
-	path    string
-	format  Format
-	opts    *options
-	isBytes bool // 标记是否从字节数据创建
+	k        atomic.Pointer[koanf.Koanf]
+	reloadMu sync.Mutex // 序列化 Reload 调用，防止并发重载导致配置回退
+	path     string
+	format   Format
+	opts     *options
+	isBytes  bool // 标记是否从字节数据创建
 }
 
 // New 从文件路径创建配置实例。
 // 根据文件扩展名自动检测格式（.yaml/.yml 或 .json）。
 //
-// 设计决策: 路径使用 filepath.Clean 规范化，但不做沙箱限制。
-// xconf 是工具库，路径安全（防止路径穿越等）由调用方负责。
+// 设计决策: 路径使用 filepath.Abs 转为绝对路径，防止 Reload 因进程 cwd 变化而读取漂移。
+// 路径安全（防止路径穿越等）由调用方负责，xconf 是工具库不做沙箱限制。
 func New(path string, opts ...Option) (Config, error) {
 	if path == "" {
 		return nil, ErrEmptyPath
 	}
 
-	path = filepath.Clean(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLoadFailed, err)
+	}
+	path = absPath
 
 	format, err := detectFormat(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// 先校验选项，再执行文件 I/O（fail-fast：参数错误优先于 I/O 错误）
+	o, err := applyOptions(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -48,23 +61,19 @@ func New(path string, opts ...Option) (Config, error) {
 		return nil, fmt.Errorf("%w: %w", ErrLoadFailed, err)
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-	if err := options.validate(); err != nil {
-		return nil, err
-	}
+	k := koanf.New(o.delim)
 
-	k := koanf.New(options.delim)
-	if err := loadData(k, data, format); err != nil {
-		return nil, err
+	// 空数据时创建空配置，与 NewFromBytes 行为一致
+	if len(data) > 0 {
+		if err := loadData(k, data, format); err != nil {
+			return nil, err
+		}
 	}
 
 	cfg := &koanfConfig{
 		path:    path,
 		format:  format,
-		opts:    options,
+		opts:    o,
 		isBytes: false,
 	}
 	cfg.k.Store(k)
@@ -83,15 +92,12 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 		return nil, ErrUnsupportedFormat
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-	if err := options.validate(); err != nil {
+	o, err := applyOptions(opts)
+	if err != nil {
 		return nil, err
 	}
 
-	k := koanf.New(options.delim)
+	k := koanf.New(o.delim)
 
 	// 空数据时创建空配置，与 New 行为一致
 	if len(data) > 0 {
@@ -103,7 +109,7 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 	cfg := &koanfConfig{
 		path:    "",
 		format:  format,
-		opts:    options,
+		opts:    o,
 		isBytes: true,
 	}
 	cfg.k.Store(k)
@@ -120,6 +126,14 @@ func (c *koanfConfig) Client() *koanf.Koanf {
 
 // Unmarshal 将指定路径的配置反序列化到目标结构体。
 func (c *koanfConfig) Unmarshal(path string, target any) error {
+	if target == nil {
+		return fmt.Errorf("%w: target must be a non-nil pointer", ErrUnmarshalFailed)
+	}
+	rv := reflect.ValueOf(target)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return fmt.Errorf("%w: target must be a non-nil pointer, got %T", ErrUnmarshalFailed, target)
+	}
+
 	k := c.k.Load()
 
 	if err := k.UnmarshalWithConf(path, target, koanf.UnmarshalConf{
@@ -131,10 +145,17 @@ func (c *koanfConfig) Unmarshal(path string, target any) error {
 }
 
 // Reload 重新加载配置文件。
+//
+// 设计决策: reloadMu 序列化并发 Reload 调用，防止配置回退。
+// 场景：Goroutine A 读取 v2 → Goroutine B 读取 v3 并 Store → Goroutine A Store v2，v3 被回退。
+// Mutex 仅保护 Reload 路径，不影响 Client/Unmarshal 的无锁读取性能。
 func (c *koanfConfig) Reload() error {
 	if c.isBytes {
 		return ErrNotFromFile
 	}
+
+	c.reloadMu.Lock()
+	defer c.reloadMu.Unlock()
 
 	data, err := os.ReadFile(c.path)
 	if err != nil {
@@ -142,8 +163,12 @@ func (c *koanfConfig) Reload() error {
 	}
 
 	newK := koanf.New(c.opts.delim)
-	if err := loadData(newK, data, c.format); err != nil {
-		return err
+
+	// 空数据时创建空配置，与 New/NewFromBytes 行为一致
+	if len(data) > 0 {
+		if err := loadData(newK, data, c.format); err != nil {
+			return err
+		}
 	}
 
 	c.k.Store(newK)
@@ -164,6 +189,9 @@ func (c *koanfConfig) Format() Format {
 // MustUnmarshal 与 Unmarshal 相同，但失败时 panic。
 // 适用于程序启动时的必要配置加载。
 func MustUnmarshal(cfg Config, path string, target any) {
+	if cfg == nil {
+		panic("xconf: MustUnmarshal called with nil Config")
+	}
 	if err := cfg.Unmarshal(path, target); err != nil {
 		panic(err)
 	}
@@ -172,6 +200,21 @@ func MustUnmarshal(cfg Config, path string, target any) {
 // =============================================================================
 // 内部辅助函数
 // =============================================================================
+
+// applyOptions 应用并校验配置选项，消除 New/NewFromBytes 中的重复逻辑。
+func applyOptions(opts []Option) (*options, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
+		opt(o)
+	}
+	if err := o.validate(); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
 
 // detectFormat 根据文件扩展名检测配置格式。
 func detectFormat(path string) (Format, error) {

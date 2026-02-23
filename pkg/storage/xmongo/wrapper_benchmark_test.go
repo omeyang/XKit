@@ -67,7 +67,7 @@ func BenchmarkFindPageInternal(b *testing.B) {
 	}
 }
 
-func BenchmarkBulkWriteInternal(b *testing.B) {
+func BenchmarkBulkInsertInternal(b *testing.B) {
 	docs := make([]any, 100)
 	for i := range docs {
 		docs[i] = bson.M{"id": i}
@@ -84,8 +84,8 @@ func BenchmarkBulkWriteInternal(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if _, err := w.bulkWriteInternal(context.Background(), coll, docs, opts); err != nil {
-			b.Fatalf("bulkWriteInternal failed: %v", err)
+		if _, err := w.bulkInsertInternal(context.Background(), coll, docs, opts); err != nil {
+			b.Fatalf("bulkInsertInternal failed: %v", err)
 		}
 	}
 }

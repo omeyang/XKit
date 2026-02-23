@@ -245,6 +245,24 @@ func TestUnixTransport_GetPeerIdentity(t *testing.T) {
 	}
 }
 
+func TestGetPeerIdentity_NonUnixConn(t *testing.T) {
+	// net.Pipe 返回的连接不是 *net.UnixConn，应返回错误
+	client, server := net.Pipe()
+	//nolint:errcheck // test cleanup
+	defer func() {
+		_ = client.Close()
+		_ = server.Close()
+	}()
+
+	identity, err := getPeerIdentity(server)
+	if err == nil {
+		t.Error("getPeerIdentity with non-UnixConn should return error")
+	}
+	if identity != nil {
+		t.Error("identity should be nil for non-UnixConn")
+	}
+}
+
 func TestUnixTransport_ListenClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "closed.sock")

@@ -242,6 +242,35 @@ func TestKey_WithExtra(t *testing.T) {
 	}
 }
 
+func TestKey_WithExtra_DeepCopy(t *testing.T) {
+	// 验证 WithExtra 深拷贝 map，分支构建不会共享底层数据
+	base := Key{}.WithExtra("region", "us")
+
+	key1 := base.WithExtra("zone", "1")
+	key2 := base.WithExtra("zone", "2")
+
+	// base 不应被修改
+	if _, ok := base.Extra["zone"]; ok {
+		t.Error("base.Extra should not contain 'zone' after branching")
+	}
+
+	// key1 和 key2 应独立
+	if key1.Extra["zone"] != "1" {
+		t.Errorf("key1.Extra[zone] = %q, want %q", key1.Extra["zone"], "1")
+	}
+	if key2.Extra["zone"] != "2" {
+		t.Errorf("key2.Extra[zone] = %q, want %q", key2.Extra["zone"], "2")
+	}
+
+	// 两者都应保留 base 的值
+	if key1.Extra["region"] != "us" {
+		t.Errorf("key1 should inherit base region")
+	}
+	if key2.Extra["region"] != "us" {
+		t.Errorf("key2 should inherit base region")
+	}
+}
+
 func TestKey_Chaining(t *testing.T) {
 	key := Key{}.
 		WithTenant("t1").

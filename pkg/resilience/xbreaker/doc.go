@@ -26,13 +26,32 @@
 //   - BreakerRetryer：每次重试都经过熔断器检查和记录
 //   - RetryThenBreak：重试期间不影响熔断器统计，只有最终结果才记录
 //
-// 组合构造函数（NewBreakerRetryer、NewRetryThenBreak、NewRetryThenBreakWithConfig）
+// 组合构造函数（NewBreakerRetryer、NewRetryThenBreakWithConfig）
 // 对 nil 参数返回错误（ErrNilBreaker、ErrNilRetryer），不会 panic。
+// RetryThenBreak 推荐使用 [NewRetryThenBreakWithConfig] 构造。
 //
 // # 错误排除
 //
-// 若需将特定错误（如 context.Canceled）从熔断统计中排除，
-// 可通过 WithSuccessPolicy 设置自定义成功判定策略。
+// 若需将特定错误（如 context.Canceled）从熔断统计中排除（不影响任何计数），
+// 可通过 WithExcludePolicy 设置错误排除策略。
+// 若需将特定错误标记为"成功"（计入成功计数），请使用 WithSuccessPolicy。
+//
+// 比率类策略（FailureRatioPolicy、SlowCallRatioPolicy）在计算失败率时，
+// 使用有效请求数（Requests - TotalExclusions）作为分母，
+// 确保被排除的请求不会稀释失败率或虚增 minRequests 判定基数。
+//
+// # 状态变化回调
+//
+// WithOnStateChange 注册的回调通过 goroutine 异步执行，
+// 避免与 gobreaker 内部 mutex 产生死锁。回调中可安全调用
+// Breaker 的 State()/Counts()/Do() 等方法。
+// 回调中的 panic 会被自动捕获并通过 slog.Error 记录，不会导致进程崩溃。
+// 注意回调执行顺序不保证，且获取的状态可能已是更新后的值。
+//
+// 设计决策: 回调必须为轻量级操作（建议 <1ms），不应在回调中执行 I/O 操作
+// （如数据库写入、HTTP 请求）。每次状态变化会启动一个新 goroutine 执行回调，
+// 不设背压机制。若回调执行缓慢且状态快速振荡，goroutine 可能累积。
+// 需要在回调中执行 I/O 的场景，请自行实现有界队列+消费者模式。
 //
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

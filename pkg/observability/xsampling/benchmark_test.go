@@ -79,8 +79,14 @@ func BenchmarkCountSampler(b *testing.B) {
 }
 
 func BenchmarkCompositeSampler_AND_2(b *testing.B) {
-	s1, _ := NewRateSampler(0.5)
-	s2, _ := NewRateSampler(0.5)
+	s1, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
+	s2, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
 	sampler, err := All(s1, s2)
 	if err != nil {
 		b.Fatal(err)
@@ -93,8 +99,14 @@ func BenchmarkCompositeSampler_AND_2(b *testing.B) {
 }
 
 func BenchmarkCompositeSampler_OR_2(b *testing.B) {
-	s1, _ := NewRateSampler(0.1)
-	s2, _ := NewRateSampler(0.1)
+	s1, err := NewRateSampler(0.1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	s2, err := NewRateSampler(0.1)
+	if err != nil {
+		b.Fatal(err)
+	}
 	sampler, err := Any(s1, s2)
 	if err != nil {
 		b.Fatal(err)
@@ -107,8 +119,14 @@ func BenchmarkCompositeSampler_OR_2(b *testing.B) {
 }
 
 func BenchmarkCompositeSampler_ShortCircuit_AND(b *testing.B) {
-	s1, _ := NewRateSampler(0.5)
-	s2, _ := NewRateSampler(0.5)
+	s1, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
+	s2, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
 	sampler, err := All(Never(), s1, s2)
 	if err != nil {
 		b.Fatal(err)
@@ -121,8 +139,14 @@ func BenchmarkCompositeSampler_ShortCircuit_AND(b *testing.B) {
 }
 
 func BenchmarkCompositeSampler_ShortCircuit_OR(b *testing.B) {
-	s1, _ := NewRateSampler(0.5)
-	s2, _ := NewRateSampler(0.5)
+	s1, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
+	s2, err := NewRateSampler(0.5)
+	if err != nil {
+		b.Fatal(err)
+	}
 	sampler, err := Any(Always(), s1, s2)
 	if err != nil {
 		b.Fatal(err)

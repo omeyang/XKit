@@ -18,6 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // =============================================================================
@@ -103,7 +106,7 @@ func TestLocalLimiter_Query(t *testing.T) {
 		WithRules(TenantRule("tenant-limit", 10, time.Minute)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "query-tenant"}
@@ -129,7 +132,7 @@ func TestLocalLimiter_QueryClosed(t *testing.T) {
 		WithRules(TenantRule("tenant-limit", 10, time.Minute)),
 	)
 	require.NoError(t, err)
-	require.NoError(t, limiter.Close())
+	require.NoError(t, limiter.Close(context.Background()))
 
 	querier, ok := limiter.(Querier)
 	require.True(t, ok)
@@ -140,7 +143,7 @@ func TestLocalLimiter_QueryClosed(t *testing.T) {
 func TestLocalLimiter_QueryNoRuleMatched(t *testing.T) {
 	limiter, err := NewLocal()
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	querier, ok := limiter.(Querier)
 	require.True(t, ok)
@@ -153,7 +156,7 @@ func TestFallbackLimiter_Query(t *testing.T) {
 		distributed := &mockFailingLimiter{failOnAllow: false}
 		local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 		require.NoError(t, err)
-		defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 		fb := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 		info, err := fb.Query(context.Background(), Key{Tenant: "t"})
@@ -168,7 +171,7 @@ func TestFallbackLimiter_Query(t *testing.T) {
 		}
 		local, err := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
 		require.NoError(t, err)
-		defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 		fb := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 		info, err := fb.Query(context.Background(), Key{Tenant: "t"})
@@ -184,7 +187,7 @@ func TestFallbackLimiter_Query(t *testing.T) {
 		}
 		local, err := NewLocal(WithRules(TenantRule("test", 5, time.Minute)))
 		require.NoError(t, err)
-		defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 		fb := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackLocal}})
 		_, err = fb.Query(context.Background(), Key{Tenant: "t"})
@@ -212,7 +215,7 @@ func (s *simpleNoQueryLimiter) AllowN(_ context.Context, _ Key, _ int) (*Result,
 	return &Result{Allowed: true}, nil
 }
 
-func (s *simpleNoQueryLimiter) Close() error { return nil }
+func (s *simpleNoQueryLimiter) Close(_ context.Context) error { return nil }
 
 // =============================================================================
 // KeyFromContext 覆盖
@@ -241,7 +244,7 @@ func TestNewWithFallback(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, limiter)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	_, isFallback := limiter.(*fallbackLimiter)
 	assert.True(t, isFallback, "NewWithFallback should return a fallbackLimiter")
@@ -396,6 +399,18 @@ func TestRuleMatcher_FindRule_EmptyMatcher(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestRuleMatcher_FindRule_NoMatchNoFallback(t *testing.T) {
+	// 设计决策: resolveVar 对缺失的 Extra 变量返回空字符串（与内置字段一致），
+	// 因此模板会被渲染为 "custom:"（变量替换为空），FindRule 判定为匹配。
+	// 这与核心执行路径（findRule 按名称查找，不检查渲染）的行为一致。
+	rules := []Rule{
+		NewRule("custom-limit", "custom:${custom_var}", 100, time.Minute),
+	}
+	matcher := newRuleMatcher(rules)
+	_, found := matcher.FindRule(Key{Tenant: "test"}) // 无 custom_var Extra → 渲染为 "custom:" → 匹配
+	assert.True(t, found, "FindRule should match when Extra variable is missing (renders to empty string)")
+}
+
 // =============================================================================
 // HTTPMiddlewareFunc 覆盖
 // =============================================================================
@@ -405,7 +420,7 @@ func TestHTTPMiddlewareFunc(t *testing.T) {
 		WithRules(TenantRule("tenant-limit", 100, time.Minute)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	handlerCalled := false
 	handler := HTTPMiddlewareFunc(limiter)(func(w http.ResponseWriter, r *http.Request) {
@@ -442,7 +457,7 @@ func TestFallbackLimiter_WithCallbacksAndMetrics(t *testing.T) {
 	}
 	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	require.NoError(t, err)
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	opts := &options{
 		config:  Config{Fallback: FallbackLocal},
@@ -465,7 +480,7 @@ func TestFallbackLimiter_CustomFallback(t *testing.T) {
 	}
 	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	require.NoError(t, err)
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	opts := &options{
 		config: Config{Fallback: FallbackLocal},
@@ -499,7 +514,7 @@ func TestFallbackLimiter_LogFallbackWithLogger(t *testing.T) {
 	}
 	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
 	require.NoError(t, err)
-	defer func() { _ = local.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	opts := &options{
 		config: Config{Fallback: FallbackLocal},
@@ -521,7 +536,7 @@ func TestLimiterCore_WithLogger(t *testing.T) {
 		WithLogger(&noopLogger{}),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "logger-tenant"}
@@ -560,7 +575,7 @@ func TestNew_WithMetrics(t *testing.T) {
 		WithFallback(""),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	_, err = limiter.Allow(context.Background(), Key{Tenant: "t1"})
 	require.NoError(t, err)
@@ -577,7 +592,7 @@ func TestNewLocal_WithMetrics(t *testing.T) {
 		WithMeterProvider(provider),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	_, err = limiter.Allow(context.Background(), Key{Tenant: "t1"})
 	require.NoError(t, err)
@@ -602,7 +617,7 @@ func TestLocalBackend_CheckRule_CanceledContext(t *testing.T) {
 		WithRules(TenantRule("tenant-limit", 10, time.Minute)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -621,7 +636,7 @@ func TestLocalBackend_DynamicPodCount(t *testing.T) {
 		WithPodCountProvider(StaticPodCount(5)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	result, err := limiter.Allow(ctx, Key{Tenant: "t"})
@@ -771,7 +786,7 @@ func TestHTTPMiddleware_DenyResponse(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter, WithMiddlewareHeaders(true))
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -801,7 +816,7 @@ func TestAllowN_InvalidN(t *testing.T) {
 		WithRules(TenantRule("tenant-limit", 100, time.Minute)),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test"}
@@ -838,7 +853,7 @@ func TestHTTPMiddleware_DenyWithHeadersDisabled(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter, WithMiddlewareHeaders(false))
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -908,4 +923,197 @@ func TestClassifyError(t *testing.T) {
 			assert.Equal(t, tc.want, classifyError(tc.err))
 		})
 	}
+}
+
+// =============================================================================
+// FG-M2: 中间件 nil result 防御性检查
+// =============================================================================
+
+// mockNilResultLimiter 模拟违反契约的 Limiter：err==nil 且 result==nil
+type mockNilResultLimiter struct{}
+
+func (m *mockNilResultLimiter) Allow(_ context.Context, _ Key) (*Result, error) {
+	return nil, nil //nolint:nilnil // 故意违反契约用于测试
+}
+
+func (m *mockNilResultLimiter) AllowN(_ context.Context, _ Key, _ int) (*Result, error) {
+	return nil, nil //nolint:nilnil // 故意违反契约用于测试
+}
+
+func (m *mockNilResultLimiter) Close(_ context.Context) error { return nil }
+
+func TestHTTPMiddleware_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: 第三方 Limiter 返回 nil result + nil error 时应 fail-open（不 panic）
+	middleware := HTTPMiddleware(&mockNilResultLimiter{})
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "nil-result-tenant")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code,
+		"nil result + nil error should fail-open with 200")
+}
+
+func TestGRPCUnaryInterceptor_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: gRPC 一元拦截器对 nil result + nil error 的防御
+	interceptor := UnaryServerInterceptor(&mockNilResultLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "nil-result-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ context.Context, _ any) (any, error) {
+		return "response", nil
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	resp, err := interceptor(ctx, "request", info, handler)
+	require.NoError(t, err)
+	assert.Equal(t, "response", resp,
+		"nil result + nil error should fail-open and call handler")
+}
+
+func TestGRPCStreamInterceptor_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: gRPC 流式拦截器对 nil result + nil error 的防御
+	interceptor := StreamServerInterceptor(&mockNilResultLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "nil-result-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handlerCalled := false
+	handler := func(_ any, _ grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.NoError(t, err)
+	assert.True(t, handlerCalled,
+		"nil result + nil error should fail-open and call handler")
+}
+
+// =============================================================================
+// FG-L3: gRPC 拦截器覆盖率提升
+// =============================================================================
+
+func TestGRPCUnaryInterceptor_FallbackCloseDeny(t *testing.T) {
+	// FallbackClose 返回 Allowed=false + ErrRedisUnavailable → ResourceExhausted
+	interceptor := UnaryServerInterceptor(&mockFallbackCloseLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "close-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ context.Context, _ any) (any, error) {
+		t.Fatal("handler should not be called when denied")
+		return nil, nil
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	_, err := interceptor(ctx, "request", info, handler)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}
+
+func TestGRPCStreamInterceptor_FallbackCloseDeny(t *testing.T) {
+	// FallbackClose 返回 Allowed=false + ErrRedisUnavailable → ResourceExhausted
+	interceptor := StreamServerInterceptor(&mockFallbackCloseLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "close-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ any, _ grpc.ServerStream) error {
+		t.Fatal("handler should not be called when denied")
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}
+
+func TestGRPCStreamInterceptor_SkipFunc(t *testing.T) {
+	limiter := setupGRPCTestLimiter(t, 1)
+
+	skipFunc := func(_ context.Context, info *grpc.StreamServerInfo) bool {
+		return info.FullMethod == "/grpc.health.v1.Health/Watch"
+	}
+	interceptor := StreamServerInterceptor(limiter,
+		WithGRPCStreamSkipFunc(skipFunc),
+	)
+
+	md := metadata.Pairs("x-tenant-id", "skip-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ any, _ grpc.ServerStream) error { return nil }
+	healthInfo := &grpc.StreamServerInfo{FullMethod: "/grpc.health.v1.Health/Watch"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	// 跳过函数匹配时不受限流影响
+	for i := 0; i < 5; i++ {
+		err := interceptor(nil, mockStream, healthInfo, handler)
+		require.NoError(t, err, "health watch stream %d should pass", i+1)
+	}
+}
+
+func TestGRPCStreamInterceptor_ErrorNilResultFailsOpen(t *testing.T) {
+	// err != nil + result == nil → fail-open
+	interceptor := StreamServerInterceptor(&mockNilResultErrorLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "error-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handlerCalled := false
+	handler := func(_ any, _ grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.NoError(t, err)
+	assert.True(t, handlerCalled, "error + nil result should fail-open")
+}
+
+// =============================================================================
+// FG-S1: warnDefaultPodCount 路径覆盖
+// =============================================================================
+
+func TestWarnDefaultPodCount_Skips(t *testing.T) {
+	// 非 FallbackLocal → 不告警
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackOpen},
+	})
+
+	// 有 PodCountProvider → 不告警
+	warnDefaultPodCount(&options{
+		config:           Config{Fallback: FallbackLocal, LocalPodCount: 1},
+		podCountProvider: StaticPodCount(3),
+	})
+
+	// LocalPodCount > 1 → 不告警
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackLocal, LocalPodCount: 5},
+	})
+}
+
+func TestWarnDefaultPodCount_Warns(t *testing.T) {
+	// FallbackLocal + 默认 PodCount=1 + 无 Provider → 触发告警（不 panic 即可）
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackLocal, LocalPodCount: 1},
+	})
 }

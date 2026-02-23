@@ -261,6 +261,7 @@ func TestClassify(t *testing.T) {
 		wantShared    bool
 		wantBenchmark bool
 		wantReserved  bool
+		wantBroadcast bool
 	}{
 		{
 			addr:         "192.168.1.1",
@@ -351,12 +352,26 @@ func TestClassify(t *testing.T) {
 			wantBenchmark: true,
 		},
 		{
+			addr:          "2001:2::1",
+			wantVersion:   V6,
+			wantString:    "benchmark",
+			wantGlobal:    true,
+			wantRoutable:  true,
+			wantBenchmark: true,
+		},
+		{
 			addr:         "240.0.0.1",
 			wantVersion:  V4,
 			wantString:   "reserved",
 			wantGlobal:   true,
 			wantRoutable: true,
 			wantReserved: true,
+		},
+		{
+			addr:          "255.255.255.255",
+			wantVersion:   V4,
+			wantString:    "broadcast",
+			wantBroadcast: true,
 		},
 	}
 
@@ -377,6 +392,7 @@ func TestClassify(t *testing.T) {
 			assert.Equal(t, tt.wantShared, c.IsSharedAddress)
 			assert.Equal(t, tt.wantBenchmark, c.IsBenchmark)
 			assert.Equal(t, tt.wantReserved, c.IsReserved)
+			assert.Equal(t, tt.wantBroadcast, c.IsBroadcast)
 		})
 	}
 
@@ -518,8 +534,14 @@ func TestIsBenchmark(t *testing.T) {
 		{"198.20.0.0", false},     // 刚好在范围外
 		{"192.168.1.1", false},
 
-		// IPv6 不适用
+		// IPv6 基准测试地址 (2001:2::/48, RFC 5180)
+		{"2001:2::1", true},
+		{"2001:2::ffff", true},
+		{"2001:2:0:ffff:ffff:ffff:ffff:ffff", true},
+		// IPv6 非基准测试地址
 		{"2001:db8::1", false},
+		{"2001:3::1", false},
+		{"2001:1::1", false},
 
 		// IPv4-mapped IPv6 (基准测试地址)
 		{"::ffff:198.18.0.1", true},
@@ -546,7 +568,7 @@ func TestIsReserved(t *testing.T) {
 		{"240.0.0.0", true},
 		{"240.0.0.1", true},
 		{"255.255.255.254", true},
-		{"255.255.255.255", true}, // 广播地址也在 240.0.0.0/4 范围内
+		{"255.255.255.255", false}, // 有限广播地址，不归入 Class E 保留
 
 		// 非保留地址
 		{"239.255.255.255", false}, // 刚好在范围外（多播最高地址）
@@ -570,6 +592,39 @@ func TestIsReserved(t *testing.T) {
 
 	// 无效地址
 	assert.False(t, IsReserved(netip.Addr{}))
+}
+
+func TestIsBroadcast(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		// 有限广播地址
+		{"255.255.255.255", true},
+
+		// 非广播地址
+		{"255.255.255.254", false},
+		{"240.0.0.1", false},
+		{"192.168.1.1", false},
+		{"10.0.0.1", false},
+
+		// IPv6 不适用
+		{"2001:db8::1", false},
+
+		// IPv4-mapped IPv6 (广播地址)
+		{"::ffff:255.255.255.255", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			addr := netip.MustParseAddr(tt.addr)
+			got := IsBroadcast(addr)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// 无效地址
+	assert.False(t, IsBroadcast(netip.Addr{}))
 }
 
 // =============================================================================
@@ -665,6 +720,9 @@ func assertClassifyFields(t *testing.T, addr netip.Addr, c Classification) {
 	}
 	if c.IsReserved != IsReserved(addr) {
 		t.Errorf("IsReserved mismatch")
+	}
+	if c.IsBroadcast != IsBroadcast(addr) {
+		t.Errorf("IsBroadcast mismatch")
 	}
 }
 

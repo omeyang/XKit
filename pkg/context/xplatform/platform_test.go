@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xplatform"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -57,6 +55,16 @@ func TestConfig_Validate(t *testing.T) {
 			err:    xplatform.ErrInvalidPlatformID,
 		},
 		{
+			name:   "PlatformID包含控制字符NUL",
+			config: xplatform.Config{PlatformID: "platform\x00001"},
+			err:    xplatform.ErrInvalidPlatformID,
+		},
+		{
+			name:   "PlatformID包含控制字符ESC",
+			config: xplatform.Config{PlatformID: "platform\x1b001"},
+			err:    xplatform.ErrInvalidPlatformID,
+		},
+		{
 			name:   "PlatformID超过最大长度",
 			config: xplatform.Config{PlatformID: strings.Repeat("a", 129)},
 			err:    xplatform.ErrInvalidPlatformID,
@@ -70,6 +78,11 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name:   "UnclassRegionID为空（可选字段）",
 			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: ""},
+			err:    nil,
+		},
+		{
+			name:   "UnclassRegionID为纯空白（等同于空）",
+			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "   "},
 			err:    nil,
 		},
 		{
@@ -90,6 +103,11 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name:   "UnclassRegionID包含换行符",
 			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "region\n001"},
+			err:    xplatform.ErrInvalidUnclassRegionID,
+		},
+		{
+			name:   "UnclassRegionID包含控制字符NUL",
+			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "region\x00001"},
 			err:    xplatform.ErrInvalidUnclassRegionID,
 		},
 		{
@@ -134,11 +152,21 @@ func TestInit(t *testing.T) {
 			HasParent:       true,
 			UnclassRegionID: "region-001",
 		})
-		require.NoError(t, err, "Init() should succeed")
-		assert.True(t, xplatform.IsInitialized(), "IsInitialized() should be true")
-		assert.Equal(t, "platform-001", xplatform.PlatformID())
-		assert.True(t, xplatform.HasParent(), "HasParent() should be true")
-		assert.Equal(t, "region-001", xplatform.UnclassRegionID())
+		if err != nil {
+			t.Fatal("Init() failed:", err)
+		}
+		if !xplatform.IsInitialized() {
+			t.Error("IsInitialized() = false, want true")
+		}
+		if got := xplatform.PlatformID(); got != "platform-001" {
+			t.Errorf("PlatformID() = %q, want %q", got, "platform-001")
+		}
+		if !xplatform.HasParent() {
+			t.Error("HasParent() = false, want true")
+		}
+		if got := xplatform.UnclassRegionID(); got != "region-001" {
+			t.Errorf("UnclassRegionID() = %q, want %q", got, "region-001")
+		}
 	})
 
 	t.Run("缺少PlatformID返回错误", func(t *testing.T) {
@@ -146,34 +174,46 @@ func TestInit(t *testing.T) {
 		t.Cleanup(xplatform.Reset)
 
 		err := xplatform.Init(xplatform.Config{})
-		assert.ErrorIs(t, err, xplatform.ErrMissingPlatformID)
-		assert.False(t, xplatform.IsInitialized(), "IsInitialized() should be false after failed init")
+		if !errors.Is(err, xplatform.ErrMissingPlatformID) {
+			t.Errorf("Init() error = %v, want %v", err, xplatform.ErrMissingPlatformID)
+		}
+		if xplatform.IsInitialized() {
+			t.Error("IsInitialized() = true after failed init, want false")
+		}
 	})
 
 	t.Run("重复初始化返回错误", func(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
-		require.NoError(t, err, "first Init() should succeed")
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+			t.Fatal("first Init() failed:", err)
+		}
 
-		err = xplatform.Init(xplatform.Config{PlatformID: "platform-002"})
-		assert.ErrorIs(t, err, xplatform.ErrAlreadyInitialized)
+		err := xplatform.Init(xplatform.Config{PlatformID: "platform-002"})
+		if !errors.Is(err, xplatform.ErrAlreadyInitialized) {
+			t.Errorf("second Init() error = %v, want %v", err, xplatform.ErrAlreadyInitialized)
+		}
 
 		// 验证原值未被覆盖
-		assert.Equal(t, "platform-001", xplatform.PlatformID(), "PlatformID should not be overwritten")
+		if got := xplatform.PlatformID(); got != "platform-001" {
+			t.Errorf("PlatformID() = %q after second Init, want %q (should not be overwritten)", got, "platform-001")
+		}
 	})
 
 	t.Run("已初始化后传无效配置仍返回ErrAlreadyInitialized", func(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
-		require.NoError(t, err, "first Init() should succeed")
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+			t.Fatal("first Init() failed:", err)
+		}
 
 		// 错误优先级：ErrAlreadyInitialized > 配置校验错误
-		err = xplatform.Init(xplatform.Config{})
-		assert.ErrorIs(t, err, xplatform.ErrAlreadyInitialized)
+		err := xplatform.Init(xplatform.Config{})
+		if !errors.Is(err, xplatform.ErrAlreadyInitialized) {
+			t.Errorf("Init() error = %v, want %v", err, xplatform.ErrAlreadyInitialized)
+		}
 	})
 }
 
@@ -210,7 +250,9 @@ func TestReset(t *testing.T) {
 	xplatform.Reset()
 	t.Cleanup(xplatform.Reset)
 
-	_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: true})
+	if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: true}); err != nil {
+		t.Fatal("Init() failed:", err)
+	}
 	if !xplatform.IsInitialized() {
 		t.Fatal("IsInitialized() = false after Init")
 	}
@@ -245,7 +287,9 @@ func TestPlatformID(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		if got := xplatform.PlatformID(); got != "platform-001" {
 			t.Errorf("PlatformID() = %q, want %q", got, "platform-001")
 		}
@@ -266,7 +310,9 @@ func TestHasParent(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: true})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: true}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		if !xplatform.HasParent() {
 			t.Error("HasParent() = false, want true")
 		}
@@ -276,7 +322,9 @@ func TestHasParent(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: false})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001", HasParent: false}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		if xplatform.HasParent() {
 			t.Error("HasParent() = true, want false")
 		}
@@ -297,7 +345,9 @@ func TestUnclassRegionID(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		if got := xplatform.UnclassRegionID(); got != "" {
 			t.Errorf("UnclassRegionID() = %q, want empty", got)
 		}
@@ -307,9 +357,23 @@ func TestUnclassRegionID(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "region-001"})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "region-001"}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		if got := xplatform.UnclassRegionID(); got != "region-001" {
 			t.Errorf("UnclassRegionID() = %q, want %q", got, "region-001")
+		}
+	})
+
+	t.Run("纯空白归一化为空字符串", func(t *testing.T) {
+		xplatform.Reset()
+		t.Cleanup(xplatform.Reset)
+
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "   "}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
+		if got := xplatform.UnclassRegionID(); got != "" {
+			t.Errorf("UnclassRegionID() = %q, want empty (whitespace should be normalized)", got)
 		}
 	})
 }
@@ -322,7 +386,9 @@ func TestIsInitialized(t *testing.T) {
 		t.Error("IsInitialized() = true, want false")
 	}
 
-	_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
+	if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+		t.Fatal("Init() failed:", err)
+	}
 	if !xplatform.IsInitialized() {
 		t.Error("IsInitialized() = false, want true")
 	}
@@ -347,7 +413,9 @@ func TestRequirePlatformID(t *testing.T) {
 		xplatform.Reset()
 		t.Cleanup(xplatform.Reset)
 
-		_ = xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
+		if err := xplatform.Init(xplatform.Config{PlatformID: "platform-001"}); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 		got, err := xplatform.RequirePlatformID()
 		if err != nil {
 			t.Fatalf("RequirePlatformID() error = %v", err)
@@ -378,7 +446,9 @@ func TestGetConfig(t *testing.T) {
 			HasParent:       true,
 			UnclassRegionID: "region-001",
 		}
-		_ = xplatform.Init(expected)
+		if err := xplatform.Init(expected); err != nil {
+			t.Fatal("Init() failed:", err)
+		}
 
 		got, err := xplatform.GetConfig()
 		if err != nil {
@@ -404,11 +474,13 @@ func TestConcurrentAccess(t *testing.T) {
 	xplatform.Reset()
 	t.Cleanup(xplatform.Reset)
 
-	_ = xplatform.Init(xplatform.Config{
+	if err := xplatform.Init(xplatform.Config{
 		PlatformID:      "platform-001",
 		HasParent:       true,
 		UnclassRegionID: "region-001",
-	})
+	}); err != nil {
+		t.Fatal("Init() failed:", err)
+	}
 
 	const goroutines = 100
 	var wg sync.WaitGroup
@@ -432,6 +504,54 @@ func TestConcurrentAccess(t *testing.T) {
 // =============================================================================
 // 并发初始化测试
 // =============================================================================
+
+func TestConcurrentResetAndRead(t *testing.T) {
+	xplatform.Reset()
+	t.Cleanup(xplatform.Reset)
+
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "platform-001",
+		HasParent:       true,
+		UnclassRegionID: "region-001",
+	}); err != nil {
+		t.Fatal("Init() failed:", err)
+	}
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines + 1)
+
+	// 并发读取
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				_ = xplatform.PlatformID()
+				_ = xplatform.HasParent()
+				_ = xplatform.UnclassRegionID()
+				_ = xplatform.IsInitialized()
+				_, _ = xplatform.RequirePlatformID()
+				_, _ = xplatform.GetConfig()
+			}
+		}()
+	}
+
+	// 并发 Reset
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			xplatform.Reset()
+			// 重新初始化，确保读取方有数据可读
+			_ = xplatform.Init(xplatform.Config{
+				PlatformID:      "platform-001",
+				HasParent:       true,
+				UnclassRegionID: "region-001",
+			})
+		}
+	}()
+
+	wg.Wait()
+}
 
 func TestConcurrentInit(t *testing.T) {
 	xplatform.Reset()

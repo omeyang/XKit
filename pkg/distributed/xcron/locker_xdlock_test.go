@@ -73,7 +73,7 @@ func (f *mockXdlockFactory) Lock(_ context.Context, key string, _ ...xdlock.Mute
 	return f.handle, nil
 }
 
-func (f *mockXdlockFactory) Close() error {
+func (f *mockXdlockFactory) Close(_ context.Context) error {
 	f.closeCalled = true
 	return nil
 }

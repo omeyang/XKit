@@ -39,6 +39,7 @@ func isASCIILetter(c byte) bool {
 
 // hasDotDotSegment 检测路径中是否包含 ".." 作为独立路径段。
 // 使用逐字符扫描实现零内存分配，避免 strings.FieldsFunc 的 []string 开销。
+// 同时将 '/' 和 '\' 视为分隔符，以检测 Windows 风格路径穿越（即使在 Linux 上）。
 func hasDotDotSegment(path string) bool {
 	i := 0
 	for i < len(path) {
@@ -61,7 +62,10 @@ func hasDotDotSegment(path string) bool {
 	return false
 }
 
-// SanitizePath 对文件路径进行安全检查和规范化
+// SanitizePath 对文件路径进行格式净化（不提供安全沙箱保证）
+//
+// 安全边界：本函数仅做格式净化，不防护绝对路径穿越。
+// 如需将路径限制在特定目录内，请使用 [SafeJoin] 或 [SafeJoinWithOptions]。
 //
 // 功能：
 //   - 路径规范化（消除 . 和冗余斜杠）
@@ -119,6 +123,9 @@ func SanitizePath(filename string) (string, error) {
 	}
 
 	// 获取文件名部分，确保不为空
+	// 设计决策: base == filepath.Separator 是防御性检查。当前触发此条件的输入（如 "/"）
+	// 都会先被第 109 行的尾部斜杠检查拦截，但保留此分支以防未来标准库行为变更
+	// 引入安全漏洞。测试覆盖通过 filepathRelFn 类似的注入模式可实现。
 	base := filepath.Base(cleaned)
 	if base == "." || base == string(filepath.Separator) {
 		return "", fmt.Errorf("no file name specified: %w", ErrInvalidPath)
@@ -259,20 +266,31 @@ func validatePath(path string) (string, error) {
 	return cleanPath, nil
 }
 
+// filepathRelFn 用于 joinAndVerify 中的路径关系计算。
+// 默认为 filepath.Rel，测试中可注入模拟实现以覆盖防御性错误分支。
+// 测试注入点：非并发安全，同包测试中修改此变量的用例不应使用 t.Parallel()。
+var filepathRelFn = filepath.Rel
+
+// filepathRelResolvedFn 用于 resolveAndVerifySymlinks 中的路径关系计算。
+// 与 filepathRelFn 对称，为符号链接解析后的防御性分支提供测试注入点。
+var filepathRelResolvedFn = filepath.Rel
+
 // joinAndVerify 拼接路径并验证结果仍在 base 内
 //
 // 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处的错误分支
 // 是防御性代码，防止标准库行为变更时出现静默安全漏洞。
 func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	joined := filepath.Join(cleanBase, cleanPath)
-	rel, err := filepath.Rel(cleanBase, joined)
+	rel, err := filepathRelFn(cleanBase, joined)
 	if err != nil {
 		return "", fmt.Errorf("failed to compute relative path (%v): %w", err, ErrPathEscaped)
 	}
-	// 使用 hasDotDotSegment 精确检测路径穿越
-	// 避免误判以 ".." 开头的合法文件名（如 "..config"）
+	// 设计决策: 此检查在当前验证流程下不可触发（validatePath 已排除 ".." 段，
+	// filepath.Join + filepath.Rel 不会引入新的 ".." 段），但保留作为防御性代码，
+	// 防止 validatePath 逻辑变更后引入安全漏洞。使用 hasDotDotSegment 精确匹配，
+	// 避免误判以 ".." 开头的合法文件名（如 "..config"）。
 	if hasDotDotSegment(rel) {
-		return "", ErrPathEscaped
+		return "", fmt.Errorf("path escapes base directory: %w", ErrPathEscaped)
 	}
 	return joined, nil
 }
@@ -289,30 +307,32 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 		return "", fmt.Errorf("resolve path symlinks: %w: %w", ErrSymlinkResolution, err)
 	}
 
-	rel, err := filepath.Rel(realBase, realJoined)
+	rel, err := filepathRelResolvedFn(realBase, realJoined)
+	// 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处拆分处理
+	// 是防御性设计，确保排障时能区分"路径计算异常"与"实际路径逃逸"两种场景。
+	if err != nil {
+		return "", fmt.Errorf("failed to compute resolved relative path (%v): %w", err, ErrPathEscaped)
+	}
 	// 使用 hasDotDotSegment 精确检测路径穿越
-	if err != nil || hasDotDotSegment(rel) {
+	if hasDotDotSegment(rel) {
 		return "", fmt.Errorf("resolved path escapes base directory: %w", ErrPathEscaped)
 	}
 
 	return realJoined, nil
 }
 
-// maxSymlinkDepth 是 evalSymlinksPartial 递归的最大深度，防止过深目录层级导致栈溢出。
+// maxSymlinkDepth 是 evalSymlinksPartial 向上查找可解析祖先时的最大层数限制。
 const maxSymlinkDepth = 255
 
 // evalSymlinksPartial 尽可能解析符号链接
-// 对于不存在的文件，解析其存在的父目录部分
-func evalSymlinksPartial(path string) (string, error) {
-	return evalSymlinksPartialWithDepth(path, 0)
-}
-
-// evalSymlinksPartialWithDepth 带深度限制的符号链接解析
+// 对于不存在的文件，解析其存在的父目录部分。
 //
-// 设计决策: 使用迭代方式从叶向根逐层查找最深的可解析祖先，
-// 替代之前的递归方式。递归方式每层重复调用一次 EvalSymlinks（子层的初始尝试
-// 与父层的 EvalSymlinks(dir) 调用重复），迭代方式避免了这些重复调用。
-func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
+// 符号链接循环行为：当路径中存在符号链接循环时，filepath.EvalSymlinks 对包含循环的
+// 路径段会返回 ELOOP 错误。本函数会跳过该层继续向上查找可解析祖先，最终返回的路径
+// 可能仍包含未解析的循环符号链接段。此行为在实际中风险极低：(1) 符号链接循环在生产
+// 环境中罕见；(2) 打开文件时 OS 会返回 ELOOP 错误；(3) 调用方（resolveAndVerifySymlinks）
+// 仍会对返回路径执行包含性检查。
+func evalSymlinksPartial(path string) (string, error) {
 	// 快速路径：直接解析
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
@@ -324,7 +344,7 @@ func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
 	var trail []string // 不存在的路径段（逆序收集）
 
 	current := clean
-	for i := depth; ; i++ {
+	for i := 0; ; i++ {
 		if i > maxSymlinkDepth {
 			return "", ErrPathTooDeep
 		}

@@ -62,7 +62,7 @@ func NewMemory(opts ...MemoryOption) (Memory, error) {
 		Metrics:     true, // 启用 Metrics 以支持 Stats() 方法
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xcache: create memory cache: %w", err)
 	}
 
 	return &memoryWrapper{
@@ -106,7 +106,7 @@ func NewMemoryFromClient(client *ristretto.Cache[string, []byte]) (Memory, error
 //	loader, _ := xcache.NewLoader(cache, xcache.WithDistributedLock(true))
 //	// 使用 loader...
 //	// 无需关闭 loader，只需在适当时机关闭 cache
-//	cache.Close()
+//	cache.Close(ctx)
 func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
 	if cache == nil {
 		return nil, ErrNilClient
@@ -132,32 +132,21 @@ func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
 type redisWrapper struct {
 	client  redis.UniversalClient
 	options *RedisOptions
+	closed  atomic.Bool
 }
 
 func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
-	if ttl <= 0 {
-		return nil, ErrInvalidLockTTL
+	if err := w.validateLockParams(ctx, key, ttl); err != nil {
+		return nil, err
 	}
 
 	lockKey := w.options.LockKeyPrefix + key
 	lockValue := generateLockValue()
 
-	// 尝试获取锁
-	acquired, err := w.tryLock(ctx, lockKey, lockValue, ttl)
+	acquired, err := w.acquireLockWithRetry(ctx, lockKey, lockValue, ttl)
 	if err != nil {
 		return nil, err
 	}
-
-	if !acquired {
-		// 如果配置了重试，进行重试
-		if w.options.LockRetryCount > 0 && w.options.LockRetryInterval > 0 {
-			acquired, err = w.lockWithRetry(ctx, lockKey, lockValue, ttl)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	if !acquired {
 		return nil, ErrLockFailed
 	}
@@ -167,6 +156,40 @@ func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) 
 		return w.unlock(ctx, lockKey, lockValue)
 	}
 	return unlocker, nil
+}
+
+// validateLockParams 校验 Lock 入口参数。
+func (w *redisWrapper) validateLockParams(ctx context.Context, key string, ttl time.Duration) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if w.closed.Load() {
+		return ErrClosed
+	}
+	if key == "" {
+		return ErrEmptyKey
+	}
+	if ttl <= 0 {
+		return ErrInvalidLockTTL
+	}
+	return nil
+}
+
+// acquireLockWithRetry 尝试获取锁，失败时按配置进行重试。
+func (w *redisWrapper) acquireLockWithRetry(ctx context.Context, lockKey, lockValue string, ttl time.Duration) (bool, error) {
+	acquired, err := w.tryLock(ctx, lockKey, lockValue, ttl)
+	if err != nil {
+		return false, err
+	}
+	if acquired {
+		return true, nil
+	}
+
+	// 如果配置了重试，进行重试
+	if w.options.LockRetryCount > 0 && w.options.LockRetryInterval > 0 {
+		return w.lockWithRetry(ctx, lockKey, lockValue, ttl)
+	}
+	return false, nil
 }
 
 // tryLock 尝试获取锁（单次）。
@@ -205,8 +228,10 @@ func (w *redisWrapper) lockWithRetry(ctx context.Context, key, value string, ttl
 			return true, nil
 		}
 
-		// 重置 timer 用于下次迭代
-		timer.Reset(w.options.LockRetryInterval)
+		// 重置 timer 用于下次迭代（最后一次迭代跳过，避免无消费的 timer）
+		if i < w.options.LockRetryCount-1 {
+			timer.Reset(w.options.LockRetryInterval)
+		}
 	}
 	return false, nil
 }
@@ -228,7 +253,10 @@ func (w *redisWrapper) Client() redis.UniversalClient {
 	return w.client
 }
 
-func (w *redisWrapper) Close() error {
+func (w *redisWrapper) Close(_ context.Context) error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
 	return w.client.Close()
 }
 
@@ -238,11 +266,15 @@ func (w *redisWrapper) Close() error {
 
 // memoryWrapper 实现 Memory 接口，提供统计信息等增值功能。
 type memoryWrapper struct {
-	cache *ristretto.Cache[string, []byte]
-	owned bool // 标记是否由本实例创建（需要负责关闭）
+	cache  *ristretto.Cache[string, []byte]
+	owned  bool // 标记是否由本实例创建（需要负责关闭）
+	closed atomic.Bool
 }
 
 func (w *memoryWrapper) Stats() MemoryStats {
+	if w.closed.Load() {
+		return MemoryStats{}
+	}
 	metrics := w.cache.Metrics
 	if metrics == nil {
 		return MemoryStats{}
@@ -276,24 +308,39 @@ func (w *memoryWrapper) Wait() {
 	w.cache.Wait()
 }
 
-func (w *memoryWrapper) Close() {
+func (w *memoryWrapper) Close(_ context.Context) error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
 	if w.owned {
 		w.cache.Close()
 	}
+	return nil
 }
 
 // =============================================================================
 // 辅助函数
 // =============================================================================
 
+// osHostname 是 os.Hostname 的可替换函数，用于测试 getHostIdentifier 的后备路径。
+var osHostname = os.Hostname
+
+// cryptoRandRead 是 rand.Read 的可替换函数，用于测试 generateLockValue 的后备路径。
+var cryptoRandRead = rand.Read
+
 // hostIdentifier 缓存的主机标识符，用于锁值后备方案。
 // 只计算一次以避免重复系统调用开销。
+//
+// 设计决策: 使用包级初始化而非 sync.Once 惰性初始化。
+// os.Hostname() 在 Linux 上调用 uname(2) 系统调用，直接从内核获取主机名，
+// 不涉及 DNS 解析，执行时间在微秒级，不存在阻塞风险。
+// 包级初始化更简单且保证并发安全，无需额外的 sync.Once 开销。
 var hostIdentifier = getHostIdentifier()
 
 // getHostIdentifier 获取主机标识符。
 // 优先使用主机名，失败时使用固定前缀 + 随机后缀。
 func getHostIdentifier() string {
-	hostname, err := os.Hostname()
+	hostname, err := osHostname()
 	if err == nil && hostname != "" {
 		return hostname
 	}
@@ -312,7 +359,7 @@ func getHostIdentifier() string {
 //   - lockValueCounter: 区分同一纳秒内的多次调用（理论上不可能，但作为额外保险）
 func generateLockValue() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := cryptoRandRead(b); err != nil {
 		// crypto/rand.Read 极少失败，使用多重因素确保唯一性
 		counter := lockValueCounter.Add(1)
 		return fmt.Sprintf("%s-%d-%d-%d", hostIdentifier, os.Getpid(), time.Now().UnixNano(), counter)

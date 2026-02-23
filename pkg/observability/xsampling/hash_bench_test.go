@@ -25,7 +25,7 @@ var testKeys = []string{
 var maphashSeed = maphash.MakeSeed()
 
 func BenchmarkMaphashString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = maphash.String(maphashSeed, key)
 		}
@@ -37,7 +37,7 @@ func BenchmarkMaphashString(b *testing.B) {
 // =============================================================================
 
 func BenchmarkFNVStdlib(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			h := fnv.New64a()
 			_, _ = h.Write([]byte(key))
@@ -55,6 +55,7 @@ const (
 	fnvPrime64  = 1099511628211
 )
 
+// fnv64aString 是零分配 FNV-1a 实现，仅用于基准对比和分布测试，非生产代码。
 func fnv64aString(s string) uint64 {
 	h := uint64(fnvOffset64)
 	for i := 0; i < len(s); i++ {
@@ -65,7 +66,7 @@ func fnv64aString(s string) uint64 {
 }
 
 func BenchmarkFNVManual(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = fnv64aString(key)
 		}
@@ -77,7 +78,7 @@ func BenchmarkFNVManual(b *testing.B) {
 // =============================================================================
 
 func BenchmarkXXHash(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = xxhash.Sum64String(key)
 		}
@@ -89,22 +90,17 @@ func BenchmarkXXHash(b *testing.B) {
 // =============================================================================
 
 func TestHashDistribution(t *testing.T) {
-	const (
-		numKeys = 100000
-		rate    = 0.1
-	)
-
-	// 生成真实场景的 key（模拟 trace_id、tenant_id 等）
-	// 使用伪随机方式生成，模拟真实的 trace_id 分布
-	keys := make([]string, numKeys)
-	for i := range uint64(numKeys) {
-		// 使用 FNV 混合生成伪随机的 hex 字符串，模拟真实 trace_id
-		// 这比纯顺序数字更接近真实场景
-		h := i * 0x9e3779b97f4a7c15
-		keys[i] = fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
+	rates := []struct {
+		rate      float64
+		numKeys   int
+		tolerance float64 // 允许的相对偏差百分比
+	}{
+		{0.1, 100000, 5},
+		{0.01, 1000000, 5},
+		{0.001, 1000000, 10}, // 低采样率容许更大偏差
 	}
 
-	tests := []struct {
+	hashes := []struct {
 		name string
 		hash func(string) uint64
 	}{
@@ -113,28 +109,64 @@ func TestHashDistribution(t *testing.T) {
 		{"xxhash", xxhash.Sum64String},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sampled := 0
-			for _, key := range keys {
-				hashValue := tt.hash(key)
-				normalized := float64(hashValue) / (float64(^uint64(0)) + 1)
-				if normalized < rate {
-					sampled++
+	for _, rc := range rates {
+		// 生成真实场景的 key（模拟 trace_id、tenant_id 等）
+		keys := make([]string, rc.numKeys)
+		for i := range rc.numKeys {
+			u := uint64(i) //nolint:gosec // i is always non-negative (loop index)
+			h := u * 0x9e3779b97f4a7c15
+			keys[i] = fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
+		}
+
+		for _, tt := range hashes {
+			t.Run(fmt.Sprintf("%s/rate=%.4f", tt.name, rc.rate), func(t *testing.T) {
+				sampled := 0
+				for _, key := range keys {
+					hashValue := tt.hash(key)
+					normalized := float64(hashValue) / float64(^uint64(0))
+					if normalized < rc.rate {
+						sampled++
+					}
 				}
-			}
 
-			actualRate := float64(sampled) / float64(numKeys)
-			deviation := (actualRate - rate) / rate * 100
+				actualRate := float64(sampled) / float64(rc.numKeys)
+				deviation := (actualRate - rc.rate) / rc.rate * 100
 
-			t.Logf("%s: sampled %d/%d = %.4f (deviation: %.2f%%)",
-				tt.name, sampled, numKeys, actualRate, deviation)
+				t.Logf("%s rate=%.4f: sampled %d/%d = %.6f (deviation: %.2f%%)",
+					tt.name, rc.rate, sampled, rc.numKeys, actualRate, deviation)
 
-			// 允许 5% 的偏差
-			if deviation < -5 || deviation > 5 {
-				t.Errorf("distribution deviation too large: %.2f%%", deviation)
-			}
-		})
+				if deviation < -rc.tolerance || deviation > rc.tolerance {
+					t.Errorf("distribution deviation too large: %.2f%% (tolerance: %.0f%%)",
+						deviation, rc.tolerance)
+				}
+			})
+		}
+	}
+}
+
+// =============================================================================
+// 哈希稳定性契约测试（固定向量）
+// =============================================================================
+
+// TestXXHashGoldenVectors 验证 xxhash 对固定输入产生固定输出。
+// 如果 xxhash 库升级导致输出变化，此测试会立即失败，防止采样群体整体漂移。
+func TestXXHashGoldenVectors(t *testing.T) {
+	vectors := []struct {
+		key      string
+		expected uint64
+	}{
+		{"0af7651916cd43dd8448eb211c80319c", 0x82d8c03acc9eb486}, // trace_id
+		{"tenant-12345", 0xdb3342fc670a3406},                     // tenant_id
+		{"user-abc-123-xyz", 0xa5300f0a319e99f4},                 // user_id
+		{"", 0xef46db3751d8e999},                                 // empty
+		{"a", 0xd24ec4f1a98c6e5b},                                // single_char
+	}
+	for _, v := range vectors {
+		got := xxhash.Sum64String(v.key)
+		if got != v.expected {
+			t.Errorf("xxhash(%q) = 0x%x, want 0x%x — 哈希输出变化将导致采样决策漂移",
+				v.key, got, v.expected)
+		}
 	}
 }
 
@@ -159,8 +191,8 @@ func TestCrossProcessConsistency(t *testing.T) {
 		}
 
 		// 验证采样决策一致
-		normalized1 := float64(hash1) / (float64(^uint64(0)) + 1)
-		normalized2 := float64(hash2) / (float64(^uint64(0)) + 1)
+		normalized1 := float64(hash1) / float64(^uint64(0))
+		normalized2 := float64(hash2) / float64(^uint64(0))
 		sampled1 := normalized1 < rate
 		sampled2 := normalized2 < rate
 
@@ -179,8 +211,8 @@ func TestCrossProcessConsistency(t *testing.T) {
 			t.Error("xxhash should produce consistent hash for same key")
 		}
 
-		normalized1 := float64(hash1) / (float64(^uint64(0)) + 1)
-		normalized2 := float64(hash2) / (float64(^uint64(0)) + 1)
+		normalized1 := float64(hash1) / float64(^uint64(0))
+		normalized2 := float64(hash2) / float64(^uint64(0))
 		sampled1 := normalized1 < rate
 		sampled2 := normalized2 < rate
 

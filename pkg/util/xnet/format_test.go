@@ -96,6 +96,14 @@ func TestParseFullIP(t *testing.T) {
 	}
 }
 
+func TestParseFullIP_IPv4MappedIPv6(t *testing.T) {
+	// IPv4-mapped IPv6 地址应通过标准解析器回退正确解析
+	addr, err := ParseFullIP("::ffff:192.168.1.1")
+	require.NoError(t, err)
+	assert.True(t, addr.Is4In6())
+	assert.Equal(t, "::ffff:192.168.1.1", addr.String())
+}
+
 func TestFullIPRoundTrip(t *testing.T) {
 	inputs := []string{
 		"192.168.1.1",

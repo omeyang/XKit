@@ -47,6 +47,11 @@ const (
 	// maxBatchSize 批量写入每批文档数上限。
 	// 避免单次 InsertMany 请求过大导致 MongoDB 16MB BSON 限制或内存问题。
 	maxBatchSize = 10000
+
+	// MaxPageSize 分页查询每页最大文档数。
+	// 防止调用方传入超大 PageSize 导致 cursor.All 一次性载入大量数据引发 OOM。
+	// 此值对外导出，便于调用方在参数校验中引用。
+	MaxPageSize int64 = 10000
 )
 
 // Client 返回底层 MongoDB 客户端。
@@ -60,6 +65,9 @@ func (w *mongoWrapper) Client() *mongo.Client {
 
 // Health 执行健康检查。
 func (w *mongoWrapper) Health(ctx context.Context) (err error) {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if w.closed.Load() {
 		return ErrClosed
 	}
@@ -69,7 +77,7 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 		Operation: "health",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 		},
 	})
 	defer func() {
@@ -82,9 +90,9 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
-	if err := w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
+	if err = w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
 		w.healthCounter.IncPingError()
-		return err
+		return fmt.Errorf("xmongo health: %w", err)
 	}
 
 	return nil
@@ -101,21 +109,7 @@ func (w *mongoWrapper) Stats() Stats {
 }
 
 // getPoolStats 获取连接池状态。
-//
-// 限制说明：
-// MongoDB Go driver v2 不直接暴露连接池详细信息（TotalConnections、AvailableConnections）。
-// 这是 driver 的设计决策，因为 MongoDB 使用连接池复用和会话管理，
-// 传统的"连接数"概念不能准确反映资源使用情况。
-//
-// 当前返回值：
-//   - InUseConnections: 使用 NumberSessionsInProgress() 返回活跃会话数作为近似值
-//   - TotalConnections: 始终为 0（driver 未暴露此信息）
-//   - AvailableConnections: 始终为 0（driver 未暴露此信息）
-//
-// 获取详细连接池信息的替代方案：
-//  1. 使用 MongoDB serverStatus 命令：db.runCommand({serverStatus: 1}).connections
-//  2. 监控 MongoDB 服务端指标（推荐用于生产环境）
-//  3. 使用 driver 的事件监控功能（PoolEvent）统计连接创建/关闭
+// 详细信息见 PoolStats 文档。
 func (w *mongoWrapper) getPoolStats() PoolStats {
 	if w.clientOps == nil {
 		return PoolStats{}
@@ -133,11 +127,17 @@ func (w *mongoWrapper) getPoolStats() PoolStats {
 // Close 关闭 MongoDB 连接。
 // 重复调用返回 ErrClosed。并发安全。
 //
+// 设计决策: nil context 替换为 context.Background() 而非返回 ErrNilContext，
+// 因为关闭操作不应因 nil ctx 而失败（资源释放优先于参数校验）。
+//
 // 设计决策: Disconnect 失败时不回滚 closed 状态（不支持重试）。
 // 原因：(1) 标准 Go 模式，io.Closer 契约为"调用一次释放资源";
 // (2) 允许重试会引入复杂的并发状态管理;
 // (3) Disconnect 失败通常意味着网络不可达，重试同样会失败。
 func (w *mongoWrapper) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}
@@ -150,23 +150,32 @@ func (w *mongoWrapper) Close(ctx context.Context) error {
 	if w.clientOps == nil {
 		return nil
 	}
-	return w.clientOps.Disconnect(ctx)
+	if err := w.clientOps.Disconnect(ctx); err != nil {
+		return fmt.Errorf("xmongo close: %w", err)
+	}
+	return nil
 }
 
 // FindPage 分页查询。
 func (w *mongoWrapper) FindPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
 	return w.findPage(ctx, coll, filter, opts)
 }
 
-// BulkWrite 批量写入。
-func (w *mongoWrapper) BulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+// BulkInsert 批量插入。
+func (w *mongoWrapper) BulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
-	return w.bulkWrite(ctx, coll, docs, opts)
+	return w.bulkInsert(ctx, coll, docs, opts)
 }
 
 // =============================================================================
@@ -191,6 +200,17 @@ func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) b
 // 内部实现
 // =============================================================================
 
+// applyTimeout 当调用方未设置 deadline 且 timeout > 0 时，添加超时兜底。
+// 返回可能带 deadline 的 ctx 和 cancel 函数（调用方需 defer cancel）。
+func applyTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			return context.WithTimeout(ctx, timeout)
+		}
+	}
+	return ctx, func() {}
+}
+
 // findPage 分页查询实现。
 func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error) {
 	if coll == nil {
@@ -201,6 +221,22 @@ func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, fil
 	// 参数验证（包括 overflow 检查）在 findPageInternal 中统一处理
 	collOps := adaptCollection(coll)
 	return w.findPageInternal(ctx, collOps, filter, opts)
+}
+
+// validatePageOptions 验证分页参数并返回计算后的 skip。
+// 包含 MaxPageSize 上限检查和 storageopt 的基础校验。
+func validatePageOptions(opts PageOptions) (int64, error) {
+	// 设计决策: PageSize 上限检查在 storageopt.ValidatePagination 之前执行，
+	// 因为 ValidatePagination 仅校验 >=1 和溢出，不含业务层上限。
+	// MaxPageSize 防止调用方（尤其是来自外部请求的参数）传入超大值导致 OOM。
+	if opts.PageSize > MaxPageSize {
+		return 0, ErrPageSizeTooLarge
+	}
+	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	if err != nil {
+		return 0, convertPaginationError(err)
+	}
+	return skip, nil
 }
 
 // convertPaginationError 将 storageopt 的分页错误转换为 xmongo 的错误类型。
@@ -226,10 +262,14 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		filter = bson.D{}
 	}
 
-	// 使用 storageopt 验证分页参数并计算 skip，防止溢出
-	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	// 当调用方未设置 deadline 且配置了 QueryTimeout 时，添加超时兜底
+	var cancel context.CancelFunc
+	ctx, cancel = applyTimeout(ctx, w.options.QueryTimeout)
+	defer cancel()
+
+	skip, err := validatePageOptions(opts)
 	if err != nil {
-		return nil, convertPaginationError(err)
+		return nil, err
 	}
 
 	info := buildSlowQueryInfoFromOps(coll, "findPage", filter)
@@ -240,9 +280,11 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		Operation: "find_page",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 			xmetrics.String("db.name", info.Database),
 			xmetrics.String("db.collection", info.Collection),
+			xmetrics.Int64("xmongo.page", opts.Page),
+			xmetrics.Int64("xmongo.page_size", opts.PageSize),
 		},
 	})
 	defer func() {
@@ -262,32 +304,28 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	// 查询总数
 	total, err := coll.CountDocuments(ctx, filter)
 	if err != nil {
-		return nil, err
-	}
-
-	// 构建查询选项
-	findOpts := options.Find().
-		SetSkip(skip).
-		SetLimit(opts.PageSize)
-	if len(opts.Sort) > 0 {
-		findOpts = findOpts.SetSort(opts.Sort)
+		return nil, fmt.Errorf("xmongo find_page count %s.%s: %w", info.Database, info.Collection, err)
 	}
 
 	// 执行查询
-	cursor, err := coll.Find(ctx, filter, findOpts)
+	cursor, err := coll.Find(ctx, filter, buildFindOptions(skip, opts))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xmongo find_page find %s.%s: %w", info.Database, info.Collection, err)
 	}
+	// 设计决策: cursor.Close 错误不合并到返回值。cursor.All 已将数据全量读入内存，
+	// Close 仅释放服务端游标资源，失败不影响已获取的数据。合并错误会导致调用方
+	// 因 if err != nil 丢弃有效的查询结果。
+	//nolint:errcheck,gosec // cursor.Close 是清理操作，数据已全量读取，忽略关闭错误
+	defer func() { cursor.Close(ctx) }()
 
 	// 解析结果
 	var data []bson.M
-	dataErr := cursor.All(ctx, &data)
-	closeErr := cursor.Close(ctx)
-	if closeErr != nil {
-		closeErr = fmt.Errorf("close cursor failed: %w", closeErr)
+	if err = cursor.All(ctx, &data); err != nil {
+		return nil, fmt.Errorf("xmongo find_page decode %s.%s: %w", info.Database, info.Collection, err)
 	}
-	if err := errors.Join(dataErr, closeErr); err != nil {
-		return nil, err
+	// 设计决策: 空结果返回空切片而非 nil，确保 JSON 序列化为 [] 而非 null。
+	if data == nil {
+		data = []bson.M{}
 	}
 
 	return &PageResult{
@@ -299,8 +337,22 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	}, nil
 }
 
-// bulkWrite 批量写入实现。
-func (w *mongoWrapper) bulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+// buildFindOptions 构建分页查询的 FindOptions。
+func buildFindOptions(skip int64, opts PageOptions) *options.FindOptionsBuilder {
+	findOpts := options.Find().
+		SetSkip(skip).
+		SetLimit(opts.PageSize)
+	if len(opts.Sort) > 0 {
+		findOpts = findOpts.SetSort(opts.Sort)
+	}
+	if len(opts.Projection) > 0 {
+		findOpts = findOpts.SetProjection(opts.Projection)
+	}
+	return findOpts
+}
+
+// bulkInsert 批量插入实现。
+func (w *mongoWrapper) bulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
 	if coll == nil {
 		return nil, ErrNilCollection
 	}
@@ -310,11 +362,16 @@ func (w *mongoWrapper) bulkWrite(ctx context.Context, coll *mongo.Collection, do
 
 	// 适配集合为接口
 	collOps := adaptCollection(coll)
-	return w.bulkWriteInternal(ctx, collOps, docs, opts)
+	return w.bulkInsertInternal(ctx, collOps, docs, opts)
 }
 
-// bulkWriteInternal 批量写入内部实现，使用接口便于测试。
-func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
+// bulkInsertInternal 批量插入内部实现，使用接口便于测试。
+func (w *mongoWrapper) bulkInsertInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
+	// 当调用方未设置 deadline 且配置了 WriteTimeout 时，添加超时兜底
+	var cancel context.CancelFunc
+	ctx, cancel = applyTimeout(ctx, w.options.WriteTimeout)
+	defer cancel()
+
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
 		batchSize = defaultBatchSize
@@ -322,15 +379,15 @@ func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOpe
 		batchSize = maxBatchSize
 	}
 
-	info := buildSlowQueryInfoFromOps(coll, "bulkWrite", nil)
+	info := buildSlowQueryInfoFromOps(coll, "bulkInsert", nil)
 
 	start := time.Now()
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: mongoComponent,
-		Operation: "bulk_write",
+		Operation: "bulk_insert",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 			xmetrics.String("db.name", info.Database),
 			xmetrics.String("db.collection", info.Collection),
 		},
@@ -409,15 +466,17 @@ func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOp
 		insertedCount = int64(len(result.InsertedIDs))
 	}
 
+	wrappedErr := fmt.Errorf("xmongo bulk_insert: %w", err)
+
 	if ordered {
 		// 有序模式下遇到错误停止
-		return insertedCount, err, true
+		return insertedCount, wrappedErr, true
 	}
 
 	// 无序模式下检查 context，避免继续无效工作
 	if ctx.Err() != nil {
-		return insertedCount, fmt.Errorf("context canceled after batch error: %w", ctx.Err()), true
+		return insertedCount, fmt.Errorf("xmongo bulk_insert context canceled: %w", ctx.Err()), true
 	}
 
-	return insertedCount, err, false
+	return insertedCount, wrappedErr, false
 }

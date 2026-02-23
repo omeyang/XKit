@@ -78,6 +78,28 @@ func TestExtractFromHTTPHeader(t *testing.T) {
 	}
 }
 
+// TestExtractFromHTTPHeader_MultiValue 验证多值 Header 取首值的契约（FG-L1 回归测试）。
+//
+// doc.go:31 定义了"单值字段，多值时取第一个"的语义。
+func TestExtractFromHTTPHeader_MultiValue(t *testing.T) {
+	h := make(http.Header)
+	// http.Header.Add 追加多值
+	h.Add(xtenant.HeaderTenantID, "first-tenant")
+	h.Add(xtenant.HeaderTenantID, "second-tenant")
+	h.Add(xtenant.HeaderTenantName, "first-name")
+	h.Add(xtenant.HeaderTenantName, "second-name")
+
+	info := xtenant.ExtractFromHTTPHeader(h)
+
+	// 应取第一个值
+	if info.TenantID != "first-tenant" {
+		t.Errorf("TenantID = %q, want %q (should take first value)", info.TenantID, "first-tenant")
+	}
+	if info.TenantName != "first-name" {
+		t.Errorf("TenantName = %q, want %q (should take first value)", info.TenantName, "first-name")
+	}
+}
+
 func TestExtractFromHTTPRequest(t *testing.T) {
 	t.Run("nil request", func(t *testing.T) {
 		got := xtenant.ExtractFromHTTPRequest(nil)
@@ -257,6 +279,64 @@ func TestInjectTenantToHeader(t *testing.T) {
 			t.Errorf("HeaderTenantName should be empty, got %q", got)
 		}
 	})
+
+	t.Run("TrimSpace归一化（FG-M4回归测试）", func(t *testing.T) {
+		h := make(http.Header)
+		info := xtenant.TenantInfo{
+			TenantID:   "  t1  ",
+			TenantName: "  n1  ",
+		}
+		xtenant.InjectTenantToHeader(h, info)
+
+		if got := h.Get(xtenant.HeaderTenantID); got != "t1" {
+			t.Errorf("HeaderTenantID = %q, want %q (should TrimSpace)", got, "t1")
+		}
+		if got := h.Get(xtenant.HeaderTenantName); got != "n1" {
+			t.Errorf("HeaderTenantName = %q, want %q (should TrimSpace)", got, "n1")
+		}
+	})
+
+	t.Run("纯空白值不注入（FG-M4回归测试）", func(t *testing.T) {
+		h := make(http.Header)
+		info := xtenant.TenantInfo{
+			TenantID:   "   ",
+			TenantName: "  \t",
+		}
+		xtenant.InjectTenantToHeader(h, info)
+
+		if got := h.Get(xtenant.HeaderTenantID); got != "" {
+			t.Errorf("HeaderTenantID should be empty for whitespace-only, got %q", got)
+		}
+		if got := h.Get(xtenant.HeaderTenantName); got != "" {
+			t.Errorf("HeaderTenantName should be empty for whitespace-only, got %q", got)
+		}
+	})
+}
+
+// =============================================================================
+// nil 选项守卫测试（FG-L3 回归测试）
+// =============================================================================
+
+func TestHTTPMiddlewareWithOptions_NilOption(t *testing.T) {
+	// nil 选项不应该 panic
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrapped := xtenant.HTTPMiddlewareWithOptions(
+		nil, // nil 选项
+		xtenant.WithRequireTenantID(),
+		nil, // 另一个 nil 选项
+	)(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set(xtenant.HeaderTenantID, "t1")
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
 }
 
 // =============================================================================

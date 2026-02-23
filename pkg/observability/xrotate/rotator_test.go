@@ -49,6 +49,20 @@ func TestNewLumberjackWithOptions(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestNewLumberjackWithNilOption 测试 nil option 被静默忽略
+func TestNewLumberjackWithNilOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "nil_opt.log")
+
+	// nil option 不应 panic
+	r, err := NewLumberjack(filename, nil, WithMaxSize(50), nil)
+	require.NoError(t, err)
+	defer r.Close()
+
+	_, err = r.Write([]byte("test with nil option\n"))
+	assert.NoError(t, err)
+}
+
 // TestNewLumberjackWithDefaultOptions 测试使用默认配置
 func TestNewLumberjackWithDefaultOptions(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -71,93 +85,93 @@ func TestNewLumberjackWithDefaultOptions(t *testing.T) {
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
 		name      string
-		setup     func() (string, []LumberjackOption)
+		setup     func() (string, []Option)
 		wantErr   error
 		wantInMsg string
 	}{
 		{
 			name: "空文件名",
-			setup: func() (string, []LumberjackOption) {
+			setup: func() (string, []Option) {
 				return "", nil
 			},
 			wantErr: ErrEmptyFilename,
 		},
 		{
 			name: "MaxSizeMB 为零",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(0)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(0)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "0",
 		},
 		{
 			name: "MaxSizeMB 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(-1)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxBackups 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(-1)}
 			},
 			wantErr:   ErrInvalidMaxBackups,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxAgeDays 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxAge(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxAge(-1)}
 			},
 			wantErr:   ErrInvalidMaxAge,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxSizeMB 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(10241)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(10241)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "10241",
 		},
 		{
 			name: "MaxBackups 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(1025)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(1025)}
 			},
 			wantErr:   ErrInvalidMaxBackups,
 			wantInMsg: "1025",
 		},
 		{
 			name: "MaxAgeDays 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxAge(3651)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxAge(3651)}
 			},
 			wantErr:   ErrInvalidMaxAge,
 			wantInMsg: "3651",
 		},
 		{
 			name: "MaxBackups 和 MaxAgeDays 同时为 0",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(0), WithMaxAge(0)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(0), WithMaxAge(0)}
 			},
 			wantErr:   ErrNoCleanupPolicy,
 			wantInMsg: "cannot both be 0",
 		},
 		{
 			name: "FileMode 包含文件类型位",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithFileMode(os.ModeDir | 0644)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithFileMode(os.ModeDir | 0644)}
 			},
 			wantErr:   ErrInvalidFileMode,
 			wantInMsg: "permission bits",
 		},
 		{
 			name: "FileMode 包含 setuid 位",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithFileMode(os.ModeSetuid | 0777)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithFileMode(os.ModeSetuid | 0777)}
 			},
 			wantErr:   ErrInvalidFileMode,
 			wantInMsg: "permission bits",
@@ -418,6 +432,79 @@ func TestRotateBySize(t *testing.T) {
 	backups, err := findBackups(filename)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(backups), 1, "应该有备份文件")
+}
+
+// TestRotateBySizeBoundary 测试恰好达到 MaxSize 阈值的边界行为
+//
+// 验证 lumberjack 在 MaxSize-1、==MaxSize、MaxSize+1 三个边界点的行为：
+//   - MaxSize-1：不触发轮转
+//   - ==MaxSize：不触发轮转（lumberjack 使用 > 比较，恰好等于不轮转）
+//   - MaxSize+1：触发轮转
+func TestRotateBySizeBoundary(t *testing.T) {
+	tests := []struct {
+		name        string
+		writeBytes  int  // 写入的总字节数
+		wantRotated bool // 是否期望触发轮转
+	}{
+		{
+			name:        "MaxSize-1 字节不触发轮转",
+			writeBytes:  1*1024*1024 - 1, // 1MB - 1
+			wantRotated: false,
+		},
+		{
+			name:        "恰好 MaxSize 字节不触发轮转",
+			writeBytes:  1 * 1024 * 1024, // 1MB（lumberjack 使用 > 比较）
+			wantRotated: false,
+		},
+		{
+			name:        "MaxSize+1 字节触发轮转",
+			writeBytes:  1*1024*1024 + 1, // 1MB + 1
+			wantRotated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			filename := filepath.Join(tmpDir, "boundary.log")
+
+			r, err := NewLumberjack(filename,
+				WithMaxSize(1), // 1MB
+				WithMaxBackups(3),
+				WithMaxAge(30),
+				WithCompress(false),
+				WithLocalTime(true),
+			)
+			require.NoError(t, err)
+			defer r.Close()
+
+			// 分批写入，避免单次写入超过 MaxSize
+			chunkSize := 64 * 1024 // 64KB
+			remaining := tt.writeBytes
+			for remaining > 0 {
+				size := chunkSize
+				if size > remaining {
+					size = remaining
+				}
+				payload := bytes.Repeat([]byte("x"), size)
+				_, err := r.Write(payload)
+				require.NoError(t, err)
+				remaining -= size
+			}
+
+			// 检查是否产生了备份文件
+			backups, err := findBackups(filename)
+			require.NoError(t, err)
+
+			if tt.wantRotated {
+				assert.GreaterOrEqual(t, len(backups), 1,
+					"写入 %d 字节应触发轮转", tt.writeBytes)
+			} else {
+				assert.Equal(t, 0, len(backups),
+					"写入 %d 字节不应触发轮转", tt.writeBytes)
+			}
+		})
+	}
 }
 
 // TestMaxBackups 测试最大备份数量限制
@@ -1058,6 +1145,34 @@ func TestEnsureFileModeChmodError(t *testing.T) {
 	storedErr, ok := stored.(error)
 	require.True(t, ok)
 	assert.Equal(t, errChmod, storedErr)
+}
+
+// TestReportErrorCallbackPanic 测试 OnError 回调 panic 被隔离
+func TestReportErrorCallbackPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "panic_callback.log")
+
+	r, err := NewLumberjack(filename,
+		WithFileMode(0644),
+		WithOnError(func(error) {
+			panic("callback panic")
+		}),
+	)
+	require.NoError(t, err)
+	defer r.Close()
+
+	// 注入 Stat 失败，确保 reportError 被调用
+	lr, ok := r.(*lumberjackRotator)
+	require.True(t, ok)
+	lr.statFn = func(string) (os.FileInfo, error) {
+		return nil, os.ErrPermission
+	}
+	lr.modeApplied.Store(false)
+
+	// 回调 panic 不应传播到调用方
+	assert.NotPanics(t, func() {
+		_, _ = r.Write([]byte("should not panic\n"))
+	})
 }
 
 // TestReportErrorNilCallback 测试 reportError 在无回调时不 panic

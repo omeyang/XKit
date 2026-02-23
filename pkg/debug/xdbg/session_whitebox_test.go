@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -265,6 +266,152 @@ func TestSession_Close_Error(t *testing.T) {
 	err = s.Close()
 	if err != nil {
 		t.Errorf("second Close() should return nil, got %v", err)
+	}
+}
+
+// FG-S1: 验证 writeData 写失败后 Close 仍然执行资源清理。
+func TestSession_Close_AfterWriteError_StillCleansUp(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	conn := &closeErrConn{}
+	s := &Session{
+		conn:     conn,
+		codec:    NewCodec(),
+		server:   srv,
+		ctx:      ctx,
+		cancel:   cancel,
+		identity: &IdentityInfo{},
+	}
+
+	// 模拟 writeData 写失败：设置 closed=true 但不关闭连接
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+
+	// Close 应该仍然执行资源清理（conn.Close 被调用）
+	err := s.Close()
+	if err == nil {
+		t.Error("Close() should return conn.Close error")
+	}
+
+	if !conn.closeCalled {
+		t.Error("conn.Close() should have been called even though closed=true from writeData")
+	}
+}
+
+// FG-S2: 验证命令 panic 被捕获并转为错误响应。
+func TestSession_ExecuteCommand_PanicRecovery(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := &Session{
+		server:   srv,
+		ctx:      ctx,
+		cancel:   cancel,
+		identity: &IdentityInfo{},
+	}
+
+	panicCmd := mustNewCommandFunc(t, "panic", "panics", func(_ context.Context, _ []string) (string, error) {
+		panic("test panic")
+	})
+
+	output, err := s.executeCommand(context.Background(), panicCmd, nil)
+	if err == nil {
+		t.Fatal("executeCommand should return error on panic")
+	}
+	if output != "" {
+		t.Errorf("output should be empty, got %q", output)
+	}
+	if !strings.Contains(err.Error(), "command panicked") {
+		t.Errorf("error should mention panic, got %q", err.Error())
+	}
+}
+
+// FG-S2: 验证正常命令不受 panic recovery 影响。
+func TestSession_ExecuteCommand_Normal(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := &Session{
+		server:   srv,
+		ctx:      ctx,
+		cancel:   cancel,
+		identity: &IdentityInfo{},
+	}
+
+	normalCmd := mustNewCommandFunc(t, "normal", "works", func(_ context.Context, _ []string) (string, error) {
+		return "ok", nil
+	})
+
+	output, err := s.executeCommand(context.Background(), normalCmd, nil)
+	if err != nil {
+		t.Fatalf("executeCommand should not error, got %v", err)
+	}
+	if output != "ok" {
+		t.Errorf("output should be 'ok', got %q", output)
+	}
+}
+
+// FG-M6: 验证 handleAcceptError 非 Listening 状态返回 true。
+func TestServer_HandleAcceptError_NotListening(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+	}
+	srv.state.Store(int32(ServerStateStarted))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if !result {
+		t.Error("handleAcceptError should return true when state is not Listening")
+	}
+}
+
+// FG-M6: 验证 handleAcceptError ctx 取消返回 true。
+func TestServer_HandleAcceptError_CtxDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+		ctx:  ctx,
+	}
+	srv.state.Store(int32(ServerStateListening))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if !result {
+		t.Error("handleAcceptError should return true when ctx is canceled")
+	}
+}
+
+// FG-M6: 验证 handleAcceptError 正常退避返回 false。
+func TestServer_HandleAcceptError_Backoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+		ctx:  ctx,
+	}
+	srv.state.Store(int32(ServerStateListening))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if result {
+		t.Error("handleAcceptError should return false during normal backoff")
 	}
 }
 

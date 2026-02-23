@@ -89,7 +89,11 @@ func BenchmarkAcquireUnlockContended(b *testing.B) {
 }
 
 func BenchmarkGetOrCreate(b *testing.B) {
-	kl := newForTest(b).(*keyLockImpl)
+	locker := newForTest(b)
+	kl, ok := locker.(*keyLockImpl)
+	if !ok {
+		b.Fatal("unexpected Locker implementation")
+	}
 	defer kl.Close()
 
 	b.ReportAllocs()

@@ -119,6 +119,28 @@ func TestResult_SetHeaders(t *testing.T) {
 	}
 }
 
+func TestResult_SetHeaders_SkipsWhenNoQuota(t *testing.T) {
+	// FG-M1: FallbackOpen 或无匹配规则时 Limit=0，不应写入误导性的配额头
+	result := &Result{
+		Allowed: true,
+		Limit:   0,
+		Rule:    "fallback-open",
+	}
+
+	recorder := httptest.NewRecorder()
+	result.SetHeaders(recorder)
+
+	if recorder.Header().Get("X-RateLimit-Limit") != "" {
+		t.Error("should not set X-RateLimit-Limit when Limit=0")
+	}
+	if recorder.Header().Get("X-RateLimit-Remaining") != "" {
+		t.Error("should not set X-RateLimit-Remaining when Limit=0")
+	}
+	if recorder.Header().Get("X-RateLimit-Reset") != "" {
+		t.Error("should not set X-RateLimit-Reset when Limit=0")
+	}
+}
+
 func TestAllowedResult(t *testing.T) {
 	result := AllowedResult(100, 99)
 

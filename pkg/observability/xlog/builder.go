@@ -34,9 +34,10 @@ import (
 type ReplaceAttrFunc func(groups []string, a slog.Attr) slog.Attr
 
 // Builder 日志配置构建器
+//
+// Builder 不是并发安全的，应在单个 goroutine 中完成链式调用后 Build。
 type Builder struct {
 	output         io.Writer
-	level          Level
 	levelVar       *slog.LevelVar
 	format         string
 	addSource      bool
@@ -46,6 +47,7 @@ type Builder struct {
 	rotator        xrotate.Rotator
 	onError        func(error) // 内部错误回调（Handler.Handle 失败时）
 	err            error
+	built          bool // Build() 已调用，防止重复构建
 }
 
 // New 创建配置构建器
@@ -55,7 +57,6 @@ func New() *Builder {
 
 	return &Builder{
 		output:       os.Stderr,
-		level:        LevelInfo,
 		levelVar:     levelVar,
 		format:       "text",
 		enableEnrich: true, // 默认启用 context 信息注入
@@ -65,7 +66,12 @@ func New() *Builder {
 // SetOutput 设置日志输出目标
 //
 // nil 会立即报错（fail-fast，与 SetDeploymentType 行为一致）。
+// 注意：如果之前调用了 SetRotation，SetOutput 会覆盖轮转输出。
+// Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
 func (b *Builder) SetOutput(w io.Writer) *Builder {
+	if b.err != nil {
+		return b
+	}
 	if w == nil {
 		b.err = fmt.Errorf("xlog: output writer is nil")
 		return b
@@ -76,13 +82,18 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 
 // SetLevel 设置日志级别
 func (b *Builder) SetLevel(level Level) *Builder {
-	b.level = level
+	if b.err != nil {
+		return b
+	}
 	b.levelVar.Set(slog.Level(level))
 	return b
 }
 
 // SetLevelString 通过字符串设置日志级别
 func (b *Builder) SetLevelString(s string) *Builder {
+	if b.err != nil {
+		return b
+	}
 	level, err := ParseLevel(s)
 	if err != nil {
 		b.err = err
@@ -93,6 +104,9 @@ func (b *Builder) SetLevelString(s string) *Builder {
 
 // SetFormat 设置输出格式：text 或 json
 func (b *Builder) SetFormat(format string) *Builder {
+	if b.err != nil {
+		return b
+	}
 	normalized := strings.ToLower(strings.TrimSpace(format))
 	if normalized == "" {
 		// 空值视为使用默认格式，避免误把“没填”变成配置错误。
@@ -109,6 +123,9 @@ func (b *Builder) SetFormat(format string) *Builder {
 
 // SetAddSource 是否在日志中添加源码位置
 func (b *Builder) SetAddSource(enable bool) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.addSource = enable
 	return b
 }
@@ -117,6 +134,9 @@ func (b *Builder) SetAddSource(enable bool) *Builder {
 //
 // 默认启用。当启用时，日志会自动从 context 中提取 xctx（trace/identity）信息。
 func (b *Builder) SetEnrich(enable bool) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.enableEnrich = enable
 	return b
 }
@@ -126,7 +146,17 @@ func (b *Builder) SetEnrich(enable bool) *Builder {
 // 注意：会同时设置 output 为 rotator，覆盖之前的 SetOutput 设置。
 // 同理，SetRotation 之后再调用 SetOutput 会覆盖 rotator 的输出。
 // Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
-func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption) *Builder {
+func (b *Builder) SetRotation(filename string, opts ...xrotate.Option) *Builder {
+	if b.err != nil {
+		return b
+	}
+	// 关闭旧 rotator，避免重复调用 SetRotation 时文件句柄泄漏
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			b.err = fmt.Errorf("xlog: failed to close previous rotator: %w", closeErr)
+			return b
+		}
+	}
 	rotator, err := xrotate.NewLumberjack(filename, opts...)
 	if err != nil {
 		b.err = err
@@ -157,6 +187,9 @@ func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption)
 //		}).
 //		Build()
 func (b *Builder) SetOnError(fn func(error)) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.onError = fn
 	return b
 }
@@ -191,6 +224,9 @@ func (b *Builder) SetOnError(fn func(error)) *Builder {
 //		}).
 //		Build()
 func (b *Builder) SetReplaceAttr(fn ReplaceAttrFunc) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.replaceAttr = fn
 	return b
 }
@@ -210,6 +246,9 @@ func (b *Builder) SetReplaceAttr(fn ReplaceAttrFunc) *Builder {
 //		SetDeploymentType(xctx.DeploymentSaaS).
 //		Build()
 func (b *Builder) SetDeploymentType(dt xctx.DeploymentType) *Builder {
+	if b.err != nil {
+		return b
+	}
 	if !dt.IsValid() {
 		b.err = xctx.ErrInvalidDeploymentType
 		return b
@@ -226,6 +265,9 @@ func (b *Builder) SetDeploymentType(dt xctx.DeploymentType) *Builder {
 //	dt, _ := xctx.ParseDeploymentType(v)
 //	builder.SetDeploymentType(dt)
 func (b *Builder) SetDeploymentTypeFromEnv() *Builder {
+	if b.err != nil {
+		return b
+	}
 	v := os.Getenv(xctx.EnvDeploymentType)
 	if v == "" {
 		b.err = xctx.ErrMissingDeploymentTypeEnv
@@ -248,8 +290,18 @@ func (b *Builder) SetDeploymentTypeFromEnv() *Builder {
 //   - error: 配置错误
 func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	if b.err != nil {
+		b.closeRotator() // best-effort 清理已创建的 rotator，防止文件句柄泄漏
 		return nil, nil, b.err
 	}
+
+	// 设计决策: 禁止重复调用 Build()。当配置了 SetRotation 时，多次 Build() 返回的
+	// logger 共享同一个 rotator 实例，第一次 cleanup 关闭 rotator 后会导致第二个 logger
+	// 写入失败。使用 built 标志强制一次性使用，避免隐式的资源共享问题。
+	if b.built {
+		b.closeRotator() // best-effort 清理
+		return nil, nil, fmt.Errorf("xlog: builder already built, create a new Builder via New()")
+	}
+	b.built = true
 
 	if b.output == nil {
 		return nil, nil, fmt.Errorf("xlog: output writer is nil")
@@ -276,7 +328,11 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 
 	// 启用 context 信息注入
 	if b.enableEnrich {
-		handler = NewEnrichHandler(handler)
+		enriched, err := NewEnrichHandler(handler)
+		if err != nil {
+			return nil, nil, err
+		}
+		handler = enriched
 	}
 
 	// 添加部署类型固定属性（在 Build 时一次性注入，避免热路径检查）
@@ -302,6 +358,17 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	cleanup := b.createCleanup()
 
 	return logger, cleanup, nil
+}
+
+// closeRotator best-effort 关闭已创建的 rotator，用于 Build() 错误路径防止文件句柄泄漏。
+// 关闭失败时仅记录到 stderr（此时 logger 尚未构建完成，无法使用自身记录错误）。
+func (b *Builder) closeRotator() {
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "xlog: failed to close rotator during cleanup: %v\n", closeErr)
+		}
+		b.rotator = nil
+	}
 }
 
 // createCleanup 创建清理函数

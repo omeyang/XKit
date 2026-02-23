@@ -97,6 +97,10 @@ func TraceAttrs(ctx context.Context) []slog.Attr {
 
 // DeploymentAttrs 从 context 提取部署类型，转换为 slog.Attr 切片
 //
+// 设计决策: 不提供 AppendDeploymentAttrs 变体，因为 deployment_type 需要验证有效性，
+// 函数签名必须包含 error 返回值，与其他 AppendXxxAttrs（无 error）模式不一致。
+// 仅 1 个字段，LogAttrs 中直接 append 即可。
+//
 // 如果 context 中缺少或包含非法 deployment_type，返回错误。
 func DeploymentAttrs(ctx context.Context) ([]slog.Attr, error) {
 	dt, err := GetDeploymentType(ctx)
@@ -152,7 +156,7 @@ func PlatformAttrs(ctx context.Context) []slog.Attr {
 //
 // deployment_type 为必填字段，缺失或无效时返回错误。
 // 错误时仍返回已收集的部分属性（identity/trace/platform），调用方可自行决定是否使用。
-// 如果 context 中完全没有任何字段，返回 (nil, err) 避免不必要的分配。
+// 如果没有收集到任何部分属性，返回 (nil, err)。
 func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -162,10 +166,13 @@ func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	dt, err := GetDeploymentType(ctx)
 	if err != nil {
 		// 部署类型缺失/无效，尝试收集其他字段作为部分结果
-		var partial []slog.Attr
+		partial := make([]slog.Attr, 0, identityFieldCount+traceFieldCount+platformFieldCount)
 		partial = AppendIdentityAttrs(partial, ctx)
 		partial = AppendTraceAttrs(partial, ctx)
 		partial = AppendPlatformAttrs(partial, ctx)
+		if len(partial) == 0 {
+			return nil, err
+		}
 		return partial, err
 	}
 

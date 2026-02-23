@@ -18,6 +18,11 @@ type OTelTracer = mqcore.OTelTracer
 // OTelTracerOption 定义 OTelTracer 的配置选项。
 type OTelTracerOption = mqcore.OTelTracerOption
 
+// 设计决策: 使用 var 重导出 mqcore 函数，而非函数包装。
+// var 重导出是 Go 中从 internal 包转发 API 的常见惯用法。
+// 虽然 var 理论上可被外部赋值覆盖，但实际风险极低，
+// 且改为函数包装需要直接 import go.opentelemetry.io/otel/propagation（影响依赖树）。
+
 // NewOTelTracer 创建 OTelTracer。
 var NewOTelTracer = mqcore.NewOTelTracer
 

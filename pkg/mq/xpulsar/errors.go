@@ -23,12 +23,15 @@ var (
 	// ErrEmptyURL URL 为空错误
 	ErrEmptyURL = errors.New("xpulsar: empty URL")
 
+	// ErrNilOption 选项函数为 nil 错误
+	ErrNilOption = errors.New("xpulsar: nil option")
+
 	// ErrNilProducer 生产者为 nil 错误
 	ErrNilProducer = errors.New("xpulsar: nil producer")
 
 	// ErrNilConsumer 消费者为 nil 错误
 	ErrNilConsumer = errors.New("xpulsar: nil consumer")
 
-	// ErrClosed 客户端已关闭错误
-	ErrClosed = errors.New("xpulsar: client closed")
+	// ErrClosed 客户端已关闭错误（复用 mqcore.ErrClosed，与 xkafka 对齐）
+	ErrClosed = mqcore.ErrClosed
 )

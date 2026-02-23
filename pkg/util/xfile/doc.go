@@ -5,9 +5,9 @@
 //
 // # 路径安全函数对比
 //
-//   - SanitizePath: 检查路径格式，防止相对路径穿越，不限制目标目录
-//   - SafeJoin: 确保结果路径始终在指定的 base 目录内，推荐用于处理用户输入
-//   - SafeJoinWithOptions: SafeJoin 的增强版，支持符号链接解析等选项
+//   - SanitizePath: 仅格式净化（空字节、穿越段、目录标记），不限制目标目录，不提供安全沙箱保证
+//   - SafeJoin: 确保结果路径始终在指定的 base 目录内，推荐用于处理用户输入（默认不解析符号链接）
+//   - SafeJoinWithOptions: SafeJoin 的增强版，支持符号链接解析等选项（高安全场景推荐）
 //
 // # 路径穿越检测
 //
@@ -36,8 +36,8 @@
 // 但如果 base 目录内可能存在恶意符号链接，攻击者可能通过符号链接访问
 // base 目录外的文件。
 //
-// 对于高安全场景（如用户上传、沙箱目录），应使用 SafeJoinWithOptions
-// 并启用 ResolveSymlinks 选项：
+// 对于需要提升安全性的场景（如用户上传、沙箱目录），应使用 SafeJoinWithOptions
+// 并启用 ResolveSymlinks 选项（注意：这不提供原子安全访问保证，参见下方 TOCTOU 说明）：
 //
 //	SafeJoinWithOptions(base, path, SafeJoinOptions{ResolveSymlinks: true})
 //
@@ -45,6 +45,19 @@
 // 之间存在 TOCTOU 窗口。本包适用于可信环境下的路径构建，不能替代对抗性环境下
 // 的安全文件访问。如需更强保证，应配合操作系统权限控制（如禁止在 base 内创建
 // 符号链接）或使用专门的安全文件访问库。
+//
+// # 目录创建与权限
+//
+// [EnsureDir] 使用安全默认权限 0750。[EnsureDirWithPerm] 允许自定义权限，
+// 仅校验所有者执行位（目录必须可遍历），不限制 world-writable 等权限位。
+// 传入宽松权限（如 0777）前请确认安全影响，gosec G301 可在下游用法中检测。
+//
+// 重要：[EnsureDir] 和 [EnsureDirWithPerm] 不校验路径穿越。若 filename 来自
+// 不可信输入，应先用 [SafeJoin] 约束路径再调用：
+//
+//	safePath, err := xfile.SafeJoin("/var/log", userInput)
+//	if err != nil { return err }
+//	err = xfile.EnsureDir(safePath)
 //
 // # 错误处理
 //

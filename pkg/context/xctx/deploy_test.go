@@ -14,6 +14,8 @@ import (
 // =============================================================================
 
 func TestDeploymentType_String(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		dt   xctx.DeploymentType
 		want string
@@ -25,6 +27,8 @@ func TestDeploymentType_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.dt.String(); got != tt.want {
 				t.Errorf("DeploymentType.String() = %q, want %q", got, tt.want)
 			}
@@ -33,6 +37,8 @@ func TestDeploymentType_String(t *testing.T) {
 }
 
 func TestDeploymentType_IsLocal(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		dt   xctx.DeploymentType
 		want bool
@@ -44,6 +50,8 @@ func TestDeploymentType_IsLocal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.dt.IsLocal(); got != tt.want {
 				t.Errorf("DeploymentType.IsLocal() = %v, want %v", got, tt.want)
 			}
@@ -52,6 +60,8 @@ func TestDeploymentType_IsLocal(t *testing.T) {
 }
 
 func TestDeploymentType_IsSaaS(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		dt   xctx.DeploymentType
 		want bool
@@ -63,6 +73,8 @@ func TestDeploymentType_IsSaaS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.dt.IsSaaS(); got != tt.want {
 				t.Errorf("DeploymentType.IsSaaS() = %v, want %v", got, tt.want)
 			}
@@ -71,6 +83,8 @@ func TestDeploymentType_IsSaaS(t *testing.T) {
 }
 
 func TestDeploymentType_IsValid(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		dt   xctx.DeploymentType
 		want bool
@@ -83,6 +97,8 @@ func TestDeploymentType_IsValid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.dt.IsValid(); got != tt.want {
 				t.Errorf("DeploymentType(%q).IsValid() = %v, want %v", tt.dt, got, tt.want)
 			}
@@ -95,7 +111,11 @@ func TestDeploymentType_IsValid(t *testing.T) {
 // =============================================================================
 
 func TestWithDeploymentType(t *testing.T) {
+	t.Parallel()
+
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.WithDeploymentType(nilCtx, xctx.DeploymentLocal)
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -115,6 +135,8 @@ func TestWithDeploymentType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx, err := xctx.WithDeploymentType(context.Background(), tt.dt)
 			if tt.wantErr {
 				if err == nil {
@@ -138,7 +160,11 @@ func TestWithDeploymentType(t *testing.T) {
 }
 
 func TestGetDeploymentType(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回错误", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := xctx.GetDeploymentType(context.Background())
 		if !errors.Is(err, xctx.ErrMissingDeploymentType) {
 			t.Errorf("GetDeploymentType(empty) error = %v, want %v", err, xctx.ErrMissingDeploymentType)
@@ -146,6 +172,8 @@ func TestGetDeploymentType(t *testing.T) {
 	})
 
 	t.Run("nil context返回错误", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.GetDeploymentType(nilCtx)
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -154,6 +182,8 @@ func TestGetDeploymentType(t *testing.T) {
 	})
 
 	t.Run("覆盖写入返回新值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithDeploymentType(context.Background(), xctx.DeploymentLocal)
 		if err != nil {
 			t.Fatalf("WithDeploymentType() error = %v", err)
@@ -177,6 +207,8 @@ func TestGetDeploymentType(t *testing.T) {
 // =============================================================================
 
 func TestDeploymentTypeCheckers(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		trueFor  xctx.DeploymentType // 应返回 true 的类型
@@ -199,7 +231,11 @@ func TestDeploymentTypeCheckers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			t.Run("匹配类型返回true", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := xctx.WithDeploymentType(context.Background(), tt.trueFor)
 				if err != nil {
 					t.Fatalf("WithDeploymentType() error = %v", err)
@@ -214,6 +250,8 @@ func TestDeploymentTypeCheckers(t *testing.T) {
 			})
 
 			t.Run("不匹配类型返回false", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := xctx.WithDeploymentType(context.Background(), tt.falseFor)
 				if err != nil {
 					t.Fatalf("WithDeploymentType() error = %v", err)
@@ -228,6 +266,8 @@ func TestDeploymentTypeCheckers(t *testing.T) {
 			})
 
 			t.Run("空context返回错误", func(t *testing.T) {
+				t.Parallel()
+
 				_, err := tt.checker(context.Background())
 				if !errors.Is(err, xctx.ErrMissingDeploymentType) {
 					t.Errorf("%s(empty) error = %v, want %v", tt.name, err, xctx.ErrMissingDeploymentType)
@@ -242,6 +282,8 @@ func TestDeploymentTypeCheckers(t *testing.T) {
 // =============================================================================
 
 func TestParseDeploymentType(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input string
 		want  xctx.DeploymentType
@@ -268,6 +310,8 @@ func TestParseDeploymentType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := xctx.ParseDeploymentType(tt.input)
 			if tt.err != nil {
 				if !errors.Is(err, tt.err) {
@@ -290,6 +334,8 @@ func TestParseDeploymentType(t *testing.T) {
 // =============================================================================
 
 func TestDeploymentKeyConstants(t *testing.T) {
+	t.Parallel()
+
 	if xctx.KeyDeploymentType != "deployment_type" {
 		t.Errorf("KeyDeploymentType = %q, want %q", xctx.KeyDeploymentType, "deployment_type")
 	}

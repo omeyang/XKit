@@ -30,7 +30,7 @@ func exampleRedisSetup() (xdlock.RedisFactory, func()) {
 	}
 
 	cleanup := func() {
-		_ = factory.Close()
+		_ = factory.Close(context.Background())
 		_ = client.Close()
 		mr.Close()
 	}
@@ -142,7 +142,7 @@ func Example_redisWithOptions() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -180,7 +180,7 @@ func Example_lockHandle() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -223,7 +223,7 @@ func Example_healthCheck() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -235,7 +235,7 @@ func Example_healthCheck() {
 	}
 
 	// 关闭后再检查
-	_ = factory.Close()
+	_ = factory.Close(context.Background())
 	if err := factory.Health(ctx); err != nil {
 		fmt.Printf("After close: %v\n", err)
 	}
@@ -278,7 +278,7 @@ func Example_redlock() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 

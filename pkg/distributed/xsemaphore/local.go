@@ -196,6 +196,11 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		return nil, err
 	}
 
+	// 校验重试参数（仅 Acquire 需要，TryAcquire 不使用重试）
+	if err := cfg.validateRetryParams(); err != nil {
+		return nil, err
+	}
+
 	// 创建 span
 	ctx, span := startSpan(ctx, s.opts.tracer, spanNameAcquire)
 	defer span.End()
@@ -210,6 +215,8 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 
 	for attempt := range cfg.maxRetries {
 		if err := ctx.Err(); err != nil {
+			s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
+			span.SetAttributes(attribute.Int(attrRetryCount, max(0, attempt-1)))
 			setSpanError(span, err)
 			return nil, err
 		}
@@ -217,6 +224,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		permit, reason, err := s.tryAcquireOnce(ctx, resource, tenantID, localCapacity, localTenantQuota, cfg.ttl, cfg.metadata)
 		if err != nil {
 			s.recordAcquireMetrics(ctx, resource, false, ReasonUnknown, time.Since(start))
+			span.SetAttributes(attribute.Int(attrRetryCount, attempt))
 			setSpanError(span, err)
 			return nil, err
 		}
@@ -237,6 +245,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		// 最后一次重试不等待
 		if attempt < cfg.maxRetries-1 {
 			if err := waitForRetry(ctx, cfg.retryDelay); err != nil {
+				s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
 				setSpanError(span, err)
 				return nil, err
 			}
@@ -294,6 +303,7 @@ func (s *localSemaphore) doAcquire(
 	// 在锁外生成许可 ID，避免时钟回拨等待期间（最多 500ms）阻塞其他 goroutine
 	permitID, err := s.opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
 		return nil, ReasonUnknown, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 

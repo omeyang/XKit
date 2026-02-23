@@ -2,6 +2,7 @@ package xpulsar
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -21,7 +22,8 @@ type Client interface {
 	Client() pulsar.Client
 
 	// Health 执行健康检查。
-	// 通过获取 Broker 元数据验证连接状态。
+	// 通过创建临时 Reader 验证与 Broker 的连接状态。
+	// ctx 为 nil 时内部替换为 context.Background()。
 	Health(ctx context.Context) error
 
 	// CreateProducer 创建 Pulsar 生产者。
@@ -36,13 +38,19 @@ type Client interface {
 	Stats() Stats
 
 	// Close 优雅关闭客户端。
-	// 会关闭所有生产者和消费者。
-	Close() error
+	// 会关闭所有生产者和消费者，并等待 Health() 超时后的后台清理 goroutine 完成。
+	//
+	// 设计决策: ctx 参数当前未使用（Pulsar SDK 的 Client.Close() 不接受 context），
+	// 保留 ctx 参数以与项目 D-02 惯例一致，便于未来扩展超时/取消语义。
+	// error 返回值当前始终为 nil（Pulsar SDK 的 Client.Close() 无返回值）。
+	Close(ctx context.Context) error
 }
 
 // Stats 包含 Pulsar 客户端的统计信息。
 type Stats struct {
-	// Connected 是否已连接。
+	// Connected 表示客户端是否未关闭（即 Close() 尚未被调用）。
+	// 设计决策: 此字段不反映与 Broker 的实际网络连接状态。
+	// 若需检测实际连接健康状态，请使用 Health() 方法。
 	Connected bool
 	// ProducersCount 活跃的生产者数量。
 	ProducersCount int
@@ -63,6 +71,9 @@ func NewClient(url string, opts ...Option) (Client, error) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(options)
 	}
 
@@ -73,22 +84,14 @@ func NewClient(url string, opts ...Option) (Client, error) {
 		MaxConnectionsPerBroker: options.MaxConnectionsPerBroker,
 	}
 
-	// 可选认证配置
-	if options.Authentication != nil {
-		clientOptions.Authentication = options.Authentication
-	}
-
-	// 可选 TLS 配置
-	if options.TLSTrustCertsFilePath != "" {
-		clientOptions.TLSTrustCertsFilePath = options.TLSTrustCertsFilePath
-	}
-	if options.TLSAllowInsecureConnection {
-		clientOptions.TLSAllowInsecureConnection = true
-	}
+	// 认证与 TLS 配置（零值与 pulsar.ClientOptions 默认值一致，直接赋值即可）
+	clientOptions.Authentication = options.Authentication
+	clientOptions.TLSTrustCertsFilePath = options.TLSTrustCertsFilePath
+	clientOptions.TLSAllowInsecureConnection = options.TLSAllowInsecureConnection
 
 	client, err := pulsar.NewClient(clientOptions)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: create client: %w", err)
 	}
 
 	return &clientWrapper{
@@ -112,7 +115,12 @@ type clientOptions struct {
 	TLSTrustCertsFilePath      string
 	TLSAllowInsecureConnection bool
 	HealthTimeout              time.Duration
+	HealthCheckTopic           string
 }
+
+// defaultHealthCheckTopic 默认健康检查 Topic。
+// 使用 non-persistent 避免创建持久化状态，public/default 是 Pulsar 标准命名空间。
+const defaultHealthCheckTopic = "non-persistent://public/default/__health_check__"
 
 func defaultOptions() *clientOptions {
 	return &clientOptions{
@@ -122,6 +130,7 @@ func defaultOptions() *clientOptions {
 		OperationTimeout:        30 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		HealthTimeout:           5 * time.Second,
+		HealthCheckTopic:        defaultHealthCheckTopic,
 	}
 }
 
@@ -193,6 +202,18 @@ func WithHealthTimeout(d time.Duration) Option {
 	return func(o *clientOptions) {
 		if d > 0 {
 			o.HealthTimeout = d
+		}
+	}
+}
+
+// WithHealthCheckTopic 设置健康检查使用的 Topic。
+// 默认为 "non-persistent://public/default/__health_check__"。
+// 在启用 ACL 或非 public/default 命名空间的集群中，
+// 需要配置为客户端有权限访问的 Topic。
+func WithHealthCheckTopic(topic string) Option {
+	return func(o *clientOptions) {
+		if topic != "" {
+			o.HealthCheckTopic = topic
 		}
 	}
 }

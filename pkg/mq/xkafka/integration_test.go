@@ -4,6 +4,7 @@ package xkafka_test
 
 import (
 	"context"
+	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -20,9 +21,24 @@ import (
 // 测试辅助函数
 // =============================================================================
 
+// skipIfNoDocker 检查 Docker 可用性，不可用时跳过测试。
+// 防止 testcontainers 在 Docker 不可用时 panic 导致整个测试进程崩溃。
+func skipIfNoDocker(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not found, skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available, skipping integration test")
+	}
+}
+
 // setupKafka 启动 Kafka 容器并返回 bootstrap servers。
 func setupKafka(t *testing.T) (string, func()) {
 	t.Helper()
+	skipIfNoDocker(t)
 	ctx := context.Background()
 
 	container, err := kafkaContainer.Run(ctx,
@@ -152,7 +168,8 @@ func TestIntegration_Producer_Produce(t *testing.T) {
 	// 等待送达确认
 	select {
 	case e := <-deliveryChan:
-		m := e.(*kafka.Message)
+		m, ok := e.(*kafka.Message)
+		require.True(t, ok, "unexpected delivery event type: %T", e)
 		if m.TopicPartition.Error != nil {
 			t.Fatalf("delivery failed: %v", m.TopicPartition.Error)
 		}
@@ -330,7 +347,8 @@ func TestIntegration_ProduceAndConsume(t *testing.T) {
 	// 等待送达
 	select {
 	case e := <-deliveryChan:
-		m := e.(*kafka.Message)
+		m, ok := e.(*kafka.Message)
+		require.True(t, ok, "unexpected delivery event type: %T", e)
 		require.NoError(t, m.TopicPartition.Error)
 	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for delivery")
@@ -454,7 +472,9 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 				"bootstrap.servers": brokers,
 			}
 			producer, err := xkafka.NewProducer(config)
-			require.NoError(t, err)
+			if !assert.NoError(t, err, "producer %d: create failed", id) {
+				return
+			}
 			defer producer.Close()
 
 			deliveryChan := make(chan kafka.Event, messagesPerProducer)
@@ -463,7 +483,9 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 					TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 					Value:          []byte("concurrent message"),
 				}, deliveryChan)
-				require.NoError(t, err)
+				if !assert.NoError(t, err, "producer %d: produce failed", id) {
+					return
+				}
 			}
 
 			// 等待送达

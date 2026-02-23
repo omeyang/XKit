@@ -3,6 +3,7 @@ package xtenant_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
@@ -36,10 +37,11 @@ func FuzzWithTenantID(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取
+		// 验证能正确读取（WithTenantID 会 TrimSpace）
 		got := xtenant.TenantID(newCtx)
-		if got != tenantID {
-			t.Errorf("TenantID() = %q, want %q", got, tenantID)
+		want := strings.TrimSpace(tenantID)
+		if got != want {
+			t.Errorf("TenantID() = %q, want %q", got, want)
 		}
 	})
 }
@@ -64,10 +66,11 @@ func FuzzWithTenantName(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取
+		// 验证能正确读取（WithTenantName 会 TrimSpace）
 		got := xtenant.TenantName(newCtx)
-		if got != tenantName {
-			t.Errorf("TenantName() = %q, want %q", got, tenantName)
+		want := strings.TrimSpace(tenantName)
+		if got != want {
+			t.Errorf("TenantName() = %q, want %q", got, want)
 		}
 	})
 }
@@ -95,13 +98,15 @@ func FuzzWithTenantInfo(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取非空字段
+		// 验证能正确读取非空字段（WithTenantInfo 会 TrimSpace）
 		gotInfo := xtenant.GetTenantInfo(newCtx)
-		if tenantID != "" && gotInfo.TenantID != tenantID {
-			t.Errorf("TenantID = %q, want %q", gotInfo.TenantID, tenantID)
+		wantID := strings.TrimSpace(tenantID)
+		if wantID != "" && gotInfo.TenantID != wantID {
+			t.Errorf("TenantID = %q, want %q", gotInfo.TenantID, wantID)
 		}
-		if tenantName != "" && gotInfo.TenantName != tenantName {
-			t.Errorf("TenantName = %q, want %q", gotInfo.TenantName, tenantName)
+		wantName := strings.TrimSpace(tenantName)
+		if wantName != "" && gotInfo.TenantName != wantName {
+			t.Errorf("TenantName = %q, want %q", gotInfo.TenantName, wantName)
 		}
 	})
 }
@@ -115,6 +120,8 @@ func FuzzTenantInfo_Validate(f *testing.F) {
 	f.Add("", "")
 	f.Add("id", "")
 	f.Add("", "name")
+	f.Add("   ", "name")
+	f.Add("id", "  \t")
 
 	f.Fuzz(func(t *testing.T, tenantID, tenantName string) {
 		info := xtenant.TenantInfo{
@@ -124,8 +131,8 @@ func FuzzTenantInfo_Validate(f *testing.F) {
 
 		err := info.Validate()
 
-		// Validate() 要求 TenantID 和 TenantName 都非空
-		shouldError := tenantID == "" || tenantName == ""
+		// Validate() 对字段做 TrimSpace 后判空，纯空白值视为空
+		shouldError := strings.TrimSpace(tenantID) == "" || strings.TrimSpace(tenantName) == ""
 
 		if shouldError {
 			if err == nil {
@@ -160,12 +167,14 @@ func FuzzExtractFromHTTPHeader(f *testing.F) {
 
 		info := xtenant.ExtractFromHTTPHeader(h)
 
-		// 验证提取结果正确（会自动 trim 空白）
-		if tenantID != "" && info.TenantID == "" {
-			// 只有完全空白的才会变成空
+		// 验证 TrimSpace 正确性（与 FuzzWithTenantID/FuzzWithTenantName 验证风格一致）
+		wantID := strings.TrimSpace(tenantID)
+		if info.TenantID != wantID {
+			t.Errorf("TenantID = %q, want %q (trimmed from %q)", info.TenantID, wantID, tenantID)
 		}
-		if tenantName != "" && info.TenantName == "" {
-			// 只有完全空白的才会变成空
+		wantName := strings.TrimSpace(tenantName)
+		if info.TenantName != wantName {
+			t.Errorf("TenantName = %q, want %q (trimmed from %q)", info.TenantName, wantName, tenantName)
 		}
 	})
 }

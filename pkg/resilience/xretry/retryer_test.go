@@ -109,7 +109,10 @@ func TestRetryer_Do(t *testing.T) {
 		})
 
 		assert.Error(t, err)
-		assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || err.Error() == "error")
+		// ShouldRetry 不检查 ctx.Err()，retry-go 在 sleep 阶段检测到 context 取消后
+		// 始终返回 context 错误，而非业务错误。
+		assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
+			"Retryer.Do should return context error when context is canceled, got: %v", err)
 	})
 
 	t.Run("InternalContextCanceledNoRetry", func(t *testing.T) {
@@ -260,6 +263,125 @@ func TestNewRetryer_NilOptions(t *testing.T) {
 
 	assert.NotNil(t, r.RetryPolicy())
 	assert.NotNil(t, r.BackoffPolicy())
+}
+
+func TestWithOnRetry_Nil(t *testing.T) {
+	// WithOnRetry(nil) 应该被静默忽略，不清除已设置的回调
+	var called bool
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(2)),
+		WithBackoffPolicy(NewNoBackoff()),
+		WithOnRetry(func(_ int, _ error) { called = true }),
+		WithOnRetry(nil), // 不应清除上面的回调
+	)
+
+	var attempts int
+	err := r.Do(context.Background(), func(_ context.Context) error {
+		attempts++
+		if attempts < 2 {
+			return errors.New("error")
+		}
+		return nil
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, called, "OnRetry callback should not be cleared by WithOnRetry(nil)")
+}
+
+// TestRetryer_SequentialReuse 验证 Retryer.Do 可安全复用
+// 每次 Do 调用创建独立的 attemptCount 闭包，因此连续调用应互不影响。
+func TestRetryer_SequentialReuse(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(3)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	// 第一次调用：执行 3 次后成功
+	var attempts1 int
+	err := r.Do(context.Background(), func(_ context.Context) error {
+		attempts1++
+		if attempts1 < 3 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, attempts1)
+
+	// 第二次调用：重试次数不应受第一次影响
+	var attempts2 int
+	err = r.Do(context.Background(), func(_ context.Context) error {
+		attempts2++
+		if attempts2 < 3 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, attempts2, "second call should have independent retry count")
+}
+
+// TestRetryer_ConcurrentUse 验证 Retryer.Do 并发安全（应通过 -race 检测）
+func TestRetryer_ConcurrentUse(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(3)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	const goroutines = 10
+	errs := make(chan error, goroutines)
+
+	for range goroutines {
+		go func() {
+			var attempts int32
+			errs <- r.Do(context.Background(), func(_ context.Context) error {
+				n := atomic.AddInt32(&attempts, 1)
+				if n < 2 {
+					return errors.New("fail")
+				}
+				return nil
+			})
+		}()
+	}
+
+	for range goroutines {
+		assert.NoError(t, <-errs)
+	}
+}
+
+// TestRetrier_ReuseAccumulatesCount 记录 Retrier() 返回实例的一次性使用特性。
+// 设计决策: Retrier() 返回的实例内部 RetryIf 闭包维护 attemptCount 状态，
+// 复用同一实例会导致计数累积。此测试明确记录该行为，防止回归。
+func TestRetrier_ReuseAccumulatesCount(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(5)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	retrier := r.Retrier(context.Background())
+
+	// 第一次调用：执行 2 次后成功
+	var attempts1 int
+	err := retrier.Do(func() error {
+		attempts1++
+		if attempts1 < 2 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, attempts1)
+
+	// 第二次调用同一实例：计数累积导致 ShouldRetry 提前拒绝
+	// 这是已知且已记录的行为（一次性使用实例）
+	var attempts2 int
+	err = retrier.Do(func() error {
+		attempts2++
+		return errors.New("always fail")
+	})
+	assert.Error(t, err)
+	// 由于 attemptCount 从上次终值继续累积，实际可用重试次数少于 MaxAttempts
+	assert.Less(t, attempts2, 5, "reused retrier should have fewer retries due to accumulated count")
 }
 
 func TestZeroValueRetryer(t *testing.T) {
@@ -510,5 +632,67 @@ func TestNilRetryer(t *testing.T) {
 	t.Run("RetrierWithData", func(t *testing.T) {
 		retrier := RetrierWithData[string](context.Background(), nil)
 		assert.NotNil(t, retrier, "nil Retryer should return usable default RetrierWithData")
+	})
+}
+
+func TestRetryer_NilFn(t *testing.T) {
+	r := NewRetryer(WithBackoffPolicy(NewNoBackoff()))
+
+	t.Run("Do", func(t *testing.T) {
+		err := r.Do(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
+
+	t.Run("DoWithResult", func(t *testing.T) {
+		result, err := DoWithResult[int](context.Background(), r, nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+		assert.Equal(t, 0, result)
+	})
+}
+
+func TestNilContext(t *testing.T) {
+	r := NewRetryer(WithBackoffPolicy(NewNoBackoff()))
+
+	t.Run("Retryer_Do", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		err := r.Do(ctx, func(_ context.Context) error {
+			t.Fatal("should not be called")
+			return nil
+		})
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("DoWithResult", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		result, err := DoWithResult(ctx, r, func(_ context.Context) (int, error) {
+			t.Fatal("should not be called")
+			return 0, nil
+		})
+		assert.ErrorIs(t, err, ErrNilContext)
+		assert.Equal(t, 0, result)
+	})
+
+	t.Run("Retrier_NilCtx", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		retrier := r.Retrier(ctx)
+		assert.NotNil(t, retrier, "nil ctx should return usable Retrier with context.Background()")
+	})
+
+	t.Run("RetrierWithData_NilCtx", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		retrier := RetrierWithData[string](ctx, r)
+		assert.NotNil(t, retrier, "nil ctx should return usable RetrierWithData with context.Background()")
+	})
+}
+
+func TestNilRetryer_Accessors(t *testing.T) {
+	var r *Retryer // nil
+
+	t.Run("RetryPolicy", func(t *testing.T) {
+		assert.Nil(t, r.RetryPolicy(), "nil Retryer should return nil RetryPolicy")
+	})
+
+	t.Run("BackoffPolicy", func(t *testing.T) {
+		assert.Nil(t, r.BackoffPolicy(), "nil Retryer should return nil BackoffPolicy")
 	})
 }

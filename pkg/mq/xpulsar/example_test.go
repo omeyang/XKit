@@ -47,7 +47,11 @@ func ExampleDLQBuilder_minimal() {
 // ExampleConsumerOptionsBuilder 演示 Consumer 配置构建器
 func ExampleConsumerOptionsBuilder() {
 	// 创建带 DLQ 和退避策略的 Consumer 配置
-	opts := xpulsar.NewConsumerOptionsBuilder("orders", "order-processor").
+	// 推荐使用全限定 Topic 名称：persistent://tenant/namespace/topic
+	opts := xpulsar.NewConsumerOptionsBuilder(
+		"persistent://public/default/orders",
+		"order-processor",
+	).
 		WithType(pulsar.Shared).
 		WithDLQBuilder(xpulsar.NewDLQBuilder().WithMaxDeliveries(5)).
 		WithNackBackoff(xretry.NewExponentialBackoff()).
@@ -60,7 +64,7 @@ func ExampleConsumerOptionsBuilder() {
 	fmt.Println("Nack 退避已配置:", opts.NackBackoffPolicy != nil)
 	fmt.Println("重试启用:", opts.RetryEnable)
 	// Output:
-	// Topic: orders
+	// Topic: persistent://public/default/orders
 	// 订阅名: order-processor
 	// DLQ 已配置: true
 	// Nack 退避已配置: true
@@ -70,7 +74,10 @@ func ExampleConsumerOptionsBuilder() {
 // ExampleConsumerOptionsBuilder_simple 演示简单的 Consumer 配置
 func ExampleConsumerOptionsBuilder_simple() {
 	// 简单配置：无 DLQ
-	opts := xpulsar.NewConsumerOptionsBuilder("events", "event-handler").
+	opts := xpulsar.NewConsumerOptionsBuilder(
+		"persistent://public/default/events",
+		"event-handler",
+	).
 		WithType(pulsar.Exclusive).
 		Build()
 
@@ -78,7 +85,7 @@ func ExampleConsumerOptionsBuilder_simple() {
 	fmt.Println("订阅名:", opts.SubscriptionName)
 	fmt.Println("订阅类型是 Exclusive:", opts.Type == pulsar.Exclusive)
 	// Output:
-	// Topic: events
+	// Topic: persistent://public/default/events
 	// 订阅名: event-handler
 	// 订阅类型是 Exclusive: true
 }
@@ -139,6 +146,7 @@ func Example_errors() {
 	fmt.Println("空消息错误:", xpulsar.ErrNilMessage)
 	fmt.Println("空处理器错误:", xpulsar.ErrNilHandler)
 	fmt.Println("空 URL 错误:", xpulsar.ErrEmptyURL)
+	fmt.Println("空选项错误:", xpulsar.ErrNilOption)
 	fmt.Println("空生产者错误:", xpulsar.ErrNilProducer)
 	fmt.Println("空消费者错误:", xpulsar.ErrNilConsumer)
 	fmt.Println("客户端已关闭:", xpulsar.ErrClosed)
@@ -147,9 +155,10 @@ func Example_errors() {
 	// 空消息错误: mq: nil message
 	// 空处理器错误: mq: nil handler
 	// 空 URL 错误: xpulsar: empty URL
+	// 空选项错误: xpulsar: nil option
 	// 空生产者错误: xpulsar: nil producer
 	// 空消费者错误: xpulsar: nil consumer
-	// 客户端已关闭: xpulsar: client closed
+	// 客户端已关闭: mq: client closed
 }
 
 // ExampleNoopTracer 演示空追踪器

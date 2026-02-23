@@ -106,6 +106,14 @@ jobs:
       - name: Build
         run: go build -v ./...
 
+      # 跨平台编译验证：确保 !unix build tag 分支（如 xsys）持续可编译。
+      # 仅编译验证，不运行测试（Windows 下无 librdkafka 等依赖）。
+      - name: Cross-compile check (Windows)
+        run: GOOS=windows GOARCH=amd64 go build ./pkg/util/xsys/...
+
+      - name: Cross-compile check (Windows tests)
+        run: GOOS=windows GOARCH=amd64 go test -c -o /dev/null ./pkg/util/xsys/...
+
   # ==================== 安全扫描 ====================
   security:
     name: Security Scan

@@ -98,7 +98,7 @@ func ExampleAddr_IsUnicast() {
 	// Multicast: false true
 }
 
-func ExampleAddr_json() {
+func ExampleAddr_MarshalJSON() {
 	type Asset struct {
 		ID  int       `json:"id"`
 		MAC xmac.Addr `json:"mac"`
@@ -157,4 +157,36 @@ func ExampleAddr_Next() {
 	// 00:00:00:00:00:fe
 	// 00:00:00:00:00:ff
 	// 00:00:00:00:01:00
+}
+
+func ExampleRange() {
+	from := xmac.MustParse("00:00:00:00:00:01")
+	to := xmac.MustParse("00:00:00:00:00:05")
+
+	for addr := range xmac.Range(from, to) {
+		fmt.Println(addr)
+	}
+
+	// Output:
+	// 00:00:00:00:00:01
+	// 00:00:00:00:00:02
+	// 00:00:00:00:00:03
+	// 00:00:00:00:00:04
+	// 00:00:00:00:00:05
+}
+
+func ExampleCollectN() {
+	from := xmac.MustParse("00:00:00:00:00:01")
+	to := xmac.MustParse("00:00:00:00:00:0a")
+
+	// 最多收集 3 个
+	addrs := xmac.CollectN(xmac.Range(from, to), 3)
+	for _, addr := range addrs {
+		fmt.Println(addr)
+	}
+
+	// Output:
+	// 00:00:00:00:00:01
+	// 00:00:00:00:00:02
+	// 00:00:00:00:00:03
 }

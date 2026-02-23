@@ -25,6 +25,9 @@ var globalMu sync.Mutex
 // globalOnce 确保默认 Logger 只初始化一次
 var globalOnce sync.Once
 
+// newBuilder 默认 Logger 的构建器工厂函数（可通过 export_test.go 替换以测试 fallback 路径）
+var newBuilder = New
+
 // defaultLogger 创建默认 Logger（惰性初始化）
 //
 // 设计决策: 在持锁状态下执行 once.Do，确保 ResetDefault（重置 globalOnce）
@@ -35,11 +38,20 @@ func defaultLogger() LoggerWithLevel {
 	defer globalMu.Unlock()
 
 	globalOnce.Do(func() {
-		// 默认配置：输出到 stderr，Info 级别，text 格式，启用 enrich
-		logger, _, err := New().Build()
+		// 设计决策: 在 once.Do 回调内检查 globalLogger，防止与 SetDefault 的逻辑竞态。
+		// 时序：G1 调用 Default() 看到 nil 进入 defaultLogger()，G2 此时完成 SetDefault(custom)，
+		// G1 获取锁后 once.Do 仍会触发——如果不加此检查，会覆盖 G2 设置的 custom logger。
+		if globalLogger.Load() != nil {
+			return
+		}
+		// 设计决策: 默认 Logger 使用 stderr，无 rotator，cleanup 为空操作（仅关闭 nil rotator）。
+		// 丢弃 cleanup 是安全的。如需轮转日志，应使用 New().SetRotation(...).Build() 手动管理生命周期。
+		logger, _, err := newBuilder().Build()
 		if err != nil {
 			// 设计决策: 默认参数不应失败；如果失败则降级为最小可用 logger，
 			// 避免库代码 panic 终止宿主进程（项目约定：构造不 panic）。
+			// 注意：fallback logger 不包装 EnrichHandler，因此不注入 context 字段。
+			// 这是可接受的降级——此分支仅在 New().Build() 默认参数失败时触发（极其罕见）。
 			fmt.Fprintf(os.Stderr, "xlog: failed to build default logger: %v, using fallback\n", err)
 			fallbackHandler := slog.NewTextHandler(os.Stderr, nil)
 			var fallback LoggerWithLevel = &xlogger{
@@ -74,7 +86,7 @@ func Default() LoggerWithLevel {
 // SetDefault 替换全局默认 Logger
 //
 // 用于测试或自定义配置场景。
-// 并发安全：使用 atomic.Pointer。
+// 并发安全：使用 globalMu 保护，避免与 defaultLogger 惰性初始化竞争。
 //
 // 注意：如果传入 nil，操作会被忽略（不会修改当前 logger）。
 // 要重置为默认 logger，请使用 ResetDefault()。
@@ -83,7 +95,9 @@ func SetDefault(l LoggerWithLevel) {
 		// 拒绝 nil，避免后续全局函数 panic
 		return
 	}
+	globalMu.Lock()
 	globalLogger.Store(&l)
+	globalMu.Unlock()
 }
 
 // ResetDefault 重置全局 Logger 为未初始化状态（仅用于测试）
@@ -109,16 +123,18 @@ func globalLog(l LoggerWithLevel, ctx context.Context, level slog.Level, msg str
 		xl.logWithSkip(ctx, level, msg, attrs, 1)
 		return
 	}
-	// fallback：非 xlogger 实现（如用户自定义），使用标准方法
-	switch level {
-	case slog.LevelDebug:
+	// fallback：非 xlogger 实现（如用户自定义），按级别范围分发
+	// 设计决策: 仅支持标准四级分发（Debug/Info/Warn/Error）。自定义级别（如 slog.LevelError+4）
+	// 会路由到对应范围的标准级别（≥Error 统一调用 Error）。这是 Logger 接口仅定义四个
+	// 级别方法的固有限制，在当前标准级别语义下行为正确。
+	switch {
+	case level < slog.LevelInfo:
 		l.Debug(ctx, msg, attrs...)
-	case slog.LevelInfo:
+	case level < slog.LevelWarn:
 		l.Info(ctx, msg, attrs...)
-	case slog.LevelWarn:
+	case level < slog.LevelError:
 		l.Warn(ctx, msg, attrs...)
 	default:
-		// 包括 LevelError 和自定义级别，确保不丢失日志
 		l.Error(ctx, msg, attrs...)
 	}
 }
@@ -147,8 +163,10 @@ func Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 func Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
 	l := Default()
 	if xl, ok := l.(*xlogger); ok {
-		// 使用内部方法，正确跳过栈帧（与 globalLog 一致）
-		xl.stackWithSkip(ctx, msg, attrs, 1)
+		// extraSkip=0：全局 Stack 直接调用 stackWithSkip，调用链为
+		// 业务代码 → xlog.Stack → stackWithSkip → Callers，共 3 帧（与实例 Stack 一致）。
+		// 注意：不同于 globalLog 路径（多一层 globalLog 函数，需要 extraSkip=1）。
+		xl.stackWithSkip(ctx, msg, attrs, 0)
 		return
 	}
 	// fallback：非 xlogger 实现

@@ -114,6 +114,9 @@ func parseDot(s string) (Addr, error) {
 
 // parseStdlib 使用标准库 [net.ParseMAC] 解析不常见格式。
 // 仅在自定义解析器都不匹配时作为回退。
+//
+// net.ParseMAC 当前支持：冒号分隔（EUI-48/EUI-64）、短线分隔、点分隔。
+// 下方的 len(hw) != 6 检查确保只接受 EUI-48 格式，过滤 EUI-64 等不兼容格式。
 func parseStdlib(s string) (Addr, error) {
 	hw, err := net.ParseMAC(s)
 	if err != nil {

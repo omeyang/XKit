@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	// 设计决策: 依赖 xjson 而非 encoding/json。xjson.PrettyE 提供带错误返回的格式化，
+	// 且 xjson 是项目内纯工具包（无外部依赖），依赖范围可控。
 	"github.com/omeyang/xkit/pkg/util/xjson"
 )
 

@@ -371,6 +371,30 @@ func TestRedisLockHandle_Renew(t *testing.T) {
 		err = handle.Renew(ctx, 60*time.Second)
 		assert.ErrorIs(t, err, ErrLockNotHeld)
 	})
+
+	t.Run("rejects zero TTL", func(t *testing.T) {
+		locker, _ := setupRedisLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-renew-zero", 30*time.Second)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Renew(ctx, 0)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
+
+	t.Run("rejects negative TTL", func(t *testing.T) {
+		locker, _ := setupRedisLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-renew-neg", 30*time.Second)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Renew(ctx, -time.Second)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
 }
 
 func TestRedisLocker_WithPrefix(t *testing.T) {

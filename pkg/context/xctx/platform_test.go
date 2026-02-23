@@ -14,7 +14,11 @@ import (
 // =============================================================================
 
 func TestWithHasParent(t *testing.T) {
+	t.Parallel()
+
 	t.Run("注入true", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithHasParent(context.Background(), true)
 		if err != nil {
 			t.Fatalf("WithHasParent(true) error = %v", err)
@@ -29,6 +33,8 @@ func TestWithHasParent(t *testing.T) {
 	})
 
 	t.Run("注入false", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithHasParent(context.Background(), false)
 		if err != nil {
 			t.Fatalf("WithHasParent(false) error = %v", err)
@@ -43,6 +49,8 @@ func TestWithHasParent(t *testing.T) {
 	})
 
 	t.Run("覆盖写入返回新值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), true)
 		ctx, _ = xctx.WithHasParent(ctx, false)
 		v, ok := xctx.HasParent(ctx)
@@ -55,6 +63,8 @@ func TestWithHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.WithHasParent(nilCtx, true)
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -64,7 +74,11 @@ func TestWithHasParent(t *testing.T) {
 }
 
 func TestHasParent(t *testing.T) {
+	t.Parallel()
+
 	t.Run("未设置返回false和ok=false", func(t *testing.T) {
+		t.Parallel()
+
 		v, ok := xctx.HasParent(context.Background())
 		if ok {
 			t.Error("HasParent(empty) ok = true, want false")
@@ -75,6 +89,8 @@ func TestHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回false和ok=false", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		v, ok := xctx.HasParent(nilCtx)
 		if ok {
@@ -86,6 +102,8 @@ func TestHasParent(t *testing.T) {
 	})
 
 	t.Run("区分未设置和设置为false", func(t *testing.T) {
+		t.Parallel()
+
 		// 未设置
 		_, okEmpty := xctx.HasParent(context.Background())
 		if okEmpty {
@@ -104,37 +122,51 @@ func TestHasParent(t *testing.T) {
 	})
 }
 
-func TestMustHasParent(t *testing.T) {
+func TestHasParentOrDefault(t *testing.T) {
+	t.Parallel()
+
 	t.Run("未设置返回false", func(t *testing.T) {
-		if xctx.MustHasParent(context.Background()) {
-			t.Error("MustHasParent(empty) = true, want false")
+		t.Parallel()
+
+		if xctx.HasParentOrDefault(context.Background()) {
+			t.Error("HasParentOrDefault(empty) = true, want false")
 		}
 	})
 
 	t.Run("nil context返回false", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
-		if xctx.MustHasParent(nilCtx) {
-			t.Error("MustHasParent(nil) = true, want false")
+		if xctx.HasParentOrDefault(nilCtx) {
+			t.Error("HasParentOrDefault(nil) = true, want false")
 		}
 	})
 
 	t.Run("设置为true返回true", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), true)
-		if !xctx.MustHasParent(ctx) {
-			t.Error("MustHasParent(true) = false, want true")
+		if !xctx.HasParentOrDefault(ctx) {
+			t.Error("HasParentOrDefault(true) = false, want true")
 		}
 	})
 
 	t.Run("设置为false返回false", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), false)
-		if xctx.MustHasParent(ctx) {
-			t.Error("MustHasParent(false) = true, want false")
+		if xctx.HasParentOrDefault(ctx) {
+			t.Error("HasParentOrDefault(false) = true, want false")
 		}
 	})
 }
 
 func TestRequireHasParent(t *testing.T) {
+	t.Parallel()
+
 	t.Run("存在则返回值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), true)
 		v, err := xctx.RequireHasParent(ctx)
 		if err != nil {
@@ -146,6 +178,8 @@ func TestRequireHasParent(t *testing.T) {
 	})
 
 	t.Run("设置为false也能正确返回", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), false)
 		v, err := xctx.RequireHasParent(ctx)
 		if err != nil {
@@ -157,6 +191,8 @@ func TestRequireHasParent(t *testing.T) {
 	})
 
 	t.Run("不存在则返回错误", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := xctx.RequireHasParent(context.Background())
 		if err == nil {
 			t.Error("RequireHasParent() should return error for empty context")
@@ -167,6 +203,8 @@ func TestRequireHasParent(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.RequireHasParent(nilCtx)
 		if err == nil {
@@ -193,12 +231,12 @@ func ExampleHasParent() {
 		fmt.Println("HasParent is not set")
 	}
 
-	// 方式2：使用 MustHasParent 简化获取
-	fmt.Println("MustHasParent:", xctx.MustHasParent(ctx))
+	// 方式2：使用 HasParentOrDefault 简化获取
+	fmt.Println("HasParentOrDefault:", xctx.HasParentOrDefault(ctx))
 
 	// Output:
 	// HasParent is set to: true
-	// MustHasParent: true
+	// HasParentOrDefault: true
 }
 
 func ExampleRequireHasParent() {
@@ -230,7 +268,11 @@ func ExampleRequireHasParent_error() {
 // =============================================================================
 
 func TestWithUnclassRegionID(t *testing.T) {
+	t.Parallel()
+
 	t.Run("注入区域ID", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithUnclassRegionID(context.Background(), "region-001")
 		if err != nil {
 			t.Fatalf("WithUnclassRegionID() error = %v", err)
@@ -242,6 +284,8 @@ func TestWithUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("注入空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithUnclassRegionID(context.Background(), "")
 		if err != nil {
 			t.Fatalf("WithUnclassRegionID() error = %v", err)
@@ -253,6 +297,8 @@ func TestWithUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("覆盖写入返回新值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithUnclassRegionID(context.Background(), "region-001")
 		ctx, _ = xctx.WithUnclassRegionID(ctx, "region-002")
 		got := xctx.UnclassRegionID(ctx)
@@ -262,6 +308,8 @@ func TestWithUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.WithUnclassRegionID(nilCtx, "region-001")
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -271,7 +319,11 @@ func TestWithUnclassRegionID(t *testing.T) {
 }
 
 func TestUnclassRegionID(t *testing.T) {
+	t.Parallel()
+
 	t.Run("未设置返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		got := xctx.UnclassRegionID(context.Background())
 		if got != "" {
 			t.Errorf("UnclassRegionID(empty) = %q, want empty", got)
@@ -279,6 +331,8 @@ func TestUnclassRegionID(t *testing.T) {
 	})
 
 	t.Run("nil context返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		got := xctx.UnclassRegionID(nilCtx)
 		if got != "" {
@@ -292,7 +346,11 @@ func TestUnclassRegionID(t *testing.T) {
 // =============================================================================
 
 func TestGetPlatform(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回零值", func(t *testing.T) {
+		t.Parallel()
+
 		p := xctx.GetPlatform(context.Background())
 		if p.HasParent {
 			t.Error("GetPlatform(empty).HasParent = true, want false")
@@ -303,6 +361,8 @@ func TestGetPlatform(t *testing.T) {
 	})
 
 	t.Run("nil context返回零值", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		p := xctx.GetPlatform(nilCtx)
 		if p.HasParent {
@@ -314,6 +374,8 @@ func TestGetPlatform(t *testing.T) {
 	})
 
 	t.Run("获取完整平台信息", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithHasParent(context.Background(), true)
 		ctx, _ = xctx.WithUnclassRegionID(ctx, "region-001")
 
@@ -327,6 +389,8 @@ func TestGetPlatform(t *testing.T) {
 	})
 
 	t.Run("部分设置", func(t *testing.T) {
+		t.Parallel()
+
 		// 只设置 HasParent
 		ctx, _ := xctx.WithHasParent(context.Background(), true)
 		p := xctx.GetPlatform(ctx)
@@ -340,7 +404,11 @@ func TestGetPlatform(t *testing.T) {
 }
 
 func TestWithPlatform(t *testing.T) {
+	t.Parallel()
+
 	t.Run("注入完整Platform", func(t *testing.T) {
+		t.Parallel()
+
 		p := xctx.Platform{
 			HasParent:       true,
 			UnclassRegionID: "region-001",
@@ -360,6 +428,8 @@ func TestWithPlatform(t *testing.T) {
 	})
 
 	t.Run("HasParent为false也会注入", func(t *testing.T) {
+		t.Parallel()
+
 		p := xctx.Platform{
 			HasParent:       false,
 			UnclassRegionID: "region-001",
@@ -380,6 +450,8 @@ func TestWithPlatform(t *testing.T) {
 	})
 
 	t.Run("空UnclassRegionID不注入", func(t *testing.T) {
+		t.Parallel()
+
 		// 先设置一个值
 		ctx, _ := xctx.WithUnclassRegionID(context.Background(), "existing")
 
@@ -401,6 +473,8 @@ func TestWithPlatform(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		p := xctx.Platform{HasParent: true}
 		_, err := xctx.WithPlatform(nilCtx, p)
@@ -415,6 +489,8 @@ func TestWithPlatform(t *testing.T) {
 // =============================================================================
 
 func TestPlatformKeyConstants(t *testing.T) {
+	t.Parallel()
+
 	if xctx.KeyHasParent != "has_parent" {
 		t.Errorf("KeyHasParent = %q, want %q", xctx.KeyHasParent, "has_parent")
 	}

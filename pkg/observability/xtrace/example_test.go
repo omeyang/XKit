@@ -128,6 +128,22 @@ func ExampleInjectToOutgoingContext() {
 	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00
 }
 
+func ExampleTraceInfoFromContext() {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithRequestID(ctx, "req-123")
+
+	info := xtrace.TraceInfoFromContext(ctx)
+	fmt.Println("TraceID:", info.TraceID)
+	fmt.Println("RequestID:", info.RequestID)
+	fmt.Println("IsEmpty:", info.IsEmpty())
+	// Output:
+	// TraceID: 0af7651916cd43dd8448eb211c80319c
+	// RequestID: req-123
+	// IsEmpty: false
+}
+
 func ExampleTraceInfo_IsEmpty() {
 	empty := xtrace.TraceInfo{}
 	fmt.Println("empty:", empty.IsEmpty())

@@ -8,10 +8,10 @@ import (
 )
 
 // WireRange 是 IP 范围的序列化格式。
-// 使用 JSON/BSON/YAML 标签 {"s":"start","e":"end"}。
+// 使用 JSON/BSON/YAML 标签 {"start":"...","end":"..."}。
 type WireRange struct {
-	Start string `json:"s" bson:"s" yaml:"s"`
-	End   string `json:"e" bson:"e" yaml:"e"`
+	Start string `json:"start" bson:"start" yaml:"start"`
+	End   string `json:"end" bson:"end" yaml:"end"`
 }
 
 // WireRangeFrom 从 [netipx.IPRange] 创建 WireRange，带有效性校验。
@@ -110,8 +110,21 @@ func (w WireRange) IsZero() bool {
 
 // String 返回 WireRange 的字符串表示："start-end"。
 // 如果起止相同则只返回单个 IP。
+// 零值返回空字符串；部分设置（仅 Start 或仅 End）返回有值的部分，避免产生
+// 尾随/前导连字符（如 "10.0.0.1-" 或 "-10.0.0.1"）影响日志可读性。
+//
+// 设计决策: 部分设置（如 Start="10.0.0.1", End=""）与单 IP 范围（Start==End）
+// 的 String() 输出相同，无法通过字符串区分。这是有意取舍——优先日志可读性
+// 而非可逆性。如需区分，请检查 [WireRange.IsZero] 或直接比较 Start/End 字段。
+// [WireRange.ToIPRange] 会对部分设置返回错误，生产运行时不受此歧义影响。
 func (w WireRange) String() string {
 	if w.Start == w.End {
+		return w.Start
+	}
+	if w.Start == "" {
+		return w.End
+	}
+	if w.End == "" {
 		return w.Start
 	}
 	return w.Start + "-" + w.End

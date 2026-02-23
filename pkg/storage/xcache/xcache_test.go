@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestNewRedis_WithValidClient_Succeeds(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	assert.NotNil(t, cache)
 }
@@ -37,7 +38,7 @@ func TestNewRedis_WithValidClient_Succeeds(t *testing.T) {
 func TestNewMemory_WithDefaults_Succeeds(t *testing.T) {
 	cache, err := NewMemory()
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	assert.NotNil(t, cache)
 }
@@ -104,7 +105,7 @@ func newTestRedisCache(t *testing.T) (Redis, *miniredis.Miniredis) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = cache.Close()
+		_ = cache.Close(context.Background())
 		mr.Close()
 	})
 
@@ -192,7 +193,7 @@ func TestRedisWrapper_Lock_WithRetry_Success(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(50*time.Millisecond, 5))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -220,7 +221,7 @@ func TestRedisWrapper_Lock_WithRetry_ContextCancelled(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(100*time.Millisecond, 10))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -245,7 +246,7 @@ func TestRedisWrapper_Lock_WithRetry_AllRetriesFail(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(10*time.Millisecond, 2))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -326,7 +327,7 @@ func newTestMemoryCache(t *testing.T) Memory {
 	t.Helper()
 	cache, err := NewMemory(WithMemoryMaxCost(1 << 20))
 	require.NoError(t, err)
-	t.Cleanup(func() { cache.Close() })
+	t.Cleanup(func() { cache.Close(context.Background()) })
 	return cache
 }
 
@@ -437,10 +438,41 @@ func TestWithLockRetry_SetsOptions(t *testing.T) {
 	assert.Equal(t, 5, opts.LockRetryCount)
 }
 
+func TestWithLockRetry_ClampsCountToUpperBound(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(100*time.Millisecond, MaxLockRetryCount+500)(opts)
+	assert.Equal(t, MaxLockRetryCount, opts.LockRetryCount)
+}
+
+func TestWithLockRetry_ClampsIntervalToUpperBound(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(MaxLockRetryInterval+time.Minute, 5)(opts)
+	assert.Equal(t, MaxLockRetryInterval, opts.LockRetryInterval)
+}
+
+func TestWithLockRetry_ExactUpperBounds(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(MaxLockRetryInterval, MaxLockRetryCount)(opts)
+	assert.Equal(t, MaxLockRetryInterval, opts.LockRetryInterval)
+	assert.Equal(t, MaxLockRetryCount, opts.LockRetryCount)
+}
+
 func TestWithLockKeyPrefix_SetsOption(t *testing.T) {
 	opts := defaultRedisOptions()
 	WithLockKeyPrefix("lock:")(opts)
 	assert.Equal(t, "lock:", opts.LockKeyPrefix)
+}
+
+func TestRedisWrapper_Lock_WithInvalidTTL_ReturnsError(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+	ctx := context.Background()
+
+	// TTL <= 0 应返回 ErrInvalidLockTTL
+	_, err := cache.Lock(ctx, "key", 0)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
+
+	_, err = cache.Lock(ctx, "key", -1*time.Second)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
 }
 
 // =============================================================================
@@ -491,7 +523,7 @@ func TestNewMemory_WithInvalidConfig_UsesDefaults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, cache)
 	if cache != nil {
-		cache.Close()
+		cache.Close(context.Background())
 	}
 }
 
@@ -571,4 +603,139 @@ func TestMemoryWrapper_Stats_HitRatio_NonZero(t *testing.T) {
 
 	// 如果所有尝试都失败，至少确认 stats 结构被返回
 	t.Logf("Could not generate hits/misses, stats: %+v", stats)
+}
+
+// =============================================================================
+// Close 行为测试
+// =============================================================================
+
+func TestRedisWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client)
+	require.NoError(t, err)
+
+	// 第一次关闭应成功
+	err = cache.Close(context.Background())
+	assert.NoError(t, err)
+
+	// 第二次关闭应返回 ErrClosed
+	err = cache.Close(context.Background())
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestRedisWrapper_LockAfterClose_ReturnsErrClosed(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client)
+	require.NoError(t, err)
+
+	_ = cache.Close(context.Background())
+
+	_, err = cache.Lock(context.Background(), "test-key", 10*time.Second)
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestRedisWrapper_Lock_WithEmptyKey_ReturnsError(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+	ctx := context.Background()
+
+	_, err := cache.Lock(ctx, "", 10*time.Second)
+	assert.ErrorIs(t, err, ErrEmptyKey)
+}
+
+func TestRedisWrapper_Lock_WithNilContext_ReturnsErrNilContext(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+
+	//nolint:staticcheck // SA1012: 故意传入 nil context 测试 fail-fast 校验
+	_, err := cache.Lock(nil, "key", 10*time.Second)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestMemoryWrapper_Stats_AfterClose_ReturnsZero(t *testing.T) {
+	cache, err := NewMemory()
+	require.NoError(t, err)
+
+	_ = cache.Close(context.Background())
+
+	// Stats() 应该返回零值而非 panic
+	stats := cache.Stats()
+	assert.Equal(t, MemoryStats{}, stats)
+}
+
+func TestMemoryWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
+	cache, err := NewMemory()
+	require.NoError(t, err)
+
+	// 第一次关闭应成功
+	err = cache.Close(context.Background())
+	assert.NoError(t, err)
+
+	// 第二次关闭应返回 ErrClosed
+	err = cache.Close(context.Background())
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+// =============================================================================
+// 辅助函数后备路径测试
+// =============================================================================
+
+func TestGetHostIdentifier_WhenHostnameFails_ReturnsFallback(t *testing.T) {
+	// Given - 模拟 os.Hostname 失败
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", errors.New("hostname unavailable")
+	}
+	defer func() { osHostname = origHostname }()
+
+	// When
+	id := getHostIdentifier()
+
+	// Then - 应返回 "unknown-" 前缀的后备值
+	assert.Contains(t, id, "unknown-")
+}
+
+func TestGetHostIdentifier_WhenHostnameEmpty_ReturnsFallback(t *testing.T) {
+	// Given - os.Hostname 返回空字符串
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", nil
+	}
+	defer func() { osHostname = origHostname }()
+
+	// When
+	id := getHostIdentifier()
+
+	// Then
+	assert.Contains(t, id, "unknown-")
+}
+
+func TestGenerateLockValue_WhenCryptoRandFails_ReturnsFallbackValue(t *testing.T) {
+	// Given - 模拟 crypto/rand.Read 失败
+	origRandRead := cryptoRandRead
+	cryptoRandRead = func(b []byte) (int, error) {
+		return 0, errors.New("rand unavailable")
+	}
+	defer func() { cryptoRandRead = origRandRead }()
+
+	// When
+	value := generateLockValue()
+
+	// Then - 应返回主机标识符格式的后备值（包含 "-" 分隔符）
+	assert.NotEmpty(t, value)
+	assert.Contains(t, value, "-")
+}
+
+func TestGenerateLockValue_Normal_ReturnsHexString(t *testing.T) {
+	// When
+	value := generateLockValue()
+
+	// Then - 应返回 32 字符的 hex 字符串 (16 bytes = 32 hex chars)
+	assert.Len(t, value, 32)
 }

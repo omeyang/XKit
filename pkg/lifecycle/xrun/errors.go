@@ -8,13 +8,22 @@ import (
 
 // ErrSignal 表示因收到系统信号而终止。
 // 使用 errors.Is(err, ErrSignal) 判断是否为信号错误。
-var ErrSignal = errors.New("received signal")
+var ErrSignal = errors.New("xrun: received signal")
 
 // ErrInvalidInterval 表示 Ticker 的间隔参数无效（必须为正数）。
 var ErrInvalidInterval = errors.New("xrun: interval must be positive")
 
 // ErrInvalidDelay 表示 Timer 的延迟参数无效（不能为负数）。
 var ErrInvalidDelay = errors.New("xrun: delay must not be negative")
+
+// ErrNilFunc 表示 Ticker/Timer 的回调函数为 nil。
+var ErrNilFunc = errors.New("xrun: fn must not be nil")
+
+// ErrNilServer 表示 HTTPServer 的 server 参数为 nil。
+var ErrNilServer = errors.New("xrun: server must not be nil")
+
+// ErrNilService 表示 RunServices/RunServicesWithOptions 的 service 参数为 nil。
+var ErrNilService = errors.New("xrun: service must not be nil")
 
 // SignalError 包含触发终止的具体信号信息。
 //
@@ -33,17 +42,12 @@ type SignalError struct {
 // Error 实现 error 接口。
 func (e *SignalError) Error() string {
 	if e.Signal == nil {
-		return "received signal <nil>"
+		return "xrun: received signal <nil>"
 	}
-	return fmt.Sprintf("received signal %s", e.Signal)
+	return fmt.Sprintf("xrun: received signal %s", e.Signal)
 }
 
-// Is 支持 errors.Is(err, ErrSignal) 判断。
-func (e *SignalError) Is(target error) bool {
-	return target == ErrSignal
-}
-
-// Unwrap 返回底层错误。
+// Unwrap 返回底层错误，使 errors.Is(err, ErrSignal) 和 errors.As 正常工作。
 func (e *SignalError) Unwrap() error {
 	return ErrSignal
 }

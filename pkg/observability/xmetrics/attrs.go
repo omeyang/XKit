@@ -23,7 +23,15 @@ func Int64(key string, value int64) Attr {
 }
 
 // Uint64 创建 uint64 属性。
+// OTel 转换时：值 ≤ math.MaxInt64 存储为 int64，超出时回退为 string（fmt.Sprint）。
+// 这是 OTel API 不支持原生 uint64 的限制，可能导致同一键在不同调用中产生不同的属性类型。
 func Uint64(key string, value uint64) Attr {
+	return Attr{Key: key, Value: value}
+}
+
+// Float32 创建 float32 属性。
+// OTel 转换时会提升为 float64。
+func Float32(key string, value float32) Attr {
 	return Attr{Key: key, Value: value}
 }
 
@@ -39,8 +47,8 @@ func Duration(key string, value time.Duration) Attr {
 }
 
 // Any 创建任意类型属性。
-// 对于非标准类型（非 string/bool/int/int64/uint64/float64/float32/time.Duration），
-// OTel 转换时会调用 fmt.Sprint 字符串化。推荐优先使用 [String]、[Int] 等类型安全函数。
+// 对于非标准类型（非 string/bool/int/int64/uint64/float32/float64/time.Duration），
+// OTel 转换时会调用 fmt.Sprint 字符串化。推荐优先使用 [String]、[Int]、[Float32] 等类型安全函数。
 func Any(key string, value any) Attr {
 	return Attr{Key: key, Value: value}
 }

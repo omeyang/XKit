@@ -121,7 +121,7 @@ func BenchmarkCommandRegistry_Get(b *testing.B) {
 	// 注册多个命令
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}
@@ -140,7 +140,7 @@ func BenchmarkCommandRegistry_Has(b *testing.B) {
 
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}
@@ -161,7 +161,7 @@ func BenchmarkCommandRegistry_Whitelist(b *testing.B) {
 
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}

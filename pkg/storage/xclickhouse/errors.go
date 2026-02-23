@@ -9,8 +9,9 @@ import (
 
 // 包级别错误定义。
 var (
-	// ErrNilConn 表示传入了 nil 连接。
-	ErrNilConn = errors.New("xclickhouse: nil connection")
+	// ErrNilClient 表示传入了 nil 连接。
+	// 命名与 xmongo.ErrNilClient、xcache.ErrNilClient 保持一致。
+	ErrNilClient = errors.New("xclickhouse: nil connection")
 
 	// ErrClosed 表示客户端已关闭。
 	ErrClosed = errors.New("xclickhouse: client closed")
@@ -24,6 +25,7 @@ var (
 	ErrInvalidPageSize = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPageSize)
 
 	// ErrPageSizeTooLarge 表示页大小超过允许的最大值。
+	// 此错误为 xclickhouse 特有（storageopt 无对应错误），因此不包装内部错误。
 	ErrPageSizeTooLarge = errors.New("xclickhouse: page size exceeds maximum allowed")
 
 	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。
@@ -37,22 +39,42 @@ var (
 	ErrEmptyTable = errors.New("xclickhouse: empty table name")
 
 	// ErrInvalidTableName 表示表名包含非法字符。
-	ErrInvalidTableName = errors.New("xclickhouse: invalid table name, contains illegal characters")
+	// 支持格式：table、db.table、`table`、`db`.`table`。
+	// 不支持混合引用风格（如 db.`table`），如需此类表名请使用 Client() 直接操作。
+	ErrInvalidTableName = errors.New("xclickhouse: invalid table name (supported: name, db.name, `name`, `db`.`name`; use Client() for advanced patterns)")
 
 	// ErrEmptyRows 表示待插入数据为空。
 	ErrEmptyRows = errors.New("xclickhouse: empty rows")
 
+	// ErrBatchSizeTooLarge 表示批量大小超过允许的最大值。
+	ErrBatchSizeTooLarge = errors.New("xclickhouse: batch size exceeds maximum allowed")
+
 	// ErrQueryContainsFormat 表示查询包含 FORMAT 子句。
 	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
 	//
-	// 注意：检测使用正则匹配，可能对字符串字面量中的 FORMAT 产生误判。
-	// 如遇误判，请使用 Conn() 直接执行查询。
+	// 检测使用末尾锚定正则（"FORMAT <name>" 在查询末尾），
+	// 不会误判 FORMAT() 函数调用或字符串常量中的 FORMAT。
+	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsFormat = errors.New("xclickhouse: query contains FORMAT clause, not supported in QueryPage")
 
 	// ErrQueryContainsSettings 表示查询包含 SETTINGS 子句。
 	// QueryPage 使用子查询包装，SETTINGS 应通过连接参数配置。
 	//
-	// 注意：检测使用正则匹配，可能对字符串字面量中的 SETTINGS 产生误判。
-	// 如遇误判，请使用 Conn() 直接执行查询。
+	// 检测使用 "SETTINGS key=value" 模式匹配，
+	// 不会误判 SETTINGS_KEY 等字段名。
+	// 字符串常量中的 "SETTINGS key=" 模式可能产生误判。
+	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsSettings = errors.New("xclickhouse: query contains SETTINGS clause, use connection options instead")
+
+	// ErrQueryContainsLimitOffset 表示查询包含 LIMIT 或 OFFSET 子句。
+	// QueryPage 自动管理分页，不接受包含 LIMIT/OFFSET 的查询。
+	//
+	// 注意：检测使用末尾正则匹配，仅检测查询末尾的 LIMIT/OFFSET。
+	// 子查询中的 LIMIT/OFFSET 不会被检测到。
+	ErrQueryContainsLimitOffset = errors.New("xclickhouse: query contains LIMIT/OFFSET clause, QueryPage manages pagination automatically")
+
+	// ErrOffsetTooLarge 表示分页偏移量超过允许的最大值。
+	// 大偏移量在 ClickHouse 中会导致扫描放大和性能下降。
+	// 如需大数据量分页，请使用 Client() 实现游标分页。
+	ErrOffsetTooLarge = errors.New("xclickhouse: offset exceeds maximum allowed, use cursor-based pagination via Client()")
 )

@@ -13,7 +13,7 @@ import (
 )
 
 // 设计决策: 健康检查通过错误消息匹配判断 "topic 不存在" 这一预期错误。
-// Pulsar Go SDK（pulsar-client-go v0.14）未导出结构化错误类型，仅能通过字符串匹配。
+// Pulsar Go SDK（pulsar-client-go v0.18）未导出结构化错误类型，仅能通过字符串匹配。
 // 以下模式限定为 topic 相关关键词，避免宽泛匹配导致误判。
 // SDK 版本更新时需验证这些模式是否仍然有效。
 var healthCheckTopicPatterns = []string{
@@ -42,6 +42,10 @@ type clientWrapper struct {
 	producersCount atomic.Int32
 	consumersCount atomic.Int32
 
+	// healthWg 跟踪 Health() 超时后的后台清理 goroutine。
+	// Close() 等待所有清理 goroutine 完成，防止 goroutine 泄漏。
+	healthWg sync.WaitGroup
+
 	// 关闭状态
 	closed atomic.Bool
 }
@@ -69,6 +73,10 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		return ErrClosed
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// 应用健康检查超时
 	healthCtx, cancel := context.WithTimeout(ctx, w.options.HealthTimeout)
 	defer cancel()
@@ -77,7 +85,7 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		Component: componentName,
 		Operation: "health",
 		Kind:      xmetrics.KindClient,
-		Attrs:     pulsarAttrs(""),
+		Attrs:     pulsarAttrs(w.options.HealthCheckTopic),
 	})
 	defer func() {
 		span.End(xmetrics.Result{Err: err})
@@ -90,7 +98,7 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		// Pulsar 客户端没有直接的健康检查 API，
 		// 但创建 reader 会验证与 broker 的连接
 		reader, err := w.client.CreateReader(pulsar.ReaderOptions{
-			Topic:          "non-persistent://public/default/__health_check__",
+			Topic:          w.options.HealthCheckTopic,
 			StartMessageID: pulsar.EarliestMessageID(),
 		})
 		resultCh <- healthCheckResult{err: err, reader: reader}
@@ -101,12 +109,13 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		// 超时后，goroutine 仍可能在执行（因为 CreateReader 不接受 context）
 		// 启动后台清理 goroutine，避免阻塞调用方，同时确保资源被清理。
 		// 清理 goroutine 最终会因 Pulsar 客户端的 OperationTimeout 而返回。
-		go func() {
+		// 通过 healthWg 跟踪，Close() 会等待所有清理 goroutine 完成。
+		w.healthWg.Go(func() {
 			result := <-resultCh
 			if result.reader != nil {
 				result.reader.Close()
 			}
-		}()
+		})
 		return healthCtx.Err()
 	case result := <-resultCh:
 		if result.err != nil {
@@ -133,14 +142,12 @@ func (w *clientWrapper) CreateProducer(options pulsar.ProducerOptions) (pulsar.P
 	}
 	producer, err := w.client.CreateProducer(options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: create producer: %w", err)
 	}
 	w.producersCount.Add(1)
 	return &trackedProducer{
 		Producer: producer,
-		onClose: func() {
-			w.producersCount.Add(-1)
-		},
+		onClose:  func() { decrementIfPositive(&w.producersCount) },
 	}, nil
 }
 
@@ -151,14 +158,12 @@ func (w *clientWrapper) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consum
 	}
 	consumer, err := w.client.Subscribe(options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: subscribe: %w", err)
 	}
 	w.consumersCount.Add(1)
 	return &trackedConsumer{
 		Consumer: consumer,
-		onClose: func() {
-			w.consumersCount.Add(-1)
-		},
+		onClose:  func() { decrementIfPositive(&w.consumersCount) },
 	}, nil
 }
 
@@ -173,11 +178,17 @@ func (w *clientWrapper) Stats() Stats {
 
 // Close 优雅关闭客户端。
 // 重复调用是安全的，仅首次调用会实际关闭底层连接。
-func (w *clientWrapper) Close() error {
+// Pulsar 内部关闭所有 producer/consumer 时不经过 tracked wrapper，
+// 因此手动重置计数器以确保 Stats() 返回一致状态。
+// Close 会等待 Health() 超时后的后台清理 goroutine 全部完成，防止 goroutine 泄漏。
+func (w *clientWrapper) Close(_ context.Context) error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	w.client.Close()
+	w.healthWg.Wait()
+	w.producersCount.Store(0)
+	w.consumersCount.Store(0)
 	return nil
 }
 
@@ -215,6 +226,23 @@ func (c *trackedConsumer) Close() {
 			c.onClose()
 		}
 	})
+}
+
+// decrementIfPositive 使用 CAS 循环将计数器安全递减，确保不低于 0。
+//
+// 设计决策: clientWrapper.Close() 调用底层 client.Close() 后手动重置计数器为 0。
+// 如果用户之后再关闭仍持有引用的 trackedProducer/trackedConsumer，
+// 简单的 Add(-1) 会导致计数器为负值。CAS 循环确保计数器语义不变式。
+func decrementIfPositive(counter *atomic.Int32) {
+	for {
+		old := counter.Load()
+		if old <= 0 {
+			return
+		}
+		if counter.CompareAndSwap(old, old-1) {
+			return
+		}
+	}
 }
 
 // 确保实现接口

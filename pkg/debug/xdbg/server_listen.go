@@ -30,7 +30,10 @@ func (s *Server) startListening() error {
 	s.transportMu.Unlock()
 
 	if err := transport.Listen(s.ctx); err != nil {
-		s.state.Store(int32(ServerStateStarted))
+		// 设计决策: 使用 CAS 而非 Store 回滚状态。若并发 Stop() 已将状态设为 Stopped，
+		// 无条件 Store(Started) 会将终态回退为 Started，破坏生命周期语义。
+		// CAS 仅在当前仍为 Listening 时才回滚到 Started，保持 Stopped 终态不变。
+		s.state.CompareAndSwap(int32(ServerStateListening), int32(ServerStateStarted))
 		return fmt.Errorf("start listening: %w", err)
 	}
 
@@ -68,13 +71,20 @@ func (s *Server) stopListening() error {
 	s.stopShutdownTimer()
 
 	// 关闭传输层（这会导致 acceptLoop 退出）
+	// 设计决策: transport.Close 错误仅写审计日志，不向调用方返回。
+	// 此时状态已从 Listening 转为 Started，新的 transport 即将创建（非自定义场景），
+	// 旧 transport 的关闭错误不影响后续 Enable→Listen 流程。
+	// 与 Stop() 不同，Disable() 是可恢复操作，调用方无需感知关闭细节。
 	s.transportMu.Lock()
 	if s.transport != nil {
 		if err := s.transport.Close(); err != nil {
 			s.audit(AuditEventCommandFailed, nil, "stopListening:transport", nil, 0, err)
 		}
-		// 仅当不是自定义传输层时才重新创建
-		// 自定义传输层由用户管理生命周期，下次 Enable 时需要用户重新提供或复用
+		// 设计决策: 仅当不是自定义传输层时才重新创建。
+		// 内置 UnixTransport 的 Close 是终态（设置 closed=true），因此需要重建。
+		// 自定义传输层由用户管理生命周期：若需 Enable→Disable→Enable 循环，
+		// 其 Close 实现应仅关闭监听器而非标记终态，以支持后续 Listen 调用。
+		// 参见 WithTransport 文档。
 		if !s.customTransport {
 			s.transport = NewUnixTransport(s.opts.SocketPath, os.FileMode(s.opts.SocketPerm))
 		}

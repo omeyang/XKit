@@ -24,6 +24,10 @@ const DefaultDirPerm = 0750
 // 安全注意：底层使用 os.MkdirAll，会跟随符号链接。如果路径中包含指向外部的
 // 符号链接，目录可能被创建在符号链接目标位置。如需防护此风险，请先使用
 // SafeJoinWithOptions（启用 ResolveSymlinks）验证路径。
+//
+// 本函数不会拒绝包含 ".." 的路径段。若 filename 来自不可信输入，应先做路径约束：
+//   - 仅做格式校验：使用 SanitizePath
+//   - 需要限制在固定目录内：使用 SafeJoin 或 SafeJoinWithOptions
 func EnsureDir(filename string) error {
 	return EnsureDirWithPerm(filename, DefaultDirPerm)
 }
@@ -37,6 +41,8 @@ func EnsureDir(filename string) error {
 // 如果目录已存在，不会修改其权限。
 //
 // 安全注意：底层使用 os.MkdirAll，会跟随符号链接。参见 [EnsureDir] 的安全注意事项。
+// 本函数同样不会拒绝 ".." 路径段；不可信输入应先经 [SanitizePath] 或
+// [SafeJoin]/[SafeJoinWithOptions] 校验后再调用。
 func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 	if filename == "" {
 		return fmt.Errorf("filename is required: %w", ErrEmptyPath)
@@ -44,13 +50,19 @@ func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 	if containsNullByte(filename) {
 		return fmt.Errorf("filename contains null byte: %w", ErrNullByte)
 	}
-	// 目录必须包含所有者执行位（0100），否则无法进入和遍历
+	// 设计决策: 仅校验所有者执行位（0100），不限制 world-writable 等权限位。
+	// 权限策略属于调用方职责：EnsureDir() 提供安全默认值（0750），
+	// EnsureDirWithPerm 为需要自定义权限的场景（如共享目录、临时目录）保留灵活性。
 	if perm&0100 == 0 {
 		return fmt.Errorf("directory permission %04o missing owner execute bit: %w", perm, ErrInvalidPerm)
 	}
 	dir := filepath.Dir(filename)
-	if dir == "" || dir == "." {
+	// filepath.Dir 对非空字符串至少返回 "."，不会返回 ""（filename 已在前面校验非空）
+	if dir == "." {
 		return nil
 	}
-	return os.MkdirAll(dir, perm)
+	if err := os.MkdirAll(dir, perm); err != nil {
+		return fmt.Errorf("xfile: create directory %q: %w", dir, err)
+	}
+	return nil
 }

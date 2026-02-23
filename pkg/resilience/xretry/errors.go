@@ -9,6 +9,14 @@ import (
 // 设计决策: 库代码不应因 nil 接收者/参数而 panic，统一返回显式错误。
 var ErrNilRetryer = errors.New("xretry: nil Retryer")
 
+// ErrNilFunc 表示传入了 nil 回调函数。
+var ErrNilFunc = errors.New("xretry: nil function")
+
+// ErrNilContext 表示传入了 nil context。
+// 设计决策: 库代码不应因 nil context 而 panic，统一返回显式错误。
+// 与 xsemaphore、xkeylock 等包保持一致的 nil context 防护策略。
+var ErrNilContext = errors.New("xretry: nil context")
+
 // RetryableError 可重试错误接口
 // 实现此接口的错误会被自动识别为可重试或不可重试
 type RetryableError interface {
@@ -28,7 +36,7 @@ func NewPermanentError(err error) *PermanentError {
 
 func (e *PermanentError) Error() string {
 	if e.err == nil {
-		return "permanent error"
+		return "xretry: permanent error"
 	}
 	return e.err.Error()
 }
@@ -53,7 +61,7 @@ func NewTemporaryError(err error) *TemporaryError {
 
 func (e *TemporaryError) Error() string {
 	if e.err == nil {
-		return "temporary error"
+		return "xretry: temporary error"
 	}
 	return e.err.Error()
 }

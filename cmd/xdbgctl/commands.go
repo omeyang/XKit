@@ -17,13 +17,73 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// errServerRejected 表示服务端拒绝执行命令。
+// 用于 errors.Is 判断，使脚本可区分服务端拒绝与网络/协议错误。
+var errServerRejected = errors.New("服务端拒绝执行")
+
 // exitError 表示需要非零退出码但已完成输出的场景。
 // 命令内部已完成所有输出，main 只需设置退出码。
 type exitError struct {
 	code int
 }
 
-func (e *exitError) Error() string { return "" }
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// usageError 表示用户输入/参数错误（退出码 2）。
+// 设计决策: 与运行时错误（退出码 1）区分，使自动化脚本可判断是否为用户输入问题。
+type usageError struct {
+	msg string
+}
+
+func (e *usageError) Error() string { return e.msg }
+
+// isCLIUsageError 检测是否为 CLI 框架产生的参数错误（如未知 flag、未知命令）。
+// 设计决策: urfave/cli/v3 对参数错误返回的是 plain error 或 ExitCoder（无统一自定义类型），
+// 只能通过错误消息前缀识别。这些前缀是 urfave/cli 内部常量，变化概率极低。
+func isCLIUsageError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "flag provided but not defined") ||
+		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "invalid value") ||
+		strings.Contains(msg, "No help topic for")
+}
+
+// maxCommLen 是 Linux TASK_COMM_LEN (16) 减去 null 终止符后的最大进程名长度。
+const maxCommLen = 15
+
+// maxTimeout 超时参数上界。超过此值视为误输入，避免 CLI 表现为"挂起"。
+const maxTimeout = 5 * time.Minute
+
+// validateTimeout 校验超时参数。
+func validateTimeout(timeout time.Duration) error {
+	if timeout <= 0 {
+		return &usageError{msg: fmt.Sprintf("超时时间必须为正数，当前值: %v", timeout)}
+	}
+	if timeout > maxTimeout {
+		return &usageError{msg: fmt.Sprintf("超时时间不能超过 %v，当前值: %v", maxTimeout, timeout)}
+	}
+	return nil
+}
+
+// validateProcessName 校验进程名参数。
+func validateProcessName(name string) error {
+	if name == "" {
+		return &usageError{msg: "进程名不能为空"}
+	}
+	if len(name) > maxCommLen {
+		return &usageError{msg: fmt.Sprintf(
+			"进程名 %q 超过 Linux 最大长度 %d 字符", name, maxCommLen)}
+	}
+	for _, r := range name {
+		if r < 32 || r == 127 {
+			return &usageError{msg: fmt.Sprintf("进程名包含非法控制字符: %q", name)}
+		}
+		if r == '/' || r == '\\' {
+			return &usageError{msg: fmt.Sprintf("进程名包含非法路径分隔符: %q", name)}
+		}
+	}
+	return nil
+}
 
 // 创建所有子命令。
 func createCommands() []*cli.Command {
@@ -86,6 +146,10 @@ func createToggleCommand() *cli.Command {
 			socketPath := cmd.String("socket")
 			pidFlag := cmd.Int("pid")
 			nameFlag := cmd.String("name")
+			// 用户显式传入 --pid 0 时报错（未传 --pid 时默认值也是 0，需区分）
+			if cmd.IsSet("pid") && pidFlag <= 0 {
+				return &usageError{msg: fmt.Sprintf("无效的 PID: %d（PID 必须为正整数）", pidFlag)}
+			}
 			return cmdToggle(ctx, socketPath, pidFlag, nameFlag)
 		},
 	}
@@ -149,6 +213,47 @@ func createInteractiveCommand() *cli.Command {
 	}
 }
 
+// validateToggleArgs 校验 toggle 命令参数。
+func validateToggleArgs(pidFlag int, nameFlag string) error {
+	if pidFlag < 0 {
+		return &usageError{msg: fmt.Sprintf("无效的 PID: %d（PID 必须为正整数）", pidFlag)}
+	}
+	if nameFlag != "" {
+		return validateProcessName(nameFlag)
+	}
+	return nil
+}
+
+// postSignalCheckDelay 发送信号后等待一段时间再检查进程状态。
+// 设计决策: 50ms 足够内核完成同步信号投递与默认处理（终止），
+// 同时不会对 CLI 交互产生可感知的延迟。
+var postSignalCheckDelay = 50 * time.Millisecond
+
+// discoverTargetPID 按优先级发现目标进程 PID。
+// 优先级：pidFlag > nameFlag > socket 文件发现。
+func discoverTargetPID(ctx context.Context, socketPath string, pidFlag int, nameFlag string) (int, error) {
+	switch {
+	case pidFlag > 0:
+		return pidFlag, nil
+	case nameFlag != "":
+		pid, err := findProcessByName(ctx, nameFlag)
+		if err != nil {
+			return 0, fmt.Errorf("通过进程名查找失败: %w", err)
+		}
+		return pid, nil
+	default:
+		pid, err := findProcessBySocket(ctx, socketPath)
+		if err != nil {
+			hint := "请使用 --pid 或 --name 参数指定目标进程"
+			if isContainerEnvironment() {
+				hint = "在容器环境中，请使用 --pid 1（如主进程是目标）、--name <进程名> 或指定具体 PID"
+			}
+			return 0, fmt.Errorf("无法自动发现进程: %w\n%s", err, hint)
+		}
+		return pid, nil
+	}
+}
+
 // cmdToggle 切换调试服务状态（发送 SIGUSR1 信号触发 toggle）。
 // 进程发现优先级：--pid > --name > socket 发现
 func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag string) error {
@@ -156,32 +261,13 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 		return err
 	}
 
-	var pid int
+	if err := validateToggleArgs(pidFlag, nameFlag); err != nil {
+		return err
+	}
 
-	// 进程发现逻辑，按优先级选择策略
-	switch {
-	case pidFlag > 0:
-		// 优先级 1: 使用用户指定的 PID
-		pid = pidFlag
-	case nameFlag != "":
-		// 优先级 2: 通过进程名查找
-		discoveredPID, err := findProcessByName(nameFlag)
-		if err != nil {
-			return fmt.Errorf("通过进程名查找失败: %w", err)
-		}
-		pid = discoveredPID
-	default:
-		// 优先级 3: 尝试通过 Socket 文件发现进程
-		discoveredPID, err := findProcessBySocket(socketPath)
-		if err != nil {
-			// 要求用户明确指定目标进程
-			hint := "请使用 --pid 或 --name 参数指定目标进程"
-			if isContainerEnvironment() {
-				hint = "在容器环境中，请使用 --pid 1（如主进程是目标）、--name <进程名> 或指定具体 PID"
-			}
-			return fmt.Errorf("无法自动发现进程: %w\n%s", err, hint)
-		}
-		pid = discoveredPID
+	pid, err := discoverTargetPID(ctx, socketPath, pidFlag, nameFlag)
+	if err != nil {
+		return err
 	}
 
 	// 验证进程存在
@@ -194,12 +280,23 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 		return fmt.Errorf("发送信号失败: %w", err)
 	}
 
+	// 安全检查: 等待短暂时间后验证目标进程仍然存活。
+	// 设计决策: 若目标进程未注册 SIGUSR1 处理器，SIGUSR1 的默认行为（Linux）
+	// 是终止进程。此检查可检测误杀，避免静默返回成功。
+	time.Sleep(postSignalCheckDelay)
+	if err := syscall.Kill(pid, 0); err != nil {
+		return fmt.Errorf("警告: 进程 %d 在收到 SIGUSR1 后已退出（可能不是 xdbg 服务进程）", pid)
+	}
+
 	fmt.Printf("已向进程 %d 发送 SIGUSR1 信号（切换调试服务状态）\n", pid)
 	return nil
 }
 
 // cmdDisable 禁用调试服务。
 func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	resp, err := client.Execute(ctx, "exit", nil)
@@ -208,7 +305,7 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 	}
 
 	if !resp.Success {
-		return errors.New(resp.Error)
+		return fmt.Errorf("%w: %s", errServerRejected, resp.Error)
 	}
 
 	fmt.Println(resp.Output)
@@ -217,8 +314,11 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 
 // cmdExec 执行调试命令。
 func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args []string) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return fmt.Errorf("exec 命令需要指定要执行的调试命令")
+		return &usageError{msg: "exec 命令需要指定要执行的调试命令"}
 	}
 
 	command := args[0]
@@ -232,7 +332,7 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 	}
 
 	if !resp.Success {
-		return errors.New(resp.Error)
+		return fmt.Errorf("%w: %s", errServerRejected, resp.Error)
 	}
 
 	if resp.Output != "" {
@@ -250,6 +350,9 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 // 设计决策: 离线时返回非零退出码（通过 exitError），
 // 使脚本和探针能正确检测服务状态。
 func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	err := client.Ping(ctx)
@@ -268,7 +371,7 @@ func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) er
 // findProcessByName 通过进程名查找进程 PID。
 // 扫描 /proc/*/comm 文件匹配进程名。
 // 当匹配多个进程时返回错误，要求使用 --pid 明确指定。
-func findProcessByName(name string) (int, error) {
+func findProcessByName(ctx context.Context, name string) (int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return 0, fmt.Errorf("无法读取 /proc: %w", err)
@@ -277,6 +380,9 @@ func findProcessByName(name string) (int, error) {
 	var matches []int
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("进程查找已取消: %w", err)
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -313,7 +419,7 @@ func findProcessByName(name string) (int, error) {
 // 设计决策: 使用 /proc/net/unix 获取 socket inode，而非 os.Stat。
 // 文件系统 inode（os.Stat 返回）和内核 socket inode（/proc/PID/fd 显示）
 // 位于不同的编号空间，直接用 os.Stat inode 匹配永远不会成功。
-func findProcessBySocket(socketPath string) (int, error) {
+func findProcessBySocket(ctx context.Context, socketPath string) (int, error) {
 	absSocketPath, err := absPath(socketPath)
 	if err != nil {
 		return 0, fmt.Errorf("获取绝对路径失败: %w", err)
@@ -325,15 +431,36 @@ func findProcessBySocket(socketPath string) (int, error) {
 		return 0, err
 	}
 
-	// 在 /proc 中查找持有该 socket 的进程
-	entries, err := os.ReadDir("/proc")
+	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
+	matches, err := scanProcForSocket(ctx, expectedLink)
 	if err != nil {
-		return 0, fmt.Errorf("无法读取 /proc: %w", err)
+		return 0, err
 	}
 
-	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
+	switch len(matches) {
+	case 0:
+		return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, fmt.Errorf("找到多个持有 socket %s 的进程 (PID: %v)，请使用 --pid 指定具体进程",
+			socketPath, matches)
+	}
+}
+
+// scanProcForSocket 在 /proc 中扫描持有指定 socket 的进程。
+func scanProcForSocket(ctx context.Context, expectedLink string) ([]int, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 /proc: %w", err)
+	}
+
+	var matches []int
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("进程查找已取消: %w", err)
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -344,11 +471,11 @@ func findProcessBySocket(socketPath string) (int, error) {
 		}
 
 		if processHasSocket(pid, expectedLink) {
-			return pid, nil
+			matches = append(matches, pid)
 		}
 	}
 
-	return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+	return matches, nil
 }
 
 // findSocketInode 从 /proc/net/unix 查找 Unix domain socket 的内核 inode。
@@ -408,16 +535,26 @@ func absPath(path string) (string, error) {
 // setupSignalHandler 设置信号处理。
 // 设计决策: 第一次信号优雅取消，第二次信号强制退出（退出码 130 = 128 + SIGINT）。
 // 当命令阻塞时，用户可通过再次 Ctrl+C 强制退出。
-func setupSignalHandler(cancel context.CancelFunc) {
+// goroutine 在 ctx 取消时自动退出，避免测试中多次调用 run() 导致的泄漏。
+func setupSignalHandler(ctx context.Context, cancel context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		cancel() // 第一次信号: 优雅取消
-
-		<-sigCh
-		signal.Stop(sigCh) // 回收订阅
-		os.Exit(130)       // 第二次信号: 强制退出
+		select {
+		case <-sigCh:
+			cancel() // 第一次信号: 优雅取消
+		case <-ctx.Done():
+			signal.Stop(sigCh)
+			return
+		}
+		select {
+		case <-sigCh:
+			signal.Stop(sigCh)
+			os.Exit(130) // 第二次信号: 强制退出
+		case <-ctx.Done():
+			signal.Stop(sigCh)
+			return
+		}
 	}()
 }
 
@@ -438,7 +575,7 @@ func isContainerEnvironment() bool {
 	// 检查 /proc/1/cgroup 是否包含容器相关信息（兼容 cgroup v1 和 v2）
 	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		content := string(data)
-		containerMarkers := []string{"docker", "kubepods", "containerd", "crio", "buildkit"}
+		containerMarkers := []string{"docker", "kubepods", "containerd", "crio", "buildkit", "libpod", "lxc"}
 		for _, marker := range containerMarkers {
 			if strings.Contains(content, marker) {
 				return true

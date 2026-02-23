@@ -6,15 +6,23 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
 
-// WatchCallback 文件变更回调函数
-// 当配置文件发生变更时调用，err 表示重载是否成功
+// WatchCallback 文件变更回调函数。
+// 当配置文件发生变更时调用，err 表示重载是否成功。
+//
+// 错误场景:
+//   - 文件被删除或权限变更导致不可读: err 包含 ErrLoadFailed
+//   - 文件内容格式错误: err 包含 ErrParseFailed（旧配置被保留）
+//   - fsnotify 自身错误: err 包含 "xconf: watch error [path]" 前缀
+//   - err == nil: 重载成功，cfg 已更新为最新配置
 type WatchCallback func(cfg Config, err error)
 
 // Watcher 配置文件监视器
@@ -32,10 +40,22 @@ type Watcher struct {
 	timer    *time.Timer // debounce 定时器，Stop() 时需要取消
 
 	// 设计决策: 两层 WaitGroup 确保 Stop() 返回后不再有回调执行。
-	// runWg 跟踪 run() goroutine 生命周期（handleError 等直接回调）。
-	// callbackWg 跟踪 debounce AfterFunc 中的 in-flight 回调。
+	// runWg 跟踪 run() goroutine 生命周期（handleError 错误回调路径）。
+	// callbackWg 跟踪 debounce AfterFunc 中的 in-flight 防抖回调。
 	runWg      sync.WaitGroup // run goroutine 生命周期
 	callbackWg sync.WaitGroup // in-flight 防抖回调
+
+	// 设计决策: runGID + callbackGIDs 记录 goroutine ID，用于检测 Stop() 重入。
+	// - runGID: 若用户在错误回调（handleError 路径）中调用 Stop()，
+	//   Stop() 跳过 runWg.Wait()，避免 run goroutine 等待自身退出。
+	// - callbackGIDs: 若用户在防抖回调（time.AfterFunc 路径）中调用 Stop()，
+	//   Stop() 跳过 callbackWg.Wait()，避免回调 goroutine 等待自身完成。
+	//   使用 map 而非单值，因为多个 AfterFunc 回调可能并发执行
+	//   （前一个回调执行时间超过防抖间隔时，新事件会创建新的 AfterFunc goroutine）。
+	//   单值会被后到的 goroutine 覆盖，导致先到的 goroutine 在回调中调用 Stop() 时死锁。
+	// 安全性保证：两个字段的读写都在 mu 保护下。
+	runGID       int64              // run goroutine ID, 0 表示 run 未执行
+	callbackGIDs map[int64]struct{} // 防抖回调 goroutine ID 集合
 }
 
 // WatchOption 监视器配置选项
@@ -51,17 +71,23 @@ func defaultWatchOptions() *watchOptions {
 	}
 }
 
+// maxDebounce 防抖时间上界。超过此值通常是配置错误，会导致热重载实质失效。
+const maxDebounce = time.Minute
+
 // validate 校验监视器选项。
 func (o *watchOptions) validate() error {
 	if o.debounce <= 0 {
 		return fmt.Errorf("%w: %v", ErrInvalidDebounce, o.debounce)
 	}
+	if o.debounce > maxDebounce {
+		return fmt.Errorf("%w: %v exceeds maximum %v", ErrInvalidDebounce, o.debounce, maxDebounce)
+	}
 	return nil
 }
 
-// WithDebounce 设置防抖时间
-// 在指定时间内的多次变更只触发一次重载
-// 默认值为 100ms，适合大多数场景
+// WithDebounce 设置防抖时间。
+// 在指定时间内的多次变更只触发一次重载。
+// 默认值为 100ms，适合大多数场景。推荐范围 50ms ~ 5s。
 func WithDebounce(d time.Duration) WatchOption {
 	return func(o *watchOptions) {
 		o.debounce = d
@@ -83,6 +109,7 @@ func WithDebounce(d time.Duration) WatchOption {
 //   - 从 bytes 创建的 Config 不支持监视
 //   - 返回的 Watcher 需要调用 Start() 开始监视，Stop() 停止监视
 //   - Stop() 保证返回后不再有回调执行
+//   - 在回调中调用 Stop() 是安全的，不会死锁
 //
 // 设计决策: cfg 参数类型为 Config 接口，但内部需要类型断言为 *koanfConfig。
 // 这是因为 Watch 需要访问内部字段（path、isBytes），而这些不属于 Config 接口。
@@ -103,7 +130,7 @@ func WithDebounce(d time.Duration) WatchOption {
 //	    log.Fatal(err)
 //	}
 //	defer w.Stop()
-//	w.Start()
+//	w.Start() // 阻塞当前 goroutine；非阻塞场景请用 w.StartAsync()
 func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, error) {
 	kc, ok := cfg.(*koanfConfig)
 	if !ok {
@@ -125,6 +152,9 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 	// 应用选项
 	options := defaultWatchOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilWatchOption
+		}
 		opt(options)
 	}
 	if err := options.validate(); err != nil {
@@ -196,11 +226,20 @@ func (w *Watcher) StartAsync() {
 }
 
 // Stop 停止监视并释放 fsnotify 资源。
-// Stop 返回后保证不再有回调执行。
+// Stop 返回后保证不再有回调执行（在回调中调用 Stop 时，当前回调是最后一次执行）。
+// 在回调中调用 Stop() 是安全的，不会死锁。
 //
 // 设计决策: Stop() 无论是否调用过 Start()，都会释放 fsnotify.Watcher。
 // Watch() 创建 fsnotify.Watcher 时已占用文件描述符，不释放会导致 fd 泄漏。
 // stopped 标志确保 Stop() 幂等，多次调用不会重复关闭。
+//
+// 设计决策: 通过 runGID + callbackGIDs 检测回调内调用 Stop() 的场景。
+//   - 错误回调路径（handleError）：运行在 run() goroutine 中，通过 runGID 检测重入，
+//     跳过 runWg.Wait() 避免 run goroutine 等待自身退出导致死锁。
+//   - 防抖回调路径（time.AfterFunc）：运行在独立 goroutine 中，通过 callbackGIDs 检测重入，
+//     跳过 callbackWg.Wait() 避免回调 goroutine 等待自身完成导致死锁。
+//
+// 两种场景中 running=false 均阻止新回调，context 已取消。
 func (w *Watcher) Stop() error {
 	w.mu.Lock()
 
@@ -222,19 +261,40 @@ func (w *Watcher) Stop() error {
 		w.timer = nil
 	}
 
+	// 检测是否在回调中调用 Stop()（GID 在 mu 保护下读取）
+	currentGID := goid()
+	_, calledFromCallback := w.callbackGIDs[currentGID]
+	calledFromRun := w.runGID != 0 && w.runGID == currentGID
+
 	w.cancel()
 	w.running = false
 	w.mu.Unlock()
 
-	// 等待 run() goroutine 退出和 in-flight 防抖回调完成
-	w.runWg.Wait()
-	w.callbackWg.Wait()
+	// 等待 run() goroutine 退出（错误回调内调用 Stop 时跳过，避免自锁）
+	if !calledFromRun {
+		w.runWg.Wait()
+	}
+
+	// 等待 in-flight 防抖回调完成（防抖回调内调用 Stop 时跳过，避免自锁）
+	if !calledFromCallback {
+		w.callbackWg.Wait()
+	}
 
 	return w.watcher.Close()
 }
 
 // run 运行监视循环
 func (w *Watcher) run() {
+	w.mu.Lock()
+	w.runGID = goid()
+	w.mu.Unlock()
+
+	defer func() {
+		w.mu.Lock()
+		w.runGID = 0
+		w.mu.Unlock()
+	}()
+
 	filename := filepath.Base(w.cfg.path)
 
 	for {
@@ -244,12 +304,14 @@ func (w *Watcher) run() {
 
 		case event, ok := <-w.watcher.Events:
 			if !ok {
+				w.safeCallback(fmt.Errorf("xconf: watch event channel closed unexpectedly [%s]", w.cfg.path))
 				return
 			}
 			w.handleEvent(event, filename)
 
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
+				w.safeCallback(fmt.Errorf("xconf: watch error channel closed unexpectedly [%s]", w.cfg.path))
 				return
 			}
 			w.handleError(err)
@@ -289,21 +351,46 @@ func (w *Watcher) handleEvent(event fsnotify.Event, filename string) {
 			w.mu.Unlock()
 			return
 		}
+		// 设计决策: callbackWg.Add(1) 必须在 mu 锁内执行。
+		// 若移到锁外，Stop() 可能在 Add 前完成 Wait()，导致 Stop 返回后仍有回调在执行。
 		w.callbackWg.Add(1)
+		cbGID := goid()
+		if w.callbackGIDs == nil {
+			w.callbackGIDs = make(map[int64]struct{})
+		}
+		w.callbackGIDs[cbGID] = struct{}{}
 		w.mu.Unlock()
-		defer w.callbackWg.Done()
+
+		defer func() {
+			w.mu.Lock()
+			delete(w.callbackGIDs, cbGID)
+			w.mu.Unlock()
+			w.callbackWg.Done()
+		}()
 
 		err := w.cfg.Reload()
 		w.safeCallback(err)
 	})
 }
 
-// handleError 处理 watcher 错误
+// handleError 处理 watcher 错误。
+// 在 run() goroutine 中调用，通过 runGID 确保回调内调用 Stop() 不会死锁。
 func (w *Watcher) handleError(err error) {
-	w.safeCallback(fmt.Errorf("xconf: watch error: %w", err))
+	w.mu.Lock()
+	if !w.running {
+		w.mu.Unlock()
+		return
+	}
+	w.mu.Unlock()
+
+	w.safeCallback(fmt.Errorf("xconf: watch error [%s]: %w", w.cfg.path, err))
 }
 
 // safeCallback 安全地调用用户回调，捕获 panic 防止进程崩溃。
+//
+// 设计决策: panic 恢复使用全局 slog 输出日志。
+// 作为工具库不应依赖上层日志组件（如 xlog），且回调 panic 属于编程错误，
+// 使用标准库 slog 确保至少有一处日志输出，优于静默吞掉。
 func (w *Watcher) safeCallback(err error) {
 	if w.callback == nil {
 		return
@@ -317,6 +404,38 @@ func (w *Watcher) safeCallback(err error) {
 		}
 	}()
 	w.callback(w.cfg, err)
+}
+
+// goid 返回当前 goroutine 的 ID。
+// 仅用于检测 Stop() 在回调内调用时避免自锁死锁，非热路径（仅回调时调用）。
+//
+// 设计决策: 依赖 runtime.Stack 输出格式（"goroutine NNN [running]:\n..."）。
+// 该格式自 Go 1.0 至 1.25 保持稳定，但不属于 Go 兼容性承诺。
+// 若未来 Go 版本变更格式导致解析失败，返回 0 并输出警告日志，
+// 代价是回调内调用 Stop() 可能死锁（概率极低且仅限升级 Go 版本后触发）。
+func goid() int64 {
+	var buf [32]byte
+	n := runtime.Stack(buf[:], false)
+	// format: "goroutine 123 [running]:\n..."
+	s := string(buf[:n])
+	const prefix = "goroutine "
+	if len(s) <= len(prefix) || s[:len(prefix)] != prefix {
+		slog.Warn("xconf: goid() runtime.Stack format changed, " +
+			"Stop-from-callback deadlock detection disabled")
+		return 0
+	}
+	s = s[len(prefix):]
+	spaceIdx := 0
+	for spaceIdx < len(s) && s[spaceIdx] != ' ' {
+		spaceIdx++
+	}
+	id, err := strconv.ParseInt(s[:spaceIdx], 10, 64)
+	if err != nil {
+		slog.Warn("xconf: goid() failed to parse goroutine ID, " +
+			"Stop-from-callback deadlock detection disabled")
+		return 0
+	}
+	return id
 }
 
 // WatchConfig 配置监视的便捷接口。

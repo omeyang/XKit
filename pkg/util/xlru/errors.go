@@ -2,9 +2,6 @@ package xlru
 
 import "errors"
 
-// maxSize 缓存最大条目数上限。
-const maxSize = 1 << 24 // 16,777,216
-
 var (
 	// ErrInvalidSize 表示缓存大小配置无效。
 	ErrInvalidSize = errors.New("xlru: size must be greater than 0")
@@ -14,4 +11,7 @@ var (
 
 	// ErrInvalidTTL 表示 TTL 配置无效。
 	ErrInvalidTTL = errors.New("xlru: TTL must not be negative")
+
+	// ErrTTLTooSmall 表示正 TTL 值低于最小阈值 (100ns)。
+	ErrTTLTooSmall = errors.New("xlru: positive TTL must be at least 100ns")
 )

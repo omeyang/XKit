@@ -41,6 +41,13 @@ func (w *producerWrapper) Producer() *kafka.Producer {
 // 在此期间 Close() 会被短暂阻塞。这是可接受的权衡：HealthTimeout 默认 5s，
 // 且 GetMetadata 通常在毫秒级完成。
 func (w *producerWrapper) Health(ctx context.Context) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if w.closed.Load() {
+		return ErrClosed
+	}
+
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: componentName,
 		Operation: "health",
@@ -60,9 +67,15 @@ func (w *producerWrapper) Health(ctx context.Context) (err error) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 
+		// 再次检查 closed，防止在等待锁期间 Close() 已执行
+		if w.closed.Load() {
+			done <- ErrClosed
+			return
+		}
+
 		_, err := w.producer.GetMetadata(nil, true, timeoutMs)
 		if err != nil {
-			done <- fmt.Errorf("kafka producer health check failed: %w", err)
+			done <- fmt.Errorf("%w: producer get metadata: %w", ErrHealthCheckFailed, err)
 			return
 		}
 		done <- nil
@@ -77,11 +90,17 @@ func (w *producerWrapper) Health(ctx context.Context) (err error) {
 }
 
 // Stats 返回生产者统计信息。
+// 如果 producer 已关闭，QueueLength 返回 0。
 func (w *producerWrapper) Stats() ProducerStats {
-	// 加锁保护对底层 producer 的访问
-	w.mu.Lock()
-	queueLen := w.producer.Len()
-	w.mu.Unlock()
+	var queueLen int
+	if !w.closed.Load() {
+		// 加锁保护对底层 producer 的访问
+		w.mu.Lock()
+		if !w.closed.Load() {
+			queueLen = w.producer.Len()
+		}
+		w.mu.Unlock()
+	}
 
 	return ProducerStats{
 		MessagesProduced: w.messagesProduced.Load(),

@@ -47,10 +47,17 @@ func BenchmarkCache_Set(b *testing.B) {
 	}
 	b.Cleanup(func() { cache.Close() })
 
+	keys := make([]string, 1000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
-		cache.Set(fmt.Sprintf("key_%d", i%1000), i)
+	i := 0
+	for b.Loop() {
+		cache.Set(keys[i%1000], i)
+		i++
 	}
 }
 
@@ -66,10 +73,17 @@ func BenchmarkCache_Set_Eviction(b *testing.B) {
 		cache.Set(fmt.Sprintf("pre_%d", i), i)
 	}
 
+	keys := make([]string, 1000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("new_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
-		cache.Set(fmt.Sprintf("new_%d", i), i)
+	i := 0
+	for b.Loop() {
+		cache.Set(keys[i%1000], i)
+		i++
 	}
 }
 
@@ -153,8 +167,10 @@ func BenchmarkCache_Get_Parallel(b *testing.B) {
 	}
 	b.Cleanup(func() { cache.Close() })
 
-	for i := range 100 {
-		cache.Set(fmt.Sprintf("key_%d", i), i)
+	keys := make([]string, 100)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+		cache.Set(keys[i], i)
 	}
 
 	b.ReportAllocs()
@@ -162,7 +178,7 @@ func BenchmarkCache_Get_Parallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_, _ = cache.Get(fmt.Sprintf("key_%d", i%100))
+			_, _ = cache.Get(keys[i%100])
 			i++
 		}
 	})
@@ -175,12 +191,17 @@ func BenchmarkCache_Set_Parallel(b *testing.B) {
 	}
 	b.Cleanup(func() { cache.Close() })
 
+	keys := make([]string, 1000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			cache.Set(fmt.Sprintf("key_%d", i%1000), i)
+			cache.Set(keys[i%1000], i)
 			i++
 		}
 	})
@@ -193,16 +214,20 @@ func BenchmarkCache_SetAndGet_Parallel(b *testing.B) {
 	}
 	b.Cleanup(func() { cache.Close() })
 
+	keys := make([]string, 100)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			key := fmt.Sprintf("key_%d", i%100)
 			if i%2 == 0 {
-				cache.Set(key, i)
+				cache.Set(keys[i%100], i)
 			} else {
-				_, _ = cache.Get(key)
+				_, _ = cache.Get(keys[i%100])
 			}
 			i++
 		}
@@ -238,8 +263,10 @@ func BenchmarkCache_IntKey_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(i%1000, i)
+		i++
 	}
 }
 
@@ -271,10 +298,17 @@ func benchmarkCacheSetWithSize(b *testing.B, size int) {
 		value[i] = byte(i % 256)
 	}
 
+	keys := make([]string, 100)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
-		cache.Set(fmt.Sprintf("key_%d", i%100), value)
+	i := 0
+	for b.Loop() {
+		cache.Set(keys[i%100], value)
+		i++
 	}
 }
 
@@ -305,9 +339,16 @@ func BenchmarkCache_NoTTL_Set(b *testing.B) {
 	}
 	b.Cleanup(func() { cache.Close() })
 
+	keys := make([]string, 1000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key_%d", i)
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
-		cache.Set(fmt.Sprintf("key_%d", i%1000), i)
+	i := 0
+	for b.Loop() {
+		cache.Set(keys[i%1000], i)
+		i++
 	}
 }

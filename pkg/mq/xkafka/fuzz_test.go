@@ -270,7 +270,7 @@ func FuzzBuildDLQMessageFromPolicy(f *testing.F) {
 		msg.Value = []byte("test-value")
 
 		// 不应 panic
-		result := buildDLQMessageFromPolicy(msg, dlqTopic, maybeError(errMsg), retryCount)
+		result := buildDLQMessageFromPolicy(msg, dlqTopic, errorString(maybeError(errMsg)), retryCount)
 
 		// 验证不变式
 		require.NotNil(t, result, "buildDLQMessageFromPolicy should never return nil")
@@ -297,7 +297,7 @@ func FuzzBuildDLQMetadataFromMessage(f *testing.F) {
 		msg.Timestamp = time.Now()
 
 		// 不应 panic
-		metadata := buildDLQMetadataFromMessage(msg, maybeError(errMsg), retryCount)
+		metadata := buildDLQMetadataFromMessage(msg, errorString(maybeError(errMsg)), retryCount)
 
 		// 验证不变式
 		if topic != "" {
@@ -352,7 +352,7 @@ func FuzzUpdateRetryHeaders(f *testing.F) {
 		}
 
 		// 不应 panic
-		updateRetryHeaders(msg, err)
+		updateRetryHeaders(msg, errorString(err))
 
 		// 验证不变式：必须有 retry count header
 		retryCountHeader := getHeader(msg, HeaderRetryCount)

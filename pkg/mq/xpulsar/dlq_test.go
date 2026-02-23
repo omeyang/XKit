@@ -122,6 +122,26 @@ func TestToPulsarNackBackoff(t *testing.T) {
 		assert.Equal(t, 150*time.Millisecond, pulsarBackoff.Next(1))
 		assert.Equal(t, 200*time.Millisecond, pulsarBackoff.Next(2))
 	})
+
+	t.Run("MaxUint32_UpperBoundClamp", func(t *testing.T) {
+		// 极端 redeliveryCount 值应被 maxNackAttempt 上界截断，
+		// 不触发超预期延迟或 panic。
+		backoff := xretry.NewExponentialBackoff(
+			xretry.WithInitialDelay(100*time.Millisecond),
+			xretry.WithMaxDelay(1*time.Second),
+			xretry.WithJitter(0),
+		)
+		pulsarBackoff := ToPulsarNackBackoff(backoff)
+
+		// uint32 最大值：在 64 位上 attempt = 4294967296（远超 maxNackAttempt），
+		// 在 32 位上 attempt 溢出为负数。两种情况都应被截断到 maxNackAttempt。
+		delay := pulsarBackoff.Next(^uint32(0))
+		assert.Equal(t, 1*time.Second, delay, "应返回 MaxDelay（被上界截断）")
+
+		// 大但未溢出的值也应被截断
+		delay = pulsarBackoff.Next(^uint32(0) - 1)
+		assert.Equal(t, 1*time.Second, delay, "大值也应被截断到 MaxDelay")
+	})
 }
 
 func TestConsumerOptionsBuilder(t *testing.T) {
@@ -198,6 +218,22 @@ func TestConsumerOptionsBuilder(t *testing.T) {
 			Build()
 
 		assert.Equal(t, 500*time.Millisecond, opts.NackRedeliveryDelay)
+	})
+
+	t.Run("WithNackRedeliveryDelay_Negative", func(t *testing.T) {
+		opts := NewConsumerOptionsBuilder("my-topic", "my-sub").
+			WithNackRedeliveryDelay(-1 * time.Second).
+			Build()
+
+		assert.Equal(t, time.Duration(0), opts.NackRedeliveryDelay, "负值应被忽略")
+	})
+
+	t.Run("WithNackRedeliveryDelay_Zero", func(t *testing.T) {
+		opts := NewConsumerOptionsBuilder("my-topic", "my-sub").
+			WithNackRedeliveryDelay(0).
+			Build()
+
+		assert.Equal(t, time.Duration(0), opts.NackRedeliveryDelay, "零值应被忽略")
 	})
 
 	t.Run("WithRetryEnable", func(t *testing.T) {

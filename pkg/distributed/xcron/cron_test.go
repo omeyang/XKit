@@ -2,6 +2,7 @@ package xcron
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -82,6 +83,120 @@ func TestScheduler_AddFunc(t *testing.T) {
 
 		_, err := s.AddFunc("@every 1s", nil)
 		assert.ErrorIs(t, err, ErrNilJob)
+	})
+
+	t.Run("distributed locker without name returns ErrMissingName", func(t *testing.T) {
+		locker := newMockLocker()
+		s := New(WithLocker(locker))
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.ErrorIs(t, err, ErrMissingName)
+	})
+
+	t.Run("noop locker without name succeeds", func(t *testing.T) {
+		s := New() // default NoopLocker
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("distributed locker with name succeeds", func(t *testing.T) {
+		locker := newMockLocker()
+		s := New(WithLocker(locker))
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("named-job"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("duplicate name returns ErrDuplicateJobName", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("dup-job"))
+		require.NoError(t, err)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("dup-job"))
+		assert.ErrorIs(t, err, ErrDuplicateJobName)
+	})
+
+	t.Run("different names succeed", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("job-a"))
+		require.NoError(t, err)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("job-b"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("removed name can be reused", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		id, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("reuse-job"))
+		require.NoError(t, err)
+
+		s.Remove(id)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("reuse-job"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("name reusable after Cron().Remove() bypasses xcron.Remove()", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		id, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("bypass-job"))
+		require.NoError(t, err)
+
+		// 通过 Cron().Remove() 直接移除，绕过 xcron.Remove()
+		s.Cron().Remove(id)
+
+		// 自修复：validateJobName 检测到 cron 中已无此条目，自动清理 jobNames
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("bypass-job"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("unnamed jobs with noop locker are not checked for duplicates", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		require.NoError(t, err)
+
+		// 无名任务不参与唯一性校验
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.NoError(t, err)
 	})
 }
 
@@ -296,6 +411,111 @@ func TestJobWrapper_PanicRecovery(t *testing.T) {
 		// AfterJob 应被调用，且 err 应包含 panic 信息
 		assert.True(t, afterCalled)
 		assert.Contains(t, afterErr.Error(), "panicked")
+	})
+}
+
+// panicLocker 用于测试 TryLock panic 隔离
+type panicLocker struct{}
+
+func (l *panicLocker) TryLock(_ context.Context, _ string, _ time.Duration) (LockHandle, error) {
+	panic("locker panic in TryLock")
+}
+
+var _ Locker = (*panicLocker)(nil)
+
+// panicRenewHandle 用于测试 Renew panic 隔离
+type panicRenewHandle struct {
+	key string
+}
+
+func (h *panicRenewHandle) Unlock(_ context.Context) error { return nil }
+func (h *panicRenewHandle) Renew(_ context.Context, _ time.Duration) error {
+	panic("locker panic in Renew")
+}
+func (h *panicRenewHandle) Key() string { return h.key }
+
+// panicRenewLocker 正常获取锁，但 Renew 会 panic
+type panicRenewLocker struct{}
+
+func (l *panicRenewLocker) TryLock(_ context.Context, key string, _ time.Duration) (LockHandle, error) {
+	return &panicRenewHandle{key: key}, nil
+}
+
+var _ Locker = (*panicRenewLocker)(nil)
+
+// panicObserver 用于测试 tracer.Start panic 隔离
+type panicObserver struct{}
+
+func (o *panicObserver) Start(_ context.Context, _ string, _ ...any) (context.Context, Span) {
+	panic("observer panic in Start")
+}
+
+var _ Observer = (*panicObserver)(nil)
+
+func TestJobWrapper_PanicIsolation(t *testing.T) {
+	t.Run("TryLock panic is recovered", func(t *testing.T) {
+		job := JobFunc(func(_ context.Context) error {
+			return nil
+		})
+
+		stats := newStats()
+		opts := defaultJobOptions()
+		opts.name = "trylock-panic-job"
+		wrapper := newJobWrapper(job, &panicLocker{}, nil, stats, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// TryLock panic 转为锁服务异常，计入 lockErrorCount（不计入执行统计）
+		assert.Equal(t, int64(0), stats.TotalExecutions())
+		assert.Equal(t, int64(0), stats.FailureCount())
+		assert.Equal(t, int64(1), stats.LockErrorCount())
+	})
+
+	t.Run("tracer.Start panic is recovered", func(t *testing.T) {
+		var executed bool
+		job := JobFunc(func(_ context.Context) error {
+			executed = true
+			return nil
+		})
+
+		opts := defaultJobOptions()
+		opts.tracer = &panicObserver{}
+		wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// tracer panic 不应阻止任务执行
+		assert.True(t, executed)
+	})
+
+	t.Run("Renew panic cancels task", func(t *testing.T) {
+		var taskCanceled atomic.Bool
+		job := JobFunc(func(ctx context.Context) error {
+			// 等待上下文被取消（续期 panic 会取消上下文）
+			select {
+			case <-ctx.Done():
+				taskCanceled.Store(true)
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+				return nil
+			}
+		})
+
+		opts := defaultJobOptions()
+		opts.name = "renew-panic-job"
+		opts.lockTTL = 3 * time.Second // 最小 TTL，续期间隔 1 秒
+		wrapper := newJobWrapper(job, &panicRenewLocker{}, nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// Renew panic 应导致任务被取消
+		assert.True(t, taskCanceled.Load())
 	})
 }
 
@@ -583,4 +803,33 @@ func TestScheduler_AddJob_WithImmediate(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	assert.True(t, executed.Load())
+}
+
+// TestScheduler_ConcurrentAddRemove 验证并发 AddJob/Remove 不会触发 map 竞态。
+// 此测试配合 -race 标志运行，确保 jobNames 的并发安全。
+func TestScheduler_ConcurrentAddRemove(t *testing.T) {
+	s := New(WithLocker(NoopLocker()))
+	defer s.Stop()
+
+	const goroutines = 20
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			name := fmt.Sprintf("concurrent-job-%d", idx)
+			id, err := s.AddFunc("@every 1h", func(ctx context.Context) error {
+				return nil
+			}, WithName(name))
+			if err != nil {
+				return
+			}
+			// 立即移除，制造 AddJob 和 Remove 的并发竞争
+			s.Remove(id)
+		}(i)
+	}
+
+	wg.Wait()
 }

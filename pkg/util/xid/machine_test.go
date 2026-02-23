@@ -1,6 +1,9 @@
 package xid
 
 import (
+	"errors"
+	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -105,9 +108,9 @@ func TestMachineIDFromHostnameEnv(t *testing.T) {
 
 func TestMachineIDFromOSHostname(t *testing.T) {
 	// os.Hostname() 在大多数系统上都能成功。
-	// 此测试依赖运行环境：有 hostname 时走成功路径，无 hostname 时验证返回 false。
-	id, ok := machineIDFromOSHostname()
-	if ok {
+	// 此测试依赖运行环境：有 hostname 时走成功路径，无 hostname 时验证返回 error。
+	id, err := machineIDFromOSHostname()
+	if err == nil {
 		assert.NotZero(t, id)
 	} else {
 		assert.Zero(t, id, "failed machineIDFromOSHostname should return zero ID")
@@ -184,27 +187,31 @@ func TestDefaultMachineID(t *testing.T) {
 func TestIsPrivateIPv4(t *testing.T) {
 	tests := []struct {
 		name     string
-		ip       []byte
+		ip       string
 		expected bool
 	}{
-		{"10.0.0.1", []byte{10, 0, 0, 1}, true},
-		{"10.255.255.255", []byte{10, 255, 255, 255}, true},
-		{"172.16.0.1", []byte{172, 16, 0, 1}, true},
-		{"172.31.255.255", []byte{172, 31, 255, 255}, true},
-		{"172.15.0.1", []byte{172, 15, 0, 1}, false},
-		{"172.32.0.1", []byte{172, 32, 0, 1}, false},
-		{"192.168.0.1", []byte{192, 168, 0, 1}, true},
-		{"192.168.255.255", []byte{192, 168, 255, 255}, true},
-		{"192.167.0.1", []byte{192, 167, 0, 1}, false},
-		{"169.254.0.1 (link-local)", []byte{169, 254, 0, 1}, true},
-		{"8.8.8.8 (public)", []byte{8, 8, 8, 8}, false},
-		{"127.0.0.1 (loopback)", []byte{127, 0, 0, 1}, false},
-		{"nil", nil, false},
+		{"10.0.0.1", "10.0.0.1", true},
+		{"10.255.255.255", "10.255.255.255", true},
+		{"172.16.0.1", "172.16.0.1", true},
+		{"172.31.255.255", "172.31.255.255", true},
+		{"172.15.0.1", "172.15.0.1", false},
+		{"172.32.0.1", "172.32.0.1", false},
+		{"192.168.0.1", "192.168.0.1", true},
+		{"192.168.255.255", "192.168.255.255", true},
+		{"192.167.0.1", "192.167.0.1", false},
+		{"169.254.0.1 (link-local)", "169.254.0.1", true},
+		{"8.8.8.8 (public)", "8.8.8.8", false},
+		{"127.0.0.1 (loopback)", "127.0.0.1", false},
+		{"zero value", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isPrivateIPv4(tt.ip)
+			addr := netip.Addr{}
+			if tt.ip != "" {
+				addr = netip.MustParseAddr(tt.ip)
+			}
+			result := isPrivateIPv4(addr)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -226,4 +233,271 @@ func TestDefaultMachineIDWithInit(t *testing.T) {
 	parts, err := Decompose(id)
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), parts.Machine)
+}
+
+// =============================================================================
+// 确定性注入测试（FG-M2/M3/M4 修复）
+// 利用 osHostname/netInterfaceAddrs 注入点覆盖 machine.go 错误分支
+// =============================================================================
+
+func TestMachineIDFromOSHostname_Deterministic(t *testing.T) {
+	t.Run("osHostname returns error", func(t *testing.T) {
+		orig := osHostname
+		osHostname = func() (string, error) {
+			return "", errors.New("hostname unavailable")
+		}
+		t.Cleanup(func() { osHostname = orig })
+
+		id, err := machineIDFromOSHostname()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "hostname unavailable")
+		assert.Zero(t, id)
+	})
+
+	t.Run("osHostname returns empty string", func(t *testing.T) {
+		orig := osHostname
+		osHostname = func() (string, error) {
+			return "", nil
+		}
+		t.Cleanup(func() { osHostname = orig })
+
+		id, err := machineIDFromOSHostname()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty")
+		assert.Zero(t, id)
+	})
+
+	t.Run("osHostname returns valid hostname", func(t *testing.T) {
+		orig := osHostname
+		osHostname = func() (string, error) {
+			return "test-host-injected", nil
+		}
+		t.Cleanup(func() { osHostname = orig })
+
+		id, err := machineIDFromOSHostname()
+		require.NoError(t, err)
+		assert.Equal(t, hashToMachineID("test-host-injected"), id)
+	})
+}
+
+func TestPrivateIPv4_Deterministic(t *testing.T) {
+	t.Run("netInterfaceAddrs returns error", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return nil, errors.New("network unavailable")
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "network unavailable")
+	})
+
+	t.Run("no addresses", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
+	})
+
+	t.Run("only loopback", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{
+				&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
+	})
+
+	t.Run("only public IP", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{
+				&net.IPNet{IP: net.ParseIP("8.8.8.8"), Mask: net.CIDRMask(24, 32)},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
+	})
+
+	t.Run("non-IPNet type skipped", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			// net.TCPAddr 实现了 net.Addr 但不是 *net.IPNet
+			return []net.Addr{
+				&net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 80},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
+	})
+
+	t.Run("IPv6 only skipped", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{
+				&net.IPNet{IP: net.ParseIP("2001:db8::1"), Mask: net.CIDRMask(64, 128)},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := privateIPv4()
+		assert.ErrorIs(t, err, ErrNoPrivateAddress)
+	})
+
+	t.Run("private IP found", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{
+				&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+				&net.IPNet{IP: net.ParseIP("10.1.2.3"), Mask: net.CIDRMask(24, 32)},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		ip, err := privateIPv4()
+		require.NoError(t, err)
+		assert.Equal(t, netip.MustParseAddr("10.1.2.3"), ip)
+	})
+}
+
+func TestMachineIDFromPrivateIP_Deterministic(t *testing.T) {
+	t.Run("error from privateIPv4", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return nil, errors.New("interface error")
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		_, err := machineIDFromPrivateIP()
+		require.Error(t, err)
+	})
+
+	t.Run("success extracts low 16 bits", func(t *testing.T) {
+		orig := netInterfaceAddrs
+		netInterfaceAddrs = func() ([]net.Addr, error) {
+			return []net.Addr{
+				&net.IPNet{IP: net.ParseIP("10.0.1.2"), Mask: net.CIDRMask(24, 32)},
+			}, nil
+		}
+		t.Cleanup(func() { netInterfaceAddrs = orig })
+
+		id, err := machineIDFromPrivateIP()
+		require.NoError(t, err)
+		// 10.0.1.2 → low 16 bits = (1 << 8) + 2 = 258
+		assert.Equal(t, uint16(258), id)
+	})
+}
+
+func TestDefaultMachineID_AllStrategiesExhausted(t *testing.T) {
+	// 清除所有环境变量（策略 1-3）
+	t.Setenv(EnvMachineID, "")
+	t.Setenv(EnvPodName, "")
+	t.Setenv(EnvHostname, "")
+
+	// 注入 osHostname 失败（策略 4）
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", errors.New("hostname unavailable")
+	}
+	t.Cleanup(func() { osHostname = origHostname })
+
+	// 注入 netInterfaceAddrs 失败（策略 5）
+	origAddrs := netInterfaceAddrs
+	netInterfaceAddrs = func() ([]net.Addr, error) {
+		return nil, errors.New("no network interfaces")
+	}
+	t.Cleanup(func() { netInterfaceAddrs = origAddrs })
+
+	_, err := DefaultMachineID()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "all machine ID strategies exhausted")
+	// 验证错误链保留策略 4（os-hostname）和策略 5（private-ip）的失败原因（FG-S1）
+	assert.Contains(t, err.Error(), "hostname unavailable")
+	assert.Contains(t, err.Error(), "no network interfaces")
+}
+
+func TestDefaultMachineID_FallbackToOSHostname(t *testing.T) {
+	// 清除环境变量（策略 1-3 均跳过）
+	t.Setenv(EnvMachineID, "")
+	t.Setenv(EnvPodName, "")
+	t.Setenv(EnvHostname, "")
+
+	// 注入 osHostname 成功（策略 4 命中）
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "injected-hostname", nil
+	}
+	t.Cleanup(func() { osHostname = origHostname })
+
+	id, err := DefaultMachineID()
+	require.NoError(t, err)
+	assert.Equal(t, hashToMachineID("injected-hostname"), id)
+}
+
+func TestDefaultMachineID_FallbackToPrivateIP(t *testing.T) {
+	// 清除环境变量（策略 1-3 均跳过）
+	t.Setenv(EnvMachineID, "")
+	t.Setenv(EnvPodName, "")
+	t.Setenv(EnvHostname, "")
+
+	// 注入 osHostname 失败（策略 4 跳过）
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", errors.New("hostname unavailable")
+	}
+	t.Cleanup(func() { osHostname = origHostname })
+
+	// 注入 netInterfaceAddrs 返回私有 IP（策略 5 命中）
+	origAddrs := netInterfaceAddrs
+	netInterfaceAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)},
+		}, nil
+	}
+	t.Cleanup(func() { netInterfaceAddrs = origAddrs })
+
+	id, err := DefaultMachineID()
+	require.NoError(t, err)
+	// 192.168.1.100 → low 16 bits = (1 << 8) + 100 = 356
+	assert.Equal(t, uint16(356), id)
+}
+
+func TestDefaultMachineID_NoPrivateAddress(t *testing.T) {
+	// 清除环境变量（策略 1-3 均跳过）
+	t.Setenv(EnvMachineID, "")
+	t.Setenv(EnvPodName, "")
+	t.Setenv(EnvHostname, "")
+
+	// 注入 osHostname 失败（策略 4 跳过）
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", errors.New("hostname unavailable")
+	}
+	t.Cleanup(func() { osHostname = origHostname })
+
+	// 注入 netInterfaceAddrs 返回空（策略 5 返回 ErrNoPrivateAddress）
+	origAddrs := netInterfaceAddrs
+	netInterfaceAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{}, nil
+	}
+	t.Cleanup(func() { netInterfaceAddrs = origAddrs })
+
+	_, err := DefaultMachineID()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "all machine ID strategies exhausted")
+	// 验证 ErrNoPrivateAddress 在错误链中可解包
+	assert.ErrorIs(t, err, ErrNoPrivateAddress)
 }

@@ -105,6 +105,25 @@ func TestConvertEvent_UnknownType(t *testing.T) {
 	}
 }
 
+func TestConvertEvent_NilKv(t *testing.T) {
+	etcdEvent := &clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   nil, // 异常情况：Kv 为 nil
+	}
+
+	event := convertEvent(etcdEvent)
+
+	if event.Type != EventUnknown {
+		t.Errorf("convertEvent() Type = %v, want EventUnknown", event.Type)
+	}
+	if event.Error == nil {
+		t.Error("convertEvent() Error should not be nil for nil Kv")
+	}
+	if event.Key != "" {
+		t.Errorf("convertEvent() Key = %v, want empty", event.Key)
+	}
+}
+
 func TestBuildWatchOptions_Empty(t *testing.T) {
 	c := &Client{}
 	opts := c.buildWatchOptions(&watchOptions{})
@@ -204,8 +223,7 @@ func TestWithBufferSize(t *testing.T) {
 }
 
 func TestWatch_Closed(t *testing.T) {
-	c := &Client{}
-	c.closed.Store(true)
+	c := newClosedStubClient()
 
 	_, err := c.Watch(context.Background(), "key")
 	if err != ErrClientClosed {
@@ -214,11 +232,31 @@ func TestWatch_Closed(t *testing.T) {
 }
 
 func TestWatch_EmptyKey(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.Watch(context.Background(), "")
 	if err != ErrEmptyKey {
 		t.Errorf("Watch() with empty key = %v, want %v", err, ErrEmptyKey)
+	}
+}
+
+// TestWatch_NilOption 测试 Watch 传入 nil WatchOption 时返回 ErrNilOption。
+func TestWatch_NilOption(t *testing.T) {
+	c := newStubClient()
+
+	_, err := c.Watch(context.Background(), "key", nil)
+	if err != ErrNilOption {
+		t.Errorf("Watch() with nil option = %v, want %v", err, ErrNilOption)
+	}
+}
+
+// TestWatch_NilOptionAmongValid 测试 Watch 混入 nil WatchOption 时返回 ErrNilOption。
+func TestWatch_NilOptionAmongValid(t *testing.T) {
+	c := newStubClient()
+
+	_, err := c.Watch(context.Background(), "key", WithPrefix(), nil, WithRevision(1))
+	if err != ErrNilOption {
+		t.Errorf("Watch() with nil among valid options = %v, want %v", err, ErrNilOption)
 	}
 }
 
@@ -269,6 +307,26 @@ func TestDispatchEvents_ContextCanceled(t *testing.T) {
 
 	if result {
 		t.Error("dispatchEvents() should return false when context is canceled")
+	}
+}
+
+func TestDispatchEvents_ClientClosed(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+	ctx := context.Background()
+
+	eventCh := make(chan Event) // 无缓冲，发送会阻塞
+
+	// 关闭 closeCh 触发退出
+	close(c.closeCh)
+
+	events := []*clientv3.Event{
+		createPutEvent("key1", "value1", 1),
+	}
+
+	_, result := c.dispatchEvents(ctx, events, eventCh)
+
+	if result {
+		t.Error("dispatchEvents() should return false when client is closed")
 	}
 }
 

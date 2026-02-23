@@ -3,18 +3,14 @@ package xproc
 import (
 	"errors"
 	"os"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// resetProcessName 重置进程名称缓存，仅供测试使用。
-func resetProcessName() {
-	processNameOnce = sync.Once{}
-	processNameValue = ""
-}
+// 注意：本文件中的测试修改包级全局变量（osExecutable、os.Args、processNameOnce），
+// 不可使用 t.Parallel()。每个测试通过 defer 恢复原始状态以避免污染后续测试。
 
 func TestProcessID(t *testing.T) {
 	pid := ProcessID()
@@ -23,8 +19,8 @@ func TestProcessID(t *testing.T) {
 }
 
 func TestProcessName(t *testing.T) {
-	resetProcessName()
-	defer resetProcessName()
+	ResetProcessName()
+	defer ResetProcessName()
 
 	name := ProcessName()
 	assert.NotEmpty(t, name)
@@ -36,10 +32,10 @@ func TestProcessName_Cached(t *testing.T) {
 	origExec := osExecutable
 	defer func() {
 		osExecutable = origExec
-		resetProcessName()
+		ResetProcessName()
 	}()
 
-	resetProcessName()
+	ResetProcessName()
 	osExecutable = func() (string, error) {
 		return "/opt/bin/cached-app", nil
 	}
@@ -58,18 +54,22 @@ func TestProcessName_Cached(t *testing.T) {
 
 func TestResolveProcessName_FallbackToArgs(t *testing.T) {
 	origExec := osExecutable
-	defer func() { osExecutable = origExec }()
+	origArgs := os.Args
+	defer func() {
+		osExecutable = origExec
+		os.Args = origArgs
+	}()
 
 	// 模拟 os.Executable 失败，应回退到 os.Args[0]
 	osExecutable = func() (string, error) {
 		return "", errors.New("not supported")
 	}
+	os.Args = []string{"/usr/bin/test-app"}
 
 	name := resolveProcessName()
-	assert.NotEmpty(t, name)
+	assert.Equal(t, "test-app", name)
 }
 
-// 注意：此测试修改全局 os.Args，不可使用 t.Parallel()。
 func TestResolveProcessName_EmptyArgs(t *testing.T) {
 	origExec := osExecutable
 	origArgs := os.Args
@@ -144,27 +144,34 @@ func TestResolveProcessName_SpecialPaths(t *testing.T) {
 	defer func() {
 		osExecutable = origExec
 		os.Args = origArgs
-		resetProcessName()
 	}()
 
-	specialPaths := []string{"/", ".", ".."}
+	// 使用描述性标签替代原始路径值，避免 "/" 被 testing 包解释为子测试层级分隔符。
+	specialPaths := []struct {
+		label string
+		path  string
+	}{
+		{"slash", "/"},
+		{"dot", "."},
+		{"dotdot", ".."},
+	}
 
-	for _, path := range specialPaths {
+	for _, tc := range specialPaths {
 		// os.Executable 返回特殊路径时应回退到 os.Args
-		t.Run("exe_"+path+"_fallback", func(t *testing.T) {
+		t.Run("exe_"+tc.label+"_fallback", func(t *testing.T) {
 			osExecutable = func() (string, error) {
-				return path, nil
+				return tc.path, nil
 			}
 			os.Args = []string{"/usr/bin/fallback"}
 			assert.Equal(t, "fallback", resolveProcessName())
 		})
 
 		// os.Args[0] 为特殊路径时应返回空
-		t.Run("args_"+path, func(t *testing.T) {
+		t.Run("args_"+tc.label, func(t *testing.T) {
 			osExecutable = func() (string, error) {
 				return "", errors.New("not supported")
 			}
-			os.Args = []string{path}
+			os.Args = []string{tc.path}
 			assert.Equal(t, "", resolveProcessName())
 		})
 	}
@@ -172,14 +179,18 @@ func TestResolveProcessName_SpecialPaths(t *testing.T) {
 
 func TestResolveProcessName_OsExecutableEmpty(t *testing.T) {
 	origExec := osExecutable
-	defer func() { osExecutable = origExec }()
+	origArgs := os.Args
+	defer func() {
+		osExecutable = origExec
+		os.Args = origArgs
+	}()
 
 	// os.Executable 返回空字符串时，应回退到 os.Args[0]
 	osExecutable = func() (string, error) {
 		return "", nil
 	}
+	os.Args = []string{"/usr/bin/test-app"}
 
 	name := resolveProcessName()
-	// 回退到 os.Args[0]
-	assert.NotEmpty(t, name)
+	assert.Equal(t, "test-app", name)
 }

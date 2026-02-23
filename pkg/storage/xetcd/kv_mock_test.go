@@ -778,6 +778,84 @@ func TestKV_PutWithTTL_PutError_RevokeError(t *testing.T) {
 	}
 }
 
+// TestKV_NilContext 测试所有 KV 方法在 ctx 为 nil 时返回 ErrNilContext。
+func TestKV_NilContext(t *testing.T) {
+	c := &Client{
+		config:  &Config{Endpoints: []string{"localhost:2379"}},
+		closeCh: make(chan struct{}),
+	}
+
+	t.Run("Get", func(t *testing.T) {
+		_, err := c.Get(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Get(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("GetWithRevision", func(t *testing.T) {
+		_, _, err := c.GetWithRevision(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("GetWithRevision(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Put", func(t *testing.T) {
+		err := c.Put(nil, "key", []byte("value")) //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Put(nil, key, value) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("PutWithTTL", func(t *testing.T) {
+		err := c.PutWithTTL(nil, "key", []byte("value"), time.Second) //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("PutWithTTL(nil, ...) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		err := c.Delete(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Delete(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("DeleteWithPrefix", func(t *testing.T) {
+		_, err := c.DeleteWithPrefix(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("DeleteWithPrefix(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		_, err := c.List(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("List(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("ListKeys", func(t *testing.T) {
+		_, err := c.ListKeys(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("ListKeys(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Exists", func(t *testing.T) {
+		_, err := c.Exists(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Exists(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Count", func(t *testing.T) {
+		_, err := c.Count(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Count(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+}
+
 // TestClient_RawClient 测试 RawClient 返回 nil（使用 mock 时）。
 func TestClient_RawClient(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -804,7 +882,7 @@ func TestClient_Close_Success(t *testing.T) {
 		Close().
 		Return(nil)
 
-	err := c.Close()
+	err := c.Close(context.Background())
 	if err != nil {
 		t.Fatalf("Close() error = %v, want nil", err)
 	}
@@ -815,7 +893,7 @@ func TestClient_Close_Success(t *testing.T) {
 	}
 
 	// 第二次关闭不应该调用底层 Close
-	err = c.Close()
+	err = c.Close(context.Background())
 	if err != nil {
 		t.Fatalf("second Close() error = %v, want nil", err)
 	}
@@ -834,7 +912,7 @@ func TestClient_Close_Error(t *testing.T) {
 		Close().
 		Return(expectedErr)
 
-	err := c.Close()
+	err := c.Close(context.Background())
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("Close() error = %v, want %v", err, expectedErr)
 	}

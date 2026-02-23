@@ -2,6 +2,7 @@ package xlog_test
 
 import (
 	"log/slog"
+	"runtime"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/observability/xlog"
@@ -185,7 +186,7 @@ func TestLevel_RoundTrip(t *testing.T) {
 func BenchmarkParseLevel(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		level, err := xlog.ParseLevel("info")
-		_ = level
-		_ = err
+		runtime.KeepAlive(level)
+		runtime.KeepAlive(err)
 	}
 }

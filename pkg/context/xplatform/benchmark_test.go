@@ -1,6 +1,7 @@
 package xplatform_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xplatform"
@@ -16,6 +17,7 @@ func BenchmarkConfig_Validate_Valid(b *testing.B) {
 		HasParent:       true,
 		UnclassRegionID: "region-001",
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -29,6 +31,7 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 	cfg := xplatform.Config{
 		PlatformID: "",
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -40,6 +43,9 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 
 // =============================================================================
 // 全局访问函数 Benchmark
+//
+// 设计决策: 串行与并行基准统一使用 runtime.KeepAlive 消费返回值防止 DCE，
+// 避免包级 sink 变量在未来误改为并行基准时引入 DATA RACE。
 // =============================================================================
 
 func BenchmarkPlatformID(b *testing.B) {
@@ -50,11 +56,14 @@ func BenchmarkPlatformID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.PlatformID()
+		v = xplatform.PlatformID()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkHasParent(b *testing.B) {
@@ -66,11 +75,14 @@ func BenchmarkHasParent(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v bool
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.HasParent()
+		v = xplatform.HasParent()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkUnclassRegionID(b *testing.B) {
@@ -82,11 +94,14 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.UnclassRegionID()
+		v = xplatform.UnclassRegionID()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkIsInitialized(b *testing.B) {
@@ -97,11 +112,14 @@ func BenchmarkIsInitialized(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v bool
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.IsInitialized()
+		v = xplatform.IsInitialized()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkRequirePlatformID(b *testing.B) {
@@ -112,13 +130,18 @@ func BenchmarkRequirePlatformID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		if _, err := xplatform.RequirePlatformID(); err != nil {
+		var err error
+		v, err = xplatform.RequirePlatformID()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkGetConfig(b *testing.B) {
@@ -131,13 +154,18 @@ func BenchmarkGetConfig(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v xplatform.Config
 	for i := 0; i < b.N; i++ {
-		if _, err := xplatform.GetConfig(); err != nil {
+		var err error
+		v, err = xplatform.GetConfig()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
+	runtime.KeepAlive(v)
 }
 
 // =============================================================================
@@ -152,12 +180,15 @@ func BenchmarkPlatformID_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local string
 		for pb.Next() {
-			_ = xplatform.PlatformID()
+			local = xplatform.PlatformID()
 		}
+		runtime.KeepAlive(local)
 	})
 }
 
@@ -170,12 +201,15 @@ func BenchmarkHasParent_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local bool
 		for pb.Next() {
-			_ = xplatform.HasParent()
+			local = xplatform.HasParent()
 		}
+		runtime.KeepAlive(local)
 	})
 }
 
@@ -187,12 +221,60 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local bool
 		for pb.Next() {
-			_ = xplatform.IsInitialized()
+			local = xplatform.IsInitialized()
 		}
+		runtime.KeepAlive(local)
+	})
+}
+
+func BenchmarkRequirePlatformID_Parallel(b *testing.B) {
+	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID: "platform-parallel",
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		var local string
+		for pb.Next() {
+			v, err := xplatform.RequirePlatformID()
+			if err != nil {
+				b.Fatal(err)
+			}
+			local = v
+		}
+		runtime.KeepAlive(local)
+	})
+}
+
+func BenchmarkUnclassRegionID_Parallel(b *testing.B) {
+	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "platform-parallel",
+		UnclassRegionID: "region-parallel",
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		var local string
+		for pb.Next() {
+			local = xplatform.UnclassRegionID()
+		}
+		runtime.KeepAlive(local)
 	})
 }
 
@@ -206,13 +288,18 @@ func BenchmarkGetConfig_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local xplatform.Config
 		for pb.Next() {
-			if _, err := xplatform.GetConfig(); err != nil {
+			v, err := xplatform.GetConfig()
+			if err != nil {
 				b.Fatal(err)
 			}
+			local = v
 		}
+		runtime.KeepAlive(local)
 	})
 }

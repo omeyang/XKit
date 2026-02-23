@@ -9,8 +9,10 @@ import (
 
 // applyDefaultTimeout 如果 context 没有 deadline 且配置了默认超时，则应用默认超时
 // 返回新的 context 和 cancel 函数（如果创建了新 context）
+//
+// 当 ctx 为 nil 时直接返回，不做超时包装——后续 validateCommonParams 会返回 ErrNilContext。
 func applyDefaultTimeout(ctx context.Context, defaultTimeout time.Duration) (context.Context, context.CancelFunc) {
-	if defaultTimeout <= 0 {
+	if defaultTimeout <= 0 || ctx == nil {
 		return ctx, func() {}
 	}
 	if _, ok := ctx.Deadline(); ok {

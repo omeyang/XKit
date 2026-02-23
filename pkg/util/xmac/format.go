@@ -94,6 +94,7 @@ func (a Addr) FormatString(f Format) string {
 		// 设计决策: 未知格式降级为默认冒号小写格式，而非返回错误。
 		// FormatString 返回 string（不含 error），保持 API 简洁；
 		// 配合 Format.String() 返回 "unknown" 可在日志中识别异常值。
+		// 调用方如需严格校验格式参数，应先调用 Format.IsValid() 预验证。
 		return formatWithSep(a.bytes, ':', hexLower)
 	}
 }

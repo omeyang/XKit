@@ -28,7 +28,11 @@ func NewCommandRegistry() *CommandRegistry {
 
 // Register 注册命令。
 // 如果命令名已存在，将覆盖原有命令。
+// nil 命令会被静默忽略。
 func (r *CommandRegistry) Register(cmd Command) {
+	if cmd == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.commands[cmd.Name()] = cmd

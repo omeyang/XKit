@@ -14,30 +14,37 @@ import (
 // =============================================================================
 
 func TestSharedErrors_AreAliases(t *testing.T) {
-	// 验证重导出的错误是 mqcore 的别名
-	assert.Same(t, mqcore.ErrNilConfig, ErrNilConfig)
+	// 验证重导出的共享错误是 mqcore 的别名
 	assert.Same(t, mqcore.ErrNilClient, ErrNilClient)
 	assert.Same(t, mqcore.ErrNilMessage, ErrNilMessage)
 	assert.Same(t, mqcore.ErrNilHandler, ErrNilHandler)
 	assert.Same(t, mqcore.ErrClosed, ErrClosed)
-	assert.Same(t, mqcore.ErrHealthCheckFailed, ErrHealthCheckFailed)
-	assert.Same(t, mqcore.ErrDLQPolicyRequired, ErrDLQPolicyRequired)
-	assert.Same(t, mqcore.ErrDLQTopicRequired, ErrDLQTopicRequired)
-	assert.Same(t, mqcore.ErrRetryPolicyRequired, ErrRetryPolicyRequired)
 }
 
 // =============================================================================
 // Kafka Specific Error Tests
 // =============================================================================
 
-func TestErrFlushTimeout(t *testing.T) {
-	assert.True(t, strings.HasPrefix(ErrFlushTimeout.Error(), "xkafka:"),
-		"error should have 'xkafka:' prefix")
-	assert.Contains(t, ErrFlushTimeout.Error(), "flush timeout")
-}
+func TestKafkaSpecificErrors_Prefix(t *testing.T) {
+	errors := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"ErrNilConfig", ErrNilConfig, "nil config"},
+		{"ErrHealthCheckFailed", ErrHealthCheckFailed, "health check failed"},
+		{"ErrDLQPolicyRequired", ErrDLQPolicyRequired, "DLQ policy"},
+		{"ErrDLQTopicRequired", ErrDLQTopicRequired, "DLQ topic"},
+		{"ErrRetryPolicyRequired", ErrRetryPolicyRequired, "retry policy"},
+		{"ErrFlushTimeout", ErrFlushTimeout, "flush timeout"},
+		{"ErrEmptyTopics", ErrEmptyTopics, "empty topics"},
+	}
 
-func TestErrEmptyTopics(t *testing.T) {
-	assert.True(t, strings.HasPrefix(ErrEmptyTopics.Error(), "xkafka:"),
-		"error should have 'xkafka:' prefix")
-	assert.Contains(t, ErrEmptyTopics.Error(), "empty topics")
+	for _, tc := range errors {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.True(t, strings.HasPrefix(tc.err.Error(), "xkafka:"),
+				"error should have 'xkafka:' prefix")
+			assert.Contains(t, tc.err.Error(), tc.want)
+		})
+	}
 }

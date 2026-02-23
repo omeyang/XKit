@@ -9,6 +9,10 @@ import (
 
 // DefaultSignals 返回默认监听的系统信号列表。
 //
+// 包含 SIGHUP、SIGINT、SIGTERM、SIGQUIT。注意 SIGHUP 在终端断开
+// （如 SSH 断连）时会触发，容器化部署中通常无此问题。如需排除 SIGHUP，
+// 可通过 [WithSignals] 自定义信号列表。
+//
 // 每次调用返回新的切片，调用者可安全修改。
 func DefaultSignals() []os.Signal {
 	return []os.Signal{
@@ -61,9 +65,16 @@ func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context)
 		if interval <= 0 {
 			return ErrInvalidInterval
 		}
+		if fn == nil {
+			return ErrNilFunc
+		}
 
-		// 立即执行一次
+		// 设计决策: 立即执行前先检查 ctx.Err()，确保已取消的 context
+		// 不会触发业务副作用（如发送消息、写库）。
 		if immediate {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err := fn(ctx); err != nil {
 				return err
 			}
@@ -103,6 +114,16 @@ func Timer(delay time.Duration, fn func(ctx context.Context) error) func(ctx con
 		// 会导致 time.NewTicker panic，所以两者的边界值不同。
 		if delay < 0 {
 			return ErrInvalidDelay
+		}
+		if fn == nil {
+			return ErrNilFunc
+		}
+		// 设计决策: 零延迟执行前先检查 ctx.Err()，与 Ticker immediate 分支对齐。
+		if delay == 0 {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fn(ctx)
 		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()

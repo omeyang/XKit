@@ -2,6 +2,7 @@ package xtenant
 
 import (
 	"context"
+	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 )
@@ -21,17 +22,27 @@ type TenantInfo struct {
 	TenantName string
 }
 
-// IsEmpty 判断租户信息是否为空
+// IsEmpty 判断租户信息是否为空（结构零值检测）。
+//
+// 注意：本方法不做 TrimSpace，纯空白值（如 "  "）不被视为空。
+// 如需验证业务有效性（会 TrimSpace），请使用 Validate。
 func (t TenantInfo) IsEmpty() bool {
 	return t.TenantID == "" && t.TenantName == ""
 }
 
-// Validate 验证必填字段
+// Validate 验证必填字段。
+//
+// 按字段顺序依次校验（TenantID → TenantName），返回第一个失败的错误。
+// 当两者都为空时，返回 ErrEmptyTenantID。
+//
+// 设计决策: 对字段做 TrimSpace 后再判空，与包内 WithTenantID、WithTenantInfo、
+// ExtractFromHTTPHeader、ExtractFromMetadata 的空白处理语义保持一致。
+// 纯空白值视为空值，返回对应的 ErrEmpty* 错误。
 func (t TenantInfo) Validate() error {
-	if t.TenantID == "" {
+	if strings.TrimSpace(t.TenantID) == "" {
 		return ErrEmptyTenantID
 	}
-	if t.TenantName == "" {
+	if strings.TrimSpace(t.TenantName) == "" {
 		return ErrEmptyTenantName
 	}
 	return nil
@@ -89,23 +100,41 @@ func RequireTenantName(ctx context.Context) (string, error) {
 //
 // 如果 ctx 为 nil，返回错误。
 // 底层使用 xctx.WithTenantID。
+//
+// 设计决策: 对 tenantID 做 TrimSpace 后再注入，与 WithTenantInfo 和
+// Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
+// 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantID。
+//
+// 注意与 WithTenantInfo 的差异: WithTenantID 始终写入 context（包括空字符串），
+// 而 WithTenantInfo 只写入 TrimSpace 后非空的字段。例如传入纯空白值时，
+// WithTenantID 会存储空字符串，WithTenantInfo 则保留 context 中的原有值。
+// 这是因为 WithTenantID 是直接赋值语义，WithTenantInfo 是选择性批量注入语义。
 func WithTenantID(ctx context.Context, tenantID string) (context.Context, error) {
-	return xctx.WithTenantID(ctx, tenantID)
+	return xctx.WithTenantID(ctx, strings.TrimSpace(tenantID))
 }
 
 // WithTenantName 将租户名称注入 context
 //
 // 如果 ctx 为 nil，返回错误。
 // 底层使用 xctx.WithTenantName。
+//
+// 设计决策: 对 tenantName 做 TrimSpace 后再注入，与 WithTenantInfo 和
+// Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
+// 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantName。
+// 参见 WithTenantID 注释了解与 WithTenantInfo 的差异。
 func WithTenantName(ctx context.Context, tenantName string) (context.Context, error) {
-	return xctx.WithTenantName(ctx, tenantName)
+	return xctx.WithTenantName(ctx, strings.TrimSpace(tenantName))
 }
 
 // WithTenantInfo 将 TenantInfo 批量注入 context
 //
-// 只注入非空字段。如果 info 为零值（IsEmpty() == true），
+// 只注入非空字段（TrimSpace 后判断）。如果 info 为零值（IsEmpty() == true），
 // 返回原始 ctx 且不做任何修改。
 // 如果 ctx 为 nil，返回错误。
+//
+// 设计决策: 对 TenantID/TenantName 做 TrimSpace 后再判断是否为空，
+// 与 Extract 函数的空白处理语义保持一致（ExtractFromHTTPHeader/ExtractFromMetadata
+// 均使用 TrimSpace）。这确保纯空白值不会被注入 context。
 func WithTenantInfo(ctx context.Context, info TenantInfo) (context.Context, error) {
 	if ctx == nil {
 		return nil, xctx.ErrNilContext
@@ -113,16 +142,16 @@ func WithTenantInfo(ctx context.Context, info TenantInfo) (context.Context, erro
 
 	var err error
 
-	if info.TenantID != "" {
-		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-		if err != nil {
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		ctx, err = xctx.WithTenantID(ctx, tid)
+		if err != nil { // 防御性处理：当前 xctx 实现下不可达
 			return nil, err
 		}
 	}
 
-	if info.TenantName != "" {
-		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-		if err != nil {
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		ctx, err = xctx.WithTenantName(ctx, tname)
+		if err != nil { // 防御性处理：当前 xctx 实现下不可达
 			return nil, err
 		}
 	}

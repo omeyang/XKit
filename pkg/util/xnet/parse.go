@@ -29,7 +29,7 @@ func ParseRange(s string) (netipx.IPRange, error) {
 
 	// 格式 4: 显式范围 "start-end"
 	if idx := strings.Index(s, "-"); idx >= 0 {
-		r, err, handled := parseExplicitRange(s, idx)
+		r, handled, err := parseExplicitRange(s, idx)
 		if handled {
 			return r, err
 		}
@@ -51,6 +51,21 @@ func ParseRange(s string) (netipx.IPRange, error) {
 		if err != nil {
 			return netipx.IPRange{}, fmt.Errorf("%w: invalid CIDR: %w", ErrInvalidRange, err)
 		}
+
+		// 设计决策: 将 IPv4-mapped IPv6 CIDR 统一转为纯 IPv4 CIDR，与 parseRangeWithMask 行为一致。
+		// 若直接按 IPv6 前缀位解析，"::ffff:192.168.1.0/24" 会生成覆盖 :: 到
+		// 0:ff:ffff:...:ffff 的巨大范围（IPv6 /24），而用户意图通常是 IPv4 /24。
+		// 规则：bits >= 96 → 转为 IPv4 prefix(bits-96)；bits < 96 → 拒绝（前缀超出映射范围，语义模糊）。
+		if prefix.Addr().Is4In6() {
+			bits := prefix.Bits()
+			if bits < 96 {
+				return netipx.IPRange{}, fmt.Errorf("%w: IPv4-mapped CIDR prefix length %d is less than 96, ambiguous range", ErrInvalidRange, bits)
+			}
+			v4Addr := prefix.Addr().Unmap()
+			v4Prefix := netip.PrefixFrom(v4Addr, bits-96)
+			prefix = v4Prefix
+		}
+
 		return netipx.RangeOfPrefix(prefix.Masked()), nil
 	}
 
@@ -59,22 +74,40 @@ func ParseRange(s string) (netipx.IPRange, error) {
 	if err != nil {
 		return netipx.IPRange{}, fmt.Errorf("%w: %w", ErrInvalidRange, err)
 	}
+	// 归一化 IPv4-mapped IPv6 → 纯 IPv4，与 CIDR/掩码路径行为一致。
+	addr = unmapAddr(addr)
 	return netipx.IPRangeFrom(addr, addr), nil
 }
 
+// unmapAddr 将 IPv4-mapped IPv6 地址归一化为纯 IPv4。
+// 非 IPv4-mapped 地址原样返回。
+//
+// 设计决策: ParseRange 的所有路径（单 IP、CIDR、掩码、显式范围）统一对
+// IPv4-mapped IPv6 地址归一化，确保 "::ffff:192.168.1.1" 和 "192.168.1.1"
+// 生成相同的范围对象，避免规则集合中出现"逻辑重复但不合并"或"查询不命中"。
+func unmapAddr(addr netip.Addr) netip.Addr {
+	if addr.Is4In6() {
+		return addr.Unmap()
+	}
+	return addr
+}
+
 // parseExplicitRange 尝试将 s 按位置 idx 处的 '-' 拆分为起止地址。
-// 返回 (range, err, handled)：handled=true 时结果已确定，handled=false 时调用方应回退。
-func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
+// 返回 (range, handled, err)：handled=true 时结果已确定，handled=false 时调用方应回退。
+func parseExplicitRange(s string, idx int) (netipx.IPRange, bool, error) {
 	startStr := strings.TrimSpace(s[:idx])
 	endStr := strings.TrimSpace(s[idx+1:])
 	start, startErr := netip.ParseAddr(startStr)
 	end, endErr := netip.ParseAddr(endStr)
 	if startErr == nil && endErr == nil {
+		// 归一化 IPv4-mapped IPv6 → 纯 IPv4，与 CIDR/掩码/单 IP 路径行为一致。
+		start = unmapAddr(start)
+		end = unmapAddr(end)
 		r := netipx.IPRangeFrom(start, end)
 		if !r.IsValid() {
-			return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s), true
+			return netipx.IPRange{}, true, fmt.Errorf("%w: %s", ErrInvalidRange, s)
 		}
-		return r, nil, true
+		return r, true, nil
 	}
 	// 仅一侧解析成功 → 明确是范围格式但另一端无效，返回具体错误
 	if startErr == nil {
@@ -85,16 +118,19 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
 		// 拆分后 start="fe80::1%eth" 可解析，end="0-garbage" 不可解析，
 		// 但整体字符串会被 netip.ParseAddr 解析为 zone="eth-0-garbage" 的合法地址。
 		// 此行为是正确的：zone ID 由操作系统/接口定义，无法在解析器层面限制其内容。
+		//
+		// 注意: 当前此分支在 ParseRange 调用路径下不可达，因为入口处已拒绝包含 '%' 的输入。
+		// 保留此逻辑作为 parseExplicitRange 的自完备性保证。
 		if addr, err := netip.ParseAddr(s); err == nil {
-			return netipx.IPRangeFrom(addr, addr), nil, true
+			return netipx.IPRangeFrom(addr, addr), true, nil
 		}
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr), true
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr)
 	}
 	if endErr == nil {
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr), true
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr)
 	}
 	// 两侧都无效 → 不处理，让调用方回退
-	return netipx.IPRange{}, nil, false
+	return netipx.IPRange{}, false, nil
 }
 
 // parseRangeWithMask 解析掩码格式的 IP 范围（仅 IPv4），包含掩码连续性校验。
@@ -141,10 +177,10 @@ func parseRangeWithMask(addrStr, maskStr string) (netipx.IPRange, error) {
 // 空切片或 nil 返回空的 IPSet。
 func ParseRanges(strs []string) (*netipx.IPSet, error) {
 	var b netipx.IPSetBuilder
-	for _, s := range strs {
+	for i, s := range strs {
 		r, err := ParseRange(s)
 		if err != nil {
-			return nil, fmt.Errorf("parse range %q: %w", s, err)
+			return nil, fmt.Errorf("parse range [%d] %q: %w", i, s, err)
 		}
 		b.AddRange(r)
 	}

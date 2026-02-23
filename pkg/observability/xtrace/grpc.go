@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/omeyang/xkit/pkg/context/xctx"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -114,11 +112,14 @@ func GRPCStreamServerInterceptor(opts ...Option) grpc.StreamServerInterceptor {
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
+		// 缓存 context（与 HTTP 中间件的 ctx := r.Context() 写法保持一致）
+		ctx := ss.Context()
+
 		// 提取追踪信息
-		traceInfo := ExtractFromIncomingContext(ss.Context())
+		traceInfo := ExtractFromIncomingContext(ctx)
 
 		// 注入到 context
-		ctx := injectTraceToContext(ss.Context(), traceInfo, cfg.autoGenerate)
+		ctx = injectTraceToContext(ctx, traceInfo, cfg.autoGenerate)
 
 		return handler(srv, &wrappedServerStream{ServerStream: ss, ctx: ctx})
 	}
@@ -175,17 +176,29 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // gRPC Metadata 注入（跨服务传播）
 // =============================================================================
 
+// grpcTransportKeys gRPC 传输层使用的 key 名称。
+//
+// 设计决策: 提取为包级变量，供 InjectToOutgoingContext 和 InjectTraceToMetadata 共享，
+// 确保两条注入路径使用相同的 traceparent 生成逻辑（resolveTraceparent）。
+var grpcTransportKeys = transportKeys{
+	traceID:     MetaTraceID,
+	spanID:      MetaSpanID,
+	requestID:   MetaRequestID,
+	traceparent: MetaTraceparent,
+	tracestate:  MetaTracestate,
+}
+
 // InjectToOutgoingContext 将追踪信息注入 outgoing context。
 // 从 context 提取追踪信息并设置到 outgoing metadata，用于跨服务调用时传播。
 // 会正确传递上游的 trace-flags（采样决策）。
+//
+// 注意：本函数不传播 tracestate（因为 context 中不存储 tracestate）。
+// 如需传播 tracestate，请使用 InjectTraceToMetadata 手动设置，或使用 OpenTelemetry SDK。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
-	traceID := xctx.TraceID(ctx)
-	spanID := xctx.SpanID(ctx)
-	requestID := xctx.RequestID(ctx)
-	traceFlags := xctx.TraceFlags(ctx)
+	info := TraceInfoFromContext(ctx)
 
-	// 如果没有任何信息，直接返回
-	if traceID == "" && spanID == "" && requestID == "" {
+	// 如果没有任何追踪信息，直接返回
+	if info.IsEmpty() {
 		return ctx
 	}
 
@@ -197,22 +210,7 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 		md = metadata.New(nil)
 	}
 
-	// 使用 Set 覆盖（而非追加），避免多次调用产生重复值
-	if traceID != "" {
-		md.Set(MetaTraceID, traceID)
-	}
-	if spanID != "" {
-		md.Set(MetaSpanID, spanID)
-	}
-	if requestID != "" {
-		md.Set(MetaRequestID, requestID)
-	}
-
-	// 生成 W3C traceparent（仅在 traceID 和 spanID 都有效时）
-	// 使用 context 中的 traceFlags，若无则默认 "00"
-	if traceparent := formatTraceparent(traceID, spanID, traceFlags); traceparent != "" {
-		md.Set(MetaTraceparent, traceparent)
-	}
+	injectTraceInfoTo(func(k, v string) { md.Set(k, v) }, info, grpcTransportKeys)
 
 	return metadata.NewOutgoingContext(ctx, md)
 }
@@ -222,39 +220,13 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 // 用于手动构造 Metadata 的场景。
 // 如果 TraceInfo.Traceparent 为空但有有效的 TraceID 和 SpanID，
 // 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "00"）。
+//
+// 注意：如果同时设置了 TraceID 和 Traceparent，请确保两者一致以避免下游混淆。
 func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 	if md == nil {
 		return
 	}
-
-	if info.TraceID != "" {
-		md.Set(MetaTraceID, info.TraceID)
-	}
-	if info.SpanID != "" {
-		md.Set(MetaSpanID, info.SpanID)
-	}
-	if info.RequestID != "" {
-		md.Set(MetaRequestID, info.RequestID)
-	}
-
-	// 如果已有 Traceparent，验证后规范化为小写再透传，确保符合 W3C 规范
-	if info.Traceparent != "" {
-		if _, _, _, ok := parseTraceparent(info.Traceparent); ok {
-			md.Set(MetaTraceparent, strings.ToLower(info.Traceparent))
-		}
-		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
-	}
-
-	// 如果没有设置有效的 Traceparent，尝试从 TraceID/SpanID 生成
-	if len(md.Get(MetaTraceparent)) == 0 {
-		if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
-			md.Set(MetaTraceparent, traceparent)
-		}
-	}
-
-	if info.Tracestate != "" {
-		md.Set(MetaTracestate, info.Tracestate)
-	}
+	injectTraceInfoTo(func(k, v string) { md.Set(k, v) }, info, grpcTransportKeys)
 }
 
 // =============================================================================

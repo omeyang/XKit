@@ -6,12 +6,39 @@ import (
 	"time"
 )
 
+// maxKeyLength 锁 key 的最大长度（字节）。
+const maxKeyLength = 512
+
+// unlockTimeout 解锁操作的清理超时时间。
+// 当调用方的 context 已取消/超时时，使用此超时确保解锁操作能尽力完成，
+// 避免锁残留到 TTL/Lease 到期。
+const unlockTimeout = 5 * time.Second
+
 // validateKey 验证锁 key 是否有效。
+//
+// 注意：此函数验证的是用户提供的原始 key，不包含 WithKeyPrefix 拼接的前缀。
+// Redis key 实际上限为 512MB，etcd key 推荐 ≤1.5MB。maxKeyLength（512 字节）
+// 是对用户 key 的合理约束，前缀拼接后的总长度远低于两种后端的限制。
 func validateKey(key string) error {
 	if strings.TrimSpace(key) == "" {
 		return ErrEmptyKey
 	}
+	if len(key) > maxKeyLength {
+		return ErrKeyTooLong
+	}
 	return nil
+}
+
+// resolveFullKey 应用 MutexOption 并返回完整 key（prefix + key）。
+// 用于 etcd 后端在创建 Mutex 前解析最终 key，消除 TryLock/Lock 的选项解析重复。
+func resolveFullKey(key string, opts ...MutexOption) string {
+	options := defaultMutexOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(options)
+		}
+	}
+	return options.KeyPrefix + key
 }
 
 // =============================================================================
@@ -105,6 +132,10 @@ func defaultMutexOptions() *mutexOptions {
 // WithKeyPrefix 设置锁 key 的前缀。
 // 最终 key = prefix + key。
 // 默认值："lock:"。
+//
+// 注意：传入空字符串 "" 会移除默认前缀，导致最终 key 等于原始 key。
+// 在多模块或多租户场景中，空前缀可能导致不同业务使用相同 key 时发生冲突。
+// 确保在去掉前缀时，key 本身已包含足够的命名空间隔离。
 //
 // 示例：
 //

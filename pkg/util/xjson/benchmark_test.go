@@ -2,8 +2,8 @@ package xjson
 
 import "testing"
 
-// benchSink 防止编译器优化掉基准测试中的函数调用结果。
-var benchSink string
+// 设计决策: Go 1.24+ 的 b.Loop() 内置 runtime.KeepAlive 防优化机制，
+// 无需额外的包级 sink 变量来防止编译器消除函数调用。
 
 func BenchmarkPretty(b *testing.B) {
 	type S struct {
@@ -15,7 +15,7 @@ func BenchmarkPretty(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		benchSink = Pretty(v)
+		Pretty(v)
 	}
 }
 
@@ -31,7 +31,7 @@ func BenchmarkPrettyMap(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		benchSink = Pretty(v)
+		Pretty(v)
 	}
 }
 
@@ -54,7 +54,7 @@ func BenchmarkPrettyLargeObject(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		benchSink = Pretty(v)
+		Pretty(v)
 	}
 }
 
@@ -64,7 +64,7 @@ func BenchmarkPrettyError(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		benchSink = Pretty(v)
+		Pretty(v)
 	}
 }
 
@@ -78,6 +78,6 @@ func BenchmarkPrettyE(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		benchSink, _ = PrettyE(v)
+		PrettyE(v)
 	}
 }

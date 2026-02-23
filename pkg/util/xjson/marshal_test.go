@@ -9,11 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testUser 用于测试的用户结构体，避免在多个测试函数中重复定义。
+type testUser struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
 func TestPrettyE(t *testing.T) {
-	type User struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
 
 	tests := []struct {
 		name     string
@@ -24,7 +26,7 @@ func TestPrettyE(t *testing.T) {
 	}{
 		{
 			name:     "struct",
-			input:    User{Name: "Alice", Age: 30},
+			input:    testUser{Name: "Alice", Age: 30},
 			contains: `"name": "Alice"`,
 		},
 		{
@@ -51,6 +53,23 @@ func TestPrettyE(t *testing.T) {
 			name:  "empty_string",
 			input: "",
 			exact: `""`,
+		},
+		{
+			name: "nested_struct",
+			input: struct {
+				Outer string `json:"outer"`
+				Inner struct {
+					Value int `json:"value"`
+				} `json:"inner"`
+			}{Outer: "a", Inner: struct {
+				Value int `json:"value"`
+			}{Value: 1}},
+			contains: `"inner": {`,
+		},
+		{
+			name:  "html_special_chars",
+			input: "<script>alert('xss')</script> & foo > bar",
+			exact: `"\u003cscript\u003ealert('xss')\u003c/script\u003e \u0026 foo \u003e bar"`,
 		},
 		{
 			name:    "error_NaN",
@@ -84,11 +103,8 @@ func TestPrettyE(t *testing.T) {
 }
 
 func TestPretty(t *testing.T) {
-	type User struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
-
+	// Pretty 的成功路径由 PrettyE 实现，TestPrettyE 已充分覆盖。
+	// 此处仅保留代表性成功 case 验证委托正确性，重点测试错误降级行为。
 	tests := []struct {
 		name     string
 		input    any
@@ -97,33 +113,13 @@ func TestPretty(t *testing.T) {
 	}{
 		{
 			name:     "struct",
-			input:    User{Name: "Alice", Age: 30},
+			input:    testUser{Name: "Alice", Age: 30},
 			contains: `"name": "Alice"`,
-		},
-		{
-			name:     "map",
-			input:    map[string]int{"a": 1},
-			contains: `"a": 1`,
 		},
 		{
 			name:  "nil",
 			input: nil,
 			exact: "null",
-		},
-		{
-			name:  "slice",
-			input: []int{1, 2, 3},
-			exact: "[\n  1,\n  2,\n  3\n]",
-		},
-		{
-			name:  "empty_struct",
-			input: struct{}{},
-			exact: "{}",
-		},
-		{
-			name:  "empty_string",
-			input: "",
-			exact: `""`,
 		},
 		{
 			name:     "error_NaN",

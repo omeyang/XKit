@@ -3,12 +3,14 @@ package xpulsar
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // =============================================================================
@@ -110,10 +112,29 @@ func TestClientWrapper_Stats_AfterClose(t *testing.T) {
 		options: defaultOptions(),
 	}
 
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	stats := w.Stats()
 	assert.False(t, stats.Connected)
+}
+
+func TestClientWrapper_Stats_AfterClose_CountersReset(t *testing.T) {
+	mc := &mockPulsarClient{}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// 模拟创建了 producer 和 consumer
+	w.producersCount.Store(3)
+	w.consumersCount.Store(2)
+
+	require.NoError(t, w.Close(context.Background()))
+
+	stats := w.Stats()
+	assert.False(t, stats.Connected)
+	assert.Equal(t, 0, stats.ProducersCount, "Close 后计数器应重置")
+	assert.Equal(t, 0, stats.ConsumersCount, "Close 后计数器应重置")
 }
 
 // =============================================================================
@@ -128,13 +149,13 @@ func TestClientWrapper_Close_Idempotent(t *testing.T) {
 	}
 
 	// 首次关闭
-	err := w.Close()
+	err := w.Close(context.Background())
 	assert.NoError(t, err)
 	assert.True(t, mc.closeCalled)
 
 	// 重复关闭不应 panic
 	mc.closeCalled = false
-	err = w.Close()
+	err = w.Close(context.Background())
 	assert.NoError(t, err)
 	assert.False(t, mc.closeCalled, "底层 client.Close 不应被重复调用")
 }
@@ -184,7 +205,7 @@ func TestClientWrapper_CreateProducer_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	producer, err := w.CreateProducer(pulsar.ProducerOptions{Topic: "test"})
 	assert.Nil(t, producer)
@@ -239,7 +260,7 @@ func TestClientWrapper_Subscribe_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	consumer, err := w.Subscribe(pulsar.ConsumerOptions{Topic: "test"})
 	assert.Nil(t, consumer)
@@ -360,10 +381,28 @@ func TestClientWrapper_Health_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	err := w.Health(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestClientWrapper_Health_NilContext(t *testing.T) {
+	reader := &mockReader{}
+	mc := &mockPulsarClient{
+		createReaderFn: func(pulsar.ReaderOptions) (pulsar.Reader, error) {
+			return reader, nil
+		},
+	}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// nil context 应内部替换为 context.Background()，不 panic
+	var nilCtx context.Context
+	err := w.Health(nilCtx)
+	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -431,6 +470,55 @@ func TestTrackedConsumer_Close_Idempotent(t *testing.T) {
 }
 
 // =============================================================================
+// trackedProducer/trackedConsumer Close 后 clientWrapper.Close 不导致负计数
+// =============================================================================
+
+func TestClientWrapper_Close_ThenTrackedClose_NoNegativeCount(t *testing.T) {
+	mc := &mockPulsarClient{}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// 创建 producer 和 consumer
+	producer, err := w.CreateProducer(pulsar.ProducerOptions{Topic: "test"})
+	require.NoError(t, err)
+
+	consumer, err := w.Subscribe(pulsar.ConsumerOptions{Topic: "test", SubscriptionName: "sub"})
+	require.NoError(t, err)
+
+	// 先关闭 clientWrapper（计数器被重置为 0）
+	require.NoError(t, w.Close(context.Background()))
+	assert.Equal(t, 0, w.Stats().ProducersCount)
+	assert.Equal(t, 0, w.Stats().ConsumersCount)
+
+	// 再关闭仍持有引用的 producer/consumer，计数器不应变为负数
+	producer.Close()
+	consumer.Close()
+	assert.Equal(t, 0, w.Stats().ProducersCount, "计数器不应为负")
+	assert.Equal(t, 0, w.Stats().ConsumersCount, "计数器不应为负")
+}
+
+func TestDecrementIfPositive(t *testing.T) {
+	var counter atomic.Int32
+
+	// 从 0 开始递减不应变为负数
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
+
+	// 正常递减
+	counter.Store(2)
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(1), counter.Load())
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
+
+	// 再次递减不应变为负数
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
+}
+
+// =============================================================================
 // isTopicNotFoundErr 测试
 // =============================================================================
 
@@ -490,4 +578,33 @@ func TestConsumeLoopWithPolicy_WithBackoff(t *testing.T) {
 	}, backoff)
 
 	assert.ErrorIs(t, loopErr, context.Canceled)
+}
+
+// =============================================================================
+// Health 超时 → Close 不泄漏 goroutine（goleak 验证）
+// =============================================================================
+
+func TestClientWrapper_Health_Timeout_Close_NoLeak(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	mc := &mockPulsarClient{
+		createReaderFn: func(pulsar.ReaderOptions) (pulsar.Reader, error) {
+			// 模拟 broker 慢响应
+			time.Sleep(300 * time.Millisecond)
+			return &mockReader{}, nil
+		},
+	}
+	opts := defaultOptions()
+	opts.HealthTimeout = 50 * time.Millisecond
+	w := &clientWrapper{
+		client:  mc,
+		options: opts,
+	}
+
+	// Health 超时
+	err := w.Health(context.Background())
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+	// Close 应等待后台清理 goroutine 完成
+	require.NoError(t, w.Close(context.Background()))
 }

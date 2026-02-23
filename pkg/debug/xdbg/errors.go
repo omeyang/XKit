@@ -41,4 +41,16 @@ var (
 
 	// ErrInvalidState 表示服务器状态无效，无法执行此操作。
 	ErrInvalidState = errors.New("xdbg: invalid server state for this operation")
+
+	// ErrNilContext 表示传入的 context 为 nil。
+	ErrNilContext = errors.New("xdbg: context must not be nil")
+
+	// ErrEmptyCommandName 表示命令名不能为空。
+	ErrEmptyCommandName = errors.New("xdbg: command name must not be empty")
+
+	// ErrNilCommandFunc 表示命令函数不能为 nil。
+	ErrNilCommandFunc = errors.New("xdbg: command function must not be nil")
+
+	// ErrNilCommand 表示命令不能为 nil。
+	ErrNilCommand = errors.New("xdbg: command must not be nil")
 )

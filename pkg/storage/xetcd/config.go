@@ -104,8 +104,12 @@ func (c *Config) String() string {
 	if c.Password != "" {
 		password = "***"
 	}
-	return fmt.Sprintf("Config{Endpoints:%v Username:%s Password:%s DialTimeout:%v}",
-		c.Endpoints, c.Username, password, c.DialTimeout)
+	return fmt.Sprintf("Config{Endpoints:%v Username:%s Password:%s DialTimeout:%v "+
+		"DialKeepAliveTime:%v DialKeepAliveTimeout:%v AutoSyncInterval:%v "+
+		"RejectOldCluster:%v PermitWithoutStream:%v}",
+		c.Endpoints, c.Username, password, c.DialTimeout,
+		c.DialKeepAliveTime, c.DialKeepAliveTimeout, c.AutoSyncInterval,
+		c.RejectOldCluster, c.PermitWithoutStream)
 }
 
 // Validate 验证配置有效性。
@@ -122,7 +126,10 @@ func (c *Config) Validate() error {
 	}
 
 	// 验证每个 endpoint 的格式
+	// 设计决策: Validate 仅校验，不修改原始 Config（符合最小惊讶原则）。
+	// TrimSpace 归一化在 applyDefaults 中执行（该方法已复制 Config，不影响原始对象）。
 	for i, ep := range c.Endpoints {
+		ep = strings.TrimSpace(ep)
 		if ep == "" {
 			return fmt.Errorf("%w: endpoint[%d] is empty", ErrInvalidEndpoint, i)
 		}
@@ -154,6 +161,10 @@ func validateEndpoint(ep string) error {
 	endpoint := ep
 
 	// 1. 去除可能的 scheme 前缀（如 http://、https://）
+	// 设计决策: 仅剥离 scheme 前缀而不校验白名单。
+	// etcd 客户端内部支持 http/https/unix 等 scheme，且未来可能扩展，
+	// xetcd 作为封装层不应假设合法 scheme 集合。非法 scheme 会在
+	// etcd 客户端连接阶段暴露，Validate 仅校验 host:port 格式。
 	if idx := strings.Index(ep, "://"); idx != -1 {
 		endpoint = ep[idx+3:]
 	}
@@ -201,8 +212,15 @@ func isValidPort(s string) bool {
 }
 
 // applyDefaults 应用默认值，返回新的配置（不修改原配置）。
+// 设计决策: TrimSpace 归一化在此处执行而非 Validate 中，
+// 确保 Validate 是纯校验无副作用，符合最小惊讶原则。
 func (c *Config) applyDefaults() *Config {
 	cfg := *c // 复制，避免修改原配置
+	// 深拷贝 Endpoints 切片后归一化，确保不修改原始 Config
+	cfg.Endpoints = make([]string, len(c.Endpoints))
+	for i, ep := range c.Endpoints {
+		cfg.Endpoints[i] = strings.TrimSpace(ep)
+	}
 	if cfg.DialTimeout == 0 {
 		cfg.DialTimeout = defaultDialTimeout
 	}

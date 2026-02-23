@@ -194,6 +194,14 @@
 // 注意：Query 方法也使用相同的 max(1, ...) 策略计算本地容量，
 // 确保 Query 返回的 GlobalCapacity 与 Acquire 实际使用的容量一致。
 //
+// 设计决策: FallbackLocal 恢复窗口 —— Redis 恢复后新请求立即走分布式路径，
+// 此前在本地 fallback 中仍有效的 permit 不会回填到 Redis 账本。
+// 恢复窗口内理论上可出现 local_active + redis_active > globalCapacity。
+// 这是刻意的简单性选择：
+//   - 超发上界为 localCapacity（= globalCapacity/podCount），且仅持续到本地 permit TTL 到期
+//   - 引入"粘滞回切"或"permit 补登"机制会大幅增加复杂度，与 fallback 的"尽力而为"定位不符
+//   - 业务方若需严格容量保证，应使用 FallbackClose 策略
+//
 // # 并发安全
 //
 // xsemaphore 的所有公开方法都是并发安全的：

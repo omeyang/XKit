@@ -141,6 +141,20 @@ func TestExponentialBackoff(t *testing.T) {
 		assert.Equal(t, 100*time.Millisecond, b.NextDelay(10))
 	})
 
+	t.Run("MaxDelayLessThanInitial", func(t *testing.T) {
+		// maxDelay < initialDelay 时，maxDelay 应被修正为 initialDelay（与 LinearBackoff 一致）
+		b := NewExponentialBackoff(
+			WithInitialDelay(1*time.Second),
+			WithMaxDelay(100*time.Millisecond),
+			WithJitter(0),
+		)
+
+		// initialDelay > maxDelay 时，maxDelay 被修正为 initialDelay (1s)
+		// 所有延迟都被 maxDelay=1s 限制
+		assert.Equal(t, 1*time.Second, b.NextDelay(1))
+		assert.Equal(t, 1*time.Second, b.NextDelay(2)) // 被 maxDelay 限制
+	})
+
 	t.Run("InvalidJitterClamped", func(t *testing.T) {
 		// 负抖动应该被设为 0
 		b := NewExponentialBackoff(WithJitter(-0.5), WithInitialDelay(100*time.Millisecond))

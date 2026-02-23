@@ -25,7 +25,7 @@ func (b *FixedBackoff) NextDelay(_ int) time.Duration {
 }
 
 // ExponentialBackoff 指数退避策略
-// delay = min(initialDelay * multiplier^(attempt-1) * (1 + jitter), maxDelay)
+// delay = min(initialDelay * multiplier^(attempt-1) * (1 + rand(-1,1) * jitter), maxDelay)
 type ExponentialBackoff struct {
 	initialDelay time.Duration
 	maxDelay     time.Duration
@@ -36,7 +36,9 @@ type ExponentialBackoff struct {
 // ExponentialBackoffOption 指数退避配置选项
 type ExponentialBackoffOption func(*ExponentialBackoff)
 
-// WithInitialDelay 设置初始延迟
+// WithInitialDelay 设置初始延迟。
+// 设计决策: d <= 0 时静默忽略（保持默认值），与 WithMaxDelay/WithMultiplier 一致。
+// WithJitter 则采用 clamp 策略，因为 jitter 有明确的有效区间 [0,1]。
 func WithInitialDelay(d time.Duration) ExponentialBackoffOption {
 	return func(b *ExponentialBackoff) {
 		if d > 0 {
@@ -83,6 +85,10 @@ func WithJitter(j float64) ExponentialBackoffOption {
 //   - maxDelay: 30s
 //   - multiplier: 2.0
 //   - jitter: 0.1 (10%)
+//
+// 设计决策: 默认 jitter=0.1 适用于单体应用和低并发场景。
+// 大规模分布式系统建议使用 WithJitter(0.3) 或更高值以增强惊群缓解效果，
+// 详见 doc.go 中的抖动说明。
 func NewExponentialBackoff(opts ...ExponentialBackoffOption) *ExponentialBackoff {
 	b := &ExponentialBackoff{
 		initialDelay: 100 * time.Millisecond,
@@ -92,6 +98,10 @@ func NewExponentialBackoff(opts ...ExponentialBackoffOption) *ExponentialBackoff
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	// 与 NewLinearBackoff 保持一致：确保 maxDelay >= initialDelay
+	if b.maxDelay < b.initialDelay {
+		b.maxDelay = b.initialDelay
 	}
 	return b
 }
@@ -112,9 +122,9 @@ func (b *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 
 	// 设计决策: NaN 安全的延迟限制。当 attempt 极大时 math.Pow 溢出为 +Inf，
 	// 与 jitterFactor=0 相乘产生 NaN。IEEE 754 中 NaN 的所有比较均返回 false，
-	// 会绕过 maxDelay 限制。这里额外检查 NaN 和负数确保安全。
+	// 会绕过 maxDelay 限制。NaN/负数返回 maxDelay（语义为退避已达上限）。
 	if math.IsNaN(delay) || delay < 0 {
-		return 0
+		return b.maxDelay
 	}
 	if delay >= float64(b.maxDelay) {
 		return b.maxDelay
@@ -167,7 +177,8 @@ func (b *LinearBackoff) NextDelay(attempt int) time.Duration {
 	if b.increment > 0 && attempt > 1 {
 		available := b.maxDelay - b.initialDelay
 		if available < 0 {
-			// maxDelay < initialDelay 时（构造时已修正，但防御性检查）
+			// 设计决策: 防御性检查——构造函数已确保 maxDelay >= initialDelay，
+			// 但此守卫保护直接构造（绕过工厂）的场景。
 			return b.maxDelay
 		}
 		maxMultiplier := available / b.increment
@@ -213,7 +224,7 @@ const (
 func randomFloat64() float64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败时返回 0，这意味着无抖动（安全默认值）
+		// crypto/rand 失败时返回 0（安全默认值），抖动公式中将产生最小抖动系数 1-jitter
 		return 0
 	}
 	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale

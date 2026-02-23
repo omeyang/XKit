@@ -2,6 +2,7 @@ package xsemaphore
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,12 +39,12 @@ func TestFallbackSemaphore_TryAcquire(t *testing.T) {
 	t.Run("fallback local on redis error", func(t *testing.T) {
 		mr, client := setupRedis(t)
 
-		var fallbackCalled bool
+		var fallbackCalled atomic.Bool
 		sem, err := New(client,
 			WithFallback(FallbackLocal),
 			WithPodCount(2),
 			WithOnFallback(func(resource string, strategy FallbackStrategy, err error) {
-				fallbackCalled = true
+				fallbackCalled.Store(true)
 				assert.Equal(t, "fallback-test", resource)
 				assert.Equal(t, FallbackLocal, strategy)
 			}),
@@ -60,7 +61,7 @@ func TestFallbackSemaphore_TryAcquire(t *testing.T) {
 		)
 		require.NoError(t, err)
 		require.NotNil(t, permit, "should fallback to local semaphore")
-		assert.True(t, fallbackCalled)
+		assert.True(t, fallbackCalled.Load())
 
 		releasePermit(t, ctx, permit)
 	})
@@ -228,10 +229,9 @@ func TestFallbackSemaphore_Health(t *testing.T) {
 
 		mr.Close()
 
-		// 即使 Redis 不可用，本地信号量仍然健康
-		_ = sem.Health(context.Background()) //nolint:errcheck // only verify no panic
-		// 可能返回 Redis 错误或成功（取决于实现）
-		// 这里我们只验证不 panic
+		// Redis 不可用时 Health 应返回错误（降级状态仍报告 Redis 不健康）
+		err = sem.Health(context.Background())
+		assert.Error(t, err, "Health should report error when Redis is unavailable")
 	})
 
 	t.Run("closed semaphore", func(t *testing.T) {
@@ -247,6 +247,72 @@ func TestFallbackSemaphore_Health(t *testing.T) {
 
 		err = sem.Health(context.Background())
 		assert.ErrorIs(t, err, ErrSemaphoreClosed)
+	})
+}
+
+func TestFallbackSemaphore_LocalCapacityFull(t *testing.T) {
+	t.Run("TryAcquire returns nil when local capacity full", func(t *testing.T) {
+		mr, client := setupRedis(t)
+
+		sem, err := New(client,
+			WithFallback(FallbackLocal),
+			WithPodCount(2),
+		)
+		require.NoError(t, err)
+		defer closeSemaphore(t, sem)
+
+		// 关闭 Redis 触发降级
+		mr.Close()
+
+		ctx := context.Background()
+		// capacity=2, podCount=2 → localCapacity = max(1, 2/2) = 1
+		permit, err := sem.TryAcquire(ctx, "capacity-full-test",
+			WithCapacity(2),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, permit, "first acquire should succeed on local fallback")
+
+		// 本地容量已满，再次 TryAcquire 应返回 (nil, nil)
+		permit2, err := sem.TryAcquire(ctx, "capacity-full-test",
+			WithCapacity(2),
+		)
+		assert.NoError(t, err)
+		assert.Nil(t, permit2, "TryAcquire should return nil when local capacity full")
+
+		releasePermit(t, ctx, permit)
+	})
+
+	t.Run("Acquire returns ErrAcquireFailed when local capacity full", func(t *testing.T) {
+		mr, client := setupRedis(t)
+
+		sem, err := New(client,
+			WithFallback(FallbackLocal),
+			WithPodCount(2),
+		)
+		require.NoError(t, err)
+		defer closeSemaphore(t, sem)
+
+		// 关闭 Redis 触发降级
+		mr.Close()
+
+		ctx := context.Background()
+		// capacity=2, podCount=2 → localCapacity = max(1, 2/2) = 1
+		permit, err := sem.TryAcquire(ctx, "capacity-full-acquire-test",
+			WithCapacity(2),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, permit, "first acquire should succeed on local fallback")
+
+		// 本地容量已满，Acquire 应在重试耗尽后返回 ErrAcquireFailed
+		_, err = sem.Acquire(ctx, "capacity-full-acquire-test",
+			WithCapacity(2),
+			WithMaxRetries(2),
+			WithRetryDelay(10*time.Millisecond),
+		)
+		assert.ErrorIs(t, err, ErrAcquireFailed,
+			"Acquire should return ErrAcquireFailed when local capacity full")
+
+		releasePermit(t, ctx, permit)
 	})
 }
 

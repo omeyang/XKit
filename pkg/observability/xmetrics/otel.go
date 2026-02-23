@@ -235,6 +235,8 @@ func (s *otelSpan) End(result Result) {
 		// 使用不可取消的 context 记录指标，确保即使请求 context 已取消/超时，
 		// 指标仍能正确记录。这对于失败/超时场景的可观测性至关重要。
 		// 注意：context.WithoutCancel 会保留 context 中的 values（如 baggage）。
+		// 当前 OTel SDK 的 Add/Record 调用是同步的，metricsCtx 不会被 SDK 延迟持有，
+		// 因此 values 不存在语义过期风险。若未来 OTel SDK 行为变化需重新评估。
 		metricsCtx := context.WithoutCancel(s.ctx)
 		elapsed := time.Since(s.start).Seconds()
 		attrs := metricAttrs(s.component, s.operation, status)
@@ -399,11 +401,15 @@ func syncXctx(ctx context.Context, sc trace.SpanContext) context.Context {
 }
 
 // validateBuckets 校验 Histogram 桶边界的合法性。
-// 要求：所有值必须是有限数（非 NaN/Inf），且严格递增。
+// 要求：所有值必须是非负有限数（非 NaN/Inf、≥ 0），且严格递增。
+// 桶边界用于 duration Histogram（记录 time.Since 秒数，始终 ≥ 0），负值无实际意义。
 func validateBuckets(buckets []float64) error {
 	for i, b := range buckets {
 		if math.IsNaN(b) || math.IsInf(b, 0) {
 			return fmt.Errorf("%w: bucket[%d] is NaN or Inf", ErrInvalidBuckets, i)
+		}
+		if b < 0 {
+			return fmt.Errorf("%w: bucket[%d] (%g) must be non-negative", ErrInvalidBuckets, i, b)
 		}
 		if i > 0 && b <= buckets[i-1] {
 			return fmt.Errorf("%w: bucket[%d] (%g) must be greater than bucket[%d] (%g)",

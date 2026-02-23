@@ -1053,6 +1053,62 @@ func TestWithoutSignalHandler(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
+// Fix 3: Cancel(cause) 在服务返回 nil 时保留 cause
+// ----------------------------------------------------------------------------
+
+func TestWait_CancelCauseWithNilReturn(t *testing.T) {
+	// Cancel(cause) 后服务返回 nil（而非 ctx.Err()），cause 不应丢失
+	customErr := errors.New("custom cause")
+
+	g, _ := NewGroup(context.Background())
+	g.Go(func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil // 返回 nil 而非 ctx.Err()
+	})
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		g.Cancel(customErr)
+	}()
+
+	err := g.Wait()
+	if !errors.Is(err, customErr) {
+		t.Errorf("expected custom cause, got %v", err)
+	}
+}
+
+func TestWait_CancelCauseNoServices(t *testing.T) {
+	// Cancel(cause) 但没有注册服务，cause 仍应返回
+	customErr := errors.New("custom cause")
+
+	g, _ := NewGroup(context.Background())
+	g.Cancel(customErr)
+
+	err := g.Wait()
+	if !errors.Is(err, customErr) {
+		t.Errorf("expected custom cause, got %v", err)
+	}
+}
+
+func TestWait_CancelNilWithNilReturn(t *testing.T) {
+	// Cancel(nil) 后服务返回 nil，Wait() 应返回 nil
+	g, _ := NewGroup(context.Background())
+	g.Go(func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	})
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		g.Cancel(nil)
+	}()
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------------
 // Fix 4: RunServicesWithOptions
 // ----------------------------------------------------------------------------
 

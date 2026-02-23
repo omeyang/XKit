@@ -11,6 +11,7 @@
 //   - Done() channel：Shutdown 超时返回后可等待残留 worker 最终完成
 //   - 可注入自定义日志记录器（WithLogger）
 //   - 多实例场景下可设置名称以区分日志来源（WithName）
+//   - panic 日志默认安全（仅记录 task 类型），可通过 WithLogTaskValue 启用完整值输出
 //
 // # 注意事项
 //
@@ -19,8 +20,8 @@
 //   - Close/Shutdown 不可在 handler 内调用，否则会死锁
 //   - 任务处理器应设计为幂等的，因为同一逻辑任务可能被多次提交
 //   - panic 的任务不会被重试——仅记录日志后丢弃；
-//     panic 恢复日志包含完整 task 值，若 task 包含敏感信息，
-//     应通过 WithLogger 注入带脱敏的 logger 或在 handler 内自行 recover
+//     panic 恢复日志默认仅记录 task 类型（避免敏感信息泄露），
+//     如需记录完整 task 值以便调试，可通过 WithLogTaskValue() 显式启用
 //   - New 创建后自动启动 worker，无需手动 Start
 //   - handler 参数不能为 nil，否则返回 ErrNilHandler
 //   - workers 和 queueSize 超出有效范围时返回错误（而非 panic）

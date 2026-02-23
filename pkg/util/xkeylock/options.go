@@ -24,7 +24,7 @@ func defaultOptions() options {
 
 // WithMaxKeys 设置最大 key 数量。
 // 达到上限时，新的 Acquire/TryAcquire 返回 [ErrMaxKeysExceeded]。
-// n <= 0 表示不限制（默认）。
+// n <= 0 表示不限制（默认），即 0 和负数均视为"无上限"而非"禁止获取"。
 func WithMaxKeys(n int) Option {
 	// 在闭包外归一化，避免闭包写捕获变量导致并发复用时的数据竞争。
 	if n < 0 {

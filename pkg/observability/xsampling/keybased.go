@@ -10,7 +10,8 @@ import (
 // KeyFunc 从上下文中提取采样 key 的函数
 //
 // 返回的 key 用于一致性哈希采样，相同的 key 总是产生相同的采样决策。
-// 如果返回空字符串，KeyBasedSampler 会回退到随机采样。
+// 如果返回空字符串，KeyBasedSampler 会回退到随机采样，此时仍保持近似的采样率语义，
+// 但失去跨进程一致性保证。
 type KeyFunc func(ctx context.Context) string
 
 // KeyBasedSampler 基于 key 的一致性采样策略
@@ -80,10 +81,13 @@ func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
 	// 这对分布式追踪采样至关重要：同一 trace_id 在所有服务中被一致采样
 	hashValue := xxhash.Sum64String(key)
 
-	// 将 hash 值映射到 [0, 1) 区间
+	// 将 hash 值归一化到 [0, 1] 区间
 	// 设计决策: 此处使用 uint64/MaxUint64 归一化（与 randomFloat64 的 >>11 * floatScale 不同），
 	// 因为确定性哈希需要完整 uint64 值域的均匀映射，而 randomFloat64 优化 IEEE 754 精度。
-	normalized := float64(hashValue) / (float64(math.MaxUint64) + 1)
+	// 注意：float64 精度有限，极大 uint64 值（约 2^53 以上）的归一化结果可能不精确，
+	// 且当 hashValue == MaxUint64 时 normalized 可能等于 1.0。但 rate < 1 时（rate=1.0 有
+	// 提前返回保护）normalized == 1.0 不会通过 normalized < rate，因此行为正确。
+	normalized := float64(hashValue) / float64(math.MaxUint64)
 
 	return normalized < s.rate
 }

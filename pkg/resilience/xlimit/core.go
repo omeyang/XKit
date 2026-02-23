@@ -157,10 +157,15 @@ func (c *limiterCore) Reset(ctx context.Context, key Key) error {
 }
 
 // Query 查询当前配额状态（不消耗配额）
+//
+// 设计决策: 遍历所有匹配规则，返回剩余配额最少（最受限）的那条规则信息，
+// 与 AllowN 的"任一规则拒绝即拒绝"语义保持一致。
 func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 	if c.closed.Load() {
 		return nil, ErrLimiterClosed
 	}
+
+	var mostRestrictive *QuotaInfo
 
 	for _, ruleName := range c.matcher.getAllRules() {
 		rule, found := c.matcher.findRule(key, ruleName)
@@ -177,16 +182,24 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 			return nil, err
 		}
 
-		return &QuotaInfo{
+		info := &QuotaInfo{
 			Limit:     effectiveLimit,
 			Remaining: remaining,
 			ResetAt:   resetAt,
 			Rule:      rule.Name,
 			Key:       key.Render(rule.KeyTemplate),
-		}, nil
+		}
+
+		if mostRestrictive == nil || remaining < mostRestrictive.Remaining {
+			mostRestrictive = info
+		}
 	}
 
-	return nil, ErrNoRuleMatched
+	if mostRestrictive == nil {
+		return nil, ErrNoRuleMatched
+	}
+
+	return mostRestrictive, nil
 }
 
 // Close 关闭限流器

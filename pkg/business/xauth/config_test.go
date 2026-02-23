@@ -75,6 +75,16 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: nil,
 		},
+		{
+			name:    "host without scheme",
+			config:  &Config{Host: "auth.test.com"},
+			wantErr: ErrInvalidHost,
+		},
+		{
+			name:    "host with unsupported scheme",
+			config:  &Config{Host: "ftp://auth.test.com"},
+			wantErr: ErrInvalidHost,
+		},
 	}
 
 	for _, tt := range tests {

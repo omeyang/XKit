@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // hashSeed 是分片哈希的种子，进程级别唯一。
@@ -31,8 +32,15 @@ type shard struct {
 	// 设计决策: 填充至 cache line 边界（64 字节），消除相邻 shard 之间的伪共享。
 	// shard 本体 ~16 字节（sync.Mutex 8 + map pointer 8），需补齐 48 字节。
 	// 内存代价可忽略（32 分片 × 64B = 2KB），在高核心数机器上可改善并发吞吐。
+	// 下方编译期断言确保此假设成立，若 Go 未来版本改变 sync.Mutex 大小将编译失败。
 	_ [64 - 16]byte //nolint:unused // cache line padding
 }
+
+// 编译期断言：确保 shard 恰好占 64 字节（一个缓存行）。
+// 如果 sync.Mutex 或 map 指针大小发生变化，以下两行之一将编译失败，
+// 提醒开发者更新 shard 的填充字节数。
+var _ [64 - unsafe.Sizeof(shard{})]byte             //nolint:unused
+var _ [unsafe.Sizeof(shard{}) - 64]byte             //nolint:unused
 
 // lockEntry 表示一个 key 的锁条目。
 // ch 是 size=1 的 channel，用作互斥量：

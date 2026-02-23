@@ -29,14 +29,18 @@ type koanfConfig struct {
 // New 从文件路径创建配置实例。
 // 根据文件扩展名自动检测格式（.yaml/.yml 或 .json）。
 //
-// 设计决策: 路径使用 filepath.Clean 规范化，但不做沙箱限制。
-// xconf 是工具库，路径安全（防止路径穿越等）由调用方负责。
+// 设计决策: 路径使用 filepath.Abs 转为绝对路径，防止 Reload 因进程 cwd 变化而读取漂移。
+// 路径安全（防止路径穿越等）由调用方负责，xconf 是工具库不做沙箱限制。
 func New(path string, opts ...Option) (Config, error) {
 	if path == "" {
 		return nil, ErrEmptyPath
 	}
 
-	path = filepath.Clean(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLoadFailed, err)
+	}
+	path = absPath
 
 	format, err := detectFormat(path)
 	if err != nil {
@@ -120,6 +124,10 @@ func (c *koanfConfig) Client() *koanf.Koanf {
 
 // Unmarshal 将指定路径的配置反序列化到目标结构体。
 func (c *koanfConfig) Unmarshal(path string, target any) error {
+	if target == nil {
+		return fmt.Errorf("%w: target must be a non-nil pointer", ErrUnmarshalFailed)
+	}
+
 	k := c.k.Load()
 
 	if err := k.UnmarshalWithConf(path, target, koanf.UnmarshalConf{
@@ -164,6 +172,9 @@ func (c *koanfConfig) Format() Format {
 // MustUnmarshal 与 Unmarshal 相同，但失败时 panic。
 // 适用于程序启动时的必要配置加载。
 func MustUnmarshal(cfg Config, path string, target any) {
+	if cfg == nil {
+		panic("xconf: MustUnmarshal called with nil Config")
+	}
 	if err := cfg.Unmarshal(path, target); err != nil {
 		panic(err)
 	}

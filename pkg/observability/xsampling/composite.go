@@ -37,7 +37,9 @@ func (m CompositeMode) String() string {
 //   - ModeAND: 所有子采样器都返回 true 时才采样
 //   - ModeOR: 任一子采样器返回 true 时即采样
 //
-// 组合采样器支持短路求值以提高性能。
+// 组合采样器使用短路求值：AND 模式遇到 false 立即返回，OR 模式遇到 true 立即返回。
+// 设计决策: 有状态子采样器（如 CountSampler）的内部状态仅在实际被求值时更新，
+// 因此子采样器的排列顺序可能影响有状态采样器的行为。
 type CompositeSampler struct {
 	samplers []Sampler
 	mode     CompositeMode

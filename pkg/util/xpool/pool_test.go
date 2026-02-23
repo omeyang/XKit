@@ -522,6 +522,41 @@ func TestWorkerPool_DoneAfterClose(t *testing.T) {
 	}
 }
 
+func TestWorkerPool_PanicLogDefaultSafe(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	pool := newPoolForTest(t, 1, 10, func(n int) {
+		if n == 0 {
+			panic("test panic")
+		}
+	}, WithLogger(logger))
+
+	require.NoError(t, pool.Submit(0))
+	require.NoError(t, pool.Close())
+
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "task_type=int", "default should log task type only")
+	assert.NotContains(t, logOutput, "task=0", "default should not log task value")
+}
+
+func TestWorkerPool_WithLogTaskValue(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	pool := newPoolForTest(t, 1, 10, func(n int) {
+		if n == 0 {
+			panic("test panic")
+		}
+	}, WithLogger(logger), WithLogTaskValue())
+
+	require.NoError(t, pool.Submit(0))
+	require.NoError(t, pool.Close())
+
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "task=0", "WithLogTaskValue should log full task value")
+}
+
 func TestWorkerPool_DoneAfterShutdownTimeout(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)

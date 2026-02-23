@@ -50,12 +50,20 @@ const (
 )
 
 // Conn 返回底层 ClickHouse 连接。
+//
+// 设计决策: Conn() 不检查 closed 状态。clickhouse-go driver.Conn 在关闭后
+// 操作会返回明确错误，无需在此层重复检查。修改返回签名为 (driver.Conn, error)
+// 会破坏 API 兼容性，且 Health/QueryPage/BatchInsert 已有 closed 检查。
 func (w *clickhouseWrapper) Conn() driver.Conn {
 	return w.conn
 }
 
 // Health 执行健康检查。
 func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
+	if w.closed.Load() {
+		return ErrClosed
+	}
+
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: clickhouseComponent,
 		Operation: "health",
@@ -104,6 +112,11 @@ func (w *clickhouseWrapper) Stats() Stats {
 
 // Close 关闭 ClickHouse 连接。
 // 多次调用 Close 是安全的，第二次及后续调用返回 ErrClosed。
+//
+// 已知限制: 若 goroutine 在 closed 检查后、defer maybeSlowQuery 前被调度，
+// 而 Close 先完成了 slowQueryDetector.Close()，则 maybeSlowQuery 可能在已关闭的
+// detector 上执行。SlowQueryDetector.Close 后调用 MaybeSlowQuery 是安全的（无 panic），
+// 但慢查询可能不被记录。此窗口极小，实际影响可忽略。
 func (w *clickhouseWrapper) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
@@ -126,6 +139,10 @@ func (w *clickhouseWrapper) Close() error {
 
 // QueryPage 分页查询。
 func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (result *PageResult, err error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	normalizedQuery, offset, err := validatePageOptions(query, opts)
 	if err != nil {
 		return nil, err
@@ -360,6 +377,10 @@ func validateTableName(table string) error {
 
 // BatchInsert 批量插入。
 func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows []any, opts BatchOptions) (result *BatchResult, err error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	if err := validateTableName(table); err != nil {
 		return nil, err
 	}
@@ -439,6 +460,8 @@ func (w *clickhouseWrapper) insertBatches(ctx context.Context, table string, row
 	return insertedCount, errs
 }
 
+// 设计决策: fmt.Sprintf 拼接表名是安全的，因为 table 在 BatchInsert 入口处
+// 已通过 validateTableName 的严格正则校验，仅允许合法标识符字符。
 func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch []any) (appendedCount int64, errs []error) {
 	batchObj, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", table))
 	if err != nil {

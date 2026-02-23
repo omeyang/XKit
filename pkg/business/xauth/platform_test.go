@@ -882,3 +882,28 @@ func TestPlatformManager_LocalCacheSize(t *testing.T) {
 		t.Errorf("tenant-3 = %q, expected 'value-3'", v)
 	}
 }
+
+func TestPlatformManager_DisableLocalCache(t *testing.T) {
+	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
+	enableLocal := false
+	mgr := NewPlatformManager(PlatformManagerConfig{
+		HTTP:        httpClient,
+		EnableLocal: &enableLocal,
+	})
+
+	// localCache should be nil when disabled
+	if mgr.localCache != nil {
+		t.Error("localCache should be nil when EnableLocal is false")
+	}
+
+	// set/get should be no-ops without panic
+	mgr.setLocalCache("tenant-1", CacheFieldPlatformID, "value-1")
+	if v := mgr.getLocalCache("tenant-1", CacheFieldPlatformID); v != "" {
+		t.Errorf("got %q, expected empty (local cache disabled)", v)
+	}
+
+	// ClearLocalCache and InvalidateCache should not panic
+	mgr.ClearLocalCache()
+	ctx := context.Background()
+	_ = mgr.InvalidateCache(ctx, "tenant-1")
+}

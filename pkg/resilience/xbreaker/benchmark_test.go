@@ -8,6 +8,9 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// benchSinkBool 防止编译器优化消除基准测试中的计算结果
+var benchSinkBool bool
+
 // ============================================================================
 // Breaker 创建基准测试
 // ============================================================================
@@ -153,9 +156,11 @@ func BenchmarkConsecutiveFailures_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkFailureRatio_ReadyToTrip(b *testing.B) {
@@ -169,9 +174,11 @@ func BenchmarkFailureRatio_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkFailureCount_ReadyToTrip(b *testing.B) {
@@ -185,9 +192,11 @@ func BenchmarkFailureCount_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkCompositePolicy_ReadyToTrip(b *testing.B) {
@@ -206,9 +215,11 @@ func BenchmarkCompositePolicy_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkNeverTrip_ReadyToTrip(b *testing.B) {
@@ -222,9 +233,11 @@ func BenchmarkNeverTrip_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkAlwaysTrip_ReadyToTrip(b *testing.B) {
@@ -237,9 +250,11 @@ func BenchmarkAlwaysTrip_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	var result bool
 	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 // ============================================================================

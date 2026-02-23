@@ -117,6 +117,9 @@ func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 // 如果错误是 context.Canceled，则优先返回 context.Cause ——
 // 这样 Cancel(cause) 或信号处理设置的退出原因不会丢失。
 // 如果没有显式原因（普通的 context 取消），返回 nil。
+//
+// 即使所有服务返回 nil，Cancel(cause) 设置的退出原因仍然会被返回。
+// 这确保调用方始终能基于退出原因做分类决策。
 func (g *Group) Wait() error {
 	g.opts.logger.Debug("waiting for services",
 		slog.String("group", g.opts.name),
@@ -143,6 +146,16 @@ func (g *Group) Wait() error {
 		// causeCtx 未被取消 → context.Canceled 来自服务内部，不过滤
 		return err
 	}
+
+	// 当所有服务返回 nil 时，仍需检查是否有显式 Cancel(cause)。
+	// 例如：Cancel(customErr) 后服务返回 nil 而非 ctx.Err()，
+	// errgroup.Wait() 返回 nil，但 cause 不应丢失。
+	if err == nil && g.causeCtx.Err() != nil {
+		if cause := context.Cause(g.causeCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+			return cause
+		}
+	}
+
 	return err
 }
 
@@ -230,6 +243,9 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 //	if errors.Is(err, xrun.ErrSignal) {
 //	    log.Println("received signal, shutting down")
 //	}
+//
+// 对于 HTTP 服务器，推荐使用 [HTTPServer] 辅助函数，
+// 它封装了完整的优雅关闭和错误传播逻辑。
 func Run(ctx context.Context, services ...func(ctx context.Context) error) error {
 	return runGroup(ctx, nil, func(g *Group) {
 		for _, svc := range services {
@@ -322,34 +338,46 @@ func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(
 	return func(ctx context.Context) error {
 		// 用 buffered channel 传递 shutdown 结果
 		shutdownErrCh := make(chan error, 1)
+		// listenDone 用于通知 shutdown goroutine: ListenAndServe 已返回，
+		// 避免在外部关闭或启动失败场景下 goroutine 永久阻塞。
+		listenDone := make(chan struct{})
 
 		// 启动关闭监听
 		go func() {
-			<-ctx.Done()
-			shutdownCtx := context.Background()
-			if shutdownTimeout > 0 {
-				var cancel context.CancelFunc
-				shutdownCtx, cancel = context.WithTimeout(shutdownCtx, shutdownTimeout)
-				defer cancel()
+			select {
+			case <-ctx.Done():
+				shutdownCtx := context.Background()
+				if shutdownTimeout > 0 {
+					var cancel context.CancelFunc
+					shutdownCtx, cancel = context.WithTimeout(shutdownCtx, shutdownTimeout)
+					defer cancel()
+				}
+				shutdownErrCh <- server.Shutdown(shutdownCtx)
+			case <-listenDone:
+				// ListenAndServe 已返回（外部关闭或启动失败），无需 Shutdown。
 			}
-			shutdownErrCh <- server.Shutdown(shutdownCtx)
 		}()
 
 		// 启动服务器
 		err := server.ListenAndServe()
-		if err != nil && errors.Is(err, http.ErrServerClosed) {
-			// 设计决策: 使用 select 防止在非 ctx 驱动关闭场景下永久阻塞。
-			// 当 ListenAndServe 因外部直接调用 server.Shutdown/Close 返回
-			// ErrServerClosed，而 ctx 尚未取消时，shutdown goroutine 尚未启动。
-			// 此时通过 ctx.Done() 等待 ctx 最终被取消后再收集 shutdown 结果，
-			// 而非无条件阻塞在 shutdownErrCh 上。
+		if errors.Is(err, http.ErrServerClosed) {
+			// 设计决策: 通过三路 select 区分关闭来源：
+			//   1. shutdownErrCh 有值 → ctx 驱动的关闭已完成，返回 shutdown 结果
+			//   2. ctx.Done() 已关闭 → ctx 驱动的关闭进行中，等待 shutdown 结果
+			//   3. default → 外部直接调用 server.Shutdown/Close，ctx 未取消，
+			//      通知 goroutine 退出并返回 nil
 			select {
 			case shutdownErr := <-shutdownErrCh:
 				return shutdownErr
 			case <-ctx.Done():
 				return <-shutdownErrCh
+			default:
+				close(listenDone)
+				return nil
 			}
 		}
+		// 非 ErrServerClosed 错误（如端口占用），通知 goroutine 退出。
+		close(listenDone)
 		return err
 	}
 }

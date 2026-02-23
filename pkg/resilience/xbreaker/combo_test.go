@@ -547,22 +547,9 @@ func TestRetryThenBreak_WithSuccessPolicy(t *testing.T) {
 	})
 }
 
-// testSuccessPolicy 用于测试的成功判定策略
-type testSuccessPolicy struct {
-	successErrors []error
-}
-
-func (p *testSuccessPolicy) IsSuccessful(err error) bool {
-	if err == nil {
-		return true
-	}
-	for _, e := range p.successErrors {
-		if errors.Is(err, e) {
-			return true
-		}
-	}
-	return false
-}
+// testSuccessPolicy 是 customSuccessPolicy 的别名，避免重复定义
+// 实际类型定义在 breaker_test.go 中
+type testSuccessPolicy = customSuccessPolicy
 
 // TestBreakerError_NotRetryable 验证问题2的修复：
 // 熔断器错误应该不可重试（Retryable() 返回 false）
@@ -938,12 +925,48 @@ func TestExecuteWithRetry_NilBreakerRetryer(t *testing.T) {
 	_, err := ExecuteWithRetry(context.Background(), nil, func() (string, error) {
 		return "hello", nil
 	})
-	assert.ErrorIs(t, err, ErrNilBreaker)
+	assert.ErrorIs(t, err, ErrNilBreakerRetryer)
 }
 
 func TestExecuteRetryThenBreak_NilRetryThenBreak(t *testing.T) {
 	_, err := ExecuteRetryThenBreak(context.Background(), nil, func() (string, error) {
 		return "hello", nil
 	})
-	assert.ErrorIs(t, err, ErrNilBreaker)
+	assert.ErrorIs(t, err, ErrNilRetryThenBreak)
+}
+
+func TestRetryThenBreak_Do_NilArgs(t *testing.T) {
+	retryer := xretry.NewRetryer()
+	breaker := NewBreaker("test")
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		err := rtb.Do(nilCtx, func(_ context.Context) error { return nil })
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("nil func", func(t *testing.T) {
+		err := rtb.Do(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
+}
+
+func TestExecuteRetryThenBreak_NilArgs(t *testing.T) {
+	retryer := xretry.NewRetryer()
+	breaker := NewBreaker("test")
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		_, err := ExecuteRetryThenBreak(nilCtx, rtb, func() (string, error) { return "", nil })
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("nil func", func(t *testing.T) {
+		_, err := ExecuteRetryThenBreak[string](context.Background(), rtb, nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
 }

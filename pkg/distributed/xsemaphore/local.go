@@ -294,6 +294,7 @@ func (s *localSemaphore) doAcquire(
 	// 在锁外生成许可 ID，避免时钟回拨等待期间（最多 500ms）阻塞其他 goroutine
 	permitID, err := s.opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
 		return nil, ReasonUnknown, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 

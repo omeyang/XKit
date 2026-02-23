@@ -50,6 +50,15 @@ func TestClient_Close_Idempotent(t *testing.T) {
 	}
 }
 
+func TestClient_Close_ZeroValue(t *testing.T) {
+	// 零值 Client（未通过 NewClient 创建）调用 Close 不应 panic
+	c := &Client{}
+	err := c.Close()
+	if err != nil {
+		t.Errorf("Close() on zero-value client should return nil, got %v", err)
+	}
+}
+
 func TestClient_checkClosed(t *testing.T) {
 	c := &Client{}
 

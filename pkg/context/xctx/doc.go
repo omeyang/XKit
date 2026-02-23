@@ -36,7 +36,7 @@
 // 设计决策: 不同字段族根据语义需要提供不同的 API 子集，并非所有字段都具备完整的六件套：
 //   - Identity (string 字段): With/Xxx/Require/GetIdentity/Validate — 无需 Must（零值即空字符串）
 //   - HasParent (bool 字段): With/HasParent(value,ok)/Must/Require — 需要 ok 区分"未设置"
-//   - Trace (string 字段): With/Xxx/Ensure/Validate — 支持自动生成和批量校验
+//   - Trace (string 字段): With/Xxx/Require/Ensure/Validate — 支持强制获取、自动生成和批量校验
 //   - DeploymentType: With/DeploymentTypeRaw/GetDeploymentType — 需要验证，命名见各函数注释
 //
 // 推荐使用顺序：

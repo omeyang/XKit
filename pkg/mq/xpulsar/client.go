@@ -69,6 +69,10 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		return ErrClosed
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// 应用健康检查超时
 	healthCtx, cancel := context.WithTimeout(ctx, w.options.HealthTimeout)
 	defer cancel()
@@ -173,11 +177,15 @@ func (w *clientWrapper) Stats() Stats {
 
 // Close 优雅关闭客户端。
 // 重复调用是安全的，仅首次调用会实际关闭底层连接。
+// Pulsar 内部关闭所有 producer/consumer 时不经过 tracked wrapper，
+// 因此手动重置计数器以确保 Stats() 返回一致状态。
 func (w *clientWrapper) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	w.client.Close()
+	w.producersCount.Store(0)
+	w.consumersCount.Store(0)
 	return nil
 }
 

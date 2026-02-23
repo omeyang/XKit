@@ -36,7 +36,9 @@ type ExponentialBackoff struct {
 // ExponentialBackoffOption 指数退避配置选项
 type ExponentialBackoffOption func(*ExponentialBackoff)
 
-// WithInitialDelay 设置初始延迟
+// WithInitialDelay 设置初始延迟。
+// 设计决策: d <= 0 时静默忽略（保持默认值），与 WithMaxDelay/WithMultiplier 一致。
+// WithJitter 则采用 clamp 策略，因为 jitter 有明确的有效区间 [0,1]。
 func WithInitialDelay(d time.Duration) ExponentialBackoffOption {
 	return func(b *ExponentialBackoff) {
 		if d > 0 {

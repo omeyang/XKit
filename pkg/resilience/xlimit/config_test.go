@@ -63,6 +63,16 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "duplicate rule names",
+			config: Config{
+				Rules: []Rule{
+					TenantRule("same-name", 100, time.Minute),
+					TenantRule("same-name", 200, time.Minute),
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

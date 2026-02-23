@@ -44,6 +44,10 @@ const (
 	// fallbackCallbackMinInterval onFallback 回调的最小触发间隔
 	// 在 Redis 故障风暴期间，限制回调频率，避免下游雪崩
 	fallbackCallbackMinInterval = 10 * time.Second
+
+	// noopPermitIDPrefix FallbackOpen 策略下 noop 许可 ID 的前缀
+	// 用于在日志和监控中区分 noop 许可与正常许可
+	noopPermitIDPrefix = "noop-"
 )
 
 // =============================================================================

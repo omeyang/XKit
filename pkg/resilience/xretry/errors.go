@@ -28,7 +28,7 @@ func NewPermanentError(err error) *PermanentError {
 
 func (e *PermanentError) Error() string {
 	if e.err == nil {
-		return "permanent error"
+		return "xretry: permanent error"
 	}
 	return e.err.Error()
 }
@@ -53,7 +53,7 @@ func NewTemporaryError(err error) *TemporaryError {
 
 func (e *TemporaryError) Error() string {
 	if e.err == nil {
-		return "temporary error"
+		return "xretry: temporary error"
 	}
 	return e.err.Error()
 }

@@ -366,3 +366,63 @@ func TestParseRangeIPv4MappedMask(t *testing.T) {
 	assert.Equal(t, "192.168.1.0", r.From().String())
 	assert.Equal(t, "192.168.1.255", r.To().String())
 }
+
+func TestParseRangeIPv4MappedCIDR(t *testing.T) {
+	// IPv4-mapped IPv6 + CIDR 应统一转为纯 IPv4 范围（与掩码路径行为一致）。
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+		wantErr   bool
+	}{
+		{
+			name:      "mapped /120 等同 IPv4 /24",
+			input:     "::ffff:192.168.1.0/120",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "mapped /128 等同 IPv4 /32",
+			input:     "::ffff:10.0.0.1/128",
+			wantStart: "10.0.0.1",
+			wantEnd:   "10.0.0.1",
+		},
+		{
+			name:      "mapped /96 等同 IPv4 /0 全范围",
+			input:     "::ffff:0.0.0.0/96",
+			wantStart: "0.0.0.0",
+			wantEnd:   "255.255.255.255",
+		},
+		{
+			name:    "mapped /24 小于 96 应拒绝",
+			input:   "::ffff:192.168.1.0/24",
+			wantErr: true,
+		},
+		{
+			name:    "mapped /64 小于 96 应拒绝",
+			input:   "::ffff:10.0.0.0/64",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidRange)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
+func TestParseRangesErrorIndex(t *testing.T) {
+	// ParseRanges 错误信息应包含元素索引
+	_, err := ParseRanges([]string{"10.0.0.1", "invalid", "192.168.1.0/24"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "[1]")
+}

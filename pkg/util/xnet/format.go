@@ -68,17 +68,12 @@ func ParseFullIP(s string) (netip.Addr, error) {
 		}
 	}
 
-	// 尝试 IPv4 带前导零格式（xxx.xxx.xxx.xxx）
-	if parts := strings.Split(s, "."); len(parts) == 4 {
-		var b [4]byte
-		for i, p := range parts {
-			n, err := strconv.ParseUint(p, 10, 8)
-			if err != nil {
-				return netip.Addr{}, fmt.Errorf("%w: invalid octet %q: %w", ErrInvalidAddress, p, err)
-			}
-			b[i] = byte(n)
-		}
-		return netip.AddrFrom4(b), nil
+	// 尝试 IPv4 带前导零格式（xxx.xxx.xxx.xxx）。
+	// 设计决策: 解析失败时回退到 netip.ParseAddr，而非直接返回错误。
+	// 这确保 IPv4-mapped IPv6 地址（如 "::ffff:192.168.1.1"）也能被正确解析：
+	// 该格式 Split(".") 得到 4 段但首段含 ":"，strconv 解析失败后由标准库处理。
+	if addr, ok := tryParsePaddedIPv4(s); ok {
+		return addr, nil
 	}
 
 	// 回退到标准解析
@@ -87,6 +82,24 @@ func ParseFullIP(s string) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("%w: %w", ErrInvalidAddress, err)
 	}
 	return addr, nil
+}
+
+// tryParsePaddedIPv4 尝试将 s 解析为带前导零的 IPv4 格式（如 "192.168.001.001"）。
+// 仅当 s 恰好是 4 段纯十进制且每段在 [0,255] 时返回 (addr, true)。
+func tryParsePaddedIPv4(s string) (netip.Addr, bool) {
+	parts := strings.Split(s, ".")
+	if len(parts) != 4 {
+		return netip.Addr{}, false
+	}
+	var b [4]byte
+	for i, p := range parts {
+		n, err := strconv.ParseUint(p, 10, 8)
+		if err != nil {
+			return netip.Addr{}, false
+		}
+		b[i] = byte(n)
+	}
+	return netip.AddrFrom4(b), true
 }
 
 // NormalizeIP 将 IP 地址字符串规范化为标准格式。

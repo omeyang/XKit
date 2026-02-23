@@ -178,6 +178,22 @@ func TestNewFromBytes_EmptyTag(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidTag)
 }
 
+func TestNew_RelativePathAbsolutized(t *testing.T) {
+	// 验证相对路径被转换为绝对路径
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(testYAMLContent), 0600)
+	require.NoError(t, err)
+
+	// 使用相对路径创建配置（构造一个相对于 tmpDir 的路径）
+	relPath := filepath.Join(tmpDir, ".", "config.yaml")
+	cfg, err := New(relPath)
+	require.NoError(t, err)
+
+	// Path() 应返回绝对路径
+	assert.True(t, filepath.IsAbs(cfg.Path()), "Path() should return absolute path, got: %s", cfg.Path())
+}
+
 func TestNew_WithOptions(t *testing.T) {
 	content := `
 app:
@@ -358,6 +374,22 @@ func TestMustUnmarshal_Panic(t *testing.T) {
 	assert.Panics(t, func() {
 		MustUnmarshal(cfg, "", appCfg) // 注意：没有 &
 	})
+}
+
+func TestMustUnmarshal_NilConfig(t *testing.T) {
+	var target AppConfig
+	assert.PanicsWithValue(t, "xconf: MustUnmarshal called with nil Config", func() {
+		MustUnmarshal(nil, "", &target)
+	})
+}
+
+func TestUnmarshal_NilTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	err = cfg.Unmarshal("", nil)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
 }
 
 // =============================================================================

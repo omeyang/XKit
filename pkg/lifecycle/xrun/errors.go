@@ -38,12 +38,7 @@ func (e *SignalError) Error() string {
 	return fmt.Sprintf("received signal %s", e.Signal)
 }
 
-// Is 支持 errors.Is(err, ErrSignal) 判断。
-func (e *SignalError) Is(target error) bool {
-	return target == ErrSignal
-}
-
-// Unwrap 返回底层错误。
+// Unwrap 返回底层错误，使 errors.Is(err, ErrSignal) 和 errors.As 正常工作。
 func (e *SignalError) Unwrap() error {
 	return ErrSignal
 }

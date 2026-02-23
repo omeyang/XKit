@@ -63,6 +63,32 @@ func TestNewK8sLocker(t *testing.T) {
 func TestK8sLocker_TryLock(t *testing.T) {
 	ctx := context.Background()
 
+	t.Run("rejects zero TTL", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		locker, err := NewK8sLocker(K8sLockerOptions{
+			Client:    fakeClient,
+			Namespace: "default",
+			Identity:  "pod-1",
+		})
+		require.NoError(t, err)
+
+		_, err = locker.TryLock(ctx, "test-job", 0)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
+
+	t.Run("rejects negative TTL", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		locker, err := NewK8sLocker(K8sLockerOptions{
+			Client:    fakeClient,
+			Namespace: "default",
+			Identity:  "pod-1",
+		})
+		require.NoError(t, err)
+
+		_, err = locker.TryLock(ctx, "test-job", -1*time.Second)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
+
 	t.Run("creates lease when not exists", func(t *testing.T) {
 		fakeClient := fake.NewSimpleClientset()
 		locker, err := NewK8sLocker(K8sLockerOptions{
@@ -486,6 +512,14 @@ func TestK8sLocker_leaseName(t *testing.T) {
 		r1 := locker.leaseName("my.job")
 		r2 := locker.leaseName("my/job")
 		assert.NotEqual(t, r1, r2, "different keys should produce different lease names")
+	})
+
+	t.Run("long key with prefix stays under 63 chars", func(t *testing.T) {
+		// 58 字符的 key，加上 prefix "xcron-" (6) 如果不截断就是 64 字符
+		longKey := "abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstu"
+		result := locker.leaseName(longKey)
+		assert.LessOrEqual(t, len(result), 63,
+			"lease name must not exceed 63 chars, got %d: %s", len(result), result)
 	})
 }
 

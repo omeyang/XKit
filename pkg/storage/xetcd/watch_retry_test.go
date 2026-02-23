@@ -3,6 +3,7 @@ package xetcd
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,13 +143,13 @@ func TestWatchWithRetry_ReconnectOnError(t *testing.T) {
 		}).
 		Times(2)
 
-	var retryCallbackCalled bool
+	var retryCallbackCalled atomic.Bool
 	cfg := RetryConfig{
 		InitialBackoff:    10 * time.Millisecond,
 		MaxBackoff:        50 * time.Millisecond,
 		BackoffMultiplier: 2.0,
 		OnRetry: func(attempt int, err error, nb time.Duration, lastRevision int64) {
-			retryCallbackCalled = true
+			retryCallbackCalled.Store(true)
 		},
 	}
 
@@ -194,12 +195,12 @@ func TestWatchWithRetry_ReconnectOnError(t *testing.T) {
 		t.Fatal("timeout waiting for event after reconnect")
 	}
 
-	if !retryCallbackCalled {
+	if !retryCallbackCalled.Load() {
 		t.Error("OnRetry callback was not called")
 	}
 }
 
-// TestWatchWithRetry_MaxRetries 测试达到最大重试次数后通道关闭。
+// TestWatchWithRetry_MaxRetries 测试达到最大重试次数后发送 ErrMaxRetriesExceeded 错误事件，然后关闭通道。
 func TestWatchWithRetry_MaxRetries(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -232,12 +233,27 @@ func TestWatchWithRetry_MaxRetries(t *testing.T) {
 		t.Fatalf("WatchWithRetry() error = %v, want nil", err)
 	}
 
-	// 通道在达到最大重试次数后应该关闭
+	// 应收到 ErrMaxRetriesExceeded 错误事件
 	select {
-	case <-eventCh:
-		// 通道已关闭或接收到事件
+	case event, ok := <-eventCh:
+		if !ok {
+			t.Fatal("channel closed without error event")
+		}
+		if !errors.Is(event.Error, ErrMaxRetriesExceeded) {
+			t.Errorf("event.Error = %v, want ErrMaxRetriesExceeded", event.Error)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for channel close after max retries")
+		t.Fatal("timeout waiting for error event after max retries")
+	}
+
+	// 随后通道应该关闭
+	select {
+	case _, ok := <-eventCh:
+		if ok {
+			t.Error("channel should be closed after error event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for channel close")
 	}
 }
 

@@ -97,6 +97,10 @@ func TraceAttrs(ctx context.Context) []slog.Attr {
 
 // DeploymentAttrs 从 context 提取部署类型，转换为 slog.Attr 切片
 //
+// 设计决策: 不提供 AppendDeploymentAttrs 变体，因为 deployment_type 需要验证有效性，
+// 函数签名必须包含 error 返回值，与其他 AppendXxxAttrs（无 error）模式不一致。
+// 仅 1 个字段，LogAttrs 中直接 append 即可。
+//
 // 如果 context 中缺少或包含非法 deployment_type，返回错误。
 func DeploymentAttrs(ctx context.Context) ([]slog.Attr, error) {
 	dt, err := GetDeploymentType(ctx)

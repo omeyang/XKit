@@ -298,21 +298,12 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 	return realJoined, nil
 }
 
-// maxSymlinkDepth 是 evalSymlinksPartial 递归的最大深度，防止过深目录层级导致栈溢出。
+// maxSymlinkDepth 是 evalSymlinksPartial 向上查找可解析祖先时的最大层数限制。
 const maxSymlinkDepth = 255
 
 // evalSymlinksPartial 尽可能解析符号链接
 // 对于不存在的文件，解析其存在的父目录部分
 func evalSymlinksPartial(path string) (string, error) {
-	return evalSymlinksPartialWithDepth(path, 0)
-}
-
-// evalSymlinksPartialWithDepth 带深度限制的符号链接解析
-//
-// 设计决策: 使用迭代方式从叶向根逐层查找最深的可解析祖先，
-// 替代之前的递归方式。递归方式每层重复调用一次 EvalSymlinks（子层的初始尝试
-// 与父层的 EvalSymlinks(dir) 调用重复），迭代方式避免了这些重复调用。
-func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
 	// 快速路径：直接解析
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
@@ -324,7 +315,7 @@ func evalSymlinksPartialWithDepth(path string, depth int) (string, error) {
 	var trail []string // 不存在的路径段（逆序收集）
 
 	current := clean
-	for i := depth; ; i++ {
+	for i := 0; ; i++ {
 		if i > maxSymlinkDepth {
 			return "", ErrPathTooDeep
 		}

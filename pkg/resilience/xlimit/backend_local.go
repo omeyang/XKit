@@ -34,7 +34,11 @@ func (b *localBackend) Type() string {
 }
 
 // CheckRule 检查单个规则是否允许请求通过
-func (b *localBackend) CheckRule(ctx context.Context, key string, limit, _ int, window time.Duration, n int) (CheckResult, error) {
+//
+// 设计决策: burst 用作令牌桶容量（突发上限），limit/window 用作补令牌速率，
+// 与 Redis 后端（redis_rate.Limit{Rate: limit, Burst: burst}）语义对齐。
+// 降级场景下本地后端可正确处理突发流量。
+func (b *localBackend) CheckRule(ctx context.Context, key string, limit, burst int, window time.Duration, n int) (CheckResult, error) {
 	if err := ctx.Err(); err != nil {
 		return CheckResult{}, err
 	}
@@ -44,8 +48,9 @@ func (b *localBackend) CheckRule(ctx context.Context, key string, limit, _ int, 
 
 	// 本地限流时，按 Pod 数量分摊配额
 	localLimit := max(limit/podCount, 1)
+	localBurst := max(burst/podCount, 1)
 
-	bucket := b.getOrCreateBucket(key, localLimit, window)
+	bucket := b.getOrCreateBucket(key, localLimit, localBurst, window)
 	allowed, remaining, retryAfter := bucket.take(n)
 
 	return CheckResult{
@@ -103,19 +108,20 @@ func (b *localBackend) getPodCount(ctx context.Context) int {
 }
 
 // getOrCreateBucket 获取或创建令牌桶
-// 设计决策: 复用已有桶时刷新 limit/window，确保动态 Pod 数量变化后
-// 存量桶的补令牌速率和上限与新计算的 localLimit 一致。
-func (b *localBackend) getOrCreateBucket(key string, limit int, window time.Duration) *tokenBucket {
+// 设计决策: 复用已有桶时刷新参数，确保动态 Pod 数量变化后
+// 存量桶的补令牌速率和容量与新计算的 localLimit/localBurst 一致。
+func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window time.Duration) *tokenBucket {
 	if val, ok := b.buckets.Load(key); ok {
 		if bucket, ok := val.(*tokenBucket); ok {
-			bucket.updateParams(limit, window)
+			bucket.updateParams(limit, burst, window)
 			return bucket
 		}
 	}
 
 	bucket := &tokenBucket{
-		tokens:     float64(limit),
+		tokens:     float64(burst),
 		limit:      limit,
+		burst:      burst,
 		window:     window,
 		lastUpdate: time.Now(),
 	}
@@ -128,25 +134,28 @@ func (b *localBackend) getOrCreateBucket(key string, limit int, window time.Dura
 }
 
 // tokenBucket 令牌桶实现
+// limit 控制补令牌速率（limit/window），burst 控制桶容量（突发上限）
 type tokenBucket struct {
 	mu         sync.Mutex
 	tokens     float64
-	limit      int
+	limit      int           // 补令牌速率基数
+	burst      int           // 桶容量（突发上限）
 	window     time.Duration
 	lastUpdate time.Time
 }
 
-// updateParams 原子刷新桶参数（limit/window），使动态 Pod 数量变化对存量桶生效。
-// 若 limit 缩小导致当前 tokens 超过新上限，截断到新上限。
-func (tb *tokenBucket) updateParams(limit int, window time.Duration) {
+// updateParams 原子刷新桶参数，使动态 Pod 数量变化对存量桶生效。
+// 若 burst 缩小导致当前 tokens 超过新容量，截断到新容量。
+func (tb *tokenBucket) updateParams(limit, burst int, window time.Duration) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
 	tb.limit = limit
+	tb.burst = burst
 	tb.window = window
 
-	if tb.tokens > float64(limit) {
-		tb.tokens = float64(limit)
+	if tb.tokens > float64(burst) {
+		tb.tokens = float64(burst)
 	}
 }
 
@@ -159,13 +168,13 @@ func (tb *tokenBucket) take(n int) (allowed bool, remaining int, retryAfter time
 	elapsed := now.Sub(tb.lastUpdate)
 	tb.lastUpdate = now
 
-	// 计算新增的令牌数
+	// 计算新增的令牌数（速率 = limit / window）
 	rate := float64(tb.limit) / tb.window.Seconds()
 	tb.tokens += rate * elapsed.Seconds()
 
-	// 令牌数不超过上限
-	if tb.tokens > float64(tb.limit) {
-		tb.tokens = float64(tb.limit)
+	// 令牌数不超过桶容量（burst）
+	if tb.tokens > float64(tb.burst) {
+		tb.tokens = float64(tb.burst)
 	}
 
 	// 检查是否有足够的令牌

@@ -64,7 +64,9 @@ var (
 
 const (
 	// EnvDeployType 环境变量名
-	EnvDeployType = "DEPLOYMENT_TYPE"
+	//
+	// 引用 internal/deploy.EnvName 作为单一事实来源。
+	EnvDeployType = deploy.EnvName
 )
 
 // =============================================================================
@@ -149,7 +151,7 @@ func MustInit() {
 // 如果已经初始化过，返回 ErrAlreadyInitialized。
 func InitWith(dt DeployType) error {
 	if !dt.IsValid() {
-		return fmt.Errorf("%w: %q", ErrInvalidType, dt)
+		return fmt.Errorf("%w: %q (expected LOCAL or SAAS)", ErrInvalidType, dt)
 	}
 
 	globalMu.Lock()
@@ -242,7 +244,9 @@ func Parse(s string) (DeployType, error) {
 	// deploy.Parse 内部已做 TrimSpace + ToUpper，直接委托
 	dt, err := deploy.Parse(s)
 	if err != nil {
-		return "", fmt.Errorf("%w: %q", ErrInvalidType, s)
+		// 设计决策: 不使用 %w 嵌套原始错误，避免公共 API 错误链泄漏 internal/deploy 命名空间。
+		// 直接附带合法值提示，方便调用方排障。
+		return "", fmt.Errorf("%w: %q (expected LOCAL or SAAS)", ErrInvalidType, s)
 	}
 	return dt, nil
 }

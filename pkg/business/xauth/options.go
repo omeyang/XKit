@@ -151,8 +151,9 @@ func WithPlatformDataCacheTTL(d time.Duration) Option {
 	}
 }
 
-// WithLocalCache 设置是否启用本地缓存。
-// 本地缓存（L1）可减少 Redis 访问，提升性能。
+// WithLocalCache 设置是否启用本地缓存（L1）。
+// 同时控制 Token 缓存和平台数据缓存的本地缓存。
+// 本地缓存可减少 Redis 访问，提升性能。
 func WithLocalCache(enable bool) Option {
 	return func(o *Options) {
 		o.EnableLocalCache = enable

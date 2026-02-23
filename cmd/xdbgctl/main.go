@@ -32,6 +32,7 @@
 //
 //	0: 命令执行成功（status 命令: 服务在线）
 //	1: 命令执行失败或服务离线（status 命令）
+//	2: 参数错误（无效 PID、缺少必需参数等）
 //
 // 示例:
 //
@@ -51,19 +52,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/omeyang/xkit/pkg/debug/xdbg"
 	"github.com/urfave/cli/v3"
 )
 
-const (
-	// DefaultSocketPath 默认 Socket 路径。
-	// 设计决策: 使用 /var/run 与 xdbg 服务端默认路径保持一致。
-	// K8s 环境中通常以 root 运行，此路径可直接使用。
-	// 非 root 用户需通过 --socket 指定自定义路径。
-	DefaultSocketPath = "/var/run/xdbg.sock"
-
-	// DefaultTimeout 默认超时时间。
-	DefaultTimeout = 30 * time.Second
-)
+// defaultTimeout 默认超时时间。
+const defaultTimeout = 30 * time.Second
 
 // Version 版本号（可通过 -ldflags "-X main.Version=x.y.z" 注入）。
 var Version = "0.1.0-dev"
@@ -82,13 +76,13 @@ func run() int {
 				Name:    "socket",
 				Aliases: []string{"s"},
 				Usage:   "Unix Socket 路径",
-				Value:   DefaultSocketPath,
+				Value:   xdbg.DefaultSocketPath,
 			},
 			&cli.DurationFlag{
 				Name:    "timeout",
 				Aliases: []string{"t"},
 				Usage:   "命令超时时间",
-				Value:   DefaultTimeout,
+				Value:   defaultTimeout,
 			},
 		},
 		Commands:       createCommands(),
@@ -127,6 +121,11 @@ func run() int {
 		var exitErr *exitError
 		if errors.As(err, &exitErr) {
 			return exitErr.code
+		}
+		var usageErr *usageError
+		if errors.As(err, &usageErr) {
+			fmt.Fprintf(os.Stderr, "参数错误: %v\n", usageErr)
+			return 2
 		}
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		return 1

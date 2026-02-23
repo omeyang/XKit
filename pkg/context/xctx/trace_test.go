@@ -180,6 +180,78 @@ func TestTrace_IsComplete(t *testing.T) {
 }
 
 // =============================================================================
+// Require 函数测试（强制获取模式）
+// =============================================================================
+
+func TestRequireTraceFunctions(t *testing.T) {
+	tests := []struct {
+		name      string
+		testValue string
+		wantErr   error
+		setter    func(context.Context, string) (context.Context, error)
+		require   func(context.Context) (string, error)
+	}{
+		{
+			name:      "TraceID",
+			testValue: "trace-123",
+			wantErr:   xctx.ErrMissingTraceID,
+			setter:    xctx.WithTraceID,
+			require:   xctx.RequireTraceID,
+		},
+		{
+			name:      "SpanID",
+			testValue: "span-456",
+			wantErr:   xctx.ErrMissingSpanID,
+			setter:    xctx.WithSpanID,
+			require:   xctx.RequireSpanID,
+		},
+		{
+			name:      "RequestID",
+			testValue: "req-789",
+			wantErr:   xctx.ErrMissingRequestID,
+			setter:    xctx.WithRequestID,
+			require:   xctx.RequireRequestID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("存在则返回", func(t *testing.T) {
+				ctx, err := tt.setter(context.Background(), tt.testValue)
+				if err != nil {
+					t.Fatalf("setter() error = %v", err)
+				}
+				got, err := tt.require(ctx)
+				if err != nil {
+					t.Errorf("Require%s() error = %v", tt.name, err)
+				}
+				if got != tt.testValue {
+					t.Errorf("Require%s() = %q, want %q", tt.name, got, tt.testValue)
+				}
+			})
+
+			t.Run("不存在则返回错误", func(t *testing.T) {
+				_, err := tt.require(context.Background())
+				if err == nil {
+					t.Errorf("Require%s() should return error for empty context", tt.name)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("error = %v, want %v", err, tt.wantErr)
+				}
+			})
+
+			t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+				var nilCtx context.Context
+				_, err := tt.require(nilCtx)
+				if !errors.Is(err, xctx.ErrNilContext) {
+					t.Errorf("Require%s(nil) error = %v, want %v", tt.name, err, xctx.ErrNilContext)
+				}
+			})
+		})
+	}
+}
+
+// =============================================================================
 // ID 生成函数测试（W3C Trace Context 规范）
 // =============================================================================
 

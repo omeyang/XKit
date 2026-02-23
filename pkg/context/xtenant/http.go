@@ -40,6 +40,10 @@ const (
 //
 // 所有字段都是可选的，未设置的字段保持零值。
 // Header 值会自动去除首尾空白。
+//
+// 设计决策: 本函数仅做 TrimSpace，不校验长度、字符集或控制字符。
+// 租户 ID/名称的格式因系统而异，格式校验应由中间件选项或业务层负责，
+// Extract 函数保持为无策略的薄提取层。
 func ExtractFromHTTPHeader(h http.Header) TenantInfo {
 	if h == nil {
 		return TenantInfo{}
@@ -191,14 +195,14 @@ func injectTenantToHTTPContext(r *http.Request, cfg *middlewareConfig) (context.
 
 	// 注入租户信息到 context（复用公开 API）
 	ctx, err := WithTenantInfo(ctx, info)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达（r.Context() 始终非 nil）
 		return nil, http.StatusInternalServerError, err
 	}
 
 	// 处理追踪信息
 	trace := ExtractTraceFromHTTPHeader(r.Header)
 	ctx, err = injectHTTPTraceToContext(ctx, trace, cfg.ensureTrace)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, http.StatusInternalServerError, err
 	}
 
@@ -219,7 +223,7 @@ func validateHTTPTenantInfo(info TenantInfo, cfg *middlewareConfig) error {
 // injectHTTPTraceToContext 处理追踪信息并注入 context
 func injectHTTPTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
 	ctx, err := xctx.WithTrace(ctx, trace)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, err
 	}
 	if ensureTrace {

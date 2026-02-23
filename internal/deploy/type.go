@@ -16,6 +16,12 @@ import (
 	"strings"
 )
 
+// EnvName 环境变量名（单一事实来源）
+//
+// xenv.EnvDeployType 和 xctx.EnvDeploymentType 均引用此常量，
+// 确保环境变量名变更时只需修改一处。
+const EnvName = "DEPLOYMENT_TYPE"
+
 // Type 表示部署类型
 //
 // 用于区分本地/私有化部署（LOCAL）和 SaaS 云部署（SAAS）。

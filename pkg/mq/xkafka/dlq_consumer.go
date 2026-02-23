@@ -16,7 +16,6 @@ type dlqConsumer struct {
 	*consumerWrapper
 	policy      *DLQPolicy
 	dlqProducer *kafka.Producer
-	config      *kafka.ConfigMap
 
 	stats *dlqStatsCollector
 }
@@ -54,7 +53,6 @@ func NewConsumerWithDLQ(
 		consumerWrapper: wrapper,
 		policy:          dlqPolicy,
 		dlqProducer:     dlqProducer,
-		config:          config,
 		stats:           newDLQStatsCollector(),
 	}, nil
 }
@@ -117,7 +115,10 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 	return runConsumeLoop(ctx, consume, &c.errorsCount, backoff)
 }
 
-// processMessage 处理单条消息
+// processMessage 处理单条消息。
+// 设计决策: messagesConsumed/bytesConsumed 在此处递增，而非在 ReadMessage 中，
+// 因为 dlqConsumer 直接调用底层 consumer.ReadMessage（不经过 TracingConsumer.ReadMessage），
+// 避免双重计数。如果未来重构为使用 TracingConsumer，需移除此处的统计递增。
 func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) error {
 	c.stats.incTotal()
 
@@ -164,7 +165,9 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		c.policy.OnRetry(msg, attempt, err)
 	}
 
-	// 计算退避延迟
+	// 设计决策: 退避延迟同步阻塞当前 goroutine，期间不消费新消息。
+	// 这是同步重试模型的固有行为——简单可靠，适合低吞吐场景。
+	// 高吞吐场景应配置 RetryTopic 将重试消息异步投递到重试队列。
 	if c.policy.BackoffPolicy != nil {
 		delay := c.policy.BackoffPolicy.NextDelay(attempt)
 		if delay > 0 {
@@ -305,10 +308,11 @@ func (c *dlqConsumer) Close() error {
 	consumerErr := c.consumerWrapper.Close()
 
 	// 刷新 DLQ Producer 队列中的消息，避免丢失
-	// 设计决策: 使用与 producerWrapper 相同的默认 FlushTimeout（10s），
-	// 而非硬编码 5s，确保在高延迟网络环境下有足够时间刷新 DLQ 消息。
-	const dlqFlushTimeoutMs = 10000
-	remaining := c.dlqProducer.Flush(dlqFlushTimeoutMs)
+	flushTimeout := c.policy.DLQFlushTimeout
+	if flushTimeout <= 0 {
+		flushTimeout = 10 * time.Second // 默认 10s
+	}
+	remaining := c.dlqProducer.Flush(int(flushTimeout.Milliseconds()))
 	c.dlqProducer.Close()
 
 	if remaining > 0 {

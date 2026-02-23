@@ -497,12 +497,12 @@ func TestWatcher_StopWithoutStart(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestWatcher_HandleError 验证 fsnotify 错误通过回调传递
+// TestWatcher_HandleError 验证 fsnotify 错误通过回调传递（包含文件路径）
 func TestWatcher_HandleError(t *testing.T) {
 	// 直接测试 handleError 方法
 	errCh := make(chan error, 1)
 	w := &Watcher{
-		cfg: &koanfConfig{},
+		cfg: &koanfConfig{path: "/etc/app/config.yaml"},
 		callback: func(c Config, err error) {
 			errCh <- err
 		},
@@ -514,6 +514,7 @@ func TestWatcher_HandleError(t *testing.T) {
 	select {
 	case err := <-errCh:
 		assert.Contains(t, err.Error(), "watch error")
+		assert.Contains(t, err.Error(), "/etc/app/config.yaml")
 		assert.ErrorIs(t, err, testErr)
 	case <-time.After(time.Second):
 		t.Fatal("handleError 回调未被调用")

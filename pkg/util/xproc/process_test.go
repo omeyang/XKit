@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// 注意：本文件中的测试修改包级全局变量（osExecutable、os.Args、processNameOnce），
+// 不可使用 t.Parallel()。每个测试通过 defer 恢复原始状态以避免污染后续测试。
+
 // resetProcessName 重置进程名称缓存，仅供测试使用。
 func resetProcessName() {
 	processNameOnce = sync.Once{}
@@ -69,7 +72,6 @@ func TestResolveProcessName_FallbackToArgs(t *testing.T) {
 	assert.NotEmpty(t, name)
 }
 
-// 注意：此测试修改全局 os.Args，不可使用 t.Parallel()。
 func TestResolveProcessName_EmptyArgs(t *testing.T) {
 	origExec := osExecutable
 	origArgs := os.Args
@@ -144,7 +146,6 @@ func TestResolveProcessName_SpecialPaths(t *testing.T) {
 	defer func() {
 		osExecutable = origExec
 		os.Args = origArgs
-		resetProcessName()
 	}()
 
 	specialPaths := []string{"/", ".", ".."}

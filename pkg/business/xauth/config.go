@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -164,16 +165,8 @@ func (c *Config) Validate() error {
 		return ErrNilConfig
 	}
 
-	host := strings.TrimSpace(c.Host)
-	if host == "" {
-		return ErrMissingHost
-	}
-
-	// 设计决策: 强制 HTTPS——认证服务传输 Bearer Token 和客户端凭据，
-	// 明文 HTTP 会将凭据暴露给网络上的窃听者。
-	// 开发/测试环境可通过 AllowInsecure = true 放行 http://。
-	if !c.AllowInsecure && strings.HasPrefix(host, "http://") {
-		return ErrInsecureHost
+	if err := c.validateHost(); err != nil {
+		return err
 	}
 
 	if c.Timeout < 0 {
@@ -182,6 +175,31 @@ func (c *Config) Validate() error {
 
 	if c.TokenRefreshThreshold < 0 {
 		return ErrInvalidRefreshThreshold
+	}
+
+	return nil
+}
+
+// validateHost 校验 Host 格式和协议安全性。
+func (c *Config) validateHost() error {
+	host := strings.TrimSpace(c.Host)
+	if host == "" {
+		return ErrMissingHost
+	}
+
+	// 设计决策: 使用 net/url 严格校验 Host 格式，确保包含有效的 scheme 和主机名。
+	// 无 scheme 的地址（如 "auth.example.com"）在拼接 API 路径后无法正确请求，
+	// 通过 fail-fast 在配置阶段暴露问题，而非在运行期请求失败。
+	u, err := url.Parse(host)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ErrInvalidHost
+	}
+
+	// 设计决策: 强制 HTTPS——认证服务传输 Bearer Token 和客户端凭据，
+	// 明文 HTTP 会将凭据暴露给网络上的窃听者。
+	// 开发/测试环境可通过 AllowInsecure = true 放行 http://。
+	if !c.AllowInsecure && u.Scheme != "https" {
+		return ErrInsecureHost
 	}
 
 	return nil

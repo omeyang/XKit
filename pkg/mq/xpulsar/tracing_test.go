@@ -630,6 +630,26 @@ func TestTracingConsumer_ConsumeLoop_ContextCanceled(t *testing.T) {
 	assert.ErrorIs(t, loopErr, context.Canceled)
 }
 
+func TestTracingConsumer_ConsumeLoopWithPolicy_NilHandler(t *testing.T) {
+	mc := &mockConsumer{}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	// nil handler 应立即返回 ErrNilHandler，而非进入无限重试循环
+	loopErr := consumer.ConsumeLoopWithPolicy(context.Background(), nil, nil)
+	assert.ErrorIs(t, loopErr, ErrNilHandler)
+}
+
+func TestTracingConsumer_ConsumeLoop_NilHandler(t *testing.T) {
+	mc := &mockConsumer{}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	// ConsumeLoop 委托 ConsumeLoopWithPolicy，同样应 fail-fast
+	loopErr := consumer.ConsumeLoop(context.Background(), nil)
+	assert.ErrorIs(t, loopErr, ErrNilHandler)
+}
+
 // =============================================================================
 // TracingConsumer.Consume subscription attribute test
 // =============================================================================

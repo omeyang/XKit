@@ -141,7 +141,12 @@ func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 //
 // 每次调用生成唯一 token，确保不同获取之间不会互相干扰。
 // 通过创建或更新 Lease 资源实现锁获取。
+//
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
 func (l *K8sLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
+	if ttl <= 0 {
+		return nil, ErrInvalidTTL
+	}
 	leaseName := l.leaseName(key)
 	// 每次获取生成唯一 token，包含实例标识便于调试
 	token := fmt.Sprintf("%s:%s", l.identity, uuid.New().String())
@@ -308,7 +313,11 @@ func (h *k8sLockHandle) Unlock(ctx context.Context) error {
 // Renew 续期锁。
 //
 // 更新 Lease 的 renewTime，延长锁的有效期。
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
 func (h *k8sLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
+	if ttl <= 0 {
+		return ErrInvalidTTL
+	}
 	lease, err := h.locker.client.CoordinationV1().Leases(h.locker.namespace).Get(ctx, h.leaseName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("xcron: failed to get lease for renew: %w", err)
@@ -341,19 +350,21 @@ func (h *k8sLockHandle) Key() string {
 	return h.key
 }
 
-// leaseName 生成 Lease 资源名称
+// leaseName 生成 Lease 资源名称。
+// 设计决策: 以最终名称（prefix + sanitized key）整体做 63 字符约束，
+// 而非仅约束 key 部分，确保 K8s metadata.name 始终合法。
 func (l *K8sLocker) leaseName(key string) string {
-	// 将 key 转换为合法的 K8S 资源名
-	return l.prefix + sanitizeK8sName(key)
+	return l.prefix + sanitizeK8sName(key, len(l.prefix))
 }
 
-// sanitizeK8sName 将字符串转换为合法的 K8S 资源名
-// K8S 资源名要求：小写字母、数字、'-'，长度不超过 63
+// sanitizeK8sName 将字符串转换为合法的 K8S 资源名（不含 prefix 部分）。
+// K8S 资源名要求：小写字母、数字、'-'，最终名称（prefix + 本函数输出）不超过 63。
+// prefixLen 为调用方已占用的前缀长度，本函数输出不超过 63 - prefixLen。
 //
 // 当清理步骤改变了名称（字符替换/折叠/修剪）或长度超限时，
 // 添加基于原始名称的 hash 后缀确保唯一性。
 // 防止不同原始名称（如 "my.job" 和 "my/job"）清理后碰撞为 "my-job"。
-func sanitizeK8sName(name string) string {
+func sanitizeK8sName(name string, prefixLen int) string {
 	if name == "" {
 		return ""
 	}
@@ -369,9 +380,15 @@ func sanitizeK8sName(name string) string {
 	// 去除首尾的 '-'
 	sanitized = strings.Trim(sanitized, "-")
 
-	const maxLen = 63
+	const k8sMaxLen = 63
 	const hashLen = 8
 	const separator = "-"
+
+	// 本函数输出的最大长度（为 prefix 预留空间）
+	maxLen := k8sMaxLen - prefixLen
+	if maxLen < 1 {
+		maxLen = 1
+	}
 
 	// 当清理步骤改变了名称或长度超限时，添加 hash 后缀确保唯一性
 	if sanitized != lowered || len(sanitized) > maxLen {

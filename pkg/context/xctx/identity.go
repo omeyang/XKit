@@ -32,7 +32,10 @@ const (
 
 // WithPlatformID 将 platform ID 注入 context
 //
-// 如果 ctx 为 nil，返回 ErrNilContext。
+// 设计决策: 返回 error 而非 panic（项目规范：构造函数统一返回 error），
+// 虽然唯一错误条件是 nil ctx，但保持所有 WithXxx 签名一致，便于中间件链统一处理。
+// 不校验 value 有效性（如空字符串），因为 xctx 是纯存取层（见 doc.go 校验策略）。
+// 如需确认值存在，请使用 RequirePlatformID。
 func WithPlatformID(ctx context.Context, platformID string) (context.Context, error) {
 	if ctx == nil {
 		return nil, ErrNilContext

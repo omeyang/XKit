@@ -316,6 +316,36 @@ func TestStart_ObserverReturnsNilContext(t *testing.T) {
 	assert.NotNil(t, span)
 }
 
+// nilSpanObserver 是返回 nil span 的测试用 Observer，用于验证 Start 的兜底逻辑。
+type nilSpanObserver struct{}
+
+func (nilSpanObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	return ctx, nil //nolint:staticcheck // 故意返回 nil span 以测试兜底逻辑
+}
+
+func TestStart_ObserverReturnsNilSpan(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 nil span，Start 应该兜底为 NoopSpan
+	ctx := context.Background()
+	newCtx, span := Start(ctx, nilSpanObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "nil-span-observer",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
 // ============================================================================
 // 接口实现验证
 // ============================================================================

@@ -23,7 +23,35 @@ type exitError struct {
 	code int
 }
 
-func (e *exitError) Error() string { return "" }
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// usageError 表示用户输入/参数错误（退出码 2）。
+// 设计决策: 与运行时错误（退出码 1）区分，使自动化脚本可判断是否为用户输入问题。
+type usageError struct {
+	msg string
+}
+
+func (e *usageError) Error() string { return e.msg }
+
+// maxCommLen 是 Linux TASK_COMM_LEN (16) 减去 null 终止符后的最大进程名长度。
+const maxCommLen = 15
+
+// validateProcessName 校验进程名参数。
+func validateProcessName(name string) error {
+	if len(name) > maxCommLen {
+		return &usageError{msg: fmt.Sprintf(
+			"进程名 %q 超过 Linux 最大长度 %d 字符", name, maxCommLen)}
+	}
+	for _, r := range name {
+		if r < 32 || r == 127 {
+			return &usageError{msg: fmt.Sprintf("进程名包含非法控制字符: %q", name)}
+		}
+		if r == '/' || r == '\\' {
+			return &usageError{msg: fmt.Sprintf("进程名包含非法路径分隔符: %q", name)}
+		}
+	}
+	return nil
+}
 
 // 创建所有子命令。
 func createCommands() []*cli.Command {
@@ -149,10 +177,25 @@ func createInteractiveCommand() *cli.Command {
 	}
 }
 
+// validateToggleArgs 校验 toggle 命令参数。
+func validateToggleArgs(pidFlag int, nameFlag string) error {
+	if pidFlag < 0 {
+		return &usageError{msg: fmt.Sprintf("无效的 PID: %d（PID 必须为正整数）", pidFlag)}
+	}
+	if nameFlag != "" {
+		return validateProcessName(nameFlag)
+	}
+	return nil
+}
+
 // cmdToggle 切换调试服务状态（发送 SIGUSR1 信号触发 toggle）。
 // 进程发现优先级：--pid > --name > socket 发现
 func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag string) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := validateToggleArgs(pidFlag, nameFlag); err != nil {
 		return err
 	}
 
@@ -218,7 +261,7 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 // cmdExec 执行调试命令。
 func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("exec 命令需要指定要执行的调试命令")
+		return &usageError{msg: "exec 命令需要指定要执行的调试命令"}
 	}
 
 	command := args[0]
@@ -333,6 +376,8 @@ func findProcessBySocket(socketPath string) (int, error) {
 
 	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
 
+	var matches []int
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -344,11 +389,19 @@ func findProcessBySocket(socketPath string) (int, error) {
 		}
 
 		if processHasSocket(pid, expectedLink) {
-			return pid, nil
+			matches = append(matches, pid)
 		}
 	}
 
-	return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+	switch len(matches) {
+	case 0:
+		return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, fmt.Errorf("找到多个持有 socket %s 的进程 (PID: %v)，请使用 --pid 指定具体进程",
+			socketPath, matches)
+	}
 }
 
 // findSocketInode 从 /proc/net/unix 查找 Unix domain socket 的内核 inode。

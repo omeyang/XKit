@@ -34,9 +34,12 @@ func WithBackoff(backoff xretry.BackoffPolicy) ConsumeLoopOption {
 }
 
 // WithOnError 设置错误回调。
+// nil 值会被忽略，与 WithBackoff 的 nil 处理保持一致。
 func WithOnError(onError func(err error)) ConsumeLoopOption {
 	return func(o *ConsumeLoopOptions) {
-		o.OnError = onError
+		if onError != nil {
+			o.OnError = onError
+		}
 	}
 }
 

@@ -272,6 +272,26 @@ func TestDispatchEvents_ContextCanceled(t *testing.T) {
 	}
 }
 
+func TestDispatchEvents_ClientClosed(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+	ctx := context.Background()
+
+	eventCh := make(chan Event) // 无缓冲，发送会阻塞
+
+	// 关闭 closeCh 触发退出
+	close(c.closeCh)
+
+	events := []*clientv3.Event{
+		createPutEvent("key1", "value1", 1),
+	}
+
+	_, result := c.dispatchEvents(ctx, events, eventCh)
+
+	if result {
+		t.Error("dispatchEvents() should return false when client is closed")
+	}
+}
+
 func TestDispatchEvents_EmptyEvents(t *testing.T) {
 	c := &Client{}
 	ctx := context.Background()

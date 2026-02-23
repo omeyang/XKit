@@ -254,6 +254,45 @@ func TestWithTenantInfo(t *testing.T) {
 			t.Error("WithTenantInfo(nil) should return error")
 		}
 	})
+
+	t.Run("纯空白字段不注入（TrimSpace一致性）", func(t *testing.T) {
+		ctx := context.Background()
+		info := xtenant.TenantInfo{
+			TenantID:   "   ",  // 纯空白
+			TenantName: "  \t", // 纯空白
+		}
+		ctx, err := xtenant.WithTenantInfo(ctx, info)
+		if err != nil {
+			t.Fatalf("WithTenantInfo() error = %v", err)
+		}
+
+		// 纯空白值不应被注入
+		if got := xtenant.TenantID(ctx); got != "" {
+			t.Errorf("TenantID() = %q, want empty (whitespace-only should not be injected)", got)
+		}
+		if got := xtenant.TenantName(ctx); got != "" {
+			t.Errorf("TenantName() = %q, want empty (whitespace-only should not be injected)", got)
+		}
+	})
+
+	t.Run("带空白的值会被trim后注入", func(t *testing.T) {
+		ctx := context.Background()
+		info := xtenant.TenantInfo{
+			TenantID:   "  t1  ",
+			TenantName: "  n1  ",
+		}
+		ctx, err := xtenant.WithTenantInfo(ctx, info)
+		if err != nil {
+			t.Fatalf("WithTenantInfo() error = %v", err)
+		}
+
+		if got := xtenant.TenantID(ctx); got != "t1" {
+			t.Errorf("TenantID() = %q, want %q", got, "t1")
+		}
+		if got := xtenant.TenantName(ctx); got != "n1" {
+			t.Errorf("TenantName() = %q, want %q", got, "n1")
+		}
+	})
 }
 
 func TestRequireTenantID(t *testing.T) {

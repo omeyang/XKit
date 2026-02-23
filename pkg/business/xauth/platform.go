@@ -43,6 +43,12 @@ type PlatformManagerConfig struct {
 	Observer xmetrics.Observer
 	CacheTTL time.Duration
 
+	// EnableLocal 是否启用本地缓存。
+	// nil 默认启用；显式设为 false 则禁用。
+	// 设计决策: 与 TokenCache.EnableLocal 共享同一开关 (WithLocalCache)，
+	// 统一控制所有本地缓存的启用/禁用。
+	EnableLocal *bool
+
 	// LocalCacheSize 本地缓存最大条目数。
 	// 默认 1000。
 	LocalCacheSize int
@@ -73,29 +79,32 @@ func NewPlatformManager(cfg PlatformManagerConfig) *PlatformManager {
 		cfg.LocalCacheTTL = cfg.CacheTTL
 	}
 
-	// 创建本地 LRU 缓存
-	localCache, err := xlru.New[string, string](xlru.Config{
-		Size: cfg.LocalCacheSize,
-		TTL:  cfg.LocalCacheTTL,
-	})
-	if err != nil {
-		// 这不应该发生，因为我们已经验证了 LocalCacheSize > 0
-		cfg.Logger.Error("failed to create local cache, using fallback",
-			slog.String("error", err.Error()))
-		// 创建一个最小的缓存作为 fallback，Size=1 不会失败
-		//nolint:errcheck // Size=1 保证不会返回错误
-		localCache, _ = xlru.New[string, string](xlru.Config{Size: 1, TTL: cfg.LocalCacheTTL})
+	pm := &PlatformManager{
+		http:     cfg.HTTP,
+		cache:    cfg.Cache,
+		tokenMgr: cfg.TokenMgr,
+		logger:   cfg.Logger,
+		observer: cfg.Observer,
+		cacheTTL: cfg.CacheTTL,
 	}
 
-	return &PlatformManager{
-		http:       cfg.HTTP,
-		cache:      cfg.Cache,
-		tokenMgr:   cfg.TokenMgr,
-		logger:     cfg.Logger,
-		observer:   cfg.Observer,
-		cacheTTL:   cfg.CacheTTL,
-		localCache: localCache,
+	// 创建本地 LRU 缓存（nil EnableLocal 默认启用）
+	enableLocal := cfg.EnableLocal == nil || *cfg.EnableLocal
+	if enableLocal {
+		localCache, err := xlru.New[string, string](xlru.Config{
+			Size: cfg.LocalCacheSize,
+			TTL:  cfg.LocalCacheTTL,
+		})
+		if err != nil {
+			cfg.Logger.Error("failed to create local cache, using fallback",
+				slog.String("error", err.Error()))
+			//nolint:errcheck // Size=1 保证不会返回错误
+			localCache, _ = xlru.New[string, string](xlru.Config{Size: 1, TTL: cfg.LocalCacheTTL})
+		}
+		pm.localCache = localCache
 	}
+
+	return pm
 }
 
 // GetPlatformID 获取平台 ID。
@@ -315,6 +324,9 @@ func localCacheKey(tenantID, field string) string {
 
 // getLocalCache 从本地缓存获取。
 func (m *PlatformManager) getLocalCache(tenantID, field string) string {
+	if m.localCache == nil {
+		return ""
+	}
 	value, ok := m.localCache.Get(localCacheKey(tenantID, field))
 	if !ok {
 		return ""
@@ -324,20 +336,27 @@ func (m *PlatformManager) getLocalCache(tenantID, field string) string {
 
 // setLocalCache 设置本地缓存。
 func (m *PlatformManager) setLocalCache(tenantID, field, value string) {
+	if m.localCache == nil {
+		return
+	}
 	m.localCache.Set(localCacheKey(tenantID, field), value)
 }
 
 // ClearLocalCache 清空本地缓存。
 func (m *PlatformManager) ClearLocalCache() {
-	m.localCache.Clear()
+	if m.localCache != nil {
+		m.localCache.Clear()
+	}
 }
 
 // InvalidateCache 使指定租户的缓存失效。
 // 注意：本地缓存使用 "tenantID:field" 作为键，需要删除所有相关字段。
 func (m *PlatformManager) InvalidateCache(ctx context.Context, tenantID string) error {
 	// 删除该租户的所有本地缓存字段
-	for _, field := range []string{CacheFieldPlatformID, CacheFieldHasParent, CacheFieldUnclassRegionID} {
-		m.localCache.Delete(localCacheKey(tenantID, field))
+	if m.localCache != nil {
+		for _, field := range []string{CacheFieldPlatformID, CacheFieldHasParent, CacheFieldUnclassRegionID} {
+			m.localCache.Delete(localCacheKey(tenantID, field))
+		}
 	}
 	return m.cache.Delete(ctx, tenantID)
 }

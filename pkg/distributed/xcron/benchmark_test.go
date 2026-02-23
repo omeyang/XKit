@@ -246,9 +246,9 @@ func BenchmarkScheduler_AddFuncWithImmediate(b *testing.B) {
 		)
 
 		b.StopTimer()
-		// 等待异步执行完成，避免 goroutine 泄露
-		time.Sleep(10 * time.Millisecond)
-		scheduler.Stop()
+		// Stop() 已等待所有 immediate 任务完成，无需额外 sleep
+		ctx := scheduler.Stop()
+		<-ctx.Done()
 		b.StartTimer()
 	}
 }

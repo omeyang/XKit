@@ -16,7 +16,9 @@ const (
 	// 例如：失败率过高但调度器仍在运行。
 	HealthStatusDegraded HealthStatus = "degraded"
 	// HealthStatusUnhealthy 表示调度器不健康，可能无法正常调度任务。
-	// 例如：调度器未启动、分布式锁连接失败等。
+	// 例如：分布式锁连接失败等。
+	// 设计决策: 不检查调度器启动状态，因为 robfig/cron 未暴露启动标志，
+	// 且健康检查通常在服务启动后的探针中调用，此时调度器已启动。
 	HealthStatusUnhealthy HealthStatus = "unhealthy"
 )
 

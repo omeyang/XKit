@@ -73,8 +73,11 @@ func (s *Server) stopListening() error {
 		if err := s.transport.Close(); err != nil {
 			s.audit(AuditEventCommandFailed, nil, "stopListening:transport", nil, 0, err)
 		}
-		// 仅当不是自定义传输层时才重新创建
-		// 自定义传输层由用户管理生命周期，下次 Enable 时需要用户重新提供或复用
+		// 设计决策: 仅当不是自定义传输层时才重新创建。
+		// 内置 UnixTransport 的 Close 是终态（设置 closed=true），因此需要重建。
+		// 自定义传输层由用户管理生命周期：若需 Enable→Disable→Enable 循环，
+		// 其 Close 实现应仅关闭监听器而非标记终态，以支持后续 Listen 调用。
+		// 参见 WithTransport 文档。
 		if !s.customTransport {
 			s.transport = NewUnixTransport(s.opts.SocketPath, os.FileMode(s.opts.SocketPerm))
 		}

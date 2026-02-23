@@ -111,7 +111,15 @@ func newProducerWrapper(config *kafka.ConfigMap, opts ...ProducerOption) (*produ
 		opt(options)
 	}
 
-	producer, err := kafka.NewProducer(config)
+	// 复制配置，避免修改调用方传入的 ConfigMap，与 newConsumerWrapper 保持一致
+	clonedConfig := &kafka.ConfigMap{}
+	for k, v := range *config {
+		if err := clonedConfig.SetKey(k, v); err != nil {
+			return nil, fmt.Errorf("clone config key %q: %w", k, err)
+		}
+	}
+
+	producer, err := kafka.NewProducer(clonedConfig)
 	if err != nil {
 		return nil, err
 	}

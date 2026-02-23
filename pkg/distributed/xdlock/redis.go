@@ -26,6 +26,12 @@ type redisFactory struct {
 
 // NewRedisFactory 创建 Redis 锁工厂。
 // 单节点为标准 Redis 锁；多节点使用 Redlock 算法（需过半成功）。
+//
+// Redlock 多节点注意事项：
+//   - 推荐使用奇数个独立节点（至少 3 个），以确保多数派仲裁的可靠性
+//   - 2 个节点无法容忍任何节点故障（需过半 = 2 个都成功），不建议用于生产
+//   - 各节点应部署在不同的故障域，避免使用同一 Redis 实例的不同地址
+//   - 传入重复的客户端（指向同一实例）会降低 Redlock 的故障隔离能力
 func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 	if len(clients) == 0 {
 		return nil, ErrNilClient
@@ -188,7 +194,17 @@ type redisLockHandle struct {
 //
 // 设计决策: 允许在 factory 关闭后解锁，避免锁悬挂等待 TTL 过期。
 // factory.Close() 仅设置逻辑标志，Redis 连接仍由调用者管理，解锁操作可正常执行。
+//
+// 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
+// 避免锁残留到 TTL 到期（默认 8s）。
 func (h *redisLockHandle) Unlock(ctx context.Context) error {
+	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), unlockTimeout)
+		defer cancel()
+	}
+
 	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)

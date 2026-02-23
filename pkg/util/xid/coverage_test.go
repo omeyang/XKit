@@ -3,7 +3,7 @@ package xid
 import (
 	"context"
 	"errors"
-	"net"
+	"net/netip"
 	"strconv"
 	"testing"
 	"time"
@@ -77,8 +77,8 @@ func TestPrivateIPv4(t *testing.T) {
 	// 纯函数 isPrivateIPv4 的确定性测试见 TestIsPrivateIPv4 和 TestIsPrivateIPv4_EdgeCases。
 	ip, err := privateIPv4()
 	if err == nil {
-		assert.NotNil(t, ip)
-		assert.Len(t, ip, 4) // IPv4 should be 4 bytes
+		assert.True(t, ip.IsValid())
+		assert.True(t, ip.Is4())
 		assert.True(t, isPrivateIPv4(ip), "returned IP should be private")
 	} else {
 		assert.ErrorIs(t, err, ErrNoPrivateAddress)
@@ -301,17 +301,19 @@ func TestGenerator_MustNewStringWithRetry_Panic(t *testing.T) {
 // =============================================================================
 
 func TestWithMaxWaitDuration_Zero(t *testing.T) {
-	// 零值存储到 config，NewGenerator 中使用默认值
+	// 显式传入零值应被记录，供 NewGenerator 区分"未传入"与"显式传入 0"
 	cfg := &options{}
 	WithMaxWaitDuration(0)(cfg)
 	assert.Equal(t, time.Duration(0), cfg.maxWaitDuration)
+	assert.True(t, cfg.maxWaitSet)
 }
 
 func TestWithRetryInterval_Zero(t *testing.T) {
-	// 零值存储到 config，NewGenerator 中使用默认值
+	// 显式传入零值应被记录，供 NewGenerator 区分"未传入"与"显式传入 0"
 	cfg := &options{}
 	WithRetryInterval(0)(cfg)
 	assert.Equal(t, time.Duration(0), cfg.retryInterval)
+	assert.True(t, cfg.retryIntervalSet)
 }
 
 func TestNewGenerator_NegativeMaxWaitDuration(t *testing.T) {
@@ -333,23 +335,25 @@ func TestNewGenerator_NegativeRetryInterval(t *testing.T) {
 func TestIsPrivateIPv4_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name     string
-		ip       net.IP
+		ip       string
 		expected bool
 	}{
-		// 172.16.0.0/12 边界测试 - 使用字节切片
-		{"172.16.0.0 boundary start", []byte{172, 16, 0, 0}, true},
-		{"172.31.255.255 boundary end", []byte{172, 31, 255, 255}, true},
-		{"172.15.255.255 below range", []byte{172, 15, 255, 255}, false},
-		{"172.32.0.0 above range", []byte{172, 32, 0, 0}, false},
-		// IPv6 mapped 转换为 IPv4
-		{"IPv6 mapped", net.ParseIP("::ffff:10.0.0.1").To4(), true},
-		// 16-byte slice (IPv4-mapped IPv6 format from net.ParseIP) — now auto-converted via To4()
-		{"16-byte IPv4", net.ParseIP("10.0.0.1"), true},
+		{"172.16.0.0 boundary start", "172.16.0.0", true},
+		{"172.31.255.255 boundary end", "172.31.255.255", true},
+		{"172.15.255.255 below range", "172.15.255.255", false},
+		{"172.32.0.0 above range", "172.32.0.0", false},
+		{"IPv6 mapped", "::ffff:10.0.0.1", true},
+		{"native IPv4", "10.0.0.1", true},
+		{"zero value", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isPrivateIPv4(tt.ip)
+			addr := netip.Addr{}
+			if tt.ip != "" {
+				addr = netip.MustParseAddr(tt.ip)
+			}
+			result := isPrivateIPv4(addr)
 			assert.Equal(t, tt.expected, result, "IP: %v", tt.ip)
 		})
 	}
@@ -473,6 +477,20 @@ func TestGenerator_NewWithRetry_Timeout(t *testing.T) {
 	assert.Less(t, elapsed, 200*time.Millisecond)
 }
 
+func TestGenerator_NewWithRetry_Timeout_UsesRemainingBudget(t *testing.T) {
+	gen := newRetryableFailGenerator(t)
+	gen.maxWaitDuration = 20 * time.Millisecond
+	gen.retryInterval = 300 * time.Millisecond
+
+	start := time.Now()
+	_, err := gen.NewWithRetry(context.Background())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrClockBackwardTimeout)
+	assert.Less(t, elapsed, 150*time.Millisecond, "should cap wait by remaining budget instead of full retry interval")
+}
+
 func TestGenerator_NewWithRetry_ContextCancelDuringWait(t *testing.T) {
 	gen := newRetryableFailGenerator(t)
 	gen.maxWaitDuration = 5 * time.Second // 设置很长的超时，确保走到 context 取消分支
@@ -536,8 +554,8 @@ func TestGenerator_NewWithRetry_NilContext(t *testing.T) {
 	gen, err := NewGenerator()
 	require.NoError(t, err)
 
-	//nolint:staticcheck // SA1012: 故意传入 nil context 以测试错误路径
-	_, err = gen.NewWithRetry(nil)
+	ctxMap := map[string]context.Context{}
+	_, err = gen.NewWithRetry(ctxMap["nil"])
 	assert.ErrorIs(t, err, ErrNilContext)
 }
 
@@ -551,7 +569,6 @@ func TestGenerator_NilReceiver(t *testing.T) {
 	_, err := g.New()
 	assert.ErrorIs(t, err, ErrNilGenerator)
 
-	//nolint:staticcheck // SA1012: 故意传入 nil context 以测试错误路径
 	_, err = g.NewWithRetry(context.Background())
 	assert.ErrorIs(t, err, ErrNilGenerator)
 

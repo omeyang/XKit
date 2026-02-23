@@ -20,10 +20,10 @@ var (
 	// ErrMissingPlatformID 缺少 PlatformID
 	ErrMissingPlatformID = errors.New("xplatform: missing platform_id")
 
-	// ErrInvalidPlatformID PlatformID 格式非法（包含空白字符或超过最大长度）
+	// ErrInvalidPlatformID PlatformID 格式非法（包含空白字符、控制字符或超过最大长度）
 	ErrInvalidPlatformID = errors.New("xplatform: invalid platform_id format")
 
-	// ErrInvalidUnclassRegionID UnclassRegionID 格式非法（包含空白字符或超过最大长度）
+	// ErrInvalidUnclassRegionID UnclassRegionID 格式非法（包含空白字符、控制字符或超过最大长度）
 	ErrInvalidUnclassRegionID = errors.New("xplatform: invalid unclass_region_id format")
 
 	// ErrAlreadyInitialized 重复初始化
@@ -54,6 +54,7 @@ type Config struct {
 	// 校验规则：
 	//   - 不能为空或纯空白字符
 	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	PlatformID string
 
@@ -64,6 +65,7 @@ type Config struct {
 	//
 	// 校验规则（仅非空时校验）：
 	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	UnclassRegionID string
 }
@@ -73,8 +75,10 @@ type Config struct {
 // 校验规则：
 //   - PlatformID 不能为空或纯空白字符 → ErrMissingPlatformID
 //   - PlatformID 不能包含空白字符 → ErrInvalidPlatformID
+//   - PlatformID 不能包含控制字符 → ErrInvalidPlatformID
 //   - PlatformID 长度不超过 128 字节 → ErrInvalidPlatformID
 //   - UnclassRegionID（非空时）不能包含空白字符 → ErrInvalidUnclassRegionID
+//   - UnclassRegionID（非空时）不能包含控制字符 → ErrInvalidUnclassRegionID
 //   - UnclassRegionID（非空时）长度不超过 128 字节 → ErrInvalidUnclassRegionID
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.PlatformID) == "" {
@@ -82,6 +86,12 @@ func (c Config) Validate() error {
 	}
 	if strings.ContainsFunc(c.PlatformID, unicode.IsSpace) {
 		return fmt.Errorf("%w: contains whitespace", ErrInvalidPlatformID)
+	}
+	// 设计决策: 校验控制字符（NUL、BEL、ESC 等），因为 PlatformID 会被注入到
+	// HTTP Header（xtenant/http.go）和 gRPC Metadata（xtenant/grpc.go），
+	// 控制字符可能导致协议层错误或隐性污染。
+	if strings.ContainsFunc(c.PlatformID, unicode.IsControl) {
+		return fmt.Errorf("%w: contains control characters", ErrInvalidPlatformID)
 	}
 	if len(c.PlatformID) > maxPlatformIDLen {
 		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidPlatformID, maxPlatformIDLen)
@@ -92,6 +102,9 @@ func (c Config) Validate() error {
 	if c.UnclassRegionID != "" {
 		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsSpace) {
 			return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
+		}
+		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsControl) {
+			return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
 		}
 		if len(c.UnclassRegionID) > maxUnclassRegionIDLen {
 			return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)

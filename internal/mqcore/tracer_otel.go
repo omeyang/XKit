@@ -112,6 +112,11 @@ func syncTraceToXctx(ctx context.Context) context.Context {
 	if err == nil {
 		ctx = newCtx
 	}
+	// 同步 TraceFlags 到 xctx，确保下游日志 LogAttrs 包含采样决策信息。
+	newCtx, err = xctx.WithTraceFlags(ctx, spanContext.TraceFlags().String())
+	if err == nil {
+		ctx = newCtx
+	}
 	return ctx
 }
 

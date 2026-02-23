@@ -39,10 +39,31 @@
 // 最终缓存的 TTL 取决于首个请求的配置。
 // 这是设计决策：同一数据应使用一致的 TTL 配置。
 //
+// # loadFn 返回值说明
+//
+// loadFn 返回 (nil, nil) 时，nil 值会被写入 Redis（存储为空字符串），
+// 后续 Get 返回 []byte("")，视为缓存命中。
+// 这等效于空值缓存，可防止缓存穿透。
+//
+// # TTL 抖动
+//
+// 使用 WithTTLJitter 可为缓存 TTL 添加随机抖动，防止大量 key 同时过期（缓存雪崩）。
+// 例如 WithTTLJitter(0.1) 时，1 小时 TTL 会被随机化到约 57-63 分钟。
+//
 // # 分布式锁
 //
 // 锁 key 格式：lock:{prefix}{key}
 //   - {prefix} 默认为 "loader:"，可通过 WithDistributedLockKeyPrefix 配置
 //
+// 分布式锁的目的是减轻后端压力（防击穿），而非保证缓存强一致性。
+// 如果锁在加载完成前过期，其他节点可能并发回源，但这不会导致数据错误，
+// 只是降低了防击穿效果。合理配置 DistributedLockTTL > LoadTimeout 可极大降低此概率。
+//
 // 对于需要更强一致性的场景，可通过 WithExternalLock 集成 xdlock。
+//
+// # Memory 组件说明
+//
+// Memory 是独立的本地内存缓存包装（基于 ristretto），不参与 Loader 流程。
+// Loader 仅支持 Redis 后端。如需本地缓存 + Redis 的双层缓存，
+// 应在业务层自行组合 Memory 和 Loader。
 package xcache

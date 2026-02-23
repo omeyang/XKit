@@ -12,12 +12,14 @@
 // # 快速上手
 //
 //	obs, err := xmetrics.NewOTelObserver()
+//	// ... handle err ...
 //	ctx, span := xmetrics.Start(ctx, obs, xmetrics.SpanOptions{
 //	    Component: "myservice",
-//	    Operation: "DoWork",
+//	    Operation: "do_work",
 //	    Kind:      xmetrics.KindClient,
 //	})
-//	defer span.End(xmetrics.Result{Err: err})
+//	result, bizErr := doWork(ctx)
+//	defer span.End(xmetrics.Result{Err: bizErr})
 //
 // # 统一指标
 //
@@ -26,7 +28,7 @@
 //
 // duration Histogram 默认桶边界为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]（秒），
 // 适用于典型 API 操作（1ms ~ 10s）。可通过 [WithHistogramBuckets] 自定义。
-// 自定义桶边界必须严格递增且不含 NaN/Inf，否则 [NewOTelObserver] 返回 [ErrInvalidBuckets]。
+// 自定义桶边界必须为非负值、严格递增且不含 NaN/Inf，否则 [NewOTelObserver] 返回 [ErrInvalidBuckets]。
 //
 // # 统一属性
 //
@@ -41,6 +43,9 @@
 // component 和 operation 应为静态的低基数字符串（如服务名、方法名），
 // 禁止将动态值（如请求 ID、用户 ID、URL 路径参数）写入。
 // 违反此约束会导致 metrics 时序爆炸和存储成本上升。
+//
+// operation 推荐使用 snake_case 命名（如 "find_page"、"produce"），
+// 与 OTel 语义约定保持一致，便于跨包查询和仪表盘维护。
 //
 // # Status 语义
 //

@@ -6,6 +6,12 @@ import (
 	"github.com/omeyang/xkit/pkg/context/xplatform"
 )
 
+// sink 变量消费 benchmark 返回值，防止编译器死代码消除（DCE）导致结果失真。
+var (
+	sinkString string
+	sinkBool   bool
+)
+
 // =============================================================================
 // Config 方法 Benchmark
 // =============================================================================
@@ -53,7 +59,7 @@ func BenchmarkPlatformID(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.PlatformID()
+		sinkString = xplatform.PlatformID()
 	}
 }
 
@@ -69,7 +75,7 @@ func BenchmarkHasParent(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.HasParent()
+		sinkBool = xplatform.HasParent()
 	}
 }
 
@@ -85,7 +91,7 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.UnclassRegionID()
+		sinkString = xplatform.UnclassRegionID()
 	}
 }
 
@@ -100,7 +106,7 @@ func BenchmarkIsInitialized(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = xplatform.IsInitialized()
+		sinkBool = xplatform.IsInitialized()
 	}
 }
 
@@ -156,7 +162,7 @@ func BenchmarkPlatformID_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = xplatform.PlatformID()
+			sinkString = xplatform.PlatformID()
 		}
 	})
 }
@@ -174,7 +180,7 @@ func BenchmarkHasParent_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = xplatform.HasParent()
+			sinkBool = xplatform.HasParent()
 		}
 	})
 }
@@ -191,7 +197,7 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = xplatform.IsInitialized()
+			sinkBool = xplatform.IsInitialized()
 		}
 	})
 }

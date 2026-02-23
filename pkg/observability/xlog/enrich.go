@@ -26,6 +26,9 @@ type EnrichHandler struct {
 // 且多数场景不会对 logger 调用 WithGroup。如需顶层 trace_id，避免对带 enrich 的
 // logger 调用 WithGroup，或在 WithGroup 前提取 enrich 字段。
 func NewEnrichHandler(base slog.Handler) *EnrichHandler {
+	if base == nil {
+		panic("xlog: NewEnrichHandler requires a non-nil base handler")
+	}
 	return &EnrichHandler{base: base}
 }
 
@@ -39,7 +42,8 @@ const maxEnrichAttrs = 7
 
 // Handle 在调用底层 handler 前，从 context 提取追踪和身份信息
 //
-// 重要：根据 slog 契约，必须 Clone record 后再修改，避免影响其他 handler
+// 重要：根据 slog 契约，必须 Clone record 后再修改，避免影响其他 handler。
+// ctx 为 nil 时安全退化为无注入（xctx 函数内部处理了 nil ctx）。
 //
 // 性能优化：使用栈数组 [maxEnrichAttrs]slog.Attr 避免热路径堆分配
 func (h *EnrichHandler) Handle(ctx context.Context, r slog.Record) error {

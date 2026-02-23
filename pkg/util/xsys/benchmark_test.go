@@ -10,11 +10,11 @@ func BenchmarkSetFileLimit(b *testing.B) {
 	if err != nil {
 		b.Fatalf("GetFileLimit: %v", err)
 	}
-	defer func() {
+	b.Cleanup(func() {
 		if restoreErr := SetFileLimit(soft); restoreErr != nil {
-			b.Logf("restore rlimit: %v", restoreErr)
+			b.Errorf("restore rlimit: %v", restoreErr)
 		}
-	}()
+	})
 
 	target := hard / 2
 	if target == 0 {

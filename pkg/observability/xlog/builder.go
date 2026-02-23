@@ -35,9 +35,8 @@ type ReplaceAttrFunc func(groups []string, a slog.Attr) slog.Attr
 
 // Builder 日志配置构建器
 type Builder struct {
-	output         io.Writer
-	level          Level
-	levelVar       *slog.LevelVar
+	output   io.Writer
+	levelVar *slog.LevelVar
 	format         string
 	addSource      bool
 	enableEnrich   bool                // 是否启用 context 信息自动注入
@@ -54,9 +53,8 @@ func New() *Builder {
 	levelVar.Set(slog.LevelInfo)
 
 	return &Builder{
-		output:       os.Stderr,
-		level:        LevelInfo,
-		levelVar:     levelVar,
+		output:   os.Stderr,
+		levelVar: levelVar,
 		format:       "text",
 		enableEnrich: true, // 默认启用 context 信息注入
 	}
@@ -66,6 +64,9 @@ func New() *Builder {
 //
 // nil 会立即报错（fail-fast，与 SetDeploymentType 行为一致）。
 func (b *Builder) SetOutput(w io.Writer) *Builder {
+	if b.err != nil {
+		return b
+	}
 	if w == nil {
 		b.err = fmt.Errorf("xlog: output writer is nil")
 		return b
@@ -76,13 +77,15 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 
 // SetLevel 设置日志级别
 func (b *Builder) SetLevel(level Level) *Builder {
-	b.level = level
 	b.levelVar.Set(slog.Level(level))
 	return b
 }
 
 // SetLevelString 通过字符串设置日志级别
 func (b *Builder) SetLevelString(s string) *Builder {
+	if b.err != nil {
+		return b
+	}
 	level, err := ParseLevel(s)
 	if err != nil {
 		b.err = err
@@ -93,6 +96,9 @@ func (b *Builder) SetLevelString(s string) *Builder {
 
 // SetFormat 设置输出格式：text 或 json
 func (b *Builder) SetFormat(format string) *Builder {
+	if b.err != nil {
+		return b
+	}
 	normalized := strings.ToLower(strings.TrimSpace(format))
 	if normalized == "" {
 		// 空值视为使用默认格式，避免误把“没填”变成配置错误。
@@ -127,6 +133,9 @@ func (b *Builder) SetEnrich(enable bool) *Builder {
 // 同理，SetRotation 之后再调用 SetOutput 会覆盖 rotator 的输出。
 // Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
 func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption) *Builder {
+	if b.err != nil {
+		return b
+	}
 	rotator, err := xrotate.NewLumberjack(filename, opts...)
 	if err != nil {
 		b.err = err
@@ -210,6 +219,9 @@ func (b *Builder) SetReplaceAttr(fn ReplaceAttrFunc) *Builder {
 //		SetDeploymentType(xctx.DeploymentSaaS).
 //		Build()
 func (b *Builder) SetDeploymentType(dt xctx.DeploymentType) *Builder {
+	if b.err != nil {
+		return b
+	}
 	if !dt.IsValid() {
 		b.err = xctx.ErrInvalidDeploymentType
 		return b
@@ -226,6 +238,9 @@ func (b *Builder) SetDeploymentType(dt xctx.DeploymentType) *Builder {
 //	dt, _ := xctx.ParseDeploymentType(v)
 //	builder.SetDeploymentType(dt)
 func (b *Builder) SetDeploymentTypeFromEnv() *Builder {
+	if b.err != nil {
+		return b
+	}
 	v := os.Getenv(xctx.EnvDeploymentType)
 	if v == "" {
 		b.err = xctx.ErrMissingDeploymentTypeEnv

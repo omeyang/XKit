@@ -14,8 +14,14 @@ func BenchmarkSubmit(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	var rejected int64
 	for b.Loop() {
-		pool.Submit(0)
+		if err := pool.Submit(0); err != nil {
+			rejected++
+		}
+	}
+	if rejected > 0 {
+		b.ReportMetric(float64(rejected)/float64(b.N)*100, "reject-%")
 	}
 }
 
@@ -26,13 +32,19 @@ func BenchmarkSubmit_Parallel(b *testing.B) {
 	}
 	defer pool.Close()
 
+	var rejected atomic.Int64
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			pool.Submit(0)
+			if err := pool.Submit(0); err != nil {
+				rejected.Add(1)
+			}
 		}
 	})
+	if r := rejected.Load(); r > 0 {
+		b.ReportMetric(float64(r)/float64(b.N)*100, "reject-%")
+	}
 }
 
 func BenchmarkSubmitAndProcess(b *testing.B) {
@@ -47,8 +59,14 @@ func BenchmarkSubmitAndProcess(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+	var rejected int64
 	for b.Loop() {
-		pool.Submit(0)
+		if err := pool.Submit(0); err != nil {
+			rejected++
+		}
+	}
+	if rejected > 0 {
+		b.ReportMetric(float64(rejected)/float64(b.N)*100, "reject-%")
 	}
 }
 

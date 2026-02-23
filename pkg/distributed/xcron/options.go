@@ -148,7 +148,8 @@ type JobOption func(*jobOptions)
 // WithName 设置任务名。
 //
 // 任务名用作分布式锁的 key，在同一调度器内必须唯一。
-// 如果使用分布式锁但未设置任务名，任务将不会获取锁直接执行。
+// 当调度器配置了分布式锁（非 NoopLocker）时，必须设置任务名，
+// 否则 AddFunc/AddJob 返回 [ErrMissingName]。
 //
 // 用法：
 //
@@ -214,9 +215,7 @@ func WithTimeout(timeout time.Duration) JobOption {
 // WithLockTimeout 设置锁获取超时时间。
 //
 // 调用 TryLock 时如果底层存储（Redis/K8s API）响应慢，
-// 超过此时间将放弃获取锁，避免 goroutine 长时间阻塞。默认无超时。
-//
-// 建议设置为较短的值（如 5-10 秒），因为分布式锁获取应该是快速操作。
+// 超过此时间将放弃获取锁，避免 goroutine 长时间阻塞。默认 5 秒。
 //
 // 用法：
 //

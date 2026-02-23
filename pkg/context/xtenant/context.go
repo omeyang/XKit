@@ -2,6 +2,7 @@ package xtenant
 
 import (
 	"context"
+	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 )
@@ -103,9 +104,13 @@ func WithTenantName(ctx context.Context, tenantName string) (context.Context, er
 
 // WithTenantInfo 将 TenantInfo 批量注入 context
 //
-// 只注入非空字段。如果 info 为零值（IsEmpty() == true），
+// 只注入非空字段（TrimSpace 后判断）。如果 info 为零值（IsEmpty() == true），
 // 返回原始 ctx 且不做任何修改。
 // 如果 ctx 为 nil，返回错误。
+//
+// 设计决策: 对 TenantID/TenantName 做 TrimSpace 后再判断是否为空，
+// 与 Extract 函数的空白处理语义保持一致（ExtractFromHTTPHeader/ExtractFromMetadata
+// 均使用 TrimSpace）。这确保纯空白值不会被注入 context。
 func WithTenantInfo(ctx context.Context, info TenantInfo) (context.Context, error) {
 	if ctx == nil {
 		return nil, xctx.ErrNilContext
@@ -113,16 +118,16 @@ func WithTenantInfo(ctx context.Context, info TenantInfo) (context.Context, erro
 
 	var err error
 
-	if info.TenantID != "" {
-		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-		if err != nil {
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		ctx, err = xctx.WithTenantID(ctx, tid)
+		if err != nil { // 防御性处理：当前 xctx 实现下不可达
 			return nil, err
 		}
 	}
 
-	if info.TenantName != "" {
-		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-		if err != nil {
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		ctx, err = xctx.WithTenantName(ctx, tname)
+		if err != nil { // 防御性处理：当前 xctx 实现下不可达
 			return nil, err
 		}
 	}

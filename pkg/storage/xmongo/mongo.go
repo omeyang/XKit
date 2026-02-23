@@ -48,9 +48,13 @@ type Mongo interface {
 	//   - 对于大数据量：考虑使用游标分页（基于 _id 或时间戳）避免 COUNT 开销
 	FindPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error)
 
-	// BulkWrite 批量写入。
+	// BulkInsert 批量插入。
 	// 将大量文档分批插入，提高写入效率。
-	BulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error)
+	//
+	// 设计决策: 命名为 BulkInsert 而非 BulkWrite，因为本方法仅支持 InsertMany 操作。
+	// MongoDB 官方 Collection.BulkWrite 接受 WriteModel 列表，支持 Insert/Update/Delete/Replace
+	// 四种混合操作。为避免语义混淆，此处使用更精确的命名。
+	BulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error)
 }
 
 // =============================================================================
@@ -121,7 +125,7 @@ type BulkOptions struct {
 //
 // 示例：
 //
-//	result, err := wrapper.BulkWrite(ctx, coll, docs, opts)
+//	result, err := wrapper.BulkInsert(ctx, coll, docs, opts)
 //	if err != nil {
 //	    log.Printf("部分失败: %d/%d 条成功插入, 错误: %v",
 //	        result.InsertedCount, len(docs), err)

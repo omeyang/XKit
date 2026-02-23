@@ -246,6 +246,10 @@ func (c *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 //   - handler: 消息处理函数
 //   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
 func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
+	if handler == nil {
+		return ErrNilHandler
+	}
+
 	consume := func(ctx context.Context) error {
 		return c.Consume(ctx, handler)
 	}

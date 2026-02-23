@@ -262,6 +262,29 @@ func TestNewRetryer_NilOptions(t *testing.T) {
 	assert.NotNil(t, r.BackoffPolicy())
 }
 
+func TestWithOnRetry_Nil(t *testing.T) {
+	// WithOnRetry(nil) 应该被静默忽略，不清除已设置的回调
+	var called bool
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(2)),
+		WithBackoffPolicy(NewNoBackoff()),
+		WithOnRetry(func(_ int, _ error) { called = true }),
+		WithOnRetry(nil), // 不应清除上面的回调
+	)
+
+	var attempts int
+	err := r.Do(context.Background(), func(_ context.Context) error {
+		attempts++
+		if attempts < 2 {
+			return errors.New("error")
+		}
+		return nil
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, called, "OnRetry callback should not be cleared by WithOnRetry(nil)")
+}
+
 func TestZeroValueRetryer(t *testing.T) {
 	// 零值 Retryer 使用时不应该 panic
 	t.Run("zero value Retryer should not panic", func(t *testing.T) {
@@ -510,5 +533,22 @@ func TestNilRetryer(t *testing.T) {
 	t.Run("RetrierWithData", func(t *testing.T) {
 		retrier := RetrierWithData[string](context.Background(), nil)
 		assert.NotNil(t, retrier, "nil Retryer should return usable default RetrierWithData")
+	})
+}
+
+func TestRetryer_NilFn(t *testing.T) {
+	// nil fn 是编程错误，应 panic（Go 标准行为）
+	r := NewRetryer(WithBackoffPolicy(NewNoBackoff()))
+
+	t.Run("Do", func(t *testing.T) {
+		assert.Panics(t, func() {
+			_ = r.Do(context.Background(), nil) //nolint:errcheck // expected to panic
+		})
+	})
+
+	t.Run("DoWithResult", func(t *testing.T) {
+		assert.Panics(t, func() {
+			_, _ = DoWithResult[int](context.Background(), r, nil) //nolint:errcheck // expected to panic
+		})
 	})
 }

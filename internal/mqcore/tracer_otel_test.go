@@ -298,6 +298,24 @@ func TestSyncTraceToXctx_ValidSpanContext(t *testing.T) {
 	// 应同步到 xctx
 	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
 	assert.Equal(t, "b7ad6b7169203331", xctx.SpanID(result))
+	assert.Equal(t, "01", xctx.TraceFlags(result), "TraceFlags should be synced")
+}
+
+func TestSyncTraceToXctx_TraceFlags_NotSampled(t *testing.T) {
+	traceID, _ := trace.TraceIDFromHex("0af7651916cd43dd8448eb211c80319c")
+	spanID, _ := trace.SpanIDFromHex("b7ad6b7169203331")
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: 0, // not sampled
+		Remote:     true,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), spanContext)
+
+	result := syncTraceToXctx(ctx)
+
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
+	assert.Equal(t, "00", xctx.TraceFlags(result), "TraceFlags 00 (not sampled) should be synced")
 }
 
 // =============================================================================

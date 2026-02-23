@@ -30,7 +30,7 @@ func TestMergeTraceContext_NilExtracted(t *testing.T) {
 func TestMergeTraceContext_BothNil(t *testing.T) {
 	var nilCtx context.Context
 	result := MergeTraceContext(nilCtx, nilCtx)
-	assert.Nil(t, result)
+	assert.NotNil(t, result, "both nil should return context.Background(), not nil")
 }
 
 func TestMergeTraceContext_WithTraceID(t *testing.T) {

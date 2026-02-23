@@ -132,6 +132,16 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 // NewEtcdFactoryFromConfig 从配置创建 etcd 锁工厂。
 // 便捷函数，等同于 NewEtcdClient + NewEtcdFactory。
 // 返回的 client 需要调用方负责关闭。
+//
+// 关闭顺序：必须先关闭 factory 再关闭 client，否则 factory 的 Session 会因底层连接断开
+// 而产生网络错误日志。推荐使用以下 defer 模式：
+//
+//	factory, client, err := xdlock.NewEtcdFactoryFromConfig(config, clientOpts, factoryOpts...)
+//	if err != nil {
+//	    return err
+//	}
+//	defer client.Close()   // 后关闭 client（defer 后进先出）
+//	defer factory.Close()  // 先关闭 factory
 func NewEtcdFactoryFromConfig(
 	config *EtcdConfig,
 	clientOpts []EtcdClientOption,
@@ -155,16 +165,17 @@ func NewEtcdFactoryFromConfig(
 // 内部函数
 // =============================================================================
 
-// convertXetcdError 将 xetcd 错误转换为 xdlock 错误。
+// convertXetcdError 将 xetcd 错误转换为 xdlock 错误，保留原始错误链。
+// 使用双 %w 保留原始错误，与 wrapEtcdError 风格一致。
 func convertXetcdError(err error) error {
 	if err == nil {
 		return nil
 	}
 	switch {
 	case errors.Is(err, xetcd.ErrNilConfig):
-		return ErrNilConfig
+		return fmt.Errorf("%w: %w", ErrNilConfig, err)
 	case errors.Is(err, xetcd.ErrNoEndpoints):
-		return ErrNoEndpoints
+		return fmt.Errorf("%w: %w", ErrNoEndpoints, err)
 	default:
 		return fmt.Errorf("xdlock: %w", err)
 	}

@@ -16,10 +16,12 @@ import (
 type ClickHouse interface {
 	// Conn 返回底层 ClickHouse 连接。
 	// 可用于执行任意 ClickHouse 操作。
+	// 关闭后仍可调用，但底层连接操作会返回驱动层错误。
 	Conn() driver.Conn
 
 	// Health 执行健康检查。
 	// 通过 Ping 检测连接状态。
+	// 关闭后调用返回 ErrClosed。
 	Health(ctx context.Context) error
 
 	// Stats 返回统计信息。
@@ -44,10 +46,12 @@ type ClickHouse interface {
 	//   - 对于简单查询可能比直接改写 SELECT 列表性能略差
 	//   - 性能敏感场景建议直接使用 Conn() 执行优化的 COUNT 语句
 	//   - Stats().QueryCount 会 +2（COUNT 和分页各计一次）
+	//   - 关闭后调用返回 ErrClosed
 	QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (*PageResult, error)
 
 	// BatchInsert 批量插入。
 	// table 是目标表名，rows 是待插入的数据切片。
+	// 关闭后调用返回 ErrClosed。
 	BatchInsert(ctx context.Context, table string, rows []any, opts BatchOptions) (*BatchResult, error)
 }
 

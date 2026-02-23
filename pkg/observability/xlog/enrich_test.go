@@ -148,6 +148,20 @@ func TestEnrichHandler_Enabled(t *testing.T) {
 	}
 }
 
+func TestNewEnrichHandler_NilBase_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("NewEnrichHandler(nil) should panic")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "non-nil") {
+			t.Errorf("unexpected panic message: %v", r)
+		}
+	}()
+	xlog.NewEnrichHandler(nil)
+}
+
 // =============================================================================
 // 性能测试
 // =============================================================================

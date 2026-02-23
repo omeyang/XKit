@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -181,6 +182,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		EnableBackgroundRefresh: options.EnableBackgroundRefresh,
 	})
 
+	enableLocal := options.EnableLocalCache
 	platformMgr := NewPlatformManager(PlatformManagerConfig{
 		HTTP:           httpClient,
 		Cache:          d.cache,
@@ -188,6 +190,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		Logger:         d.logger,
 		Observer:       d.observer,
 		CacheTTL:       d.platformDataTTL,
+		EnableLocal:    &enableLocal,
 		LocalCacheSize: options.LocalCacheMaxSize,
 		LocalCacheTTL:  d.localCacheTTL,
 	})
@@ -311,6 +314,12 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 
 // doAuthRequest 执行带认证的 HTTP 请求。
 func (c *client) doAuthRequest(ctx context.Context, tenantID string, req *AuthRequest) error {
+	// 设计决策: 绝对 URL 必须使用 HTTPS（除非 AllowInsecure=true），
+	// 防止 Bearer Token 通过明文 HTTP 泄露到非安全通道。
+	if !c.config.AllowInsecure && strings.HasPrefix(req.URL, "http://") {
+		return fmt.Errorf("%w: request URL must use https:// when carrying Bearer token", ErrInsecureHost)
+	}
+
 	// 获取 Token
 	token, err := c.tokenMgr.GetToken(ctx, tenantID)
 	if err != nil {
@@ -348,6 +357,19 @@ func (c *client) InvalidateToken(ctx context.Context, tenantID string) error {
 		return ErrMissingTenantID
 	}
 	return c.tokenMgr.InvalidateToken(ctx, tenantID)
+}
+
+// InvalidatePlatformCache 主动使指定租户的平台数据缓存失效。
+// 用于平台信息变更后强制重新获取，避免等待 TTL 过期。
+func (c *client) InvalidatePlatformCache(ctx context.Context, tenantID string) error {
+	if c.closed.Load() {
+		return ErrClientClosed
+	}
+	tenantID = c.resolveTenantID(tenantID)
+	if tenantID == "" {
+		return ErrMissingTenantID
+	}
+	return c.platformMgr.InvalidateCache(ctx, tenantID)
 }
 
 // Close 关闭客户端。

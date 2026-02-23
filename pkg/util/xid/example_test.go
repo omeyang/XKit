@@ -1,6 +1,7 @@
 package xid_test
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -9,8 +10,12 @@ import (
 )
 
 func Example_basic() {
-	// 推荐：使用 MustNewStringWithRetry，自动处理时钟回拨
-	id := xid.MustNewStringWithRetry()
+	// 推荐：使用 NewStringWithRetry 并显式处理错误
+	id, err := xid.NewStringWithRetry(context.Background())
+	if err != nil {
+		log.Printf("Failed to generate ID: %v", err)
+		return
+	}
 	// ID 长度通常为 12-13 个字符（取决于时间戳大小）
 	fmt.Printf("Generated ID length in range: %v\n", len(id) >= 10 && len(id) <= 13)
 	fmt.Printf("ID is not empty: %v\n", id != "")
@@ -58,13 +63,18 @@ func Example_parseAndDecompose() {
 func Example_concurrent() {
 	// 并发生成 ID
 	var wg sync.WaitGroup
-	ids := make(chan string, 10)
+	type result struct {
+		id  string
+		err error
+	}
+	ids := make(chan result, 10)
 
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids <- xid.MustNewStringWithRetry()
+			id, err := xid.NewStringWithRetry(context.Background())
+			ids <- result{id: id, err: err}
 		}()
 	}
 
@@ -73,8 +83,12 @@ func Example_concurrent() {
 
 	// 收集所有 ID
 	uniqueIDs := make(map[string]bool)
-	for id := range ids {
-		uniqueIDs[id] = true
+	for result := range ids {
+		if result.err != nil {
+			log.Printf("Failed to generate ID: %v", result.err)
+			return
+		}
+		uniqueIDs[result.id] = true
 	}
 
 	fmt.Printf("Generated %d unique IDs\n", len(uniqueIDs))

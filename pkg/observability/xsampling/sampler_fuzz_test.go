@@ -13,12 +13,9 @@ func FuzzSamplerInputs(f *testing.F) {
 	f.Fuzz(func(t *testing.T, rate float64, n int, key string) {
 		ctx := context.Background()
 
-		// RateSampler: 仅测试有效 rate 值
-		if rate >= 0 && rate <= 1 {
-			rateSampler, err := NewRateSampler(rate)
-			if err != nil {
-				t.Fatalf("NewRateSampler(%f): %v", rate, err)
-			}
+		// RateSampler: 测试有效和无效 rate 值
+		rateSampler, err := NewRateSampler(rate)
+		if err == nil {
 			_ = rateSampler.ShouldSample(ctx)
 		}
 
@@ -27,14 +24,11 @@ func FuzzSamplerInputs(f *testing.F) {
 			_ = countSampler.ShouldSample(ctx)
 		}
 
-		// KeyBasedSampler: 仅测试有效 rate 值
-		if rate >= 0 && rate <= 1 {
-			keySampler, err := NewKeyBasedSampler(rate, func(context.Context) string {
-				return key
-			})
-			if err != nil {
-				t.Fatalf("NewKeyBasedSampler(%f): %v", rate, err)
-			}
+		// KeyBasedSampler: 测试有效和无效 rate 值
+		keySampler, err := NewKeyBasedSampler(rate, func(context.Context) string {
+			return key
+		})
+		if err == nil {
 			_ = keySampler.ShouldSample(ctx)
 		}
 	})

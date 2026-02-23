@@ -57,10 +57,11 @@ const (
 // SlowQueryDetector 慢查询检测器。
 // 封装了同步/异步钩子的调用逻辑。
 type SlowQueryDetector[T any] struct {
-	options SlowQueryOptions[T]
-	pool    *xpool.Pool[T]
-	mu      sync.RWMutex
-	closed  bool
+	options    SlowQueryOptions[T]
+	pool       *xpool.Pool[T]
+	mu         sync.RWMutex
+	closed     bool
+	poolFailed bool // pool 创建失败标志，避免重复尝试导致的锁争用
 }
 
 // NewSlowQueryDetector 创建慢查询检测器。
@@ -117,11 +118,11 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 // ensurePoolStarted 确保 worker pool 已启动。
 // 使用双重检查锁定模式，避免每次调用都获取写锁。
 func (d *SlowQueryDetector[T]) ensurePoolStarted() {
-	// 快速路径：读锁检查 pool 是否已创建
+	// 快速路径：读锁检查 pool 是否已创建或已失败
 	d.mu.RLock()
-	poolStarted := d.pool != nil
+	poolReady := d.pool != nil || d.poolFailed
 	d.mu.RUnlock()
-	if poolStarted {
+	if poolReady {
 		return
 	}
 
@@ -130,13 +131,14 @@ func (d *SlowQueryDetector[T]) ensurePoolStarted() {
 	defer d.mu.Unlock()
 
 	// 双重检查：获取写锁后再次检查
-	if d.pool != nil || d.closed {
+	if d.pool != nil || d.closed || d.poolFailed {
 		return
 	}
 
 	// 设计决策: 惰性创建 pool 而非在构造函数中创建，因为 Threshold 为 0 时 pool 不会被使用。
 	// 此处 error 路径在正常使用中不可达：AsyncHook 已 nil 检查，默认值（10 workers、1000 queue）
-	// 在 xpool 有效范围内。若因极端参数失败，后续 MaybeSlowQuery 的 d.pool != nil 检查会优雅降级。
+	// 在 xpool 有效范围内。若因极端参数失败，设置 poolFailed 标志避免后续重复尝试导致的锁争用，
+	// 异步钩子将被静默跳过（d.pool != nil 检查会优雅降级）。
 	if d.options.AsyncHook != nil {
 		pool, err := xpool.New(
 			d.options.AsyncWorkerPoolSize,
@@ -144,6 +146,7 @@ func (d *SlowQueryDetector[T]) ensurePoolStarted() {
 			d.options.AsyncHook,
 		)
 		if err != nil {
+			d.poolFailed = true
 			return
 		}
 		d.pool = pool

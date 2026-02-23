@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
@@ -209,10 +210,14 @@ func (k Key) WithResource(resource string) Key {
 }
 
 // WithExtra 返回添加了自定义维度的新 Key
+//
+// 设计决策: 始终深拷贝 Extra map，确保返回的 Key 与原 Key 完全独立。
+// Key 是值类型但 map 是引用类型，浅拷贝会导致多个 Key 共享同一 map，
+// 并发修改时触发 concurrent map write panic。
 func (k Key) WithExtra(key, value string) Key {
-	if k.Extra == nil {
-		k.Extra = make(map[string]string)
-	}
-	k.Extra[key] = value
+	newExtra := make(map[string]string, len(k.Extra)+1)
+	maps.Copy(newExtra, k.Extra)
+	newExtra[key] = value
+	k.Extra = newExtra
 	return k
 }

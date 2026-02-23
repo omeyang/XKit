@@ -268,6 +268,9 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 }
 
 // VerifyToken 验证 Token。
+// 设计决策: 完全委托认证服务端校验 Token 有效性。客户端不做本地 exp/issuer/audience
+// 校验，因为服务端是 Token 状态的唯一权威来源（可能有 grace period、吊销等机制），
+// 客户端冗余校验反而可能导致与服务端判定不一致。
 func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInfo, error) {
 	if token == "" {
 		return nil, ErrMissingToken

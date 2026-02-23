@@ -117,12 +117,18 @@ func (c *Client) RawClient() *clientv3.Client {
 
 // Close 关闭客户端连接并通知所有 Watch goroutine 退出。
 // 关闭后客户端不可再使用。
+// Client 必须通过 NewClient 创建，零值 Client 的行为未定义。
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil // 已经关闭
 	}
-	close(c.closeCh)
-	return c.client.Close()
+	if c.closeCh != nil {
+		close(c.closeCh)
+	}
+	if c.client != nil {
+		return c.client.Close()
+	}
+	return nil
 }
 
 // isClosed 检查客户端是否已关闭。

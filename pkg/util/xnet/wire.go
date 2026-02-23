@@ -110,8 +110,16 @@ func (w WireRange) IsZero() bool {
 
 // String 返回 WireRange 的字符串表示："start-end"。
 // 如果起止相同则只返回单个 IP。
+// 零值返回空字符串；部分设置（仅 Start 或仅 End）返回有值的部分，避免产生
+// 尾随/前导连字符（如 "10.0.0.1-" 或 "-10.0.0.1"）影响日志可读性。
 func (w WireRange) String() string {
 	if w.Start == w.End {
+		return w.Start
+	}
+	if w.Start == "" {
+		return w.End
+	}
+	if w.End == "" {
 		return w.Start
 	}
 	return w.Start + "-" + w.End

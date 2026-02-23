@@ -36,6 +36,17 @@ type Loader interface {
 	//
 	// 空 key 会返回 ErrEmptyKey（fail-fast），空字符串在 Redis 中合法但几乎总是使用错误。
 	//
+	// loader 返回值说明：
+	//   - (nil, nil): nil 值会被写入 Redis（存储为空字符串），后续 Get 返回 []byte("")，
+	//     视为缓存命中。这等效于空值缓存，可防止缓存穿透。
+	//   - (data, nil): 正常写入缓存。
+	//   - (_, err): 不写入缓存，直接返回错误。
+	//
+	// ttl 说明：
+	//   - ttl > 0: 设置指定过期时间。
+	//   - ttl == 0: 不设置过期（key 永不过期）。
+	//   - ttl < 0: Redis 会拒绝设置，行为等同于不缓存。
+	//
 	// 注意：singleflight 去重仅基于 key，不包含 ttl。
 	// 同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
 	// 最终缓存的 TTL 取决于首个请求的配置。
@@ -47,6 +58,8 @@ type Loader interface {
 	// 默认行为是每次写入时刷新 TTL，可通过 WithHashTTLRefresh(false) 改为仅首次写入时设置。
 	//
 	// 空 key 或空 field 会返回 ErrEmptyKey（fail-fast）。
+	//
+	// loader 返回值说明与 Load 相同：nil 值存储为空字符串，等效于空值缓存。
 	//
 	// 注意：singleflight 去重基于 key+field 组合，不包含 ttl。
 	// 同一 key+field 的并发请求（即使 ttl 不同）只会触发一次回源。
@@ -131,6 +144,12 @@ type LoaderOptions struct {
 	// 超过任一限制后直接回源，避免无限等待或并发回源。
 	// 默认为 10。
 	MaxRetryAttempts int
+
+	// TTLJitter 控制写入缓存时 TTL 的随机抖动比例 (0.0-1.0)。
+	// 启用后，实际 TTL 为 ttl * (1 + jitter * (rand - 0.5))，避免大量 key 同时过期（缓存雪崩）。
+	// 例如 TTLJitter=0.1 时，1 小时 TTL 会被随机化到约 57-63 分钟。
+	// 默认为 0（不抖动）。
+	TTLJitter float64
 
 	// HashTTLRefresh 控制 LoadHash 时是否刷新 Hash key 的 TTL。
 	// 默认为 true（滑动过期）。
@@ -242,6 +261,22 @@ func WithMaxRetryAttempts(n int) LoaderOption {
 		if n > 0 {
 			o.MaxRetryAttempts = n
 		}
+	}
+}
+
+// WithTTLJitter 设置缓存 TTL 的随机抖动比例，用于防止缓存雪崩。
+// factor 范围为 [0.0, 1.0]，超出范围会被钳位。
+// 例如 factor=0.1 时，1 小时 TTL 会被随机化到约 57-63 分钟。
+// 默认为 0（不抖动）。
+func WithTTLJitter(factor float64) LoaderOption {
+	return func(o *LoaderOptions) {
+		if factor < 0 {
+			factor = 0
+		}
+		if factor > 1 {
+			factor = 1
+		}
+		o.TTLJitter = factor
 	}
 }
 

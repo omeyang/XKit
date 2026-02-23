@@ -10,6 +10,9 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
+// 确保 etcdLockHandle 实现 LockHandle 接口。
+var _ LockHandle = (*etcdLockHandle)(nil)
+
 // =============================================================================
 // etcd 工厂实现
 // =============================================================================
@@ -172,30 +175,48 @@ func (f *etcdFactory) Session() Session {
 // etcdLockHandle 实现 LockHandle 接口。
 // 每次成功获取锁时创建，封装了唯一的锁标识。
 type etcdLockHandle struct {
-	factory *etcdFactory
-	mutex   *concurrency.Mutex
-	key     string
+	factory  *etcdFactory
+	mutex    *concurrency.Mutex
+	key      string
+	unlocked atomic.Bool // 标记锁是否已被显式释放
 }
 
 // Unlock 释放锁。
 //
 // 设计决策: 允许在 factory 关闭后尝试解锁。factory.Close() 会关闭 Session
 // 并撤销 Lease，锁已自动释放。即使解锁失败（Session 已关闭），也不会造成锁悬挂。
+//
+// 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
+// 避免锁残留到 Lease TTL 到期（默认 60s）。
 func (h *etcdLockHandle) Unlock(ctx context.Context) error {
+	h.unlocked.Store(true)
+
+	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), unlockTimeout)
+		defer cancel()
+	}
+
 	if err := h.mutex.Unlock(ctx); err != nil {
 		return wrapEtcdError(err)
 	}
 	return nil
 }
 
-// Extend 检查 Session 状态。
+// Extend 检查 Session 和锁所有权状态。
 //
 // etcd 使用 Session 自动续期（keep-alive），无需手动续期。
-// 此方法仅验证 Session 是否仍然有效，若已过期返回 ErrSessionExpired。
+// 此方法验证 Session 是否仍然有效且锁未被显式释放，
+// 若 Session 已过期返回 [ErrSessionExpired]，若锁已释放返回 [ErrNotLocked]。
 //
 // 与 Redis 后端不同，etcd 的续期完全自动，调用此方法不会延长锁的有效期，
-// 而是检查 Session 是否健康。推荐在长时间运行的任务中定期调用以检测 Session 状态。
+// 而是检查锁状态是否健康。推荐在长时间运行的任务中定期调用以检测锁状态。
 func (h *etcdLockHandle) Extend(_ context.Context) error {
+	// 检查锁是否已被显式释放
+	if h.unlocked.Load() {
+		return ErrNotLocked
+	}
 	// 检查 Session 是否仍然有效
 	if err := h.factory.checkSession(); err != nil {
 		return err

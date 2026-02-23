@@ -153,6 +153,19 @@ func TestWithBackoff_NilIgnored(t *testing.T) {
 	}
 }
 
+func TestWithOnError_NilIgnored(t *testing.T) {
+	original := func(_ error) {}
+	opts := &ConsumeLoopOptions{
+		OnError: original,
+	}
+
+	WithOnError(nil)(opts)
+
+	if opts.OnError == nil {
+		t.Error("nil onError should be ignored, existing callback should be preserved")
+	}
+}
+
 // mockResettableBackoff 实现 ResettableBackoff 接口用于测试
 type mockResettableBackoff struct {
 	delay      time.Duration

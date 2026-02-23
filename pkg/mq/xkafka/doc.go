@@ -17,4 +17,9 @@
 // # 死信队列
 //
 // 使用 ConsumerWithDLQ 结合 DLQPolicy 实现消息重试和死信处理。
+//
+// # 并发安全
+//
+// 所有 Health() 和 Stats() 方法在 Close() 后安全返回 ErrClosed 或零值，
+// 不会在已关闭的底层句柄上执行操作。Close() 可安全地与 Health()/Stats() 并发调用。
 package xkafka

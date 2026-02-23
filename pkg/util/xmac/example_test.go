@@ -98,7 +98,7 @@ func ExampleAddr_IsUnicast() {
 	// Multicast: false true
 }
 
-func ExampleAddr_json() {
+func ExampleAddr_MarshalJSON() {
 	type Asset struct {
 		ID  int       `json:"id"`
 		MAC xmac.Addr `json:"mac"`

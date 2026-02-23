@@ -29,6 +29,10 @@ var (
 	// ErrWatchDisconnected Watch 通道意外关闭。
 	// 用于 WatchWithRetry 内部标识需要重连的断开事件。
 	ErrWatchDisconnected = errors.New("xetcd: watch disconnected")
+
+	// ErrMaxRetriesExceeded 达到最大重试次数。
+	// WatchWithRetry 在耗尽重试次数后，通过错误事件发送此错误。
+	ErrMaxRetriesExceeded = errors.New("xetcd: max retries exceeded")
 )
 
 // IsKeyNotFound 检查错误是否为键不存在。

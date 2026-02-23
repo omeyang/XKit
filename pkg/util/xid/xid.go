@@ -178,10 +178,12 @@ func NewGenerator(opts ...Option) (*Generator, error) {
 		retryInterval:   DefaultRetryInterval,
 	}
 	g.generateID = sf.NextID
-	if cfg.maxWaitDuration > 0 {
+	// 设计决策: 使用 maxWaitSet/retryIntervalSet 标志区分"未传入"与"显式传入 0"。
+	// 未传入 → 使用默认值；显式传入 0 → 表示"不等待/无间隔"，语义明确。
+	if cfg.maxWaitSet {
 		g.maxWaitDuration = cfg.maxWaitDuration
 	}
-	if cfg.retryInterval > 0 {
+	if cfg.retryIntervalSet {
 		g.retryInterval = cfg.retryInterval
 	}
 
@@ -261,13 +263,14 @@ func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 			return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, err)
 		}
 
-		// 检查是否超时
-		if time.Now().After(deadline) {
+		// 检查剩余时间，按"剩余时间"裁剪等待间隔，避免超过 maxWaitDuration
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			return 0, fmt.Errorf("%w: %w", ErrClockBackwardTimeout, lastErr)
 		}
 
 		// 等待后重试，支持 context 取消
-		timer.Reset(g.retryInterval)
+		timer.Reset(min(g.retryInterval, remaining))
 		select {
 		case <-ctx.Done():
 			return 0, ctx.Err()
@@ -486,7 +489,7 @@ func MustNewStringWithRetry() string {
 func Parse(s string) (int64, error) {
 	id, err := strconv.ParseInt(s, 36, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrInvalidID, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalidID, err)
 	}
 	if id <= 0 {
 		return 0, fmt.Errorf("%w: value must be positive, got %d", ErrInvalidID, id)

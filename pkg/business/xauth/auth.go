@@ -48,6 +48,10 @@ type Client interface {
 	// 用于 Token 被服务端撤销或权限变更后强制重新获取。
 	InvalidateToken(ctx context.Context, tenantID string) error
 
+	// InvalidatePlatformCache 主动使指定租户的平台数据缓存失效。
+	// 用于平台信息变更后强制重新获取，避免等待 TTL 过期。
+	InvalidatePlatformCache(ctx context.Context, tenantID string) error
+
 	// Close 关闭客户端，释放资源。
 	Close() error
 }

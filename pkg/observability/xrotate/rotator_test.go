@@ -49,6 +49,20 @@ func TestNewLumberjackWithOptions(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestNewLumberjackWithNilOption 测试 nil option 被静默忽略
+func TestNewLumberjackWithNilOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "nil_opt.log")
+
+	// nil option 不应 panic
+	r, err := NewLumberjack(filename, nil, WithMaxSize(50), nil)
+	require.NoError(t, err)
+	defer r.Close()
+
+	_, err = r.Write([]byte("test with nil option\n"))
+	assert.NoError(t, err)
+}
+
 // TestNewLumberjackWithDefaultOptions 测试使用默认配置
 func TestNewLumberjackWithDefaultOptions(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1058,6 +1072,34 @@ func TestEnsureFileModeChmodError(t *testing.T) {
 	storedErr, ok := stored.(error)
 	require.True(t, ok)
 	assert.Equal(t, errChmod, storedErr)
+}
+
+// TestReportErrorCallbackPanic 测试 OnError 回调 panic 被隔离
+func TestReportErrorCallbackPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+	filename := filepath.Join(tmpDir, "panic_callback.log")
+
+	r, err := NewLumberjack(filename,
+		WithFileMode(0644),
+		WithOnError(func(error) {
+			panic("callback panic")
+		}),
+	)
+	require.NoError(t, err)
+	defer r.Close()
+
+	// 注入 Stat 失败，确保 reportError 被调用
+	lr, ok := r.(*lumberjackRotator)
+	require.True(t, ok)
+	lr.statFn = func(string) (os.FileInfo, error) {
+		return nil, os.ErrPermission
+	}
+	lr.modeApplied.Store(false)
+
+	// 回调 panic 不应传播到调用方
+	assert.NotPanics(t, func() {
+		_, _ = r.Write([]byte("should not panic\n"))
+	})
 }
 
 // TestReportErrorNilCallback 测试 reportError 在无回调时不 panic

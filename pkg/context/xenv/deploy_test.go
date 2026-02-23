@@ -2,7 +2,6 @@ package xenv_test
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -390,7 +389,9 @@ func TestType(t *testing.T) {
 		xenv.Reset()
 		t.Cleanup(xenv.Reset)
 
-		_ = xenv.InitWith(xenv.DeploySaaS)
+		if err := xenv.InitWith(xenv.DeploySaaS); err != nil {
+			t.Fatalf("InitWith(DeploySaaS) error = %v", err)
+		}
 		if got := xenv.Type(); got != xenv.DeploySaaS {
 			t.Errorf("Type() = %q, want %q", got, xenv.DeploySaaS)
 		}
@@ -412,7 +413,9 @@ func TestIsLocal_Global(t *testing.T) {
 			xenv.Reset()
 			t.Cleanup(xenv.Reset)
 
-			_ = xenv.InitWith(tt.dt)
+			if err := xenv.InitWith(tt.dt); err != nil {
+				t.Fatalf("InitWith(%q) error = %v", tt.dt, err)
+			}
 			if got := xenv.IsLocal(); got != tt.want {
 				t.Errorf("IsLocal() = %v, want %v", got, tt.want)
 			}
@@ -444,7 +447,9 @@ func TestIsSaaS_Global(t *testing.T) {
 			xenv.Reset()
 			t.Cleanup(xenv.Reset)
 
-			_ = xenv.InitWith(tt.dt)
+			if err := xenv.InitWith(tt.dt); err != nil {
+				t.Fatalf("InitWith(%q) error = %v", tt.dt, err)
+			}
 			if got := xenv.IsSaaS(); got != tt.want {
 				t.Errorf("IsSaaS() = %v, want %v", got, tt.want)
 			}
@@ -469,7 +474,9 @@ func TestIsInitialized(t *testing.T) {
 		t.Error("IsInitialized() = true, want false")
 	}
 
-	_ = xenv.InitWith(xenv.DeployLocal)
+	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	}
 	if !xenv.IsInitialized() {
 		t.Error("IsInitialized() = false, want true")
 	}
@@ -490,7 +497,9 @@ func TestRequireType(t *testing.T) {
 		xenv.Reset()
 		t.Cleanup(xenv.Reset)
 
-		_ = xenv.InitWith(xenv.DeploySaaS)
+		if err := xenv.InitWith(xenv.DeploySaaS); err != nil {
+			t.Fatalf("InitWith(DeploySaaS) error = %v", err)
+		}
 		got, err := xenv.RequireType()
 		if err != nil {
 			t.Fatalf("RequireType() error = %v", err)
@@ -509,7 +518,9 @@ func TestConcurrentAccess(t *testing.T) {
 	xenv.Reset()
 	t.Cleanup(xenv.Reset)
 
-	_ = xenv.InitWith(xenv.DeployLocal)
+	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	}
 
 	const goroutines = 100
 	var wg sync.WaitGroup
@@ -545,51 +556,5 @@ func TestConstants(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 示例测试
-// =============================================================================
-
-func ExampleInit() {
-	// 假设环境变量 DEPLOYMENT_TYPE=SAAS
-	// 实际使用时从环境变量读取
-	_ = xenv.InitWith(xenv.DeploySaaS)
-	defer xenv.Reset()
-
-	fmt.Println("Type:", xenv.Type())
-	fmt.Println("IsLocal:", xenv.IsLocal())
-	fmt.Println("IsSaaS:", xenv.IsSaaS())
-	// Output:
-	// Type: SAAS
-	// IsLocal: false
-	// IsSaaS: true
-}
-
-func ExampleParse() {
-	// 支持大小写不敏感
-	dt1, _ := xenv.Parse("local")
-	dt2, _ := xenv.Parse("SAAS")
-	_, err := xenv.Parse("invalid")
-
-	fmt.Println("local ->", dt1)
-	fmt.Println("SAAS ->", dt2)
-	fmt.Println("invalid err ->", err != nil)
-	// Output:
-	// local -> LOCAL
-	// SAAS -> SAAS
-	// invalid err -> true
-}
-
-func ExampleRequireType() {
-	xenv.Reset()
-	_ = xenv.InitWith(xenv.DeployLocal)
-	defer xenv.Reset()
-
-	dt, err := xenv.RequireType()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Println("DeployType:", dt)
-	// Output:
-	// DeployType: LOCAL
-}
+// 设计决策: 示例测试集中在 example_test.go 中维护，避免分散在多个文件中
+// 增加 API 变更时的更新点。deploy_test.go 仅包含单元测试和 benchmark。

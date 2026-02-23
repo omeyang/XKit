@@ -25,3 +25,16 @@ func BenchmarkIfString_False(b *testing.B) {
 		_ = If(false, "hello", "world")
 	}
 }
+
+func BenchmarkIfStruct(b *testing.B) {
+	type Large struct {
+		ID   int
+		Name string
+		Data [64]byte
+	}
+	a := Large{ID: 1, Name: "a"}
+	c := Large{ID: 2, Name: "b"}
+	for b.Loop() {
+		_ = If(true, a, c)
+	}
+}

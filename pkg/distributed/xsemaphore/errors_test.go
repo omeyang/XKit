@@ -325,18 +325,48 @@ func TestIsRedisError_ClusterErrors(t *testing.T) {
 }
 
 func TestIsRedisClusterError(t *testing.T) {
-	// 测试 isRedisClusterError 函数的覆盖
-	t.Run("nil error", func(t *testing.T) {
-		assert.False(t, isRedisClusterError(nil))
-	})
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"regular error", errors.New("some error"), false},
+		{"CROSSSLOT", redis.ErrCrossSlot, true},                                                          // CROSSSLOT 由 errors.Is 检测
+		{"CLUSTERDOWN", errors.New("CLUSTERDOWN The cluster is down"), true},                             // 集群处于 fail 状态
+		{"MOVED", errors.New("MOVED 3999 127.0.0.1:6381"), true},                                        // 键所在槽已迁移
+		{"ASK", errors.New("ASK 3999 127.0.0.1:6381"), true},                                            // 键正在迁移中
+		{"READONLY", errors.New("READONLY You can't write against a read only replica"), true},           // 节点处于只读状态
+		{"MASTERDOWN", errors.New("MASTERDOWN Link with MASTER is down and replica-serve-stale-data"), true}, // 主节点不可用
+		{"LOADING", errors.New("LOADING Redis is loading the dataset in memory"), true},                  // Redis 正在加载数据
+	}
 
-	t.Run("regular error is not cluster error", func(t *testing.T) {
-		assert.False(t, isRedisClusterError(errors.New("some error")))
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isRedisClusterError(tt.err))
+		})
+	}
+}
 
-	t.Run("CROSSSLOT is cluster error", func(t *testing.T) {
-		assert.True(t, isRedisClusterError(redis.ErrCrossSlot))
-	})
+func TestIsRedisClusterError_ViaIsRedisError(t *testing.T) {
+	// 验证集群错误通过顶层 IsRedisError 正确检测
+	clusterErrors := []struct {
+		name string
+		err  error
+	}{
+		{"CLUSTERDOWN", errors.New("CLUSTERDOWN The cluster is down")},
+		{"MOVED", errors.New("MOVED 3999 127.0.0.1:6381")},
+		{"ASK", errors.New("ASK 3999 127.0.0.1:6381")},
+		{"READONLY", errors.New("READONLY You can't write against a read only replica")},
+		{"MASTERDOWN", errors.New("MASTERDOWN Link with MASTER is down")},
+		{"LOADING", errors.New("LOADING Redis is loading the dataset in memory")},
+	}
+
+	for _, tt := range clusterErrors {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.True(t, IsRedisError(tt.err), "%s should be detected as Redis error", tt.name)
+		})
+	}
 }
 
 // =============================================================================

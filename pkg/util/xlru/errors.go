@@ -2,9 +2,6 @@ package xlru
 
 import "errors"
 
-// maxSize 缓存最大条目数上限。
-const maxSize = 1 << 24 // 16,777,216
-
 var (
 	// ErrInvalidSize 表示缓存大小配置无效。
 	ErrInvalidSize = errors.New("xlru: size must be greater than 0")

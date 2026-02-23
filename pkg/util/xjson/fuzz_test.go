@@ -2,6 +2,7 @@ package xjson
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -22,6 +23,33 @@ func FuzzPretty(f *testing.F) {
 		// 对 string 类型，Pretty 应返回合法的 JSON
 		if !json.Valid([]byte(result)) {
 			t.Errorf("Pretty(%q) produced invalid JSON: %s", s, result)
+		}
+	})
+}
+
+// FuzzPrettyE 验证 PrettyE 的错误契约：成功时返回合法 JSON，
+// 失败时 error 必须满足 errors.Is(err, ErrMarshal)。
+func FuzzPrettyE(f *testing.F) {
+	f.Add("hello")
+	f.Add("")
+	f.Add("special chars: <>&\"'")
+	f.Add("中文字符串")
+	f.Add("\x00\x01\x02")
+	f.Add("a\nb\tc")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		got, err := PrettyE(s)
+		if err != nil {
+			if !errors.Is(err, ErrMarshal) {
+				t.Errorf("PrettyE(%q) error should wrap ErrMarshal, got: %v", s, err)
+			}
+			if got != "" {
+				t.Errorf("PrettyE(%q) should return empty string on error, got: %q", s, got)
+			}
+			return
+		}
+		if !json.Valid([]byte(got)) {
+			t.Errorf("PrettyE(%q) produced invalid JSON: %s", s, got)
 		}
 	})
 }

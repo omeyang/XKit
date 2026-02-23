@@ -507,3 +507,114 @@ func TestExecute_NilBreaker(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, ErrNilBreaker)
 }
+
+func TestWithExcludePolicy(t *testing.T) {
+	// 自定义排除策略：context.Canceled 被排除在统计之外
+	excludePolicy := &testExcludePolicy{
+		excludedErrors: []error{context.Canceled},
+	}
+
+	t.Run("excluded error does not affect counts", func(t *testing.T) {
+		b := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)),
+			WithExcludePolicy(excludePolicy),
+		)
+		ctx := context.Background()
+
+		// context.Canceled 应被排除，不计入失败
+		_ = b.Do(ctx, func() error { return context.Canceled })
+		_ = b.Do(ctx, func() error { return context.Canceled })
+		_ = b.Do(ctx, func() error { return context.Canceled })
+
+		// 熔断器仍为 Closed（排除的错误不影响计数）
+		assert.Equal(t, StateClosed, b.State())
+		// 注意：gobreaker 的 IsExcluded 回调使得排除的错误不计入任何计数
+	})
+
+	t.Run("non-excluded error still triggers trip", func(t *testing.T) {
+		b := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)),
+			WithExcludePolicy(excludePolicy),
+			WithTimeout(time.Hour),
+		)
+		ctx := context.Background()
+
+		// 普通错误仍计入失败
+		_ = b.Do(ctx, func() error { return errTest })
+		_ = b.Do(ctx, func() error { return errTest })
+
+		assert.Equal(t, StateOpen, b.State())
+	})
+
+	t.Run("with SuccessPolicy together", func(t *testing.T) {
+		// 同时使用 ExcludePolicy 和 SuccessPolicy
+		successPolicy := &customSuccessPolicy{
+			successErrors: []error{errTest},
+		}
+		b := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)),
+			WithExcludePolicy(excludePolicy),
+			WithSuccessPolicy(successPolicy),
+		)
+		ctx := context.Background()
+
+		// context.Canceled 被排除
+		_ = b.Do(ctx, func() error { return context.Canceled })
+		// errTest 被 SuccessPolicy 视为成功
+		_ = b.Do(ctx, func() error { return errTest })
+
+		assert.Equal(t, StateClosed, b.State())
+	})
+
+	t.Run("ExcludePolicy getter", func(t *testing.T) {
+		b := NewBreaker("test", WithExcludePolicy(excludePolicy))
+		assert.Equal(t, excludePolicy, b.ExcludePolicy())
+	})
+
+	t.Run("nil ExcludePolicy not set", func(t *testing.T) {
+		b := NewBreaker("test", WithExcludePolicy(nil))
+		assert.Nil(t, b.ExcludePolicy())
+	})
+
+	t.Run("IsExcluded method", func(t *testing.T) {
+		b := NewBreaker("test", WithExcludePolicy(excludePolicy))
+		assert.True(t, b.IsExcluded(context.Canceled))
+		assert.False(t, b.IsExcluded(errTest))
+		assert.False(t, b.IsExcluded(nil))
+	})
+
+	t.Run("IsExcluded without policy", func(t *testing.T) {
+		b := NewBreaker("test")
+		assert.False(t, b.IsExcluded(errTest))
+		assert.False(t, b.IsExcluded(nil))
+	})
+}
+
+type testExcludePolicy struct {
+	excludedErrors []error
+}
+
+func (p *testExcludePolicy) IsExcluded(err error) bool {
+	for _, e := range p.excludedErrors {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWithOnStateChange_NilIgnored(t *testing.T) {
+	var called bool
+	b := NewBreaker("test",
+		WithTripPolicy(NewConsecutiveFailures(1)),
+		WithOnStateChange(func(name string, from, to State) {
+			called = true
+		}),
+		WithOnStateChange(nil), // nil 不应覆盖之前设置的回调
+	)
+
+	ctx := context.Background()
+	_ = b.Do(ctx, func() error { return errTest })
+
+	assert.True(t, called, "original callback should still be active after nil WithOnStateChange")
+}

@@ -2924,6 +2924,101 @@ func TestBackgroundCleanupLoop_StopsOnClose(t *testing.T) {
 }
 
 // =============================================================================
+// applyDefaultTimeout nil context 回归测试（FG-S1 修复验证）
+// =============================================================================
+
+func TestApplyDefaultTimeout_NilContext(t *testing.T) {
+	// 修复前：当 defaultTimeout > 0 且 ctx == nil 时，ctx.Deadline() 会 panic
+	// 修复后：nil ctx 直接透传，由后续 validateCommonParams 返回 ErrNilContext
+	t.Run("nil ctx with positive timeout does not panic", func(t *testing.T) {
+		ctx, cancel := applyDefaultTimeout(nil, 5*time.Second)
+		defer cancel()
+		assert.Nil(t, ctx)
+	})
+
+	t.Run("nil ctx with zero timeout returns nil", func(t *testing.T) {
+		ctx, cancel := applyDefaultTimeout(nil, 0)
+		defer cancel()
+		assert.Nil(t, ctx)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Redis 验证 Redis 信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Redis(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem, err := New(client, WithDefaultTimeout(5*time.Second))
+	require.NoError(t, err)
+	t.Cleanup(func() { closeSemaphore(t, sem) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Local 验证本地信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Local(t *testing.T) {
+	opts := defaultOptions()
+	opts.defaultTimeout = 5 * time.Second
+	sem := newLocalSemaphore(opts)
+	t.Cleanup(func() { _ = sem.Close(context.Background()) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Fallback 验证降级信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Fallback(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem, err := New(client,
+		WithDefaultTimeout(5*time.Second),
+		WithFallback(FallbackLocal),
+		WithPodCount(1),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { closeSemaphore(t, sem) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// =============================================================================
 // ErrNilContext 测试（覆盖新增的 nil context 校验路径）
 // =============================================================================
 
@@ -3029,4 +3124,102 @@ func TestOptions_Validate_SentinelErrors(t *testing.T) {
 		err := opts.validate()
 		assert.ErrorIs(t, err, ErrInvalidFallbackStrategy)
 	})
+}
+
+// =============================================================================
+// convertScriptResult 测试（FG-M4 覆盖率修复）
+// =============================================================================
+
+func TestConvertScriptResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  []int64
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:     "int64 elements",
+			input:    []any{int64(1), int64(2), int64(3)},
+			expected: []int64{1, 2, 3},
+		},
+		{
+			name:     "int elements",
+			input:    []any{int(10), int(20)},
+			expected: []int64{10, 20},
+		},
+		{
+			name:     "float64 integer values",
+			input:    []any{float64(42), float64(100)},
+			expected: []int64{42, 100},
+		},
+		{
+			name:     "mixed numeric types",
+			input:    []any{int64(1), int(2), float64(3)},
+			expected: []int64{1, 2, 3},
+		},
+		{
+			name:     "empty array",
+			input:    []any{},
+			expected: []int64{},
+		},
+		{
+			name:      "non-array input",
+			input:     "not an array",
+			wantErr:   true,
+			errSubstr: "expected array",
+		},
+		{
+			name:      "nil input",
+			input:     nil,
+			wantErr:   true,
+			errSubstr: "expected array",
+		},
+		{
+			name:      "float64 non-integer value",
+			input:     []any{float64(3.14)},
+			wantErr:   true,
+			errSubstr: "non-integer float64",
+		},
+		{
+			name:      "float64 non-integer negative",
+			input:     []any{float64(-2.5)},
+			wantErr:   true,
+			errSubstr: "non-integer float64",
+		},
+		{
+			name:      "unknown type string",
+			input:     []any{"not a number"},
+			wantErr:   true,
+			errSubstr: "expected number",
+		},
+		{
+			name:      "unknown type bool",
+			input:     []any{true},
+			wantErr:   true,
+			errSubstr: "expected number",
+		},
+		{
+			name:      "mixed with unknown type in middle",
+			input:     []any{int64(1), "bad", int64(3)},
+			wantErr:   true,
+			errSubstr: "element 1 is string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := convertScriptResult(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, errUnexpectedScriptResult)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

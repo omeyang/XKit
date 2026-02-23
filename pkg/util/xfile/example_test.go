@@ -83,7 +83,11 @@ func ExampleEnsureDir() {
 		fmt.Println("error:", err)
 		return
 	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // 示例清理
+	defer func() {
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			fmt.Println("cleanup error:", rmErr)
+		}
+	}()
 
 	// 确保日志文件的父目录存在
 	err = EnsureDir(filepath.Join(tmpDir, "myapp", "app.log"))
@@ -101,7 +105,11 @@ func ExampleEnsureDirWithPerm() {
 		fmt.Println("error:", err)
 		return
 	}
-	defer os.RemoveAll(tmpDir) //nolint:errcheck // 示例清理
+	defer func() {
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			fmt.Println("cleanup error:", rmErr)
+		}
+	}()
 
 	// 使用自定义权限创建目录
 	err = EnsureDirWithPerm(filepath.Join(tmpDir, "myapp", "app.log"), 0700)

@@ -19,7 +19,7 @@
 //
 // # 任务选项
 //
-//   - WithName: 任务名（用作锁 key，必须唯一）
+//   - WithName: 任务名（用作锁 key，必须唯一；使用分布式锁时必须设置）
 //   - WithJobLocker: 任务级分布式锁
 //   - WithLockTTL: 锁超时时间（默认 5 分钟）
 //   - WithTimeout: 任务执行超时

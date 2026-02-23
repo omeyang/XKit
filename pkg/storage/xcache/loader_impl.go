@@ -248,6 +248,7 @@ func (l *loader) loadWithSingleflight(ctx context.Context, key string, loadFn Lo
 		}
 		value, ok := result.Val.([]byte)
 		if !ok {
+			// 防御性检查：正常不可达，仅在内部类型系统被破坏时触发
 			return nil, errors.New("xcache: unexpected result type from singleflight")
 		}
 		return value, nil
@@ -270,6 +271,15 @@ func (l *loader) loadWithDistLock(ctx context.Context, key string, loadFn LoadFu
 }
 
 // loadWithLock 使用分布式锁加载数据。
+//
+// 设计决策: 锁过期后写入缓存的行为说明
+// 如果加载时间超过 DistributedLockTTL，锁会自然过期，此时另一个节点可能获取锁并加载更新的数据。
+// 当前节点仍会将加载结果写入缓存（loadAndCache 不检查锁状态），可能覆盖更新的值。
+// 这是有意为之的设计：
+//  1. 分布式锁的目的是减轻后端压力（防击穿），而非保证缓存强一致性
+//  2. 如果需要强一致性，应使用版本号或 CAS 机制在业务层处理
+//  3. 合理配置 DistributedLockTTL > LoadTimeout 可以极大降低此场景的概率
+//  4. logUnlockError 会记录 ErrLockExpired 事件，便于监控告警
 func (l *loader) loadWithLock(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
 	lockKey := l.options.DistributedLockKeyPrefix + key
 	unlock, lockErr := l.acquireLock(ctx, lockKey)
@@ -334,6 +344,19 @@ func (l *loader) handleLockError(lockErr error, lockKey string, fallback func() 
 	return fallback()
 }
 
+// applyTTLJitter 对 TTL 应用随机抖动。
+// 当 TTLJitter > 0 且 ttl > 0 时，返回 ttl * (1 + jitter * (rand - 0.5))。
+func (l *loader) applyTTLJitter(ttl time.Duration) time.Duration {
+	if l.options.TTLJitter <= 0 || ttl <= 0 {
+		return ttl
+	}
+	jittered := float64(ttl) * (1 + l.options.TTLJitter*(randomFloat64()-0.5))
+	if jittered <= 0 {
+		return ttl // 防止抖动到负数
+	}
+	return time.Duration(jittered)
+}
+
 // loadAndCache 加载数据并写入缓存。
 func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
 	// 应用超时
@@ -347,7 +370,8 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 	}
 
 	// 写入缓存（best-effort，失败不影响业务返回）
-	if setErr := l.cache.Client().Set(ctx, key, value, ttl).Err(); setErr != nil {
+	cacheTTL := l.applyTTLJitter(ttl)
+	if setErr := l.cache.Client().Set(ctx, key, value, cacheTTL).Err(); setErr != nil {
 		l.logWarn("xcache: cache set failed", "key", key, "error", setErr)
 		l.onCacheSetError(ctx, key, setErr)
 	}
@@ -378,6 +402,7 @@ func (l *loader) loadHashWithSingleflight(ctx context.Context, key, field, sfKey
 		}
 		value, ok := result.Val.([]byte)
 		if !ok {
+			// 防御性检查：正常不可达，仅在内部类型系统被破坏时触发
 			return nil, errors.New("xcache: unexpected result type from singleflight")
 		}
 		return value, nil
@@ -457,21 +482,23 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 	}
 
 	// 写入缓存（best-effort，失败不影响业务返回）
-	hashKey := hashFieldKey(key, field)
-	if ttl > 0 && l.options.HashTTLRefresh {
+	// 设计决策: onCacheSetError 回调传递实际 Redis key（而非 hashFieldKey 合成格式），
+	// 与 loadAndCache 行为一致，便于监控系统关联到实际 Redis key。
+	cacheTTL := l.applyTTLJitter(ttl)
+	if cacheTTL > 0 && l.options.HashTTLRefresh {
 		// 设计决策: 使用 Pipeline 合并 HSet+Expire 为一次 roundtrip，
 		// 减少进程崩溃时 hash key 无 TTL 的风险窗口。
 		pipe := l.cache.Client().Pipeline()
 		pipe.HSet(ctx, key, field, value)
-		pipe.Expire(ctx, key, ttl)
+		pipe.Expire(ctx, key, cacheTTL)
 		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil {
 			l.logWarn("xcache: hash set/expire pipeline failed", "key", key, "field", field, "error", pipeErr)
-			l.onCacheSetError(ctx, hashKey, pipeErr)
+			l.onCacheSetError(ctx, key, pipeErr)
 		}
 	} else if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
 		l.logWarn("xcache: hash set failed", "key", key, "field", field, "error", setErr)
-		l.onCacheSetError(ctx, hashKey, setErr)
-	} else if ttl > 0 {
+		l.onCacheSetError(ctx, key, setErr)
+	} else if cacheTTL > 0 {
 		// HashTTLRefresh=false: 仅首次设置 TTL
 		// 设计决策: 此路径使用 HSet → TTL → Expire 三次 roundtrip（非 Pipeline），
 		// 因为需要先检查 TTL 再决定是否 Expire。虽然 HSet 和 Expire 之间存在
@@ -481,8 +508,8 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 		if ttlErr != nil {
 			l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
 		} else if currentTTL < 0 {
-			if expireErr := l.cache.Client().Expire(ctx, key, ttl).Err(); expireErr != nil {
-				l.logWarn("xcache: hash expire failed", "key", key, "ttl", ttl, "error", expireErr)
+			if expireErr := l.cache.Client().Expire(ctx, key, cacheTTL).Err(); expireErr != nil {
+				l.logWarn("xcache: hash expire failed", "key", key, "ttl", cacheTTL, "error", expireErr)
 			}
 		}
 	}

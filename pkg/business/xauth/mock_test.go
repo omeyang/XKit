@@ -211,6 +211,10 @@ func (m *mockClient) InvalidateToken(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockClient) InvalidatePlatformCache(_ context.Context, _ string) error {
+	return nil
+}
+
 func (m *mockClient) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

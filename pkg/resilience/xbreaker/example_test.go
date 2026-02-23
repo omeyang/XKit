@@ -299,13 +299,9 @@ func ExampleIsOpen() {
 	if xbreaker.IsBreakerError(err) {
 		fmt.Println("这是熔断器错误")
 	}
-	if xbreaker.IsRecoverable(err) {
-		fmt.Println("错误可恢复，稍后重试")
-	}
 	// Output:
 	// 熔断器已打开
 	// 这是熔断器错误
-	// 错误可恢复，稍后重试
 }
 
 // ExampleBreaker_Counts 演示获取熔断器计数

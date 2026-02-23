@@ -203,7 +203,9 @@ func NewLumberjack(filename string, opts ...LumberjackOption) (Rotator, error) {
 
 	// 应用选项
 	for _, opt := range opts {
-		opt(&cfg)
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
 
 	// 验证配置
@@ -350,8 +352,10 @@ func (r *lumberjackRotator) ensureFileMode() error {
 // reportError 通过回调上报内部错误
 //
 // 设计决策: 不使用 slog 等日志库，避免 Rotator 作为日志输出目标时产生递归写入。
+// 回调 panic 被 recover 隔离，防止日志错误通知反向中断业务主流程。
 func (r *lumberjackRotator) reportError(err error) {
 	if err != nil && r.onError != nil {
+		defer func() { recover() }() //nolint:errcheck // recover 返回值无需检查
 		r.onError(err)
 	}
 }

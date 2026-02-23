@@ -18,7 +18,9 @@
 //
 // # 高级策略
 //
-//   - NewCompositeSampler(mode, ...): 组合多个采样器（AND/OR 逻辑），非法 mode 或 nil 子采样器返回错误
+//   - NewCompositeSampler(mode, ...): 组合多个采样器（AND/OR 逻辑，短路求值），非法 mode 或 nil 子采样器返回错误。
+//     短路求值意味着有状态子采样器（如 CountSampler）的内部状态仅在实际被求值时更新，
+//     子采样器的排列顺序可能影响行为
 //   - NewKeyBasedSampler(rate, keyFunc): 基于 key 的一致性采样（使用 xxhash），keyFunc 不能为 nil
 //
 // # 错误处理
@@ -40,7 +42,8 @@
 // # 零值行为
 //
 // CountSampler 零值（未经构造函数创建）按全采样处理，避免除零 panic。
-// 其他采样器应始终通过构造函数创建。
+// RateSampler 零值等同于 Never()（rate=0），CompositeSampler 零值等同于 All()（空 AND → true）。
+// 所有采样器的结构体字段均未导出，应始终通过构造函数创建。
 //
 // # 与 OTel 的关系
 //
@@ -59,6 +62,9 @@
 //   - 同一 trace_id 在所有服务中被一致地采样或丢弃
 //   - 不同服务实例之间的采样决策保持一致
 //   - 服务重启后采样行为不变
+//
+// 当 KeyFunc 返回空字符串时（例如 context 中缺少 trace ID），采样器回退到随机采样。
+// 此时仍保持近似的采样率语义，但失去跨进程一致性保证。
 //
 // 选择 xxhash 的原因：
 //   - 确定性：相同输入总是产生相同输出（跨进程一致）

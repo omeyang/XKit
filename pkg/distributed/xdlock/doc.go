@@ -34,7 +34,7 @@
 //	| 特性 | etcd | Redis (redsync) |
 //	|------|------|-----------------|
 //	| 续期方式 | 自动（Session） | 手动（Extend） |
-//	| Extend() | 检查 Session 状态（返回 nil 或 ErrSessionExpired） | 延长锁 TTL |
+//	| Extend() | 检查 Session 和锁状态（返回 nil、ErrSessionExpired 或 ErrNotLocked） | 延长锁 TTL |
 //	| 多节点支持 | 原生（etcd 集群） | Redlock 算法 |
 //	| 锁释放 | 立即生效 | 立即生效 |
 //	| MutexOption | 仅 KeyPrefix 生效 | 全部生效 |
@@ -47,6 +47,17 @@
 // etcd: Factory.Close() 会关闭底层 Session 并撤销 Lease，所有基于该 Session 的锁
 // 会立即失效。已持有的 LockHandle 在 Close 后 Extend 会返回 ErrSessionExpired，
 // Unlock 可能返回错误但锁已自动释放，不会悬挂。
+//
+// # Unlock 清理上下文
+//
+// 设计决策: Unlock 使用独立清理上下文。当调用方的 context 已取消/超时时（如 defer
+// handle.Unlock(ctx) 中 ctx 已过期），Unlock 会自动切换到 context.Background() 派生的
+// 5 秒超时上下文，确保解锁操作尽力完成，避免锁残留到 TTL/Lease 到期。
+//
+// # Key 校验
+//
+// 锁 key 必须满足：非空（去除空白后不为空）、长度不超过 512 字节。
+// 超长 key 会返回 [ErrKeyTooLong]。
 //
 // # 锁重入
 //

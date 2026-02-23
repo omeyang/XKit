@@ -63,6 +63,31 @@ func Example() {
 	// Processed: 5
 }
 
+func Example_withLogTaskValue() {
+	pool, err := xpool.New(2, 10, func(n int) {
+		if n < 0 {
+			panic("invalid task")
+		}
+	}, xpool.WithLogTaskValue())
+	if err != nil {
+		panic(err)
+	}
+
+	for i := range 3 {
+		if err := pool.Submit(i); err != nil {
+			fmt.Println("Submit error:", err)
+		}
+	}
+
+	if err := pool.Close(); err != nil {
+		panic(err)
+	}
+
+	fmt.Println("done")
+	// Output:
+	// done
+}
+
 func Example_gracefulShutdown() {
 	var sum atomic.Int64
 

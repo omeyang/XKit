@@ -29,6 +29,6 @@ var (
 	// ErrNilConsumer 消费者为 nil 错误
 	ErrNilConsumer = errors.New("xpulsar: nil consumer")
 
-	// ErrClosed 客户端已关闭错误
-	ErrClosed = errors.New("xpulsar: client closed")
+	// ErrClosed 客户端已关闭错误（复用 mqcore.ErrClosed，与 xkafka 对齐）
+	ErrClosed = mqcore.ErrClosed
 )

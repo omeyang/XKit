@@ -51,6 +51,10 @@ type DLQPolicy struct {
 
 	// OnRetry 消息重试时的回调（可选）
 	OnRetry func(msg *kafka.Message, attempt int, err error)
+
+	// DLQFlushTimeout DLQ Producer 关闭时的刷新超时（可选，默认 10s）。
+	// 控制 Close() 时等待 DLQ 消息发送完成的最长时间。
+	DLQFlushTimeout time.Duration
 }
 
 // Validate 验证策略配置
@@ -363,7 +367,9 @@ func parseFirstFailTime(msg *kafka.Message) time.Time {
 	return parsed
 }
 
-// errorString 安全地获取错误字符串，nil 返回空字符串
+// errorString 安全地获取错误字符串，nil 返回空字符串。
+// 设计决策: 直接使用 err.Error() 而非脱敏/截断，保留完整调试信息。
+// 调用方有责任确保 handler 返回的错误不包含敏感信息（如 token、密码）。
 func errorString(err error) string {
 	if err == nil {
 		return ""

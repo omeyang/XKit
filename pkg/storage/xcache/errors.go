@@ -9,6 +9,10 @@ import "errors"
 var (
 	// ErrNilClient 表示传入的客户端为 nil。
 	ErrNilClient = errors.New("xcache: nil client")
+
+	// ErrClosed 表示缓存实例已关闭。
+	// 在调用 Close() 后继续使用缓存实例会返回此错误。
+	ErrClosed = errors.New("xcache: closed")
 )
 
 // =============================================================================

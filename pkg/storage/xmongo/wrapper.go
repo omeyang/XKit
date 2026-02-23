@@ -84,7 +84,7 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 
 	if err := w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
 		w.healthCounter.IncPingError()
-		return err
+		return fmt.Errorf("xmongo health: %w", err)
 	}
 
 	return nil
@@ -161,12 +161,12 @@ func (w *mongoWrapper) FindPage(ctx context.Context, coll *mongo.Collection, fil
 	return w.findPage(ctx, coll, filter, opts)
 }
 
-// BulkWrite 批量写入。
-func (w *mongoWrapper) BulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+// BulkInsert 批量插入。
+func (w *mongoWrapper) BulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
-	return w.bulkWrite(ctx, coll, docs, opts)
+	return w.bulkInsert(ctx, coll, docs, opts)
 }
 
 // =============================================================================
@@ -262,7 +262,7 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	// 查询总数
 	total, err := coll.CountDocuments(ctx, filter)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xmongo find_page count %s.%s: %w", info.Database, info.Collection, err)
 	}
 
 	// 构建查询选项
@@ -276,18 +276,18 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	// 执行查询
 	cursor, err := coll.Find(ctx, filter, findOpts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xmongo find_page find %s.%s: %w", info.Database, info.Collection, err)
 	}
+	defer func() {
+		if closeErr := cursor.Close(ctx); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("xmongo find_page close cursor: %w", closeErr))
+		}
+	}()
 
 	// 解析结果
 	var data []bson.M
-	dataErr := cursor.All(ctx, &data)
-	closeErr := cursor.Close(ctx)
-	if closeErr != nil {
-		closeErr = fmt.Errorf("close cursor failed: %w", closeErr)
-	}
-	if err := errors.Join(dataErr, closeErr); err != nil {
-		return nil, err
+	if err = cursor.All(ctx, &data); err != nil {
+		return nil, fmt.Errorf("xmongo find_page decode %s.%s: %w", info.Database, info.Collection, err)
 	}
 
 	return &PageResult{
@@ -299,8 +299,8 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	}, nil
 }
 
-// bulkWrite 批量写入实现。
-func (w *mongoWrapper) bulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+// bulkInsert 批量插入实现。
+func (w *mongoWrapper) bulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
 	if coll == nil {
 		return nil, ErrNilCollection
 	}
@@ -310,11 +310,11 @@ func (w *mongoWrapper) bulkWrite(ctx context.Context, coll *mongo.Collection, do
 
 	// 适配集合为接口
 	collOps := adaptCollection(coll)
-	return w.bulkWriteInternal(ctx, collOps, docs, opts)
+	return w.bulkInsertInternal(ctx, collOps, docs, opts)
 }
 
-// bulkWriteInternal 批量写入内部实现，使用接口便于测试。
-func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
+// bulkInsertInternal 批量插入内部实现，使用接口便于测试。
+func (w *mongoWrapper) bulkInsertInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
 		batchSize = defaultBatchSize
@@ -322,12 +322,12 @@ func (w *mongoWrapper) bulkWriteInternal(ctx context.Context, coll collectionOpe
 		batchSize = maxBatchSize
 	}
 
-	info := buildSlowQueryInfoFromOps(coll, "bulkWrite", nil)
+	info := buildSlowQueryInfoFromOps(coll, "bulkInsert", nil)
 
 	start := time.Now()
 	ctx, span := xmetrics.Start(ctx, w.options.Observer, xmetrics.SpanOptions{
 		Component: mongoComponent,
-		Operation: "bulk_write",
+		Operation: "bulk_insert",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
 			xmetrics.String("db.system", "mongo"),
@@ -409,15 +409,17 @@ func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOp
 		insertedCount = int64(len(result.InsertedIDs))
 	}
 
+	wrappedErr := fmt.Errorf("xmongo bulk_insert: %w", err)
+
 	if ordered {
 		// 有序模式下遇到错误停止
-		return insertedCount, err, true
+		return insertedCount, wrappedErr, true
 	}
 
 	// 无序模式下检查 context，避免继续无效工作
 	if ctx.Err() != nil {
-		return insertedCount, fmt.Errorf("context canceled after batch error: %w", ctx.Err()), true
+		return insertedCount, fmt.Errorf("xmongo bulk_insert context canceled: %w", ctx.Err()), true
 	}
 
-	return insertedCount, err, false
+	return insertedCount, wrappedErr, false
 }

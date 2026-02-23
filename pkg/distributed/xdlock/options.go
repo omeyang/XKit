@@ -6,10 +6,21 @@ import (
 	"time"
 )
 
+// maxKeyLength 锁 key 的最大长度（字节）。
+const maxKeyLength = 512
+
+// unlockTimeout 解锁操作的清理超时时间。
+// 当调用方的 context 已取消/超时时，使用此超时确保解锁操作能尽力完成，
+// 避免锁残留到 TTL/Lease 到期。
+const unlockTimeout = 5 * time.Second
+
 // validateKey 验证锁 key 是否有效。
 func validateKey(key string) error {
 	if strings.TrimSpace(key) == "" {
 		return ErrEmptyKey
+	}
+	if len(key) > maxKeyLength {
+		return ErrKeyTooLong
 	}
 	return nil
 }

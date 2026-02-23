@@ -48,6 +48,10 @@ var (
 	// key 为空字符串或仅含空白时返回此错误。
 	ErrEmptyKey = errors.New("xdlock: key must not be empty")
 
+	// ErrKeyTooLong 锁 key 超过长度限制。
+	// key 长度不能超过 maxKeyLength（512 字节）。
+	ErrKeyTooLong = errors.New("xdlock: key exceeds maximum length of 512 bytes")
+
 	// ErrNilConfig 配置为空。
 	// 传入 nil 配置时返回此错误。
 	ErrNilConfig = errors.New("xdlock: config is nil")

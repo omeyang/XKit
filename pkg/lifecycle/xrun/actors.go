@@ -104,6 +104,9 @@ func Timer(delay time.Duration, fn func(ctx context.Context) error) func(ctx con
 		if delay < 0 {
 			return ErrInvalidDelay
 		}
+		if delay == 0 {
+			return fn(ctx)
+		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 

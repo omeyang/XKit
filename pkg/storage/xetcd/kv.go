@@ -81,6 +81,9 @@ func (c *Client) PutWithTTL(ctx context.Context, key string, value []byte, ttl t
 	if key == "" {
 		return ErrEmptyKey
 	}
+	// 设计决策: ttl <= 0 时降级为普通 Put（永不过期），而非返回错误。
+	// 这简化了调用方的动态 TTL 计算场景（计算结果可能为 0），
+	// 同时与 Go 标准库零值行为一致（如 time.Duration 零值 = 无等待）。
 	if ttl <= 0 {
 		return c.Put(ctx, key, value)
 	}
@@ -141,6 +144,8 @@ func (c *Client) DeleteWithPrefix(ctx context.Context, prefix string) (int64, er
 }
 
 // List 列出指定前缀的所有键值，返回键值对映射。
+// 注意：此方法一次性加载所有匹配的键值到内存中，
+// 不适用于前缀下有大量 key 的场景（如数万个服务实例）。
 func (c *Client) List(ctx context.Context, prefix string) (map[string][]byte, error) {
 	if err := c.checkClosed(); err != nil {
 		return nil, err

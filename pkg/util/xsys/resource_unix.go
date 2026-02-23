@@ -24,6 +24,10 @@ var fileLimitMu sync.Mutex
 // SetFileLimit 设置进程的最大打开文件数（RLIMIT_NOFILE）。
 // 设置 soft limit 为指定值，仅在当前 hard limit 不足时提升 hard limit（需要 CAP_SYS_RESOURCE）。
 // 不会降低 hard limit，因为降低 hard limit 是不可逆操作（非特权进程无法再提升）。
+//
+// 注意：允许将 soft limit 设置为低于当前值。在进程运行中降低 soft limit
+// 可能导致后续文件操作因 "too many open files" 而失败。通常建议仅在进程启动阶段调用。
+//
 // 并发安全：内部使用互斥锁保护读改写序列。
 func SetFileLimit(limit uint64) error {
 	if err := validateFileLimit(limit); err != nil {

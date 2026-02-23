@@ -43,6 +43,10 @@ func newRuleMatcher(rules []Rule) *ruleMatcher {
 
 // FindRule 实现 RuleProvider 接口
 // 根据 Key 查找第一个适用的规则
+//
+// 设计决策: 无匹配时返回 (Rule{}, false)，不静默回退到第一条规则。
+// 静默回退会掩盖配置错误（如 Key 缺少必要字段），调用方无法区分
+// "匹配了默认规则"和"没有规则适用"两种情况。
 func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 	for _, name := range rm.ruleNames {
 		rule, ok := rm.rules[name]
@@ -55,12 +59,6 @@ func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 		if rendered != "" && rendered != rule.KeyTemplate {
 			return rule, true
 		}
-	}
-
-	// 如果没有匹配，返回第一个规则（如果有）
-	if len(rm.ruleNames) > 0 {
-		name := rm.ruleNames[0]
-		return rm.rules[name], true
 	}
 
 	return Rule{}, false

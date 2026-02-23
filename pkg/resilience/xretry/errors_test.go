@@ -17,7 +17,7 @@ func TestPermanentError(t *testing.T) {
 
 	t.Run("ErrorNil", func(t *testing.T) {
 		err := NewPermanentError(nil)
-		assert.Equal(t, "permanent error", err.Error())
+		assert.Equal(t, "xretry: permanent error", err.Error())
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestTemporaryError(t *testing.T) {
 
 	t.Run("ErrorNil", func(t *testing.T) {
 		err := NewTemporaryError(nil)
-		assert.Equal(t, "temporary error", err.Error())
+		assert.Equal(t, "xretry: temporary error", err.Error())
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {

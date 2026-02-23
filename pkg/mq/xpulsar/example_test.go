@@ -149,7 +149,7 @@ func Example_errors() {
 	// 空 URL 错误: xpulsar: empty URL
 	// 空生产者错误: xpulsar: nil producer
 	// 空消费者错误: xpulsar: nil consumer
-	// 客户端已关闭: xpulsar: client closed
+	// 客户端已关闭: mq: client closed
 }
 
 // ExampleNoopTracer 演示空追踪器

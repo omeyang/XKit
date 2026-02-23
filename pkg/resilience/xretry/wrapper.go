@@ -38,7 +38,8 @@ type (
 
 // 以下是 retry-go 的配置选项函数
 var (
-	// Attempts 设置重试次数，设置为 0 表示无限重试
+	// Attempts 设置总尝试次数（包含首次尝试），设置为 0 表示无限重试。
+	// 例如 Attempts(3) 表示最多执行 3 次（首次 + 2 次重试）。
 	// 默认值: 10
 	Attempts = retry.Attempts
 

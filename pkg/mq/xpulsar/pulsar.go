@@ -21,7 +21,8 @@ type Client interface {
 	Client() pulsar.Client
 
 	// Health 执行健康检查。
-	// 通过获取 Broker 元数据验证连接状态。
+	// 通过创建临时 Reader 验证与 Broker 的连接状态。
+	// ctx 为 nil 时内部替换为 context.Background()。
 	Health(ctx context.Context) error
 
 	// CreateProducer 创建 Pulsar 生产者。

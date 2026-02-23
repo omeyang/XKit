@@ -695,6 +695,54 @@ func TestClose_Idempotent_WithConn(t *testing.T) {
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
+func TestHealth_AfterClose(t *testing.T) {
+	conn := newMockConn()
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 关闭后调用 Health 应返回 ErrClosed
+	err := w.Close()
+	assert.NoError(t, err)
+
+	err = w.Health(context.Background())
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestQueryPage_AfterClose(t *testing.T) {
+	conn := newMockConn()
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	err := w.Close()
+	assert.NoError(t, err)
+
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: 10,
+	})
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestBatchInsert_AfterClose(t *testing.T) {
+	conn := newMockConn()
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	err := w.Close()
+	assert.NoError(t, err)
+
+	result, err := w.BatchInsert(context.Background(), "users", []any{struct{ ID int }{ID: 1}}, BatchOptions{})
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
 func TestBatchInsert_ContextCanceledDuringAppend(t *testing.T) {
 	// 测试: context 取消后应该 abort 而非 send
 	conn := newMockConn()

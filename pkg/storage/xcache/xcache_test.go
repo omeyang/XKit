@@ -572,3 +572,53 @@ func TestMemoryWrapper_Stats_HitRatio_NonZero(t *testing.T) {
 	// 如果所有尝试都失败，至少确认 stats 结构被返回
 	t.Logf("Could not generate hits/misses, stats: %+v", stats)
 }
+
+// =============================================================================
+// Close 行为测试
+// =============================================================================
+
+func TestRedisWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client)
+	require.NoError(t, err)
+
+	// 第一次关闭应成功
+	err = cache.Close()
+	assert.NoError(t, err)
+
+	// 第二次关闭应返回 ErrClosed
+	err = cache.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestRedisWrapper_LockAfterClose_ReturnsErrClosed(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client)
+	require.NoError(t, err)
+
+	_ = cache.Close()
+
+	_, err = cache.Lock(context.Background(), "test-key", 10*time.Second)
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestMemoryWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
+	cache, err := NewMemory()
+	require.NoError(t, err)
+
+	// 第一次关闭应成功
+	err = cache.Close()
+	assert.NoError(t, err)
+
+	// 第二次关闭应返回 ErrClosed
+	err = cache.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+}

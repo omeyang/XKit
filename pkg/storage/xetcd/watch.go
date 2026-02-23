@@ -36,6 +36,8 @@ func (e EventType) String() string {
 }
 
 // Event Watch 事件。
+// 注意：零值 Event 的 Type 为 EventPut（因为 EventPut = 0）。
+// 判断事件有效性应检查 Key 或 Revision 是否非零，而非依赖 Type 字段。
 type Event struct {
 	// Type 事件类型。
 	Type EventType
@@ -332,6 +334,10 @@ type RetryConfig struct {
 
 	// OnRetry 重试时的回调函数。
 	// 用于记录日志或监控。
+	//
+	// ⚠️ 此回调在 WatchWithRetry 内部 goroutine 中被调用，
+	// 实现时需注意并发安全（例如使用 atomic 或 sync 保护共享状态）。
+	//
 	// 参数：
 	//   - attempt: 重试次数，从 1 开始
 	//   - err: 导致重试的错误
@@ -356,8 +362,13 @@ func DefaultRetryConfig() RetryConfig {
 //
 // 重连特性：
 //   - 使用指数退避策略，避免对 etcd 集群造成压力
-//   - 自动从上次成功的 Revision 恢复，确保不丢失事件
+//   - 自动从上次成功的 Revision 恢复，尽量避免丢失事件
 //   - 支持配置最大重试次数和退避参数
+//
+// ⚠️ 事件连续性说明：
+// 当 Watch 在成功消费任何事件之前就失败（lastRevision=0）时，
+// 重连将从 etcd 当前时间点开始，断线窗口内的变更可能丢失。
+// 如需严格不丢事件，调用方应通过 WithRevision 指定已知的起始版本号。
 //
 // 使用示例：
 //
@@ -426,6 +437,7 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 		innerCh, err := c.Watch(ctx, key, watchOpts...)
 		if err != nil {
 			if c.handleWatchRetry(ctx, cfg, state, err) {
+				c.sendMaxRetriesErrorIfNeeded(ctx, cfg, state, eventCh)
 				return
 			}
 			continue
@@ -439,8 +451,17 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 
 		retryErr := disconnectErrOrDefault(disconnectErr)
 		if c.handleWatchRetry(ctx, cfg, state, retryErr) {
+			c.sendMaxRetriesErrorIfNeeded(ctx, cfg, state, eventCh)
 			return
 		}
+	}
+}
+
+// sendMaxRetriesErrorIfNeeded 在达到最大重试次数时向通道发送错误事件。
+// 仅当因 MaxRetries 耗尽而停止时发送，context 取消导致的停止不发送。
+func (c *Client) sendMaxRetriesErrorIfNeeded(ctx context.Context, cfg RetryConfig, state *watchRetryState, eventCh chan<- Event) {
+	if cfg.MaxRetries > 0 && state.retryCount > cfg.MaxRetries {
+		c.sendErrorEvent(ctx, eventCh, ErrMaxRetriesExceeded, state.lastRevision, 0)
 	}
 }
 

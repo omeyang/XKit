@@ -105,6 +105,16 @@
 //
 // # IPv4-mapped IPv6 地址处理
 //
+// [ParseRange] 对 IPv4-mapped IPv6 CIDR（如 "::ffff:192.168.1.0/120"）统一转为纯 IPv4 范围：
+//   - 前缀位 ≥ 96：转为 IPv4 前缀（bits-96），如 /120 → IPv4 /24
+//   - 前缀位 < 96：拒绝并返回错误（前缀超出 IPv4-mapped 范围，语义模糊）
+//   - 掩码格式（如 "::ffff:192.168.1.0/255.255.255.0"）同样转为纯 IPv4
+//   - 这确保 CIDR 和掩码两种格式的输出地址族一致
+//
+// [ParseFullIP] 接受 IPv4-mapped IPv6 地址（如 "::ffff:192.168.1.1"）：
+//   - 此格式的点分特征会触发 IPv4 解析尝试，但首段含 ":" 导致失败
+//   - 失败后自动回退到标准 [netip.ParseAddr]，正确返回 IPv4-mapped 地址
+//
 // [WireRangeFromAddrs] 将纯 IPv4 与 IPv4-mapped IPv6 视为不同族：
 //   - 192.168.1.1（纯 IPv4）与 ::ffff:192.168.1.100（IPv4-mapped）不能混合
 //   - 这确保序列化后的字符串格式一致，避免反序列化时产生歧义

@@ -74,7 +74,7 @@ func Default() LoggerWithLevel {
 // SetDefault 替换全局默认 Logger
 //
 // 用于测试或自定义配置场景。
-// 并发安全：使用 atomic.Pointer。
+// 并发安全：使用 globalMu 保护，避免与 defaultLogger 惰性初始化竞争。
 //
 // 注意：如果传入 nil，操作会被忽略（不会修改当前 logger）。
 // 要重置为默认 logger，请使用 ResetDefault()。
@@ -83,7 +83,9 @@ func SetDefault(l LoggerWithLevel) {
 		// 拒绝 nil，避免后续全局函数 panic
 		return
 	}
+	globalMu.Lock()
 	globalLogger.Store(&l)
+	globalMu.Unlock()
 }
 
 // ResetDefault 重置全局 Logger 为未初始化状态（仅用于测试）
@@ -147,8 +149,10 @@ func Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 func Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
 	l := Default()
 	if xl, ok := l.(*xlogger); ok {
-		// 使用内部方法，正确跳过栈帧（与 globalLog 一致）
-		xl.stackWithSkip(ctx, msg, attrs, 1)
+		// extraSkip=0：全局 Stack 直接调用 stackWithSkip，调用链为
+		// 业务代码 → xlog.Stack → stackWithSkip → Callers，共 3 帧（与实例 Stack 一致）。
+		// 注意：不同于 globalLog 路径（多一层 globalLog 函数，需要 extraSkip=1）。
+		xl.stackWithSkip(ctx, msg, attrs, 0)
 		return
 	}
 	// fallback：非 xlogger 实现

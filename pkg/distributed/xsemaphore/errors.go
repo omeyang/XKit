@@ -87,6 +87,7 @@ var (
 
 	// ErrNilContext context 参数为空。
 	// 所有公开方法都要求传入非 nil 的 context.Context。
+	// 设计决策: Close 方法例外，不校验 ctx（Close 不使用 context，参数仅为接口统一而保留）。
 	ErrNilContext = errors.New("xsemaphore: context must not be nil")
 
 	// ErrInvalidPodCount 无效的 Pod 数量配置。

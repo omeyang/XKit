@@ -812,3 +812,48 @@ func TestLoader_Load_WithSingleflight_WhenLoadFnPanics_ReturnsErrLoadPanic(t *te
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrLoadPanic)
 }
+
+// =============================================================================
+// TTL 抖动测试
+// =============================================================================
+
+func TestLoader_Load_WithTTLJitter_WritesJitteredTTL(t *testing.T) {
+	cache, mr := newTestRedis(t)
+
+	loader, err := NewLoader(cache, WithTTLJitter(0.5))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	baseTTL := 10 * time.Minute
+
+	_, err = loader.Load(ctx, "jitter-key", func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}, baseTTL)
+	require.NoError(t, err)
+
+	// 验证 TTL 被设置且在合理范围内（baseTTL ± 25%）
+	actualTTL := mr.TTL("jitter-key")
+	minTTL := time.Duration(float64(baseTTL) * 0.7)
+	maxTTL := time.Duration(float64(baseTTL) * 1.3)
+	assert.True(t, actualTTL >= minTTL && actualTTL <= maxTTL,
+		"TTL %v should be between %v and %v", actualTTL, minTTL, maxTTL)
+}
+
+func TestLoader_Load_WithZeroTTLJitter_WritesExactTTL(t *testing.T) {
+	cache, mr := newTestRedis(t)
+
+	// TTLJitter=0 (default) should write exact TTL
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	baseTTL := 10 * time.Minute
+
+	_, err = loader.Load(ctx, "exact-ttl-key", func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}, baseTTL)
+	require.NoError(t, err)
+
+	actualTTL := mr.TTL("exact-ttl-key")
+	assert.Equal(t, baseTTL, actualTTL)
+}

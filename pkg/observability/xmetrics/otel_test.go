@@ -745,7 +745,7 @@ func TestValidateBuckets(t *testing.T) {
 		{"not_increasing", []float64{0.1, 0.5, 0.3}, true},
 		{"duplicate", []float64{0.1, 0.5, 0.5}, true},
 		{"descending", []float64{10, 5, 1}, true},
-		{"negative_valid", []float64{-1, 0, 1}, false},
+		{"negative_rejected", []float64{-1, 0, 1}, true},
 	}
 
 	for _, tt := range tests {

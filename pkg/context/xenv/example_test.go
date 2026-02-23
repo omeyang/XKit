@@ -89,9 +89,30 @@ func ExampleParse_caseInsensitive() {
 	// "SaaS" -> SAAS
 }
 
+// ExampleRequireType 演示 RequireType 函数的使用。
+//
+// RequireType 在未初始化时返回错误，适用于必须明确知道部署类型的场景。
+func ExampleRequireType() {
+	xenv.Reset()
+	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+		fmt.Println("初始化失败:", err)
+		return
+	}
+	defer xenv.Reset()
+
+	dt, err := xenv.RequireType()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("DeployType:", dt)
+	// Output:
+	// DeployType: LOCAL
+}
+
 // ExampleParse_invalidInput 演示 Parse 函数的错误处理。
 func ExampleParse_invalidInput() {
-	// 无效输入返回包含输入值的 ErrInvalidType
+	// 无效输入返回包含输入值和合法值提示的 ErrInvalidType
 	_, err := xenv.Parse("invalid")
 	fmt.Printf("无效输入: %v\n", errors.Is(err, xenv.ErrInvalidType))
 	fmt.Printf("错误信息包含输入值: %v\n", err)
@@ -102,6 +123,6 @@ func ExampleParse_invalidInput() {
 
 	// Output:
 	// 无效输入: true
-	// 错误信息包含输入值: xenv: invalid deployment type: "invalid"
+	// 错误信息包含输入值: xenv: invalid deployment type: "invalid" (expected LOCAL or SAAS)
 	// 空输入: true
 }

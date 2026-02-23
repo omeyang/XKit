@@ -62,6 +62,11 @@ func (f *fallbackSemaphore) ensureLocalSemaphore() *localSemaphore {
 }
 
 // TryAcquire 尝试获取许可，失败时降级
+//
+// 设计决策: 不在入口检查 f.closed，依赖 f.distributed 内部的 closed 检查。
+// Close 后 f.distributed.Close 会设置其 closed 标志，后续请求返回 ErrSemaphoreClosed。
+// 极窄的竞态窗口（Close 设 f.closed 到 distributed.Close 之间）可能放行一个请求，
+// 但该许可最终会正常 Release，不影响系统正确性。
 func (f *fallbackSemaphore) TryAcquire(ctx context.Context, resource string, opts ...AcquireOption) (Permit, error) {
 	permit, err := f.distributed.TryAcquire(ctx, resource, opts...)
 	if err == nil {
@@ -360,12 +365,13 @@ func newNoopPermit(ctx context.Context, resource, tenantID string, ttl time.Dura
 	// 生成许可 ID（通过注入的生成器，默认使用 xid.NewStringWithRetry）
 	id, err := opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
 		return nil, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 
 	p := &noopPermit{opts: opts}
 	expiresAt := time.Now().Add(ttl)
-	initPermitBase(&p.permitBase, "noop-"+id, resource, tenantID, expiresAt, ttl, false, metadata)
+	initPermitBase(&p.permitBase, noopPermitIDPrefix+id, resource, tenantID, expiresAt, ttl, false, metadata)
 	return p, nil
 }
 

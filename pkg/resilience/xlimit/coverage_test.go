@@ -396,6 +396,16 @@ func TestRuleMatcher_FindRule_EmptyMatcher(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestRuleMatcher_FindRule_NoMatchNoFallback(t *testing.T) {
+	// 使用 Extra 变量的规则模板，Key 不含对应 Extra → 模板无法渲染 → 应返回 false
+	rules := []Rule{
+		NewRule("custom-limit", "custom:${custom_var}", 100, time.Minute),
+	}
+	matcher := newRuleMatcher(rules)
+	_, found := matcher.FindRule(Key{Tenant: "test"}) // 无 custom_var Extra
+	assert.False(t, found, "FindRule should not fall back to first rule when Key lacks required fields")
+}
+
 // =============================================================================
 // HTTPMiddlewareFunc 覆盖
 // =============================================================================

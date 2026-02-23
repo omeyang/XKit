@@ -10,6 +10,9 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
+// maxSize 缓存最大条目数上限。
+const maxSize = 1 << 24 // 16,777,216
+
 // Config 定义缓存配置。
 type Config struct {
 	// Size 缓存最大条目数。
@@ -138,15 +141,14 @@ func (c *Cache[K, V]) Len() int {
 }
 
 // Contains 检查键是否存在（不更新访问时间）。
-//
-// 注意：Contains 不检查 TTL 过期状态，可能对已过期但尚未被后台清理的条目返回 true。
-// 如需精确判断，应使用 Peek 或 Get。
+// 内部使用 Peek 实现，因此会过滤已过期条目，与 Get/Peek 的 TTL 语义一致。
 // 如果缓存已关闭，返回 false。
 func (c *Cache[K, V]) Contains(key K) bool {
 	if c.closed.Load() {
 		return false
 	}
-	return c.lru.Contains(key)
+	_, ok := c.lru.Peek(key)
+	return ok
 }
 
 // Peek 获取缓存值但不更新 LRU 顺序。

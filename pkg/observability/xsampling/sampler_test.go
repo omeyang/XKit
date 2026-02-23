@@ -185,7 +185,7 @@ func TestRateSampler(t *testing.T) {
 			tolerance float64
 		}{
 			{0.01, 100000, 0.003},
-			{0.001, 1000000, 0.001},
+			{0.001, 1000000, 0.0005},
 		}
 		for _, tt := range tests {
 			s, err := NewRateSampler(tt.rate)
@@ -194,6 +194,8 @@ func TestRateSampler(t *testing.T) {
 			actualRate := float64(sampled) / float64(tt.total)
 			assert.InDelta(t, tt.rate, actualRate, tt.tolerance,
 				"rate=%.4f: 采样率应接近 %f，实际为 %f", tt.rate, tt.rate, actualRate)
+			assert.Greater(t, sampled, 0,
+				"rate=%.4f: 至少应采样到 1 个事件", tt.rate)
 		}
 	})
 

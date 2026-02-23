@@ -62,7 +62,7 @@ func NewMemory(opts ...MemoryOption) (Memory, error) {
 		Metrics:     true, // 启用 Metrics 以支持 Stats() 方法
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xcache: create memory cache: %w", err)
 	}
 
 	return &memoryWrapper{
@@ -132,9 +132,13 @@ func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
 type redisWrapper struct {
 	client  redis.UniversalClient
 	options *RedisOptions
+	closed  atomic.Bool
 }
 
 func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
+	if w.closed.Load() {
+		return nil, ErrClosed
+	}
 	if ttl <= 0 {
 		return nil, ErrInvalidLockTTL
 	}
@@ -229,6 +233,9 @@ func (w *redisWrapper) Client() redis.UniversalClient {
 }
 
 func (w *redisWrapper) Close() error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
 	return w.client.Close()
 }
 
@@ -238,8 +245,9 @@ func (w *redisWrapper) Close() error {
 
 // memoryWrapper 实现 Memory 接口，提供统计信息等增值功能。
 type memoryWrapper struct {
-	cache *ristretto.Cache[string, []byte]
-	owned bool // 标记是否由本实例创建（需要负责关闭）
+	cache  *ristretto.Cache[string, []byte]
+	owned  bool // 标记是否由本实例创建（需要负责关闭）
+	closed atomic.Bool
 }
 
 func (w *memoryWrapper) Stats() MemoryStats {
@@ -276,10 +284,14 @@ func (w *memoryWrapper) Wait() {
 	w.cache.Wait()
 }
 
-func (w *memoryWrapper) Close() {
+func (w *memoryWrapper) Close() error {
+	if !w.closed.CompareAndSwap(false, true) {
+		return ErrClosed
+	}
 	if w.owned {
 		w.cache.Close()
 	}
+	return nil
 }
 
 // =============================================================================

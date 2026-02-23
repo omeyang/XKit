@@ -11,7 +11,7 @@
 //
 // # 创建 Logger
 //
-// 使用 Builder 模式。
+// 使用 Builder 模式（first-error-wins：遇到第一个配置错误后，后续 Set 操作被跳过）。
 // Builder 方法：SetLevel、SetFormat、SetOutput、SetRotation、SetEnrich、
 // SetDeploymentType、SetOnError、SetReplaceAttr。
 //

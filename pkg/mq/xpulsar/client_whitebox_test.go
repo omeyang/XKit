@@ -116,6 +116,25 @@ func TestClientWrapper_Stats_AfterClose(t *testing.T) {
 	assert.False(t, stats.Connected)
 }
 
+func TestClientWrapper_Stats_AfterClose_CountersReset(t *testing.T) {
+	mc := &mockPulsarClient{}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// 模拟创建了 producer 和 consumer
+	w.producersCount.Store(3)
+	w.consumersCount.Store(2)
+
+	require.NoError(t, w.Close())
+
+	stats := w.Stats()
+	assert.False(t, stats.Connected)
+	assert.Equal(t, 0, stats.ProducersCount, "Close 后计数器应重置")
+	assert.Equal(t, 0, stats.ConsumersCount, "Close 后计数器应重置")
+}
+
 // =============================================================================
 // clientWrapper.Close() 测试
 // =============================================================================
@@ -364,6 +383,24 @@ func TestClientWrapper_Health_AfterClose(t *testing.T) {
 
 	err := w.Health(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestClientWrapper_Health_NilContext(t *testing.T) {
+	reader := &mockReader{}
+	mc := &mockPulsarClient{
+		createReaderFn: func(pulsar.ReaderOptions) (pulsar.Reader, error) {
+			return reader, nil
+		},
+	}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// nil context 应内部替换为 context.Background()，不 panic
+	var nilCtx context.Context
+	err := w.Health(nilCtx)
+	assert.NoError(t, err)
 }
 
 // =============================================================================

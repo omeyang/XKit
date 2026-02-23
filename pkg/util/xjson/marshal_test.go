@@ -9,11 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testUser 用于测试的用户结构体，避免在多个测试函数中重复定义。
+type testUser struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
 func TestPrettyE(t *testing.T) {
-	type User struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
 
 	tests := []struct {
 		name     string
@@ -24,7 +26,7 @@ func TestPrettyE(t *testing.T) {
 	}{
 		{
 			name:     "struct",
-			input:    User{Name: "Alice", Age: 30},
+			input:    testUser{Name: "Alice", Age: 30},
 			contains: `"name": "Alice"`,
 		},
 		{
@@ -84,11 +86,6 @@ func TestPrettyE(t *testing.T) {
 }
 
 func TestPretty(t *testing.T) {
-	type User struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
-
 	tests := []struct {
 		name     string
 		input    any
@@ -97,7 +94,7 @@ func TestPretty(t *testing.T) {
 	}{
 		{
 			name:     "struct",
-			input:    User{Name: "Alice", Age: 30},
+			input:    testUser{Name: "Alice", Age: 30},
 			contains: `"name": "Alice"`,
 		},
 		{

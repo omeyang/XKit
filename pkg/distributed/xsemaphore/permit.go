@@ -202,7 +202,10 @@ func (b *permitBase) releaseCommon(ctx context.Context, tracer trace.Tracer, sem
 		return ErrNilContext
 	}
 
-	// 检查是否已释放，防止重复释放
+	// 设计决策: 使用 Load 而非 Swap 检查 released 状态。
+	// 并发调用 Release 可能产生两个 trace span，但不影响数据正确性（后端操作是串行化的）。
+	// 保留 Load 而非 Swap 是为了允许 doRelease 返回网络错误时重试（不标记 released），
+	// 仅在成功或 ErrPermitNotHeld 时标记 released。
 	if b.isReleased() {
 		return nil // 已释放，静默返回
 	}

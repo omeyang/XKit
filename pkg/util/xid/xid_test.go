@@ -331,6 +331,7 @@ func BenchmarkNew(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = New() // benchmark
@@ -343,6 +344,7 @@ func BenchmarkNewString(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = NewString() // benchmark
@@ -357,12 +359,14 @@ func BenchmarkComparison(b *testing.B) {
 	}
 
 	b.Run("xid/New", func(b *testing.B) {
+		// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 		for i := 0; i < b.N; i++ {
 			_, _ = New() // benchmark
 		}
 	})
 
 	b.Run("xid/NewString", func(b *testing.B) {
+		// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 		for i := 0; i < b.N; i++ {
 			_, _ = NewString() // benchmark
 		}

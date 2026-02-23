@@ -15,3 +15,4 @@ func Reset() {
 	globalType.Store(DeployType(""))
 	globalMu.Unlock()
 }
+

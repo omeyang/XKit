@@ -22,6 +22,7 @@
 // # 错误处理
 //
 // 内部操作（如文件权限调整）的错误通过 [WithOnError] 回调上报。
+// 回调 panic 被 recover 隔离，不会传播到业务调用链。
 // 设计决策: 不在底层 writer 内使用 slog 等日志库记录错误，
 // 避免 Rotator 作为日志输出目标时产生递归写入导致死锁或栈溢出。
 //
@@ -29,6 +30,12 @@
 //
 // 设计决策: [NewLumberjack] 通过 [xfile.SanitizePath] 防止路径穿越，
 // 但不限制文件必须位于特定根目录。调用方需确保 filename 来源可信。
+//
+// # 已知限制
+//
+// 设计决策: lumberjack v2 的 Close 不关闭内部 millCh channel，导致
+// 负责文件压缩和清理的 millRun goroutine 在 Logger 关闭后仍驻留。
+// 这是上游已知限制，无法在 wrapper 层修复。测试通过 goleak 白名单过滤。
 //
 // # 扩展新实现
 //

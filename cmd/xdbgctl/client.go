@@ -7,10 +7,18 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/debug/xdbg"
 )
+
+// executor 定义调试命令执行接口。
+// 设计决策: 使用接口而非直接依赖 *Client，使 REPL 核心逻辑可被测试。
+type executor interface {
+	Execute(ctx context.Context, command string, args []string) (*xdbg.Response, error)
+	Ping(ctx context.Context) error
+}
 
 // Client xdbg 客户端。
 type Client struct {
@@ -28,7 +36,9 @@ func NewClient(socketPath string, timeout time.Duration) *Client {
 	}
 }
 
-// validateSocket 校验目标路径是否为 Unix Socket 文件。
+// validateSocket 校验目标路径是否为 Unix Socket 文件，并验证所有者。
+// 设计决策: 校验 socket 所有者匹配当前用户或 root，防止连接到非预期服务。
+// 在 K8s 环境中通常以 root 运行，此检查不会产生误报。
 func (c *Client) validateSocket() error {
 	info, err := os.Lstat(c.socketPath)
 	if err != nil {
@@ -37,6 +47,16 @@ func (c *Client) validateSocket() error {
 	if info.Mode().Type()&os.ModeSocket == 0 {
 		return fmt.Errorf("路径 %s 不是 Unix Socket 文件（类型: %s）", c.socketPath, info.Mode().Type())
 	}
+
+	// 校验 socket 所有者
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		uid := uint32(os.Getuid()) //nolint:gosec // Getuid 返回值在 Linux 上始终 ≥0，安全转换为 uint32
+		if stat.Uid != uid && stat.Uid != 0 {
+			return fmt.Errorf("socket %s 的所有者 (UID=%d) 与当前用户 (UID=%d) 不匹配",
+				c.socketPath, stat.Uid, uid)
+		}
+	}
+
 	return nil
 }
 

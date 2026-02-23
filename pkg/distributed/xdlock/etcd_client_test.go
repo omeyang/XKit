@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,15 +249,16 @@ func TestErrorDefinitions(t *testing.T) {
 
 func TestConvertXetcdError(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     error
-		wantErr error
-		wantNil bool
+		name         string
+		err          error
+		wantErr      error
+		wantOriginal error // 验证原始错误保留在链中
+		wantNil      bool
 	}{
-		{"nil error", nil, nil, true},
-		{"ErrNilConfig", xetcd.ErrNilConfig, ErrNilConfig, false},
-		{"ErrNoEndpoints", xetcd.ErrNoEndpoints, ErrNoEndpoints, false},
-		{"other error", errors.New("some error"), nil, false},
+		{"nil error", nil, nil, nil, true},
+		{"ErrNilConfig", xetcd.ErrNilConfig, ErrNilConfig, xetcd.ErrNilConfig, false},
+		{"ErrNoEndpoints", xetcd.ErrNoEndpoints, ErrNoEndpoints, xetcd.ErrNoEndpoints, false},
+		{"other error", errors.New("some error"), nil, nil, false},
 	}
 
 	for _, tt := range tests {
@@ -268,10 +270,15 @@ func TestConvertXetcdError(t *testing.T) {
 			}
 			require.NotNil(t, result)
 			if tt.wantErr != nil {
-				assert.Equal(t, tt.wantErr, result)
+				// 使用 ErrorIs 而非 Equal，因为错误现在是包装过的
+				assert.ErrorIs(t, result, tt.wantErr)
 			} else {
 				assert.Contains(t, result.Error(), "xdlock:")
 				assert.ErrorIs(t, result, tt.err)
+			}
+			// 验证原始错误保留在链中
+			if tt.wantOriginal != nil {
+				assert.ErrorIs(t, result, tt.wantOriginal)
 			}
 		})
 	}
@@ -453,22 +460,25 @@ func TestValidateKey(t *testing.T) {
 	tests := []struct {
 		name    string
 		key     string
-		wantErr bool
+		wantErr error
 	}{
-		{"valid key", "my-lock", false},
-		{"valid with dots", "resource.lock", false},
-		{"valid unicode", "中文锁名", false},
-		{"empty string", "", true},
-		{"space only", " ", true},
-		{"tabs only", "\t\t", true},
-		{"mixed whitespace", " \t\n ", true},
+		{"valid key", "my-lock", nil},
+		{"valid with dots", "resource.lock", nil},
+		{"valid unicode", "中文锁名", nil},
+		{"at max length", strings.Repeat("x", maxKeyLength), nil},
+		{"empty string", "", ErrEmptyKey},
+		{"space only", " ", ErrEmptyKey},
+		{"tabs only", "\t\t", ErrEmptyKey},
+		{"mixed whitespace", " \t\n ", ErrEmptyKey},
+		{"over max length", strings.Repeat("x", maxKeyLength+1), ErrKeyTooLong},
+		{"way over max length", strings.Repeat("x", maxKeyLength*2), ErrKeyTooLong},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateKey(tt.key)
-			if tt.wantErr {
-				assert.ErrorIs(t, err, ErrEmptyKey)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 			}

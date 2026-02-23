@@ -241,3 +241,26 @@ func TestConfig_String(t *testing.T) {
 		})
 	}
 }
+
+func TestConfig_String_AllFields(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Endpoints = []string{"localhost:2379"}
+	cfg.Username = "admin"
+	cfg.Password = "secret"
+	cfg.AutoSyncInterval = 5 * time.Second
+
+	s := cfg.String()
+
+	requiredFields := []string{
+		"DialKeepAliveTime:",
+		"DialKeepAliveTimeout:",
+		"AutoSyncInterval:",
+		"RejectOldCluster:",
+		"PermitWithoutStream:",
+	}
+	for _, field := range requiredFields {
+		if !strings.Contains(s, field) {
+			t.Errorf("String() = %q, should contain %q", s, field)
+		}
+	}
+}

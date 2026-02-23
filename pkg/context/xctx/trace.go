@@ -7,6 +7,57 @@ import (
 )
 
 // =============================================================================
+// Require 函数：强制获取模式
+// 追踪信息通常由 EnsureXxx 自动生成，但在需要确认特定字段存在的场景下
+// 提供单字段级的强制获取。如需批量校验，可使用 Trace.Validate()。
+// =============================================================================
+
+// RequireTraceID 从 context 获取 trace ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingTraceID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireTraceID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := TraceID(ctx)
+	if v == "" {
+		return "", ErrMissingTraceID
+	}
+	return v, nil
+}
+
+// RequireSpanID 从 context 获取 span ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingSpanID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireSpanID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := SpanID(ctx)
+	if v == "" {
+		return "", ErrMissingSpanID
+	}
+	return v, nil
+}
+
+// RequireRequestID 从 context 获取 request ID，不存在则返回错误。
+//
+// 语义：值必须存在，缺失时返回 ErrMissingRequestID。
+// 如果 ctx 为 nil，返回 ErrNilContext。
+func RequireRequestID(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", ErrNilContext
+	}
+	v := RequestID(ctx)
+	if v == "" {
+		return "", ErrMissingRequestID
+	}
+	return v, nil
+}
+
+// =============================================================================
 // ID 格式常量（遵循 W3C Trace Context 规范）
 // =============================================================================
 

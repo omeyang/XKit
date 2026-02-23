@@ -424,7 +424,7 @@ func handleTokenAndCustomEndpoint(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Token endpoint (client_id is in query params for token requests)
 		if r.FormValue("client_id") != "" {
-			writeJSONToken(w, "test-token", 3600)
+			writeJSONToken(w, "test-token")
 			return
 		}
 
@@ -442,11 +442,11 @@ func handleTokenAndCustomEndpoint(t *testing.T) http.HandlerFunc {
 	}
 }
 
-// writeJSONToken writes a standard token JSON response.
-func writeJSONToken(w http.ResponseWriter, accessToken string, expiresIn int) {
+// writeJSONToken writes a standard token JSON response with a 1-hour expiry.
+func writeJSONToken(w http.ResponseWriter, accessToken string) {
 	resp := map[string]any{
 		"access_token": accessToken,
-		"expires_in":   expiresIn,
+		"expires_in":   3600,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -780,7 +780,7 @@ func handleRetryOn401(requestCount, tokenRequestCount *int) http.HandlerFunc {
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
 			*tokenRequestCount++
-			writeJSONToken(w, "token-"+string(rune('0'+*tokenRequestCount)), 3600)
+			writeJSONToken(w, "token-"+string(rune('0'+*tokenRequestCount)))
 			return
 		}
 
@@ -806,7 +806,7 @@ func handleAlways401(requestCount *int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
-			writeJSONToken(w, "test-token", 3600)
+			writeJSONToken(w, "test-token")
 			return
 		}
 
@@ -906,6 +906,108 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 
 		// Should have made exactly 2 requests (initial + one retry)
 		assert.Equal(t, 2, requestCount, "expected initial + one retry only")
+	})
+}
+
+func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONToken(w, "test-token")
+	}))
+	defer server.Close()
+
+	t.Run("http absolute URL rejected when AllowInsecure=false", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Host = server.URL
+		// testConfig sets AllowInsecure=true for httptest. Create client, then
+		// flip AllowInsecure to false to test request-level URL validation.
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		defer c.Close()
+
+		// Override AllowInsecure on the internal client to false after creation
+		internal := c.(*client)
+		internal.config.AllowInsecure = false
+
+		err = c.Request(ctx, &AuthRequest{
+			TenantID: "tenant-1",
+			URL:      "http://evil.com/steal",
+			Method:   "GET",
+		})
+		assert.ErrorIs(t, err, ErrInsecureHost)
+	})
+
+	t.Run("http absolute URL allowed when AllowInsecure=true", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Host = server.URL
+
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		defer c.Close()
+
+		// The request will fail because the URL points to a non-existent host,
+		// but it should NOT be blocked by the insecure URL check.
+		err = c.Request(ctx, &AuthRequest{
+			TenantID: "tenant-1",
+			URL:      "http://localhost:1/test",
+			Method:   "GET",
+		})
+		assert.NotErrorIs(t, err, ErrInsecureHost)
+	})
+
+	t.Run("relative URL always allowed", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Host = server.URL
+		cfg.AllowInsecure = true
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		defer c.Close()
+
+		internal := c.(*client)
+		internal.config.AllowInsecure = false
+
+		// Relative URL should pass the insecure check (even though the request may fail)
+		err = c.Request(ctx, &AuthRequest{
+			TenantID: "tenant-1",
+			URL:      "/api/test",
+			Method:   "GET",
+		})
+		assert.NotErrorIs(t, err, ErrInsecureHost)
+	})
+}
+
+func TestClient_InvalidatePlatformCache(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("successful invalidation", func(t *testing.T) {
+		cfg := testConfig()
+		c, err := NewClient(cfg, WithLocalCache(true))
+		require.NoError(t, err)
+		defer c.Close()
+
+		err = c.InvalidatePlatformCache(ctx, "tenant-1")
+		assert.NoError(t, err)
+	})
+
+	t.Run("client closed", func(t *testing.T) {
+		cfg := testConfig()
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		c.Close()
+
+		err = c.InvalidatePlatformCache(ctx, "tenant-1")
+		assert.Equal(t, ErrClientClosed, err)
+	})
+
+	t.Run("missing tenant ID", func(t *testing.T) {
+		cfg := testConfig()
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		defer c.Close()
+
+		err = c.InvalidatePlatformCache(ctx, "")
+		assert.Equal(t, ErrMissingTenantID, err)
 	})
 }
 

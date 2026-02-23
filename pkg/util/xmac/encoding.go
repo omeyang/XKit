@@ -47,12 +47,29 @@ func (a Addr) MarshalJSON() ([]byte, error) {
 	if !a.IsValid() {
 		return []byte(`""`), nil
 	}
-	s := a.String()
-	// len(`"`) + 17 + len(`"`) = 19
-	buf := make([]byte, 0, len(s)+2)
-	buf = append(buf, '"')
-	buf = append(buf, s...)
-	buf = append(buf, '"')
+	// 直接构造 19 字节: `"` + 17 字节 MAC + `"`，
+	// 复用 marshalColonBytes 的编码逻辑，仅 1 次堆分配。
+	b := a.bytes
+	buf := make([]byte, 19)
+	buf[0] = '"'
+	buf[1] = hexLower[b[0]>>4]
+	buf[2] = hexLower[b[0]&0x0f]
+	buf[3] = ':'
+	buf[4] = hexLower[b[1]>>4]
+	buf[5] = hexLower[b[1]&0x0f]
+	buf[6] = ':'
+	buf[7] = hexLower[b[2]>>4]
+	buf[8] = hexLower[b[2]&0x0f]
+	buf[9] = ':'
+	buf[10] = hexLower[b[3]>>4]
+	buf[11] = hexLower[b[3]&0x0f]
+	buf[12] = ':'
+	buf[13] = hexLower[b[4]>>4]
+	buf[14] = hexLower[b[4]&0x0f]
+	buf[15] = ':'
+	buf[16] = hexLower[b[5]>>4]
+	buf[17] = hexLower[b[5]&0x0f]
+	buf[18] = '"'
 	return buf, nil
 }
 
@@ -130,6 +147,8 @@ func (a *Addr) Scan(src any) error {
 		}
 		// 6 字节视为二进制格式，适用于 BINARY(6) 列存储的原始 MAC 字节。
 		// 文本格式 MAC 最短 12 字符（如 "aabbccddeeff"），不会与 6 字节二进制冲突。
+		// 设计决策: 全零字节 {0,0,0,0,0,0} 直接 copy 后等于零值 Addr{}，
+		// IsValid() 返回 false，与 Parse("00:00:00:00:00:00") 行为一致。
 		if len(v) == 6 {
 			copy(a.bytes[:], v)
 			return nil

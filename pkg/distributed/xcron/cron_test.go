@@ -83,6 +83,38 @@ func TestScheduler_AddFunc(t *testing.T) {
 		_, err := s.AddFunc("@every 1s", nil)
 		assert.ErrorIs(t, err, ErrNilJob)
 	})
+
+	t.Run("distributed locker without name returns ErrMissingName", func(t *testing.T) {
+		locker := newMockLocker()
+		s := New(WithLocker(locker))
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.ErrorIs(t, err, ErrMissingName)
+	})
+
+	t.Run("noop locker without name succeeds", func(t *testing.T) {
+		s := New() // default NoopLocker
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("distributed locker with name succeeds", func(t *testing.T) {
+		locker := newMockLocker()
+		s := New(WithLocker(locker))
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("named-job"))
+		assert.NoError(t, err)
+	})
 }
 
 func TestScheduler_AddJob(t *testing.T) {

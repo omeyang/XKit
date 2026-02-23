@@ -100,13 +100,17 @@ type ConsumerOptionsBuilder struct {
 	opts pulsar.ConsumerOptions
 }
 
-// NewConsumerOptionsBuilder 创建 Consumer 配置构建器
+// NewConsumerOptionsBuilder 创建 Consumer 配置构建器。
+//
+// 设计决策: 默认订阅类型为 Shared（而非 Pulsar 原生默认的 Exclusive），
+// 因为 Shared 模式更适合多实例部署的微服务场景。如需 Exclusive 模式，
+// 请显式调用 WithType(pulsar.Exclusive)。
 func NewConsumerOptionsBuilder(topic, subscription string) *ConsumerOptionsBuilder {
 	return &ConsumerOptionsBuilder{
 		opts: pulsar.ConsumerOptions{
 			Topic:            topic,
 			SubscriptionName: subscription,
-			Type:             pulsar.Shared, // 默认共享模式
+			Type:             pulsar.Shared,
 		},
 	}
 }

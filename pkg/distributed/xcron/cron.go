@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 
 	"github.com/robfig/cron/v3"
@@ -12,6 +11,11 @@ import (
 
 // ErrNilJob 表示任务为 nil。
 var ErrNilJob = errors.New("xcron: job cannot be nil")
+
+// ErrMissingName 表示配置了分布式锁但未设置任务名。
+// 设计决策: 选择 fail-fast 而非静默降级，因为无名任务跳过加锁会导致多副本重复执行，
+// 可能引发重复扣款、重复下发等生产事故。调用方必须显式使用 WithName 或 WithJobLocker(NoopLocker())。
+var ErrMissingName = errors.New("xcron: job with distributed locker must have a name, use WithName() to set one")
 
 // cronScheduler 基于 robfig/cron/v3 的调度器实现
 type cronScheduler struct {
@@ -97,16 +101,11 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 		locker = s.locker
 	}
 
-	// 警告：配置了分布式锁但未设置任务名，锁将被跳过
+	// 设计决策: 配置了分布式锁但未设置任务名时 fail-fast 返回错误，
+	// 而非静默降级跳过加锁。静默降级在多副本场景下会导致重复执行。
 	if jobOpts.name == "" {
 		if _, isNoop := locker.(*noopLocker); !isNoop {
-			if s.logger != nil {
-				s.logger.Warn(context.Background(),
-					"job has distributed locker but no name; lock will be skipped, use WithName() to enable locking",
-					"spec", spec)
-			} else {
-				log.Printf("[WARN] xcron: job has distributed locker but no name; lock will be skipped, use WithName()")
-			}
+			return 0, ErrMissingName
 		}
 	}
 
@@ -145,15 +144,25 @@ func (s *cronScheduler) Start() {
 	s.cron.Start()
 }
 
-// Stop 优雅停止。
-// 会等待所有正在执行的任务完成，包括 WithImmediate 启动的立即执行任务。
+// Stop 优雅停止，立即返回。
+// 返回的 context 在所有运行中的任务（含 WithImmediate 启动的立即执行任务）完成后 Done。
 // 立即执行任务的上下文会被取消，使其能尽快结束。
+//
+// 设计决策: Stop() 立即返回 context 而不阻塞，调用方通过 ctx.Done() 或
+// select + time.After 做超时控制，避免 Stop() 本身卡死。
 func (s *cronScheduler) Stop() context.Context {
 	// 取消所有立即执行任务的上下文
 	s.immediateCancel()
-	ctx := s.cron.Stop()
-	// 等待 WithImmediate 启动的立即执行任务完成
-	s.immediateWg.Wait()
+	// cron.Stop() 不阻塞，返回的 ctx 在所有定时任务完成后 Done
+	cronCtx := s.cron.Stop()
+
+	// 合并 cron 的完成信号和 immediate 的完成信号
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-cronCtx.Done()
+		s.immediateWg.Wait()
+		cancel()
+	}()
 	return ctx
 }
 

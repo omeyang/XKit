@@ -17,28 +17,6 @@ import (
 // 集成测试 - 需要真实 MongoDB
 // =============================================================================
 
-func TestWrapper_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// 集成测试需要真实的 MongoDB 连接
-	// 由于当前环境没有 MongoDB，跳过这些测试
-	// 实际使用时应当配置测试 MongoDB 实例
-}
-
-func TestWrapper_Health_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}
-
-func TestWrapper_Stats_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}
-
 // =============================================================================
 // 单元测试 - 不需要真实 MongoDB
 // =============================================================================
@@ -344,7 +322,8 @@ func TestWrapper_Health_Error(t *testing.T) {
 
 	err := w.Health(context.Background())
 	assert.Error(t, err)
-	assert.Equal(t, errMockPing, err)
+	assert.ErrorIs(t, err, errMockPing)
+	assert.Contains(t, err.Error(), "xmongo health")
 	assert.Equal(t, 1, mock.pingCount)
 
 	stats := w.Stats()
@@ -496,7 +475,8 @@ func TestWrapper_FindPageInternal_CountError(t *testing.T) {
 
 	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 1, PageSize: 10})
 	assert.Error(t, err)
-	assert.Equal(t, errMockCount, err)
+	assert.ErrorIs(t, err, errMockCount)
+	assert.Contains(t, err.Error(), "xmongo find_page count")
 	assert.Nil(t, result)
 }
 
@@ -512,51 +492,52 @@ func TestWrapper_FindPageInternal_FindError(t *testing.T) {
 
 	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{Page: 1, PageSize: 10})
 	assert.Error(t, err)
-	assert.Equal(t, errMockFind, err)
+	assert.ErrorIs(t, err, errMockFind)
+	assert.Contains(t, err.Error(), "xmongo find_page find")
 	assert.Nil(t, result)
 }
 
-func TestWrapper_BulkWrite_NilCollection(t *testing.T) {
+func TestWrapper_BulkInsert_NilCollection(t *testing.T) {
 	w := &mongoWrapper{
 		client:  nil,
 		options: defaultOptions(),
 	}
 
-	result, err := w.BulkWrite(context.Background(), nil, []any{1, 2, 3}, BulkOptions{})
+	result, err := w.BulkInsert(context.Background(), nil, []any{1, 2, 3}, BulkOptions{})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNilCollection, err)
 	assert.Nil(t, result)
 }
 
-func TestWrapper_BulkWrite_EmptyDocs(t *testing.T) {
+func TestWrapper_BulkInsert_EmptyDocs(t *testing.T) {
 	w := &mongoWrapper{
 		client:  nil,
 		options: defaultOptions(),
 	}
 
-	// bulkWrite 先检查 nil collection，所以这里测试 BulkWrite 公共接口
-	result, err := w.BulkWrite(context.Background(), nil, []any{}, BulkOptions{})
+	// bulkInsert 先检查 nil collection，所以这里测试 BulkInsert 公共接口
+	result, err := w.BulkInsert(context.Background(), nil, []any{}, BulkOptions{})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNilCollection, err) // nil collection 先于 empty docs 检查
 	assert.Nil(t, result)
 }
 
-func TestWrapper_BulkWriteInternal_EmptyDocs(t *testing.T) {
+func TestWrapper_BulkInsertInternal_EmptyDocs(t *testing.T) {
 	mock := newMockCollectionOps()
 	w := &mongoWrapper{
 		client:  nil,
 		options: defaultOptions(),
 	}
 
-	// 空文档数组测试 - 通过 bulkWriteInternal 测试
-	// 注意：bulkWriteInternal 不检查空文档，它会直接返回空结果
-	result, err := w.bulkWriteInternal(context.Background(), mock, []any{}, BulkOptions{BatchSize: 10})
+	// 空文档数组测试 - 通过 bulkInsertInternal 测试
+	// 注意：bulkInsertInternal 不检查空文档，它会直接返回空结果
+	result, err := w.bulkInsertInternal(context.Background(), mock, []any{}, BulkOptions{BatchSize: 10})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(0), result.InsertedCount)
 }
 
-func TestWrapper_BulkWriteInternal_Success(t *testing.T) {
+func TestWrapper_BulkInsertInternal_Success(t *testing.T) {
 	mock := newMockCollectionOps()
 
 	w := &mongoWrapper{
@@ -570,14 +551,14 @@ func TestWrapper_BulkWriteInternal_Success(t *testing.T) {
 		map[string]any{"name": "doc3"},
 	}
 
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(3), result.InsertedCount)
 	assert.Empty(t, result.Errors)
 }
 
-func TestWrapper_BulkWriteInternal_DefaultBatchSize(t *testing.T) {
+func TestWrapper_BulkInsertInternal_DefaultBatchSize(t *testing.T) {
 	mock := newMockCollectionOps()
 
 	w := &mongoWrapper{
@@ -590,13 +571,13 @@ func TestWrapper_BulkWriteInternal_DefaultBatchSize(t *testing.T) {
 	}
 
 	// BatchSize 为 0，应使用默认值 1000
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 0})
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 0})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(1), result.InsertedCount)
 }
 
-func TestWrapper_BulkWriteInternal_MaxBatchSize(t *testing.T) {
+func TestWrapper_BulkInsertInternal_MaxBatchSize(t *testing.T) {
 	mock := newMockCollectionOps()
 
 	w := &mongoWrapper{
@@ -609,13 +590,13 @@ func TestWrapper_BulkWriteInternal_MaxBatchSize(t *testing.T) {
 	}
 
 	// BatchSize 超过上限，应被限制为 maxBatchSize
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: maxBatchSize + 1})
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: maxBatchSize + 1})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(1), result.InsertedCount)
 }
 
-func TestWrapper_BulkWriteInternal_InsertError_Unordered(t *testing.T) {
+func TestWrapper_BulkInsertInternal_InsertError_Unordered(t *testing.T) {
 	mock := newMockCollectionOps()
 	mock.insertErr = errMockInsert
 
@@ -630,17 +611,17 @@ func TestWrapper_BulkWriteInternal_InsertError_Unordered(t *testing.T) {
 	}
 
 	// 无序模式：遇到错误继续执行
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{
 		BatchSize: 1,
 		Ordered:   false,
 	})
-	assert.Error(t, err) // bulkWriteInternal 收集错误并返回合并的错误
+	assert.Error(t, err) // bulkInsertInternal 收集错误并返回合并的错误
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(0), result.InsertedCount)
 	assert.Len(t, result.Errors, 2) // 每个批次一个错误
 }
 
-func TestWrapper_BulkWriteInternal_InsertError_Ordered(t *testing.T) {
+func TestWrapper_BulkInsertInternal_InsertError_Ordered(t *testing.T) {
 	mock := newMockCollectionOps()
 	mock.insertErr = errMockInsert
 
@@ -656,17 +637,17 @@ func TestWrapper_BulkWriteInternal_InsertError_Ordered(t *testing.T) {
 	}
 
 	// 有序模式：遇到错误停止
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{
 		BatchSize: 1,
 		Ordered:   true,
 	})
-	assert.Error(t, err) // bulkWriteInternal 收集错误并返回合并的错误
+	assert.Error(t, err) // bulkInsertInternal 收集错误并返回合并的错误
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(0), result.InsertedCount)
 	assert.Len(t, result.Errors, 1) // 只有第一个批次的错误
 }
 
-func TestWrapper_BulkWriteInternal_MultipleBatches(t *testing.T) {
+func TestWrapper_BulkInsertInternal_MultipleBatches(t *testing.T) {
 	mock := newMockCollectionOps()
 
 	w := &mongoWrapper{
@@ -681,14 +662,14 @@ func TestWrapper_BulkWriteInternal_MultipleBatches(t *testing.T) {
 	}
 
 	// 每批 3 个，共 4 批（3+3+3+1）
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 3})
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 3})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(10), result.InsertedCount)
 	assert.Empty(t, result.Errors)
 }
 
-func TestWrapper_BulkWriteInternal_WithSlowQueryHook(t *testing.T) {
+func TestWrapper_BulkInsertInternal_WithSlowQueryHook(t *testing.T) {
 	mock := newMockCollectionOps()
 	var captured SlowQueryInfo
 
@@ -706,10 +687,10 @@ func TestWrapper_BulkWriteInternal_WithSlowQueryHook(t *testing.T) {
 
 	docs := []any{map[string]any{"name": "doc1"}}
 
-	result, err := w.bulkWriteInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "bulkWrite", captured.Operation)
+	assert.Equal(t, "bulkInsert", captured.Operation)
 }
 
 func TestBuildSlowQueryInfoFromOps(t *testing.T) {
@@ -745,7 +726,6 @@ func TestWithAsyncSlowQueryHook(t *testing.T) {
 
 func TestWithAsyncSlowQueryWorkers(t *testing.T) {
 	opts := defaultOptions()
-	original := opts.AsyncSlowQueryWorkers
 
 	// 正数生效
 	WithAsyncSlowQueryWorkers(20)(opts)
@@ -758,8 +738,6 @@ func TestWithAsyncSlowQueryWorkers(t *testing.T) {
 	// 负值被忽略
 	WithAsyncSlowQueryWorkers(-1)(opts)
 	assert.Equal(t, 20, opts.AsyncSlowQueryWorkers)
-
-	_ = original
 }
 
 func TestWithAsyncSlowQueryQueueSize(t *testing.T) {
@@ -894,7 +872,7 @@ func TestWrapper_FindPage_AfterClose(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestWrapper_BulkWrite_AfterClose(t *testing.T) {
+func TestWrapper_BulkInsert_AfterClose(t *testing.T) {
 	mock := newMockClientOps()
 	w := &mongoWrapper{
 		client:    nil,
@@ -905,8 +883,8 @@ func TestWrapper_BulkWrite_AfterClose(t *testing.T) {
 	err := w.Close(context.Background())
 	assert.NoError(t, err)
 
-	// Close 后调用 BulkWrite 应返回 ErrClosed
-	result, err := w.BulkWrite(context.Background(), nil, []any{1}, BulkOptions{})
+	// Close 后调用 BulkInsert 应返回 ErrClosed
+	result, err := w.BulkInsert(context.Background(), nil, []any{1}, BulkOptions{})
 	assert.ErrorIs(t, err, ErrClosed)
 	assert.Nil(t, result)
 }
@@ -1139,7 +1117,7 @@ func TestWrapper_FindPage_ValidParams_WithRealCollection(t *testing.T) {
 	}
 }
 
-func TestWrapper_BulkWrite_EmptyDocs_WithRealCollection(t *testing.T) {
+func TestWrapper_BulkInsert_EmptyDocs_WithRealCollection(t *testing.T) {
 	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
 	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
@@ -1153,15 +1131,15 @@ func TestWrapper_BulkWrite_EmptyDocs_WithRealCollection(t *testing.T) {
 	}
 	coll := client.Database("testdb").Collection("testcoll")
 
-	// When: bulkWrite is called with empty docs
-	result, err := w.bulkWrite(context.Background(), coll, []any{}, BulkOptions{})
+	// When: bulkInsert is called with empty docs
+	result, err := w.bulkInsert(context.Background(), coll, []any{}, BulkOptions{})
 
 	// Then: should return ErrEmptyDocs
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrEmptyDocs)
 }
 
-func TestWrapper_BulkWrite_ValidParams_WithRealCollection(t *testing.T) {
+func TestWrapper_BulkInsert_ValidParams_WithRealCollection(t *testing.T) {
 	// 创建一个真实的 wrapper 和 collection（使用延迟连接）
 	client, err := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
@@ -1175,12 +1153,12 @@ func TestWrapper_BulkWrite_ValidParams_WithRealCollection(t *testing.T) {
 	}
 	coll := client.Database("testdb").Collection("testcoll")
 
-	// When: bulkWrite is called with valid params
+	// When: bulkInsert is called with valid params
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	docs := []any{map[string]any{"name": "test"}}
-	result, err := w.bulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 10})
+	result, err := w.bulkInsert(ctx, coll, docs, BulkOptions{BatchSize: 10})
 
 	// Then: 可能成功（有 MongoDB）或失败（无 MongoDB），两者都是有效的代码路径
 	// 此测试主要验证代码路径可达，而非特定结果

@@ -31,8 +31,9 @@
 //
 // # 错误排除
 //
-// 若需将特定错误（如 context.Canceled）从熔断统计中排除，
-// 可通过 WithSuccessPolicy 设置自定义成功判定策略。
+// 若需将特定错误（如 context.Canceled）从熔断统计中排除（不影响任何计数），
+// 可通过 WithExcludePolicy 设置错误排除策略。
+// 若需将特定错误标记为"成功"（计入成功计数），请使用 WithSuccessPolicy。
 //
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

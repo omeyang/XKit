@@ -97,6 +97,7 @@ func (br *BreakerRetryer) Retryer() *xretry.Retryer {
 //
 // 注意：fn 不接收 context，context 取消仅在重试间隔时检测。
 // 若需在操作内部响应取消，请在 fn 闭包中捕获 context 使用。
+// br 不能为 nil，否则返回 ErrNilBreakerRetryer。
 //
 // 示例:
 //
@@ -108,7 +109,7 @@ func (br *BreakerRetryer) Retryer() *xretry.Retryer {
 func ExecuteWithRetry[T any](ctx context.Context, br *BreakerRetryer, fn func() (T, error)) (T, error) {
 	var zero T
 	if br == nil {
-		return zero, ErrNilBreaker
+		return zero, ErrNilBreakerRetryer
 	}
 	return xretry.DoWithResult(ctx, br.retryer, func(ctx context.Context) (T, error) {
 		// 每次重试尝试都经过熔断器
@@ -223,7 +224,13 @@ func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...B
 //
 // 注意：即使发生 panic，也会通过 defer 确保熔断器计数被正确更新（记为失败）。
 func (rtb *RetryThenBreak) Do(ctx context.Context, fn func(ctx context.Context) error) error {
-	// 检查 context
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if fn == nil {
+		return ErrNilFunc
+	}
+	// 检查 context 是否已取消
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -304,15 +311,21 @@ func (rtb *RetryThenBreak) toResultError(err error) error {
 // ExecuteRetryThenBreak 执行先重试后熔断的操作（泛型版本）
 //
 // 注意：即使发生 panic，也会通过 defer 确保熔断器计数被正确更新（记为失败）。
-// rtb 不能为 nil，否则返回 ErrNilBreaker。
+// rtb 不能为 nil，否则返回 ErrNilRetryThenBreak。
 func ExecuteRetryThenBreak[T any](ctx context.Context, rtb *RetryThenBreak, fn func() (T, error)) (T, error) {
 	var zero T
 
 	if rtb == nil {
-		return zero, ErrNilBreaker
+		return zero, ErrNilRetryThenBreak
+	}
+	if ctx == nil {
+		return zero, ErrNilContext
+	}
+	if fn == nil {
+		return zero, ErrNilFunc
 	}
 
-	// 检查 context
+	// 检查 context 是否已取消
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}

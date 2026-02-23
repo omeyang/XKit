@@ -298,6 +298,85 @@ func TestBuilder_SetAddSource(t *testing.T) {
 	}
 }
 
+func TestBuilder_SetAddSource_Accuracy(t *testing.T) {
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetAddSource(true).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	// 实例方法 source 应指向当前测试文件
+	logger.Info(context.Background(), "source accuracy test")
+	output := buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("instance Info source should point to xlog_test.go\noutput: %s", output)
+	}
+
+	// Stack 实例方法也应指向当前测试文件
+	buf.Reset()
+	logger.Stack(context.Background(), "stack source test")
+	output = buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("instance Stack source should point to xlog_test.go\noutput: %s", output)
+	}
+}
+
+func TestGlobal_SetAddSource_Accuracy(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetAddSource(true).
+		SetLevel(xlog.LevelDebug).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+	xlog.SetDefault(logger)
+
+	// 全局便利函数 source 应指向当前测试文件
+	xlog.Info(context.Background(), "global source test")
+	output := buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("global Info source should point to xlog_test.go\noutput: %s", output)
+	}
+
+	// 全局 Stack source 应指向当前测试文件
+	buf.Reset()
+	xlog.Stack(context.Background(), "global stack source test")
+	output = buf.String()
+	if !strings.Contains(output, "xlog_test.go") {
+		t.Errorf("global Stack source should point to xlog_test.go\noutput: %s", output)
+	}
+}
+
+// =============================================================================
+// Builder first-error-wins 测试
+// =============================================================================
+
+func TestBuilder_FirstErrorWins(t *testing.T) {
+	// 第一个错误应该被保留，后续 Set 应被跳过
+	_, _, err := xlog.New().
+		SetLevelString("invalid_first").    // 第一个错误
+		SetFormat("also_invalid").           // 应被跳过
+		SetDeploymentType("NOT_VALID_TYPE"). // 应被跳过
+		Build()
+	if err == nil {
+		t.Fatal("Build() should return error")
+	}
+	// 验证保留的是第一个错误
+	if !strings.Contains(err.Error(), "invalid_first") {
+		t.Errorf("Build() should return first error, got: %v", err)
+	}
+}
+
 // =============================================================================
 // Cleanup 生命周期测试
 // =============================================================================

@@ -178,6 +178,9 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // InjectToOutgoingContext 将追踪信息注入 outgoing context。
 // 从 context 提取追踪信息并设置到 outgoing metadata，用于跨服务调用时传播。
 // 会正确传递上游的 trace-flags（采样决策）。
+//
+// 注意：本函数不传播 tracestate。如需传播 tracestate，
+// 请使用 InjectTraceToMetadata 手动设置，或使用 OpenTelemetry SDK。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
 	traceID := xctx.TraceID(ctx)
 	spanID := xctx.SpanID(ctx)
@@ -222,6 +225,8 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 // 用于手动构造 Metadata 的场景。
 // 如果 TraceInfo.Traceparent 为空但有有效的 TraceID 和 SpanID，
 // 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "00"）。
+//
+// 注意：如果同时设置了 TraceID 和 Traceparent，请确保两者一致以避免下游混淆。
 func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 	if md == nil {
 		return
@@ -237,10 +242,12 @@ func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 		md.Set(MetaRequestID, info.RequestID)
 	}
 
-	// 如果已有 Traceparent，验证后规范化为小写再透传，确保符合 W3C 规范
+	// 设计决策: 无论 info.Traceparent 是否包含非 v00 版本，
+	// 始终以 v00 格式重新生成 traceparent。这与 formatTraceparent 的设计决策一致：
+	// 本包作为 v00 实现，按 W3C 规范应以自身支持的版本重新生成。
 	if info.Traceparent != "" {
-		if _, _, _, ok := parseTraceparent(info.Traceparent); ok {
-			md.Set(MetaTraceparent, strings.ToLower(info.Traceparent))
+		if traceID, spanID, traceFlags, ok := parseTraceparent(info.Traceparent); ok {
+			md.Set(MetaTraceparent, formatTraceparent(traceID, spanID, traceFlags))
 		}
 		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
 	}

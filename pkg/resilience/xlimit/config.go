@@ -64,10 +64,15 @@ func (c Config) Validate() error {
 		return fmt.Errorf("%w: local_pod_count cannot be negative", ErrInvalidRule)
 	}
 
+	seen := make(map[string]int, len(c.Rules))
 	for i, rule := range c.Rules {
 		if err := rule.Validate(); err != nil {
 			return fmt.Errorf("rules[%d]: %w", i, err)
 		}
+		if prev, dup := seen[rule.Name]; dup {
+			return fmt.Errorf("%w: duplicate rule name %q (rules[%d] and rules[%d])", ErrInvalidRule, rule.Name, prev, i)
+		}
+		seen[rule.Name] = i
 	}
 
 	return nil
@@ -216,10 +221,10 @@ type Override struct {
 // Validate 验证覆盖配置是否有效
 func (o Override) Validate() error {
 	if o.Match == "" {
-		return fmt.Errorf("match pattern is required")
+		return fmt.Errorf("%w: match pattern is required", ErrInvalidRule)
 	}
 	if o.Limit <= 0 {
-		return fmt.Errorf("limit must be positive")
+		return fmt.Errorf("%w: limit must be positive", ErrInvalidRule)
 	}
 	return nil
 }

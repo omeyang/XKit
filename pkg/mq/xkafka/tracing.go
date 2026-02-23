@@ -77,6 +77,9 @@ func (w *TracingConsumer) ReadMessage(ctx context.Context) (context.Context, *ka
 	}
 
 	for {
+		if w.closed.Load() {
+			return ctx, nil, ErrClosed
+		}
 		if ctx.Err() != nil {
 			return ctx, nil, ctx.Err()
 		}

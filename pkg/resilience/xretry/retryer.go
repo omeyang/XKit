@@ -65,10 +65,13 @@ func WithBackoffPolicy(p BackoffPolicy) RetryerOption {
 	}
 }
 
-// WithOnRetry 设置重试回调函数
+// WithOnRetry 设置重试回调函数。
+// 传入 nil 会被静默忽略（与 WithRetryPolicy/WithBackoffPolicy 保持一致）。
 func WithOnRetry(f func(attempt int, err error)) RetryerOption {
 	return func(r *Retryer) {
-		r.onRetry = f
+		if f != nil {
+			r.onRetry = f
+		}
 	}
 }
 
@@ -153,7 +156,10 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	}
 
 	// 设置重试条件
-	// 通过闭包捕获 ctx 并维护计数器，使 ShouldRetry 在 Retryer 路径下真正生效。
+	// 设计决策: Attempts(maxAttempts) 设置 retry-go 的硬上限，RetryIf 中的
+	// ShouldRetry 提供更灵活的逐次判断。两者共同生效——ShouldRetry 可提前终止，
+	// 但不会超过 Attempts 上限。attemptCount 表示"已失败次数"（1-based），
+	// 与 RetryPolicy.ShouldRetry 的 attempt 参数语义一致。
 	// RetryIf 在每次失败后被顺序调用（非并发），因此普通 int 计数器是安全的。
 	var attemptCount int
 	opts = append(opts, RetryIf(func(err error) bool {
@@ -190,10 +196,11 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 //
 // 通过此方法可以获取 retry-go 的原生 Retrier 实例，
 // 使用 retry-go 的完整功能。
-//
-// 注意：每次调用都会创建新的 Retrier 实例。返回的实例为一次性使用，
-// 内部 RetryIf 闭包维护了 attemptCount 状态，多次调用 Do 会导致计数累积。
 // 如果接收者为 nil，使用默认配置创建实例。
+//
+// WARNING: 返回的实例为一次性使用。内部 RetryIf 闭包维护了 attemptCount 状态，
+// 对同一实例多次调用 Do 会导致计数累积，产生非预期的重试行为。
+// 每次需要重试时应重新调用 Retrier() 获取新实例。
 func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 	if r == nil {
 		return retry.New(Context(ctx))

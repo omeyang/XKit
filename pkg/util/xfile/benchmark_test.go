@@ -45,6 +45,14 @@ func BenchmarkSanitizePathRelative(b *testing.B) {
 	}
 }
 
+// BenchmarkSanitizePathTraversal 测试路径穿越拒绝路径性能
+func BenchmarkSanitizePathTraversal(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = SanitizePath("../etc/passwd")
+	}
+}
+
 // BenchmarkSanitizePathParallel 测试并发路径规范化性能
 func BenchmarkSanitizePathParallel(b *testing.B) {
 	b.ReportAllocs()
@@ -72,6 +80,14 @@ func BenchmarkSafeJoinSubdir(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = SafeJoin("/var/log", "myapp/service/app.log")
+	}
+}
+
+// BenchmarkSafeJoinReject 测试路径穿越拒绝路径性能
+func BenchmarkSafeJoinReject(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = SafeJoin("/var/log", "../etc/passwd")
 	}
 }
 

@@ -210,7 +210,9 @@ func WithMaxRequests(n uint32) BreakerOption {
 // 可用于日志记录、监控告警等。
 func WithOnStateChange(f func(name string, from, to State)) BreakerOption {
 	return func(b *Breaker) {
-		b.onStateChange = f
+		if f != nil {
+			b.onStateChange = f
+		}
 	}
 }
 

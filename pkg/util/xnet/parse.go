@@ -51,6 +51,21 @@ func ParseRange(s string) (netipx.IPRange, error) {
 		if err != nil {
 			return netipx.IPRange{}, fmt.Errorf("%w: invalid CIDR: %w", ErrInvalidRange, err)
 		}
+
+		// 设计决策: 将 IPv4-mapped IPv6 CIDR 统一转为纯 IPv4 CIDR，与 parseRangeWithMask 行为一致。
+		// 若直接按 IPv6 前缀位解析，"::ffff:192.168.1.0/24" 会生成覆盖 :: 到
+		// 0:ff:ffff:...:ffff 的巨大范围（IPv6 /24），而用户意图通常是 IPv4 /24。
+		// 规则：bits >= 96 → 转为 IPv4 prefix(bits-96)；bits < 96 → 拒绝（前缀超出映射范围，语义模糊）。
+		if prefix.Addr().Is4In6() {
+			bits := prefix.Bits()
+			if bits < 96 {
+				return netipx.IPRange{}, fmt.Errorf("%w: IPv4-mapped CIDR prefix length %d is less than 96, ambiguous range", ErrInvalidRange, bits)
+			}
+			v4Addr := prefix.Addr().Unmap()
+			v4Prefix := netip.PrefixFrom(v4Addr, bits-96)
+			prefix = v4Prefix
+		}
+
 		return netipx.RangeOfPrefix(prefix.Masked()), nil
 	}
 
@@ -85,6 +100,9 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
 		// 拆分后 start="fe80::1%eth" 可解析，end="0-garbage" 不可解析，
 		// 但整体字符串会被 netip.ParseAddr 解析为 zone="eth-0-garbage" 的合法地址。
 		// 此行为是正确的：zone ID 由操作系统/接口定义，无法在解析器层面限制其内容。
+		//
+		// 注意: 当前此分支在 ParseRange 调用路径下不可达，因为入口处已拒绝包含 '%' 的输入。
+		// 保留此逻辑作为 parseExplicitRange 的自完备性保证。
 		if addr, err := netip.ParseAddr(s); err == nil {
 			return netipx.IPRangeFrom(addr, addr), nil, true
 		}
@@ -141,10 +159,10 @@ func parseRangeWithMask(addrStr, maskStr string) (netipx.IPRange, error) {
 // 空切片或 nil 返回空的 IPSet。
 func ParseRanges(strs []string) (*netipx.IPSet, error) {
 	var b netipx.IPSetBuilder
-	for _, s := range strs {
+	for i, s := range strs {
 		r, err := ParseRange(s)
 		if err != nil {
-			return nil, fmt.Errorf("parse range %q: %w", s, err)
+			return nil, fmt.Errorf("parse range [%d] %q: %w", i, s, err)
 		}
 		b.AddRange(r)
 	}

@@ -510,12 +510,12 @@ func TestEvalSymlinksPartialDeepPath(t *testing.T) {
 	}
 
 	// 测试超深路径（超过 maxSymlinkDepth=255 层）
-	// 当目录不存在时，evalSymlinksPartialWithDepth 会递归调用自己
+	// 当目录不存在时，evalSymlinksPartial 会迭代向上查找可解析祖先
 	deepBase := "/nonexistent"
 	for i := 0; i < 300; i++ {
 		deepBase += "/level"
 	}
-	_, err = evalSymlinksPartialWithDepth(deepBase+"/file.log", 0)
+	_, err = evalSymlinksPartial(deepBase + "/file.log")
 	if err == nil {
 		t.Fatal("期望深层路径返回错误，但没有")
 	}

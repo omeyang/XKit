@@ -452,27 +452,34 @@ func TestTokenBucket_UpdateParams(t *testing.T) {
 	tb := &tokenBucket{
 		tokens:     100,
 		limit:      100,
+		burst:      100,
 		window:     time.Minute,
 		lastUpdate: time.Now(),
 	}
 
-	// 缩小 limit，tokens 应该被截断
-	tb.updateParams(50, time.Minute)
+	// 缩小 burst，tokens 应该被截断到新容量
+	tb.updateParams(50, 50, time.Minute)
 
 	tb.mu.Lock()
 	if tb.limit != 50 {
 		t.Errorf("expected limit 50, got %d", tb.limit)
+	}
+	if tb.burst != 50 {
+		t.Errorf("expected burst 50, got %d", tb.burst)
 	}
 	if tb.tokens != 50 {
 		t.Errorf("expected tokens truncated to 50, got %f", tb.tokens)
 	}
 	tb.mu.Unlock()
 
-	// 扩大 limit，tokens 不变
-	tb.updateParams(200, time.Minute)
+	// 扩大 burst，tokens 不变
+	tb.updateParams(200, 200, time.Minute)
 	tb.mu.Lock()
 	if tb.limit != 200 {
 		t.Errorf("expected limit 200, got %d", tb.limit)
+	}
+	if tb.burst != 200 {
+		t.Errorf("expected burst 200, got %d", tb.burst)
 	}
 	if tb.tokens != 50 {
 		t.Errorf("expected tokens unchanged at 50, got %f", tb.tokens)

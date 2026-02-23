@@ -373,7 +373,7 @@ func TestMongo_FindPage_Integration(t *testing.T) {
 // 批量写入测试
 // =============================================================================
 
-func TestMongo_BulkWrite_Integration(t *testing.T) {
+func TestMongo_BulkInsert_Integration(t *testing.T) {
 	client, cleanup := setupMongo(t)
 	defer cleanup()
 
@@ -396,7 +396,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			docs[i] = bson.M{"index": i, "name": fmt.Sprintf("bulk-%d", i)}
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), result.InsertedCount)
 		assert.Empty(t, result.Errors)
@@ -415,7 +415,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			docs[i] = bson.M{"index": i}
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 100})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{BatchSize: 100})
 		require.NoError(t, err)
 		assert.Equal(t, int64(250), result.InsertedCount)
 	})
@@ -432,7 +432,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 		}
 
 		start := time.Now()
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 1000})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{BatchSize: 1000})
 		elapsed := time.Since(start)
 
 		require.NoError(t, err)
@@ -457,7 +457,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			bson.M{"unique_field": "c"},
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{
 			Ordered: false, // 无序，继续执行
 		})
 		require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 	})
 
 	t.Run("空文档列表", func(t *testing.T) {
-		_, err := wrapper.BulkWrite(ctx, coll, []any{}, BulkOptions{})
+		_, err := wrapper.BulkInsert(ctx, coll, []any{}, BulkOptions{})
 		assert.ErrorIs(t, err, ErrEmptyDocs)
 	})
 }
@@ -822,7 +822,7 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 				for j := 0; j < 10; j++ {
 					docs[j] = bson.M{"worker": id, "item": j}
 				}
-				result, err := wrapper.BulkWrite(ctx, writeColl, docs, BulkOptions{})
+				result, err := wrapper.BulkInsert(ctx, writeColl, docs, BulkOptions{})
 				if err == nil {
 					successCount.Add(result.InsertedCount)
 				}

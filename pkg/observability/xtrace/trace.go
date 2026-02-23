@@ -125,7 +125,7 @@ func injectID(ctx context.Context, value string, autoGenerate bool, inj idInject
 	if value != "" {
 		if inj.validate(value) {
 			ctx, err = inj.inject(ctx, value)
-			if err != nil {
+			if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 				xlog.Warn(ctx, "xtrace: failed to inject "+inj.name,
 					slog.String(inj.name, value), slog.Any("error", err))
 			}
@@ -134,14 +134,14 @@ func injectID(ctx context.Context, value string, autoGenerate bool, inj idInject
 				slog.String(inj.name, value))
 			if autoGenerate {
 				ctx, err = inj.ensure(ctx)
-				if err != nil {
+				if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 					xlog.Warn(ctx, "xtrace: failed to ensure "+inj.name, slog.Any("error", err))
 				}
 			}
 		}
 	} else if autoGenerate {
 		ctx, err = inj.ensure(ctx)
-		if err != nil {
+		if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 			xlog.Warn(ctx, "xtrace: failed to ensure "+inj.name, slog.Any("error", err))
 		}
 	}
@@ -209,7 +209,7 @@ func injectTraceFlags(ctx context.Context, traceFlags string) context.Context {
 	}
 	var err error
 	ctx, err = xctx.WithTraceFlags(ctx, strings.ToLower(traceFlags))
-	if err != nil {
+	if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 		xlog.Warn(ctx, "xtrace: failed to inject trace_flags",
 			slog.String("trace_flags", traceFlags), slog.Any("error", err))
 	}
@@ -235,20 +235,28 @@ func hasTraceparentSeparators(s string) bool {
 	return s[2] == '-' && s[35] == '-' && s[52] == '-'
 }
 
-// 使用固定索引解析，避免 strings.SplitN 的堆分配。
-func parseTraceparent(traceparent string) (traceID, spanID, traceFlags string, ok bool) {
+// validateTraceparentStructure 验证 traceparent 的结构（长度、分隔符、版本、版本长度约束）。
+func validateTraceparentStructure(traceparent string) bool {
 	// W3C 规范：最小长度 55 字符（{2}-{32}-{16}-{2}）
 	if len(traceparent) < 55 || !hasTraceparentSeparators(traceparent) {
-		return "", "", "", false
+		return false
 	}
-
 	version := traceparent[0:2]
 	if !isValidTraceparentVersion(version) {
-		return "", "", "", false
+		return false
 	}
 	// W3C 规范：version 00 必须恰好 55 字符，不允许额外字段
-	// 未来版本（> 00）可以包含额外字段
-	if version == "00" && len(traceparent) != 55 {
+	if version == "00" {
+		return len(traceparent) == 55
+	}
+	// W3C 前向兼容：未知版本如果长度超过 55，第 56 位（索引 55）必须是 '-'
+	// 这确保扩展字段使用正确的分隔符格式
+	return len(traceparent) <= 55 || traceparent[55] == '-'
+}
+
+// 使用固定索引解析，避免 strings.SplitN 的堆分配。
+func parseTraceparent(traceparent string) (traceID, spanID, traceFlags string, ok bool) {
+	if !validateTraceparentStructure(traceparent) {
 		return "", "", "", false
 	}
 
@@ -289,6 +297,9 @@ func isValidTraceFlags(flags string) bool {
 // 解析端容错：同时接受大写和小写，确保与不同实现的互操作性。
 // 输出端（formatTraceparent）会统一转换为小写，确保符合 W3C 规范。
 func isValidHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		isDigit := c >= '0' && c <= '9'

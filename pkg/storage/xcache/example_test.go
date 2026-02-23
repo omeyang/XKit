@@ -200,6 +200,45 @@ func Example_hashOperations() {
 	// total fields: 2
 }
 
+func Example_loaderWithTTLJitter() {
+	// 使用 miniredis 进行测试
+	mr, err := miniredis.Run()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	})
+
+	cache, err := xcache.NewRedis(client)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer cache.Close()
+
+	// 创建带 TTL 抖动的 Loader，防止缓存雪崩
+	loader, err := xcache.NewLoader(cache,
+		xcache.WithTTLJitter(0.1), // 10% 抖动：1h TTL → 约 57-63 分钟
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	value, err := loader.Load(ctx, "config:app", func(ctx context.Context) ([]byte, error) {
+		return []byte(`{"feature":"enabled"}`), nil
+	}, time.Hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(string(value))
+	// Output: {"feature":"enabled"}
+}
+
 func Example_loaderWithDistributedLock() {
 	// 使用 miniredis 进行测试
 	mr, err := miniredis.Run()

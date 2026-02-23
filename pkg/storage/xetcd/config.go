@@ -104,8 +104,12 @@ func (c *Config) String() string {
 	if c.Password != "" {
 		password = "***"
 	}
-	return fmt.Sprintf("Config{Endpoints:%v Username:%s Password:%s DialTimeout:%v}",
-		c.Endpoints, c.Username, password, c.DialTimeout)
+	return fmt.Sprintf("Config{Endpoints:%v Username:%s Password:%s DialTimeout:%v "+
+		"DialKeepAliveTime:%v DialKeepAliveTimeout:%v AutoSyncInterval:%v "+
+		"RejectOldCluster:%v PermitWithoutStream:%v}",
+		c.Endpoints, c.Username, password, c.DialTimeout,
+		c.DialKeepAliveTime, c.DialKeepAliveTimeout, c.AutoSyncInterval,
+		c.RejectOldCluster, c.PermitWithoutStream)
 }
 
 // Validate 验证配置有效性。

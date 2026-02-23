@@ -33,4 +33,5 @@
 //   - Client() 方法返回底层的 pulsar.Client，可使用所有原生 API
 //   - CreateProducer/Subscribe 返回原生的 pulsar.Producer/Consumer
 //   - TracingProducer/TracingConsumer 嵌入原生类型，可访问所有原生方法
+//   - Schema 管理（Avro/JSON/Protobuf）超出本包范围，通过 Client() 使用原生 Schema API
 package xpulsar

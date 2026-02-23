@@ -196,6 +196,13 @@ func TestWireRangeString(t *testing.T) {
 	// Single IP
 	w = WireRange{Start: "192.168.1.1", End: "192.168.1.1"}
 	assert.Equal(t, "192.168.1.1", w.String())
+
+	// 零值
+	assert.Equal(t, "", WireRange{}.String())
+
+	// 部分设置 — 只返回有值的部分，不产生前导/尾随连字符
+	assert.Equal(t, "10.0.0.1", WireRange{Start: "10.0.0.1", End: ""}.String())
+	assert.Equal(t, "10.0.0.1", WireRange{Start: "", End: "10.0.0.1"}.String())
 }
 
 func TestWireRangeJSON(t *testing.T) {

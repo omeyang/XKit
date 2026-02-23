@@ -24,6 +24,7 @@ var (
 	ErrInvalidPageSize = fmt.Errorf("xclickhouse: %w", storageopt.ErrInvalidPageSize)
 
 	// ErrPageSizeTooLarge 表示页大小超过允许的最大值。
+	// 此错误为 xclickhouse 特有（storageopt 无对应错误），因此不包装内部错误。
 	ErrPageSizeTooLarge = errors.New("xclickhouse: page size exceeds maximum allowed")
 
 	// ErrPageOverflow 表示分页计算溢出（页码或每页大小过大）。

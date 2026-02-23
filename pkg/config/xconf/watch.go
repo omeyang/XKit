@@ -300,10 +300,14 @@ func (w *Watcher) handleEvent(event fsnotify.Event, filename string) {
 
 // handleError 处理 watcher 错误
 func (w *Watcher) handleError(err error) {
-	w.safeCallback(fmt.Errorf("xconf: watch error: %w", err))
+	w.safeCallback(fmt.Errorf("xconf: watch error [%s]: %w", w.cfg.path, err))
 }
 
 // safeCallback 安全地调用用户回调，捕获 panic 防止进程崩溃。
+//
+// 设计决策: panic 恢复使用全局 slog 输出日志。
+// 作为工具库不应依赖上层日志组件（如 xlog），且回调 panic 属于编程错误，
+// 使用标准库 slog 确保至少有一处日志输出，优于静默吞掉。
 func (w *Watcher) safeCallback(err error) {
 	if w.callback == nil {
 		return

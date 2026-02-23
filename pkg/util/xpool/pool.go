@@ -87,16 +87,20 @@ func (p *Pool[T]) worker() {
 
 // safeHandle 安全执行 handler，捕获 panic 并记录堆栈。
 //
-// 设计决策: panic 恢复日志包含完整 task 值以便调试。
-// 若 task 包含敏感信息，调用方应通过 WithLogger 注入带脱敏的 logger，
-// 或在 handler 内部自行 recover 以控制日志内容。
+// 设计决策: panic 恢复日志默认仅记录 task 类型（如 "int"、"*MyStruct"），
+// 避免泛型 T 可能包含的敏感信息（密码、Token 等）泄露到日志系统。
+// 如需在 panic 日志中包含完整 task 值以便调试，可通过 WithLogTaskValue() 显式启用。
 func (p *Pool[T]) safeHandle(task T) {
 	defer func() {
 		if r := recover(); r != nil {
 			attrs := []any{
 				"panic", r,
-				"task", task,
 				"stack", string(debug.Stack()),
+			}
+			if p.opts.logTaskValue {
+				attrs = append(attrs, "task", task)
+			} else {
+				attrs = append(attrs, "task_type", fmt.Sprintf("%T", task))
 			}
 			if p.opts.name != "" {
 				attrs = append(attrs, "pool", p.opts.name)

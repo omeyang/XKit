@@ -55,8 +55,10 @@ func (l *xlogger) logWithSkip(ctx context.Context, level slog.Level, msg string,
 	var pc uintptr
 	if l.addSource {
 		var pcs [1]uintptr
-		// skip=3: runtime.Callers -> logWithSkip -> log/Debug/Info/... -> 业务代码
-		// extraSkip: 额外跳过的栈帧（如全局函数调用时需要 +1）
+		// 基础 skip=3: Callers(0) → logWithSkip(1) → 直接调用方(2) → 跳到(3)
+		// extraSkip 用于跳过额外的中间帧：
+		//   实例路径 log() 传 1：Callers → logWithSkip → log → Debug → 业务代码(3+1=4)
+		//   全局路径 globalLog 传 1：Callers → logWithSkip → globalLog → xlog.Info → 业务代码(3+1=4)
 		runtime.Callers(3+extraSkip, pcs[:])
 		pc = pcs[0]
 	}
@@ -71,10 +73,11 @@ func (l *xlogger) logWithSkip(ctx context.Context, level slog.Level, msg string,
 
 // log 通用日志方法，正确捕获调用者位置
 // 用于实例方法调用（如 logger.Info()）
+// extraSkip=1：跳过 log 自身这一帧（调用链 业务代码 → Debug/Info/… → log → logWithSkip）
 //
 //go:noinline
 func (l *xlogger) log(ctx context.Context, level slog.Level, msg string, attrs []slog.Attr) {
-	l.logWithSkip(ctx, level, msg, attrs, 0)
+	l.logWithSkip(ctx, level, msg, attrs, 1)
 }
 
 // handleError 处理内部错误（Handler.Handle 失败）
@@ -171,12 +174,13 @@ func (l *xlogger) stackWithSkip(ctx context.Context, msg string, attrs []slog.At
 		n = runtime.Stack(buf, false)
 	}
 
-	// 设计决策: 始终归还原始缓冲区（bufp）到池中。bufp 始终指向 Get 获取的
-	// initialStackSize 缓冲区，即使 buf 已扩展为新分配的大缓冲区。
-	// 扩展后的大缓冲区（buf）交给 GC 回收，避免池中积累大量内存。
-	stackPool.Put(bufp)
-
+	// 先将堆栈转为不可变 string，再归还缓冲区。
+	// 设计决策: 必须在 Put 前完成 string(buf[:n]) 拷贝，否则未扩展场景下
+	// buf 与 *bufp 共享底层数组，另一个 goroutine 的 Get+Stack 会覆盖数据。
+	// bufp 始终指向 Get 获取的 initialStackSize 缓冲区，扩展后的大缓冲区
+	// (buf) 交给 GC 回收，避免池中积累大量内存。
 	stackAttr := slog.String(KeyStack, string(buf[:n]))
+	stackPool.Put(bufp)
 
 	// 仅在启用 AddSource 时才捕获调用者位置（与 logWithSkip 行为一致）
 	var pc uintptr

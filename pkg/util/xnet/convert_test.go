@@ -225,6 +225,11 @@ func TestAddrAdd_Overflow(t *testing.T) {
 	maxV6 := netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
 	_, err = AddrAdd(maxV6, 1)
 	assert.ErrorIs(t, err, ErrOverflow)
+
+	// IPv6 下溢
+	minV6 := netip.MustParseAddr("::")
+	_, err = AddrAdd(minV6, -1)
+	assert.ErrorIs(t, err, ErrOverflow)
 }
 
 func TestAddrAdd_Invalid(t *testing.T) {

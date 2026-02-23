@@ -217,6 +217,33 @@ func TestParseRoundTrip(t *testing.T) {
 	})
 }
 
+// TestParseStdlib 直接测试 parseStdlib 内部函数的成功路径。
+// 通过 Parse() 调用时，所有标准 6 字节 MAC 格式都被自定义解析器拦截，
+// parseStdlib 的成功路径（net.ParseMAC 返回 6 字节）不会被覆盖。
+func TestParseStdlib(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  Addr
+	}{
+		{"colon", "aa:bb:cc:dd:ee:ff", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}},
+		{"dash", "aa-bb-cc-dd-ee-ff", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseStdlib(tt.input)
+			if err != nil {
+				t.Errorf("parseStdlib(%q) error = %v", tt.input, err)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("parseStdlib(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestParse_ZeroAddressConsistency 验证全零 MAC 地址的一致性行为。
 // 这是有意的设计决策：Parse("00:00:00:00:00:00") 返回零值 Addr{}，
 // 其 IsValid() 返回 false，与 net/netip.Addr 的设计一致。

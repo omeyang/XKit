@@ -8,14 +8,15 @@
 //   - 增值功能（健康检查、统计、分页查询、批量插入、慢查询检测）
 //
 // 通过 Conn() 直接执行的操作不会进入统计和慢查询检测。
+// 异步插入（AsyncInsert）、Exec 等未封装的操作也应通过 Conn() 使用。
 //
 // # 核心功能
 //
-//   - Conn()：暴露底层 driver.Conn
-//   - Health()：健康检查
+//   - Conn()：暴露底层 driver.Conn（关闭后仍可调用，底层操作返回驱动层错误）
+//   - Health()：健康检查（关闭后返回 ErrClosed）
 //   - Stats()：统计信息
-//   - QueryPage()：分页查询（统计为 2 次查询，PageSize 上限 MaxPageSize）
-//   - BatchInsert()：批量插入（context 取消时中止当前批次，不发送部分数据）
+//   - QueryPage()：分页查询（关闭后返回 ErrClosed，统计为 2 次查询，PageSize 上限 MaxPageSize）
+//   - BatchInsert()：批量插入（关闭后返回 ErrClosed，context 取消时中止当前批次，不发送部分数据）
 //   - Close()：幂等关闭（多次调用安全，第二次起返回 ErrClosed）
 //
 // # 已知限制

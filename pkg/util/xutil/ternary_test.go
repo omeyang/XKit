@@ -24,8 +24,8 @@ func TestIf(t *testing.T) {
 	t.Run("pointer", func(t *testing.T) {
 		t.Parallel()
 		a, b := "a", "b"
-		assert.Equal(t, &a, If(true, &a, &b))
-		assert.Equal(t, &b, If(false, &a, &b))
+		assert.Same(t, &a, If(true, &a, &b))
+		assert.Same(t, &b, If(false, &a, &b))
 	})
 
 	t.Run("struct", func(t *testing.T) {

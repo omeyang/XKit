@@ -1,6 +1,7 @@
 package xid
 
 import (
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,27 +185,31 @@ func TestDefaultMachineID(t *testing.T) {
 func TestIsPrivateIPv4(t *testing.T) {
 	tests := []struct {
 		name     string
-		ip       []byte
+		ip       string
 		expected bool
 	}{
-		{"10.0.0.1", []byte{10, 0, 0, 1}, true},
-		{"10.255.255.255", []byte{10, 255, 255, 255}, true},
-		{"172.16.0.1", []byte{172, 16, 0, 1}, true},
-		{"172.31.255.255", []byte{172, 31, 255, 255}, true},
-		{"172.15.0.1", []byte{172, 15, 0, 1}, false},
-		{"172.32.0.1", []byte{172, 32, 0, 1}, false},
-		{"192.168.0.1", []byte{192, 168, 0, 1}, true},
-		{"192.168.255.255", []byte{192, 168, 255, 255}, true},
-		{"192.167.0.1", []byte{192, 167, 0, 1}, false},
-		{"169.254.0.1 (link-local)", []byte{169, 254, 0, 1}, true},
-		{"8.8.8.8 (public)", []byte{8, 8, 8, 8}, false},
-		{"127.0.0.1 (loopback)", []byte{127, 0, 0, 1}, false},
-		{"nil", nil, false},
+		{"10.0.0.1", "10.0.0.1", true},
+		{"10.255.255.255", "10.255.255.255", true},
+		{"172.16.0.1", "172.16.0.1", true},
+		{"172.31.255.255", "172.31.255.255", true},
+		{"172.15.0.1", "172.15.0.1", false},
+		{"172.32.0.1", "172.32.0.1", false},
+		{"192.168.0.1", "192.168.0.1", true},
+		{"192.168.255.255", "192.168.255.255", true},
+		{"192.167.0.1", "192.167.0.1", false},
+		{"169.254.0.1 (link-local)", "169.254.0.1", true},
+		{"8.8.8.8 (public)", "8.8.8.8", false},
+		{"127.0.0.1 (loopback)", "127.0.0.1", false},
+		{"zero value", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isPrivateIPv4(tt.ip)
+			addr := netip.Addr{}
+			if tt.ip != "" {
+				addr = netip.MustParseAddr(tt.ip)
+			}
+			result := isPrivateIPv4(addr)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

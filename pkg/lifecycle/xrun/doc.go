@@ -31,6 +31,7 @@
 //   - 如果 context.Canceled 来自服务内部（causeCtx 未被取消），不过滤，直接返回
 //   - 当 Group 被取消且有显式 cause 时（如 SignalError），Wait() 返回该 cause
 //   - 当 Group 被取消且无显式 cause 时，Wait() 返回 nil
+//   - 即使所有服务返回 nil，Cancel(cause) 设置的显式 cause 仍会被返回
 //
 // # 设计决策
 //
@@ -65,8 +66,9 @@
 //
 //  8. HTTPServer 关闭错误传播：HTTPServer 辅助函数通过 buffered channel
 //     传递 Shutdown() 的返回值。当 ListenAndServe 返回 http.ErrServerClosed
-//     （正常关闭）时，通过 select 同时监听 shutdownErrCh 和 ctx.Done()，
-//     防止在外部直接调用 server.Shutdown/Close 的场景下永久阻塞。
+//     （正常关闭）时，通过三路 select 区分关闭来源：ctx 驱动的关闭等待
+//     shutdown 结果，外部直接调用 server.Shutdown/Close 时立即返回 nil
+//     并通知 shutdown goroutine 退出，防止 goroutine 泄漏。
 //     这确保关闭超时等错误不会被静默吞掉，同时保证函数始终能返回。
 //
 //  9. Ticker 输入校验：Ticker 的 interval 参数必须为正数，

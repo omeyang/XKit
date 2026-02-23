@@ -46,7 +46,7 @@
 //   - 不支持自定义时钟：TTL 使用系统时间，无法注入 mock 时钟
 //   - 无内置指标：不提供命中率、淘汰次数等统计
 //   - Clear() 会触发 OnEvicted：调用 Clear() 时，所有条目的淘汰回调都会被调用
-//   - TTL 延迟清理语义：Get/Peek 会过滤已过期条目，但 Contains/Len/Keys 可能包含
+//   - TTL 延迟清理语义：Get/Peek/Contains 会过滤已过期条目，但 Len/Keys 可能包含
 //     已过期但尚未被后台清理的条目（底层库行为）
 //   - 锁竞争：底层库使用 sync.Mutex（非 RWMutex），因为 Get 会更新 LRU 顺序；
 //     高并发读场景下可能有锁竞争，当前性能对大多数场景足够

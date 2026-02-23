@@ -39,6 +39,9 @@ var (
 //
 // 这解决了熔断器打开时，重试器仍然会继续退避重试的问题。
 // 熔断器错误应该立即返回（快速失败），而不是继续重试。
+// 设计决策: Err/Name/State 保留为导出字段，便于调用方在日志和监控中直接读取。
+// 与 xretry 的未导出字段风格不同，是因为 BreakerError 通常用于外部诊断（日志/告警），
+// 而 xretry 的错误主要用于内部错误链传递。
 type BreakerError struct {
 	Err   error  // 原始错误（ErrOpenState 或 ErrTooManyRequests）
 	Name  string // 熔断器名称（可选，用于日志）

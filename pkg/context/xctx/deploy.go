@@ -41,9 +41,8 @@ const (
 
 	// EnvDeploymentType 环境变量名
 	//
-	// 设计决策: 定义在 xctx 而非 xenv，与 ErrMissingDeploymentTypeEnv 保持一致。
-	// deployment_type 是 xctx 管理的核心概念，环境变量名作为常量由此包统一提供。
-	EnvDeploymentType = "DEPLOYMENT_TYPE"
+	// 引用 internal/deploy.EnvName 作为单一事实来源。
+	EnvDeploymentType = deploy.EnvName
 
 	// deploymentFieldCount 部署字段数量（用于 slog 属性预分配，不导出以避免脆弱的 API 契约）
 	deploymentFieldCount = 1

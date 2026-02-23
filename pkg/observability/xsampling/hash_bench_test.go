@@ -55,6 +55,7 @@ const (
 	fnvPrime64  = 1099511628211
 )
 
+// fnv64aString 是零分配 FNV-1a 实现，仅用于基准对比和分布测试，非生产代码。
 func fnv64aString(s string) uint64 {
 	h := uint64(fnvOffset64)
 	for i := 0; i < len(s); i++ {
@@ -118,7 +119,7 @@ func TestHashDistribution(t *testing.T) {
 			sampled := 0
 			for _, key := range keys {
 				hashValue := tt.hash(key)
-				normalized := float64(hashValue) / (float64(^uint64(0)) + 1)
+				normalized := float64(hashValue) / float64(^uint64(0))
 				if normalized < rate {
 					sampled++
 				}
@@ -159,8 +160,8 @@ func TestCrossProcessConsistency(t *testing.T) {
 		}
 
 		// 验证采样决策一致
-		normalized1 := float64(hash1) / (float64(^uint64(0)) + 1)
-		normalized2 := float64(hash2) / (float64(^uint64(0)) + 1)
+		normalized1 := float64(hash1) / float64(^uint64(0))
+		normalized2 := float64(hash2) / float64(^uint64(0))
 		sampled1 := normalized1 < rate
 		sampled2 := normalized2 < rate
 
@@ -179,8 +180,8 @@ func TestCrossProcessConsistency(t *testing.T) {
 			t.Error("xxhash should produce consistent hash for same key")
 		}
 
-		normalized1 := float64(hash1) / (float64(^uint64(0)) + 1)
-		normalized2 := float64(hash2) / (float64(^uint64(0)) + 1)
+		normalized1 := float64(hash1) / float64(^uint64(0))
+		normalized2 := float64(hash2) / float64(^uint64(0))
 		sampled1 := normalized1 < rate
 		sampled2 := normalized2 < rate
 

@@ -51,7 +51,9 @@ func setupPulsar(t *testing.T) (string, func()) {
 	serviceURL := "pulsar://" + host + ":" + port.Port()
 
 	cleanup := func() {
-		container.Terminate(ctx)
+		if err := container.Terminate(ctx); err != nil {
+			t.Logf("warning: failed to terminate container: %v", err)
+		}
 	}
 
 	return serviceURL, cleanup
@@ -74,7 +76,7 @@ func TestIntegration_NewClient_Success(t *testing.T) {
 		xpulsar.WithOperationTimeout(30*time.Second),
 	)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	assert.NotNil(t, client.Client())
 }
@@ -91,7 +93,7 @@ func TestIntegration_Client_Health(t *testing.T) {
 		xpulsar.WithHealthTimeout(10*time.Second),
 	)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -110,7 +112,7 @@ func TestIntegration_Client_Stats(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	stats := client.Stats()
 	// 刚创建时应该没有生产者和消费者
@@ -132,7 +134,7 @@ func TestIntegration_CreateProducer_Success(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	producer, err := client.CreateProducer(pulsar.ProducerOptions{
 		Topic: "persistent://public/default/test-producer-topic",
@@ -157,7 +159,7 @@ func TestIntegration_Producer_Send(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	topic := "persistent://public/default/test-send-topic"
 	producer, err := client.CreateProducer(pulsar.ProducerOptions{
@@ -187,7 +189,7 @@ func TestIntegration_Producer_SendAsync(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	topic := "persistent://public/default/test-async-topic"
 	producer, err := client.CreateProducer(pulsar.ProducerOptions{
@@ -232,7 +234,7 @@ func TestIntegration_Subscribe_Success(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	consumer, err := client.Subscribe(pulsar.ConsumerOptions{
 		Topic:            "persistent://public/default/test-subscribe-topic",
@@ -259,7 +261,7 @@ func TestIntegration_Consumer_Receive(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	topic := "persistent://public/default/test-receive-topic"
 
@@ -312,7 +314,7 @@ func TestIntegration_ProduceAndConsume(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	topic := "persistent://public/default/test-e2e-topic"
 
@@ -371,7 +373,7 @@ func TestIntegration_MultipleProducersConsumers(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	topic := "persistent://public/default/test-multi-topic"
 	messageCount := 10
@@ -442,7 +444,7 @@ func TestIntegration_NewClient_InvalidURL(t *testing.T) {
 		// 创建失败，测试通过
 		return
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	// 如果创建成功，健康检查应该失败
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -500,7 +502,7 @@ func TestIntegration_Client_Close(t *testing.T) {
 	consumer.Close()
 
 	// 关闭客户端
-	err = client.Close()
+	err = client.Close(context.Background())
 	assert.NoError(t, err)
 }
 
@@ -514,7 +516,7 @@ func TestIntegration_Producer_Close(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	producer, err := client.CreateProducer(pulsar.ProducerOptions{
 		Topic: "persistent://public/default/test-producer-close-topic",
@@ -543,7 +545,7 @@ func TestIntegration_Consumer_Close(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	consumer, err := client.Subscribe(pulsar.ConsumerOptions{
 		Topic:            "persistent://public/default/test-consumer-close-topic",
@@ -577,7 +579,7 @@ func TestIntegration_SubscriptionTypes(t *testing.T) {
 
 	client, err := xpulsar.NewClient(serviceURL)
 	require.NoError(t, err)
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	testCases := []struct {
 		name    string

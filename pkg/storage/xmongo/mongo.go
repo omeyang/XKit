@@ -2,8 +2,10 @@ package xmongo
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/omeyang/xkit/internal/storageopt"
+	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -48,9 +50,13 @@ type Mongo interface {
 	//   - 对于大数据量：考虑使用游标分页（基于 _id 或时间戳）避免 COUNT 开销
 	FindPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error)
 
-	// BulkWrite 批量写入。
+	// BulkInsert 批量插入。
 	// 将大量文档分批插入，提高写入效率。
-	BulkWrite(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error)
+	//
+	// 设计决策: 命名为 BulkInsert 而非 BulkWrite，因为本方法仅支持 InsertMany 操作。
+	// MongoDB 官方 Collection.BulkWrite 接受 WriteModel 列表，支持 Insert/Update/Delete/Replace
+	// 四种混合操作。为避免语义混淆，此处使用更精确的命名。
+	BulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error)
 }
 
 // =============================================================================
@@ -62,7 +68,8 @@ type PageOptions struct {
 	// Page 页码，从 1 开始。
 	Page int64
 
-	// PageSize 每页大小。
+	// PageSize 每页大小，上限为 MaxPageSize（10000）。
+	// 超过上限时返回 ErrPageSizeTooLarge。
 	PageSize int64
 
 	// Sort 排序条件。
@@ -73,6 +80,16 @@ type PageOptions struct {
 	// 这可能导致分页结果在翻页时出现数据重复或遗漏。
 	// 常见做法是按 _id 或创建时间排序以确保稳定的分页结果。
 	Sort bson.D
+
+	// Projection 字段投影，控制返回哪些字段。
+	// nil 或空表示返回所有字段。
+	//
+	// 示例：
+	//   bson.D{{"name", 1}, {"age", 1}}        // 只返回 name 和 age（以及 _id）
+	//   bson.D{{"password", 0}, {"secret", 0}}  // 排除 password 和 secret
+	//
+	// 当文档包含大字段（如富文本、嵌套数组）时，使用投影可显著减少网络带宽和内存消耗。
+	Projection bson.D
 }
 
 // PageResult 分页查询结果。
@@ -104,13 +121,24 @@ type PageResult struct {
 // =============================================================================
 
 // BulkOptions 批量写入选项。
+//
+// ⚠️ 注意：BatchSize 基于文档数量而非 BSON 大小。MongoDB 单次请求的 BSON 大小限制为 16MB，
+// 当文档较大时（如包含 base64 图片、长文本），即使文档数量在 BatchSize 范围内，
+// 仍可能因 BSON 大小超限导致 MongoDB 服务端错误。
+// 建议大文档场景使用较小的 BatchSize（如 100）。
 type BulkOptions struct {
 	// BatchSize 每批大小。
 	// 默认为 1000，上限为 10000。超过上限时自动限制为上限值。
 	BatchSize int
 
 	// Ordered 是否有序写入。
-	// 有序写入时，遇到错误会停止后续操作。
+	// 默认值为 false（无序写入），与 MongoDB driver 的默认行为（有序写入）不同。
+	//
+	// 设计决策: 默认无序写入，因为批量插入场景通常追求吞吐量而非顺序保证，
+	// 且无序模式下部分失败不会阻止后续文档插入。
+	//
+	// 有序写入（Ordered=true）时，遇到第一个错误会停止后续操作。
+	// 无序写入（Ordered=false）时，MongoDB 会尝试插入所有文档，跳过失败的继续执行。
 	Ordered bool
 }
 
@@ -121,7 +149,7 @@ type BulkOptions struct {
 //
 // 示例：
 //
-//	result, err := wrapper.BulkWrite(ctx, coll, docs, opts)
+//	result, err := wrapper.BulkInsert(ctx, coll, docs, opts)
 //	if err != nil {
 //	    log.Printf("部分失败: %d/%d 条成功插入, 错误: %v",
 //	        result.InsertedCount, len(docs), err)
@@ -163,8 +191,17 @@ func New(client *mongo.Client, opts ...Option) (Mongo, error) {
 		}
 	}
 
+	// 防御性校验：确保 Observer 不为 nil（defaultOptions 已设置 NoopObserver，
+	// 但自定义 Option 可能误设为 nil）
+	if options.Observer == nil {
+		options.Observer = xmetrics.NoopObserver{}
+	}
+
 	// 创建慢查询检测器
-	detector := newSlowQueryDetector(options)
+	detector, err := newSlowQueryDetector(options)
+	if err != nil {
+		return nil, fmt.Errorf("xmongo: create slow query detector: %w", err)
+	}
 
 	return &mongoWrapper{
 		client:            client,
@@ -175,7 +212,7 @@ func New(client *mongo.Client, opts ...Option) (Mongo, error) {
 }
 
 // newSlowQueryDetector 创建慢查询检测器。
-func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQueryInfo] {
+func newSlowQueryDetector(opts *Options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
 	// 构建 storageopt 的慢查询选项
 	sqOpts := storageopt.SlowQueryOptions[SlowQueryInfo]{
 		Threshold:           opts.SlowQueryThreshold,

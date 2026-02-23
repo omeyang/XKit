@@ -19,13 +19,17 @@ type Handle interface {
 
 // Locker 提供基于 key 的进程内互斥锁。
 // 所有方法都是并发安全的。
+//
+// 设计决策: 采用 io.Closer（Close() error）而非 Close(ctx) error。
+// xkeylock 是纯内存操作，Close 仅设置标志位并关闭 channel，无需 context
+// 传递取消/超时语义。D-02 的 Close(ctx) 策略适用于分布式/资源管理类组件。
 type Locker interface {
 	io.Closer
 
 	// Acquire 阻塞式获取锁。
 	// 支持 ctx 超时/取消，ctx 取消时返回 [context.Canceled] 或 [context.DeadlineExceeded]。
 	// Locker 已关闭时返回 [ErrClosed]。key 不得为空字符串，否则返回 [ErrInvalidKey]。
-	// ctx 不得为 nil，否则 panic（与标准库 http.NewRequestWithContext 等一致）。
+	// ctx 不得为 nil，否则返回 [ErrNilContext]。
 	//
 	// 当 Acquire 处于阻塞等待时，若 Close 与 ctx 取消同时发生，
 	// 返回 [ErrClosed] 或 ctx.Err() 均有可能（Go select 语义）。
@@ -41,15 +45,23 @@ type Locker interface {
 	// 锁被占用时返回 (nil, [ErrLockOccupied])。
 	// Locker 已关闭时返回 (nil, [ErrClosed])。
 	// key 不得为空字符串，否则返回 (nil, [ErrInvalidKey])。
+	//
+	// 设计决策: 与 Close 并发时，TryAcquire 可能返回 ErrLockOccupied 而非 ErrClosed。
+	// 内部使用 best-effort 的 closed 二次检查捕获绝大多数竞态，但 check-to-return
+	// 之间存在纳秒级 TOCTOU 窗口，消除此窗口需加互斥锁，与无锁设计目标冲突。
+	// 调用方应同时处理 ErrLockOccupied 和 ErrClosed。
 	TryAcquire(key string) (Handle, error)
 
-	// Len 返回当前活跃的 key 数量。
+	// Len 返回当前活跃的 key 数量（单次原子读取，瞬时快照）。
 	// 比 Keys() 更高效，适用于监控和指标采集。
+	// 并发场景下 Len() 与 len(Keys()) 可能不一致，属正常行为。
+	// Close 后仍可安全调用，返回值随已持有 Handle 的释放逐渐归零。
 	Len() int
 
 	// Keys 返回当前活跃条目的 key 列表（包含持有者和等待者），仅用于调试。
 	// 返回值是快照，不保证跨分片原子性。
 	// 监控/指标采集场景推荐使用 Len（单次原子读取，无锁开销）。
+	// Close 后仍可安全调用，返回值随已持有 Handle 的释放逐渐归零。
 	Keys() []string
 }
 

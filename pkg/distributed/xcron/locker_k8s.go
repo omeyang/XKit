@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -22,6 +23,9 @@ import (
 var (
 	k8sNameReplaceRegex  = regexp.MustCompile(`[^a-z0-9-]`)
 	k8sNameCollapseRegex = regexp.MustCompile(`-+`)
+	// k8sPrefixRegex 校验 Lease 名称前缀：小写字母、数字、'-'，首字符必须为字母或数字。
+	// 允许以 '-' 结尾（作为前缀与 key 的分隔符）。
+	k8sPrefixRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 )
 
 // K8sLocker 基于 K8S Lease 的分布式锁。
@@ -94,10 +98,24 @@ type K8sLockerOptions struct {
 // K8s 官方 leader-election 库使用的默认值也是 2 秒。
 const DefaultClockSkew = 2 * time.Second
 
+// k8sMaxNameLen K8s 资源名最大长度（DNS-1123 label）。
+const k8sMaxNameLen = 63
+
+// k8sMinKeyBudget 前缀校验后为 key 预留的最小长度（"-" + 8位hash）。
+const k8sMinKeyBudget = 10
+
+// ErrInvalidK8sPrefix 表示 K8s Lease 名称前缀不合法。
+// 前缀必须符合 DNS-1123 字符集（小写字母、数字、'-'），首字符为字母或数字，
+// 且长度不超过 k8sMaxNameLen - k8sMinKeyBudget。
+var ErrInvalidK8sPrefix = fmt.Errorf("xcron: invalid K8s Lease prefix")
+
 // NewK8sLocker 创建基于 K8S Lease 的分布式锁。
 //
 // 如果不提供 Client，将使用 InClusterConfig 自动创建，
 // 适用于在 K8S Pod 内运行的场景。
+//
+// Prefix 必须符合 DNS-1123 字符集（小写字母、数字、'-'），
+// 首字符必须为字母或数字，且长度不超过 53（为 key 预留至少 10 个字符）。
 func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 	// 设置默认值
 	if opts.Namespace == "" {
@@ -113,6 +131,11 @@ func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 		opts.ClockSkew = DefaultClockSkew
 	} else if opts.ClockSkew < 0 {
 		opts.ClockSkew = 0 // 用户显式禁用容忍度
+	}
+
+	// Prefix fail-fast 校验：字符集、首字符、长度预算
+	if err := validateK8sPrefix(opts.Prefix); err != nil {
+		return nil, err
 	}
 
 	// 创建 K8S 客户端
@@ -141,12 +164,17 @@ func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 //
 // 每次调用生成唯一 token，确保不同获取之间不会互相干扰。
 // 通过创建或更新 Lease 资源实现锁获取。
+//
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
 func (l *K8sLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
+	if ttl <= 0 {
+		return nil, ErrInvalidTTL
+	}
 	leaseName := l.leaseName(key)
 	// 每次获取生成唯一 token，包含实例标识便于调试
 	token := fmt.Sprintf("%s:%s", l.identity, uuid.New().String())
 	now := metav1.NewMicroTime(time.Now())
-	leaseDuration := int32(ttl.Seconds())
+	leaseDuration := int32(math.Ceil(ttl.Seconds()))
 
 	// 尝试获取现有 Lease
 	lease, err := l.client.CoordinationV1().Leases(l.namespace).Get(ctx, leaseName, metav1.GetOptions{})
@@ -308,7 +336,11 @@ func (h *k8sLockHandle) Unlock(ctx context.Context) error {
 // Renew 续期锁。
 //
 // 更新 Lease 的 renewTime，延长锁的有效期。
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
 func (h *k8sLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
+	if ttl <= 0 {
+		return ErrInvalidTTL
+	}
 	lease, err := h.locker.client.CoordinationV1().Leases(h.locker.namespace).Get(ctx, h.leaseName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("xcron: failed to get lease for renew: %w", err)
@@ -321,7 +353,7 @@ func (h *k8sLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
 
 	// 更新续期时间和租期
 	now := metav1.NewMicroTime(time.Now())
-	leaseDuration := int32(ttl.Seconds())
+	leaseDuration := int32(math.Ceil(ttl.Seconds()))
 	lease.Spec.RenewTime = &now
 	lease.Spec.LeaseDurationSeconds = &leaseDuration
 
@@ -341,19 +373,21 @@ func (h *k8sLockHandle) Key() string {
 	return h.key
 }
 
-// leaseName 生成 Lease 资源名称
+// leaseName 生成 Lease 资源名称。
+// 设计决策: 以最终名称（prefix + sanitized key）整体做 63 字符约束，
+// 而非仅约束 key 部分，确保 K8s metadata.name 始终合法。
 func (l *K8sLocker) leaseName(key string) string {
-	// 将 key 转换为合法的 K8S 资源名
-	return l.prefix + sanitizeK8sName(key)
+	return l.prefix + sanitizeK8sName(key, len(l.prefix))
 }
 
-// sanitizeK8sName 将字符串转换为合法的 K8S 资源名
-// K8S 资源名要求：小写字母、数字、'-'，长度不超过 63
+// sanitizeK8sName 将字符串转换为合法的 K8S 资源名（不含 prefix 部分）。
+// K8S 资源名要求：小写字母、数字、'-'，最终名称（prefix + 本函数输出）不超过 63。
+// prefixLen 为调用方已占用的前缀长度，本函数输出不超过 63 - prefixLen。
 //
 // 当清理步骤改变了名称（字符替换/折叠/修剪）或长度超限时，
 // 添加基于原始名称的 hash 后缀确保唯一性。
 // 防止不同原始名称（如 "my.job" 和 "my/job"）清理后碰撞为 "my-job"。
-func sanitizeK8sName(name string) string {
+func sanitizeK8sName(name string, prefixLen int) string {
 	if name == "" {
 		return ""
 	}
@@ -369,9 +403,15 @@ func sanitizeK8sName(name string) string {
 	// 去除首尾的 '-'
 	sanitized = strings.Trim(sanitized, "-")
 
-	const maxLen = 63
+	const k8sMaxLen = 63
 	const hashLen = 8
 	const separator = "-"
+
+	// 本函数输出的最大长度（为 prefix 预留空间）
+	maxLen := k8sMaxLen - prefixLen
+	if maxLen < 1 {
+		maxLen = 1
+	}
 
 	// 当清理步骤改变了名称或长度超限时，添加 hash 后缀确保唯一性
 	if sanitized != lowered || len(sanitized) > maxLen {
@@ -397,6 +437,20 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// validateK8sPrefix 校验 K8s Lease 名称前缀的合法性。
+// DNS-1123 label 要求：小写字母、数字、'-'，首字符为字母或数字。
+// 前缀长度不超过 k8sMaxNameLen - k8sMinKeyBudget，为 key 预留空间。
+func validateK8sPrefix(prefix string) error {
+	maxPrefixLen := k8sMaxNameLen - k8sMinKeyBudget
+	if len(prefix) > maxPrefixLen {
+		return fmt.Errorf("%w: length %d exceeds maximum %d", ErrInvalidK8sPrefix, len(prefix), maxPrefixLen)
+	}
+	if !k8sPrefixRegex.MatchString(prefix) {
+		return fmt.Errorf("%w: %q must match [a-z0-9][a-z0-9-]*", ErrInvalidK8sPrefix, prefix)
+	}
+	return nil
 }
 
 // 确保 K8sLocker 实现了 Locker 接口

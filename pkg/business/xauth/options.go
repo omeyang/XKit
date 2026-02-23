@@ -47,7 +47,8 @@ type Options struct {
 	LocalCacheMaxSize int
 
 	// LocalCacheTTL 本地缓存 TTL。
-	// 默认与 PlatformDataCacheTTL 相同。
+	// 控制平台数据在本地缓存中的过期时间，默认与 PlatformDataCacheTTL 相同。
+	// Token 本地缓存的 TTL 独立计算（RefreshThreshold * 2），不受此参数影响。
 	LocalCacheTTL time.Duration
 
 	// EnableSingleflight 是否启用 singleflight。
@@ -105,6 +106,11 @@ func WithCache(cache CacheStore) Option {
 
 // WithHTTPClient 设置自定义 HTTP 客户端。
 // 可用于配置自定义的传输层、代理等。
+//
+// 设计决策: 注入自定义 Client 后，Config.TLS 和 Config.Timeout 不再生效——
+// 调用方既然选择自行构造 Client，就应当自行保证其 TLS 版本和超时策略满足安全要求。
+// 不对外部 Client 做事后校验，因为 http.Client 的 Transport 可以是任意实现，
+// 无法可靠地提取 TLS 配置进行断言。
 func WithHTTPClient(client *http.Client) Option {
 	return func(o *Options) {
 		o.HTTPClient = client
@@ -151,8 +157,9 @@ func WithPlatformDataCacheTTL(d time.Duration) Option {
 	}
 }
 
-// WithLocalCache 设置是否启用本地缓存。
-// 本地缓存（L1）可减少 Redis 访问，提升性能。
+// WithLocalCache 设置是否启用本地缓存（L1）。
+// 同时控制 Token 缓存和平台数据缓存的本地缓存。
+// 本地缓存可减少 Redis 访问，提升性能。
 func WithLocalCache(enable bool) Option {
 	return func(o *Options) {
 		o.EnableLocalCache = enable

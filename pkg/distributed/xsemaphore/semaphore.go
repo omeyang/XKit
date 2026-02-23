@@ -1,5 +1,7 @@
 package xsemaphore
 
+//go:generate mockgen -source=semaphore.go -destination=xsemaphoremock/mock.go -package=xsemaphoremock -mock_names=Semaphore=MockSemaphore,Permit=MockPermit
+
 import (
 	"context"
 	"time"
@@ -37,7 +39,10 @@ type Permit interface {
 	// Release 释放许可。
 	//
 	// 只释放本次获取的许可，不会影响其他 goroutine 或实例持有的许可。
-	// 返回 [ErrPermitNotHeld] 表示许可已过期或被其他获取覆盖。
+	// Release 是幂等的：重复调用或对已过期许可调用均返回 nil。
+	// 当后端检测到许可已过期或被覆盖时（ErrPermitNotHeld），
+	// Release 会静默标记为已释放并返回 nil，同时记录 warn 级别日志和 trace span，
+	// 确保 defer permit.Release(ctx) 模式始终安全。
 	Release(ctx context.Context) error
 
 	// Extend 续期许可。
@@ -144,8 +149,10 @@ type Semaphore interface {
 	Query(ctx context.Context, resource string, opts ...QueryOption) (*ResourceInfo, error)
 
 	// Close 关闭信号量，释放底层资源。
-	// 关闭后不应再创建新的许可。
-	// ctx 可用于设置关闭超时（如等待活跃许可释放）。
+	// 关闭后不应再创建新的许可。已获取的许可仍可正常 Release 和 Extend。
+	//
+	// 设计决策: ctx 参数当前未使用，仅为接口统一而保留。
+	// 关闭操作是幂等的，重复调用直接返回 nil。
 	Close(ctx context.Context) error
 
 	// Health 健康检查。

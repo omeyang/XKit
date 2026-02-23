@@ -3,6 +3,7 @@ package xbreaker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/sony/gobreaker/v2"
@@ -208,15 +209,30 @@ func WithMaxRequests(n uint32) BreakerOption {
 //
 // 当熔断器状态发生变化时会调用此回调。
 // 可用于日志记录、监控告警等。
+//
+// 设计决策: 回调通过 goroutine 异步执行，避免与 gobreaker 内部 mutex 产生死锁。
+// gobreaker 在 setState 方法中持有 sync.Mutex 期间调用 OnStateChange 回调，
+// 若回调同步调用同一 Breaker 的 State()/Counts()/Do() 方法会导致不可恢复的死锁。
+// 异步执行的代价是回调可能在状态变化后稍有延迟执行，且多次状态变化的回调顺序不保证。
+//
+// 注意：
+//   - 回调异步执行，不阻塞熔断器状态转换
+//   - 回调中的 panic 会被自动捕获并通过 slog.Error 记录，不会导致进程崩溃
+//   - 多次快速状态变化时，回调执行顺序不保证
+//   - 回调中获取的 State()/Counts() 可能已是更新后的值
 func WithOnStateChange(f func(name string, from, to State)) BreakerOption {
 	return func(b *Breaker) {
-		b.onStateChange = f
+		if f != nil {
+			b.onStateChange = f
+		}
 	}
 }
 
 // NewBreaker 创建熔断器执行器
 //
-// name 是熔断器的名称，用于日志和监控标识。
+// name 是熔断器的名称，用于日志和监控标识，建议传入非空字符串。
+// 空名称不会报错，但会影响日志可读性和监控标签有效性。
+//
 // 默认配置：
 //   - 熔断策略：连续失败 5 次触发熔断
 //   - 超时时间：60 秒
@@ -241,6 +257,16 @@ func NewBreaker(name string, opts ...BreakerOption) *Breaker {
 
 // buildSettings 构建 gobreaker 配置
 func (b *Breaker) buildSettings() gobreaker.Settings {
+	// 校验 BucketPeriod 与 Interval 的一致性
+	if b.bucketPeriod > 0 && b.interval == 0 {
+		slog.Warn("xbreaker: WithBucketPeriod set without WithInterval, behavior depends on gobreaker internal defaults",
+			"name", b.name, "bucketPeriod", b.bucketPeriod)
+	}
+	if b.bucketPeriod > 0 && b.interval > 0 && b.bucketPeriod > b.interval {
+		slog.Warn("xbreaker: BucketPeriod exceeds Interval, sliding window may behave unexpectedly",
+			"name", b.name, "interval", b.interval, "bucketPeriod", b.bucketPeriod)
+	}
+
 	st := gobreaker.Settings{
 		Name:         b.name,
 		MaxRequests:  b.maxRequests,
@@ -266,10 +292,21 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 		}
 	}
 
-	// 如果有状态变化回调
+	// 设计决策: 回调通过 goroutine 异步执行，避免在 gobreaker 内部 mutex 持有期间
+	// 同步调用回调导致死锁。详见 WithOnStateChange 文档。
+	// goroutine 内使用 recover 隔离用户回调 panic，防止回调故障导致进程崩溃。
 	if b.onStateChange != nil {
+		cb := b.onStateChange
 		st.OnStateChange = func(name string, from, to gobreaker.State) {
-			b.onStateChange(name, from, to)
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("xbreaker: OnStateChange callback panicked",
+							"name", name, "from", from.String(), "to", to.String(), "panic", r)
+					}
+				}()
+				cb(name, from, to)
+			}()
 		}
 	}
 
@@ -292,6 +329,9 @@ func (b *Breaker) buildCircuitBreaker() *gobreaker.CircuitBreaker[any] {
 //   - 熔断器错误会被包装为 BreakerError，实现 Retryable() 返回 false
 //   - 这样在与 xretry 组合使用时，熔断错误不会被重试
 func (b *Breaker) Do(ctx context.Context, fn func() error) error {
+	if b == nil {
+		return ErrNilBreaker
+	}
 	if ctx == nil {
 		return ErrNilContext
 	}
@@ -303,11 +343,17 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		return err
 	}
 
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	// 仅当 called == false 时才包装为 BreakerError，避免将业务错误误归因为熔断器拒绝。
+	var called bool
 	_, err := b.cb.Execute(func() (any, error) {
+		called = true
 		return nil, fn()
 	})
-	// 包装熔断器错误，使其实现 Retryable() 返回 false
-	return wrapBreakerError(err, b.name, b.State())
+	if err != nil && !called {
+		return wrapBreakerError(err, b.name)
+	}
+	return err
 }
 
 // Execute 执行受熔断器保护的操作（泛型版本）
@@ -340,12 +386,17 @@ func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, e
 		return zero, err
 	}
 
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	var called bool
 	result, err := b.cb.Execute(func() (any, error) {
+		called = true
 		return fn()
 	})
 	if err != nil {
-		// 包装熔断器错误，使其实现 Retryable() 返回 false
-		return zero, wrapBreakerError(err, b.name, b.State())
+		if !called {
+			return zero, wrapBreakerError(err, b.name)
+		}
+		return zero, err
 	}
 	// result 来自 fn()，类型始终为 T；nil 对应 T 的零值
 	if result == nil {
@@ -361,7 +412,12 @@ func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, e
 }
 
 // State 返回熔断器当前状态
+//
+// 如果 b 为 nil，返回 StateClosed（零值）。
 func (b *Breaker) State() State {
+	if b == nil {
+		return StateClosed
+	}
 	return b.cb.State()
 }
 
@@ -371,7 +427,12 @@ func (b *Breaker) Name() string {
 }
 
 // Counts 返回当前统计计数
+//
+// 如果 b 为 nil，返回零值 Counts。
 func (b *Breaker) Counts() Counts {
+	if b == nil {
+		return Counts{}
+	}
 	return b.cb.Counts()
 }
 
@@ -468,14 +529,25 @@ func NewManagedBreaker[T any](b *Breaker) (*ManagedBreaker[T], error) {
 //   - 熔断器错误会被包装为 BreakerError，实现 Retryable() 返回 false
 //   - 这样在与 xretry 组合使用时，熔断错误不会被重试
 func (m *ManagedBreaker[T]) Execute(fn func() (T, error)) (T, error) {
+	if m == nil {
+		var zero T
+		return zero, ErrNilManagedBreaker
+	}
 	if fn == nil {
 		var zero T
 		return zero, ErrNilFunc
 	}
-	result, err := m.cb.Execute(fn)
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	var called bool
+	result, err := m.cb.Execute(func() (T, error) {
+		called = true
+		return fn()
+	})
 	if err != nil {
-		// 包装熔断器错误，使其实现 Retryable() 返回 false
-		return result, wrapBreakerError(err, m.breaker.name, m.State())
+		if !called {
+			return result, wrapBreakerError(err, m.breaker.name)
+		}
+		return result, err
 	}
 	return result, nil
 }

@@ -10,6 +10,15 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
+// maxSize 缓存最大条目数上限。
+const maxSize = 1 << 24 // 16,777,216
+
+// minTTL 最小正 TTL 值。
+// 设计决策: 底层 expirable.LRU 使用 time.NewTicker(ttl/100) 清理过期条目，
+// 当 ttl < 100ns 时间隔截断为 0，导致 NewTicker panic。
+// 设置下限为 100ns 以防止进程崩溃，同时对实际使用场景无影响（纳秒级 TTL 无实际意义）。
+const minTTL = 100 * time.Nanosecond
+
 // Config 定义缓存配置。
 type Config struct {
 	// Size 缓存最大条目数。
@@ -17,8 +26,26 @@ type Config struct {
 	Size int
 
 	// TTL 条目过期时间。
-	// 0 表示永不过期，不允许负值。
+	// 0 表示永不过期，不允许负值，正值不得低于 100ns。
 	TTL time.Duration
+}
+
+// Validate 校验配置有效性。
+// 可在创建 Cache 前独立调用，用于启动阶段集中校验所有配置。
+func (c Config) Validate() error {
+	if c.Size <= 0 {
+		return ErrInvalidSize
+	}
+	if c.Size > maxSize {
+		return ErrSizeExceedsMax
+	}
+	if c.TTL < 0 {
+		return ErrInvalidTTL
+	}
+	if c.TTL > 0 && c.TTL < minTTL {
+		return ErrTTLTooSmall
+	}
+	return nil
 }
 
 // Option 定义缓存可选配置函数类型。
@@ -56,15 +83,10 @@ type Cache[K comparable, V any] struct {
 // 如果 cfg.Size <= 0，返回 ErrInvalidSize。
 // 如果 cfg.Size > maxSize (16,777,216)，返回 ErrSizeExceedsMax。
 // 如果 cfg.TTL < 0，返回 ErrInvalidTTL。
+// 如果 0 < cfg.TTL < 100ns，返回 ErrTTLTooSmall。
 func New[K comparable, V any](cfg Config, opts ...Option[K, V]) (*Cache[K, V], error) {
-	if cfg.Size <= 0 {
-		return nil, ErrInvalidSize
-	}
-	if cfg.Size > maxSize {
-		return nil, ErrSizeExceedsMax
-	}
-	if cfg.TTL < 0 {
-		return nil, ErrInvalidTTL
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	// 应用可选配置
@@ -139,14 +161,17 @@ func (c *Cache[K, V]) Len() int {
 
 // Contains 检查键是否存在（不更新访问时间）。
 //
-// 注意：Contains 不检查 TTL 过期状态，可能对已过期但尚未被后台清理的条目返回 true。
-// 如需精确判断，应使用 Peek 或 Get。
+// 设计决策: 内部使用 Peek 而非上游 expirable.LRU.Contains，因为上游 Contains
+// 不检查 TTL 过期（仅做 map 查找），而 Peek 会过滤已过期条目。
+// 这确保 Contains 与 Get/Peek 的 TTL 语义一致。
+//
 // 如果缓存已关闭，返回 false。
 func (c *Cache[K, V]) Contains(key K) bool {
 	if c.closed.Load() {
 		return false
 	}
-	return c.lru.Contains(key)
+	_, ok := c.lru.Peek(key)
+	return ok
 }
 
 // Peek 获取缓存值但不更新 LRU 顺序。
@@ -189,6 +214,7 @@ func (c *Cache[K, V]) Close() {
 }
 
 // stopCleanupGoroutine 停止 expirable.LRU 内部的清理 goroutine。
+// 返回 true 表示成功停止，false 表示降级为无操作（上游结构变化或通道已关闭）。
 //
 // 设计决策: hashicorp/golang-lru/v2@v2.0.7 在 TTL > 0 时启动后台 goroutine 清理过期条目，
 // 但其 Close() 方法被注释掉（源码注释："decided to add functionality to close it in the version
@@ -197,30 +223,42 @@ func (c *Cache[K, V]) Close() {
 //
 // 已知限制：
 //   - 依赖上游未导出字段 "done" 的名称和类型（chan struct{}），升级版本后应验证
-//   - 如果上游结构变化（字段重命名/类型变更），静默降级为无操作（goroutine 泄漏）
-//   - 如果 done 已关闭，recover 捕获 panic，不会崩溃
+//   - 如果上游结构变化（字段重命名/类型变更），返回 false（goroutine 泄漏），
+//     此时 TestStopCleanupGoroutine_UpstreamStructAssert 会捕获此问题
+//   - 如果 done 已关闭，recover 捕获 panic，返回 false
 //
 // 维护须知: 升级 golang-lru 版本时，检查上游是否已实现公开的 Close() 方法。
 // 若已实现，应移除此函数并直接调用上游 Close()。
-func stopCleanupGoroutine(lru any) {
-	defer func() { recover() }() //nolint:errcheck // recover 返回值无需处理
+func stopCleanupGoroutine(lru any) (stopped bool) {
+	defer func() {
+		// close(doneCh) 可能因通道已关闭而 panic，静默捕获并返回 false
+		if r := recover(); r != nil {
+			stopped = false
+		}
+	}()
 
 	v := reflect.ValueOf(lru)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
-		return
+		return false
 	}
 
 	doneField := v.Elem().FieldByName("done")
-	if !doneField.IsValid() || doneField.IsNil() {
-		return
+	if !doneField.IsValid() {
+		return false
 	}
 
-	// 验证字段类型为 chan struct{}
+	// 设计决策: 类型检查前置于 IsNil()，确保 IsNil() 只在确认为 chan struct{} 后调用。
+	// 非 nilable 类型（如 int）调用 IsNil() 会 panic，前置类型检查消除该路径对 recover 的依赖。
+	// 顶层 recover 仍保留以防 close(doneCh) 的 double-close panic。
 	if doneField.Type() != reflect.TypeOf(make(chan struct{})) {
-		return
+		return false
+	}
+	if doneField.IsNil() {
+		return false
 	}
 
 	// 通过 unsafe 访问未导出字段值，关闭 done 通道使清理 goroutine 退出
 	doneCh := *(*chan struct{})(unsafe.Pointer(doneField.UnsafeAddr())) //nolint:gosec // 有意使用 unsafe 访问内部字段
 	close(doneCh)
+	return true
 }

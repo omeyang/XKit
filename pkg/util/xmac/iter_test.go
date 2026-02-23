@@ -222,6 +222,18 @@ func TestCollectN(t *testing.T) {
 	}
 }
 
+func TestCollectN_NilSeq(t *testing.T) {
+	result := CollectN(nil, 10)
+	if result != nil {
+		t.Errorf("CollectN(nil, 10) = %v, want nil", result)
+	}
+
+	result = CollectN(nil, 0)
+	if result != nil {
+		t.Errorf("CollectN(nil, 0) = %v, want nil", result)
+	}
+}
+
 func TestCollectN_LargeMaxCount(t *testing.T) {
 	// 验证极大 maxCount 不会导致 OOM（预分配被限制为 1<<20）
 	from := MustParse("00:00:00:00:00:01")
@@ -241,6 +253,13 @@ func TestCount(t *testing.T) {
 	count := Count(Range(from, to))
 	if count != 10 {
 		t.Errorf("Count() = %d, want 10", count)
+	}
+}
+
+func TestCount_NilSeq(t *testing.T) {
+	count := Count(nil)
+	if count != 0 {
+		t.Errorf("Count(nil) = %d, want 0", count)
 	}
 }
 

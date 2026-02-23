@@ -2,7 +2,6 @@ package xsampling
 
 import (
 	"context"
-	"math"
 	"sync/atomic"
 )
 
@@ -61,8 +60,8 @@ type RateSampler struct {
 //
 // rate 超出 [0.0, 1.0] 范围或为 NaN 时返回 ErrInvalidRate。
 func NewRateSampler(rate float64) (*RateSampler, error) {
-	if math.IsNaN(rate) || rate < 0 || rate > 1 {
-		return nil, ErrInvalidRate
+	if err := validateRate(rate); err != nil {
+		return nil, err
 	}
 	return &RateSampler{rate: rate}, nil
 }

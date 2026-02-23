@@ -2,11 +2,15 @@ package xlimit
 
 import (
 	"context"
+	"math"
+	"strconv"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/omeyang/xkit/pkg/context/xtenant"
 )
 
 // GRPCKeyExtractor 从 gRPC 请求中提取限流键
@@ -22,7 +26,7 @@ type GRPCKeyExtractorOption func(*GRPCKeyExtractor)
 // DefaultGRPCKeyExtractor 创建默认的 gRPC 键提取器
 func DefaultGRPCKeyExtractor() *GRPCKeyExtractor {
 	return &GRPCKeyExtractor{
-		tenantHeader: "x-tenant-id",
+		tenantHeader: xtenant.MetaTenantID,
 		callerHeader: "x-caller-id",
 	}
 }
@@ -38,17 +42,7 @@ func NewGRPCKeyExtractor(opts ...GRPCKeyExtractorOption) *GRPCKeyExtractor {
 
 // Extract 从 gRPC 上下文中提取限流键
 func (e *GRPCKeyExtractor) Extract(ctx context.Context, info *grpc.UnaryServerInfo) Key {
-	key := Key{}
-
-	// 从 metadata 提取 tenant 和 caller
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if values := md.Get(e.tenantHeader); len(values) > 0 {
-			key.Tenant = values[0]
-		}
-		if values := md.Get(e.callerHeader); len(values) > 0 {
-			key.Caller = values[0]
-		}
-	}
+	key := e.extractFromMetadata(ctx)
 
 	// 从 info 提取 method
 	if info != nil {
@@ -65,9 +59,19 @@ func (e *GRPCKeyExtractor) Extract(ctx context.Context, info *grpc.UnaryServerIn
 
 // ExtractStream 从 gRPC Stream 上下文中提取限流键
 func (e *GRPCKeyExtractor) ExtractStream(ctx context.Context, info *grpc.StreamServerInfo) Key {
-	key := Key{}
+	key := e.extractFromMetadata(ctx)
 
-	// 从 metadata 提取 tenant 和 caller
+	// 从 info 提取 method
+	if info != nil {
+		key.Method = info.FullMethod
+	}
+
+	return key
+}
+
+// extractFromMetadata 从 gRPC metadata 提取 tenant 和 caller
+func (e *GRPCKeyExtractor) extractFromMetadata(ctx context.Context) Key {
+	var key Key
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if values := md.Get(e.tenantHeader); len(values) > 0 {
 			key.Tenant = values[0]
@@ -76,12 +80,6 @@ func (e *GRPCKeyExtractor) ExtractStream(ctx context.Context, info *grpc.StreamS
 			key.Caller = values[0]
 		}
 	}
-
-	// 从 info 提取 method
-	if info != nil {
-		key.Method = info.FullMethod
-	}
-
 	return key
 }
 
@@ -153,6 +151,11 @@ func WithGRPCStreamSkipFunc(skipFunc func(ctx context.Context, info *grpc.Stream
 //	    grpc.UnaryInterceptor(xlimit.UnaryServerInterceptor(limiter)),
 //	)
 func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
+	// 设计决策: nil limiter 使用 panic（同 HTTPMiddleware，见 middleware_http.go 注释）。
+	if limiter == nil {
+		panic("xlimit: UnaryServerInterceptor requires a non-nil Limiter")
+	}
+
 	options := defaultGRPCInterceptorOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -161,34 +164,16 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 		options.KeyExtractor = DefaultGRPCKeyExtractor()
 	}
 
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		// 检查是否跳过
 		if options.SkipFunc != nil && options.SkipFunc(ctx, info) {
 			return handler(ctx, req)
 		}
 
-		// 提取限流键
+		// 提取限流键并执行限流检查
 		key := options.KeyExtractor.Extract(ctx, info)
-
-		// 执行限流检查
-		result, err := limiter.Allow(ctx, key)
-		if err != nil {
-			// 设计决策: 优先检查 result 是否携带拒绝信息（如 FallbackClose 策略
-			// 返回 Allowed=false + ErrRedisUnavailable）。仅当 result 为空时
-			// 才 fail-open（限流器内部错误不阻塞业务请求）。
-			if result != nil && !result.Allowed {
-				return nil, status.Errorf(codes.ResourceExhausted,
-					"rate limit exceeded: limit=%d, retry_after=%v",
-					result.Limit, result.RetryAfter)
-			}
-			return handler(ctx, req)
-		}
-
-		// 检查是否被限流
-		if !result.Allowed {
-			return nil, status.Errorf(codes.ResourceExhausted,
-				"rate limit exceeded: limit=%d, retry_after=%v",
-				result.Limit, result.RetryAfter)
+		if denied, err := handleGRPCLimit(ctx, limiter, key); denied {
+			return nil, err
 		}
 
 		return handler(ctx, req)
@@ -204,6 +189,11 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 //	    grpc.StreamInterceptor(xlimit.StreamServerInterceptor(limiter)),
 //	)
 func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
+	// 设计决策: nil limiter 使用 panic（同 HTTPMiddleware，见 middleware_http.go 注释）。
+	if limiter == nil {
+		panic("xlimit: StreamServerInterceptor requires a non-nil Limiter")
+	}
+
 	options := defaultGRPCInterceptorOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -212,7 +202,7 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 		options.KeyExtractor = DefaultGRPCKeyExtractor()
 	}
 
-	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx := stream.Context()
 
 		// 检查是否跳过
@@ -220,28 +210,60 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 			return handler(srv, stream)
 		}
 
-		// 提取限流键
+		// 提取限流键并执行限流检查
 		key := options.KeyExtractor.ExtractStream(ctx, info)
-
-		// 执行限流检查
-		result, err := limiter.Allow(ctx, key)
-		if err != nil {
-			// 设计决策: 同 UnaryServerInterceptor，优先检查 result 拒绝信息。
-			if result != nil && !result.Allowed {
-				return status.Errorf(codes.ResourceExhausted,
-					"rate limit exceeded: limit=%d, retry_after=%v",
-					result.Limit, result.RetryAfter)
-			}
-			return handler(srv, stream)
-		}
-
-		// 检查是否被限流
-		if !result.Allowed {
-			return status.Errorf(codes.ResourceExhausted,
-				"rate limit exceeded: limit=%d, retry_after=%v",
-				result.Limit, result.RetryAfter)
+		if denied, err := handleGRPCLimit(ctx, limiter, key); denied {
+			return err
 		}
 
 		return handler(srv, stream)
+	}
+}
+
+// handleGRPCLimit 执行 gRPC 限流检查并处理结果。
+// 返回 (true, error) 表示请求被拒绝；(false, nil) 表示放行。
+func handleGRPCLimit(ctx context.Context, limiter Limiter, key Key) (denied bool, err error) {
+	result, err := limiter.Allow(ctx, key)
+	if err != nil {
+		// 设计决策: 优先检查 result 是否携带拒绝信息（如 FallbackClose 策略
+		// 返回 Allowed=false + ErrRedisUnavailable）。仅当 result 为空时
+		// 才 fail-open（限流器内部错误不阻塞业务请求）。
+		if result != nil && !result.Allowed {
+			return true, grpcRateLimitError(ctx, result)
+		}
+		return false, nil // fail-open
+	}
+
+	// 防御性检查: Limiter 接口契约要求 err==nil 时 result 必非 nil，
+	// 但第三方实现可能违反契约。此处 fail-open 避免运行时 panic。
+	if result == nil {
+		return false, nil
+	}
+
+	if !result.Allowed {
+		return true, grpcRateLimitError(ctx, result)
+	}
+
+	return false, nil
+}
+
+// grpcRateLimitError 创建 gRPC 限流错误并设置 Retry-After trailer metadata。
+// SetTrailer 失败仅表示 transport 不可用，此时 error 也无法投递，不影响限流语义。
+func grpcRateLimitError(ctx context.Context, result *Result) error {
+	setRetryAfterTrailer(ctx, result)
+	return status.Errorf(codes.ResourceExhausted,
+		"rate limit exceeded: limit=%d, retry_after=%v",
+		result.Limit, result.RetryAfter)
+}
+
+// setRetryAfterTrailer 尽力设置 Retry-After trailer metadata
+func setRetryAfterTrailer(ctx context.Context, result *Result) {
+	if result.RetryAfter <= 0 {
+		return
+	}
+	retryAfterSec := int64(math.Ceil(result.RetryAfter.Seconds()))
+	if err := grpc.SetTrailer(ctx, metadata.Pairs("retry-after",
+		strconv.FormatInt(retryAfterSec, 10))); err != nil {
+		return // transport 不可用时无法设置 trailer，继续返回限流错误
 	}
 }

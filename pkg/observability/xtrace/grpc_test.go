@@ -115,6 +115,16 @@ func TestExtractFromMetadata(t *testing.T) {
 				Traceparent: "invalid-format",
 			},
 		},
+		{
+			name: "W3C 版本前向兼容 - 未来版本扩展字段分隔符非 '-' 拒绝",
+			md: metadata.Pairs(
+				xtrace.MetaTraceparent, "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01x",
+			),
+			want: xtrace.TraceInfo{
+				Traceparent: "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01x",
+				// 非法格式，不解析
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -290,6 +300,21 @@ func TestInjectTraceToMetadata(t *testing.T) {
 		assertMetaValue(t, md, xtrace.MetaTraceparent, expected)
 	})
 
+	t.Run("非 v00 traceparent 重新生成为 v00", func(t *testing.T) {
+		md := metadata.MD{}
+		// 传入 v02 版本的 traceparent（含扩展字段）
+		info := xtrace.TraceInfo{
+			TraceID:     "0af7651916cd43dd8448eb211c80319c",
+			SpanID:      "b7ad6b7169203331",
+			Traceparent: "02-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-vendordata",
+		}
+		xtrace.InjectTraceToMetadata(md, info)
+
+		// 应该输出 v00 格式，不是原始 v02 字符串
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+		assertMetaValue(t, md, xtrace.MetaTraceparent, want)
+	})
+
 	t.Run("version 00 带额外字段的 traceparent 被拒绝", func(t *testing.T) {
 		md := metadata.MD{}
 		// version 00 不允许额外字段（长度超过 55）
@@ -358,4 +383,29 @@ func TestContextHelpers(t *testing.T) {
 	if got := xtrace.TraceFlags(ctx); got != "01" {
 		t.Errorf("TraceFlags() = %q, want %q", got, "01")
 	}
+}
+
+func TestTraceInfoFromContext(t *testing.T) {
+	t.Run("完整 context", func(t *testing.T) {
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+		ctx, _ = xctx.WithRequestID(ctx, "req-123")
+		ctx, _ = xctx.WithTraceFlags(ctx, "01")
+
+		info := xtrace.TraceInfoFromContext(ctx)
+
+		assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", info.TraceID)
+		assert.Equal(t, "b7ad6b7169203331", info.SpanID)
+		assert.Equal(t, "req-123", info.RequestID)
+		assert.Equal(t, "01", info.TraceFlags)
+		// Traceparent 和 Tracestate 不存储在 context 中
+		assert.Empty(t, info.Traceparent)
+		assert.Empty(t, info.Tracestate)
+	})
+
+	t.Run("空 context", func(t *testing.T) {
+		info := xtrace.TraceInfoFromContext(context.Background())
+		assert.True(t, info.IsEmpty())
+	})
 }

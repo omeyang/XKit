@@ -18,6 +18,7 @@ func TestSharedErrors_AreAliases(t *testing.T) {
 	assert.Same(t, mqcore.ErrNilClient, ErrNilClient)
 	assert.Same(t, mqcore.ErrNilMessage, ErrNilMessage)
 	assert.Same(t, mqcore.ErrNilHandler, ErrNilHandler)
+	assert.Same(t, mqcore.ErrClosed, ErrClosed)
 }
 
 // =============================================================================
@@ -36,9 +37,9 @@ func TestPulsarSpecificErrors(t *testing.T) {
 		err  error
 		want string
 	}{
+		{"ErrNilOption", ErrNilOption, "nil option"},
 		{"ErrNilProducer", ErrNilProducer, "nil producer"},
 		{"ErrNilConsumer", ErrNilConsumer, "nil consumer"},
-		{"ErrClosed", ErrClosed, "client closed"},
 	}
 
 	for _, tc := range errors {
@@ -48,4 +49,9 @@ func TestPulsarSpecificErrors(t *testing.T) {
 			assert.Contains(t, tc.err.Error(), tc.want)
 		})
 	}
+}
+
+func TestErrClosed_IsShared(t *testing.T) {
+	// ErrClosed 现在是共享错误，使用 mq: 前缀而非 xpulsar: 前缀
+	assert.Contains(t, ErrClosed.Error(), "closed")
 }

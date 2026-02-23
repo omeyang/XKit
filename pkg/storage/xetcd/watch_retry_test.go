@@ -3,6 +3,8 @@ package xetcd
 import (
 	"context"
 	"errors"
+	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,10 +34,141 @@ func TestDefaultRetryConfig(t *testing.T) {
 	}
 }
 
+// TestWatch_NilContext 测试 Watch 在 ctx 为 nil 时返回 ErrNilContext。
+func TestWatch_NilContext(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	_, err := c.Watch(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+	if err != ErrNilContext {
+		t.Errorf("Watch(nil, key) = %v, want %v", err, ErrNilContext)
+	}
+}
+
+// TestWatchWithRetry_NilContext 测试 WatchWithRetry 在 ctx 为 nil 时返回 ErrNilContext。
+func TestWatchWithRetry_NilContext(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	_, err := c.WatchWithRetry(nil, "key", DefaultRetryConfig()) //nolint:staticcheck // 测试 nil ctx 防御
+	if err != ErrNilContext {
+		t.Errorf("WatchWithRetry(nil, key, cfg) = %v, want %v", err, ErrNilContext)
+	}
+}
+
+// TestValidateRetryConfig 测试 validateRetryConfig 对显式负值返回错误，对零值应用默认值。
+func TestValidateRetryConfig(t *testing.T) {
+	t.Run("negative InitialBackoff", func(t *testing.T) {
+		cfg := RetryConfig{InitialBackoff: -1 * time.Second}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxBackoff", func(t *testing.T) {
+		cfg := RetryConfig{MaxBackoff: -1 * time.Second}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxRetries", func(t *testing.T) {
+		cfg := RetryConfig{MaxRetries: -1}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("NaN BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.NaN()}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("positive Inf BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.Inf(1)}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative Inf BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.Inf(-1)}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("zero values apply defaults", func(t *testing.T) {
+		cfg := RetryConfig{}
+		err := validateRetryConfig(&cfg)
+		if err != nil {
+			t.Fatalf("validateRetryConfig() = %v, want nil", err)
+		}
+		if cfg.InitialBackoff != 1*time.Second {
+			t.Errorf("InitialBackoff = %v, want 1s", cfg.InitialBackoff)
+		}
+		if cfg.MaxBackoff != 30*time.Second {
+			t.Errorf("MaxBackoff = %v, want 30s", cfg.MaxBackoff)
+		}
+		if cfg.BackoffMultiplier != 2.0 {
+			t.Errorf("BackoffMultiplier = %v, want 2.0", cfg.BackoffMultiplier)
+		}
+	})
+
+	t.Run("MaxBackoff less than InitialBackoff corrected", func(t *testing.T) {
+		cfg := RetryConfig{
+			InitialBackoff:    5 * time.Second,
+			MaxBackoff:        2 * time.Second,
+			BackoffMultiplier: 2.0,
+		}
+		err := validateRetryConfig(&cfg)
+		if err != nil {
+			t.Fatalf("validateRetryConfig() = %v, want nil", err)
+		}
+		if cfg.MaxBackoff != cfg.InitialBackoff {
+			t.Errorf("MaxBackoff = %v, want %v (corrected to InitialBackoff)", cfg.MaxBackoff, cfg.InitialBackoff)
+		}
+	})
+}
+
+// TestWatchWithRetry_NegativeConfig 测试 WatchWithRetry 对显式负值配置返回错误。
+func TestWatchWithRetry_NegativeConfig(t *testing.T) {
+	c := newStubClient()
+
+	t.Run("negative InitialBackoff", func(t *testing.T) {
+		cfg := RetryConfig{InitialBackoff: -1 * time.Second}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxBackoff", func(t *testing.T) {
+		cfg := RetryConfig{MaxBackoff: -1 * time.Second}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxRetries", func(t *testing.T) {
+		cfg := RetryConfig{MaxRetries: -1}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+}
+
 // TestWatchWithRetry_Closed 测试已关闭客户端调用 WatchWithRetry 返回错误。
 func TestWatchWithRetry_Closed(t *testing.T) {
-	c := &Client{}
-	c.closed.Store(true)
+	c := newClosedStubClient()
 
 	_, err := c.WatchWithRetry(context.Background(), "key", DefaultRetryConfig())
 	if err != ErrClientClosed {
@@ -45,12 +178,118 @@ func TestWatchWithRetry_Closed(t *testing.T) {
 
 // TestWatchWithRetry_EmptyKey 测试空键调用 WatchWithRetry 返回错误。
 func TestWatchWithRetry_EmptyKey(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.WatchWithRetry(context.Background(), "", DefaultRetryConfig())
 	if err != ErrEmptyKey {
 		t.Errorf("WatchWithRetry() with empty key = %v, want %v", err, ErrEmptyKey)
 	}
+}
+
+// TestWatchWithRetry_NilOption 测试 WatchWithRetry 传入 nil WatchOption 时返回 ErrNilOption。
+func TestWatchWithRetry_NilOption(t *testing.T) {
+	c := newStubClient()
+
+	_, err := c.WatchWithRetry(context.Background(), "key", DefaultRetryConfig(), nil)
+	if err != ErrNilOption {
+		t.Errorf("WatchWithRetry() with nil option = %v, want %v", err, ErrNilOption)
+	}
+}
+
+// TestWatchWithRetry_InvalidBackoffMultiplier 测试 BackoffMultiplier < 1 被修正为 2.0。
+func TestWatchWithRetry_InvalidBackoffMultiplier(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	watchChan := make(chan clientv3.WatchResponse, 1)
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any()).
+		Return(clientv3.WatchChan(watchChan))
+
+	cfg := RetryConfig{
+		InitialBackoff:    10 * time.Millisecond,
+		MaxBackoff:        50 * time.Millisecond,
+		BackoffMultiplier: 0.5, // 无效值，应被修正
+	}
+
+	eventCh, err := c.WatchWithRetry(ctx, "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	go func() {
+		watchChan <- clientv3.WatchResponse{
+			Events: []*clientv3.Event{
+				{Type: mvccpb.PUT, Kv: &mvccpb.KeyValue{Key: []byte("/key"), Value: []byte("v"), ModRevision: 1}},
+			},
+		}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	select {
+	case event := <-eventCh:
+		if event.Key != "/key" {
+			t.Errorf("event.Key = %v, want /key", event.Key)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+
+	<-eventCh // drain close
+}
+
+// TestWatchWithRetry_MaxBackoffLessThanInitial 测试 MaxBackoff < InitialBackoff 被修正。
+func TestWatchWithRetry_MaxBackoffLessThanInitial(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	watchChan := make(chan clientv3.WatchResponse, 1)
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any()).
+		Return(clientv3.WatchChan(watchChan))
+
+	cfg := RetryConfig{
+		InitialBackoff:    100 * time.Millisecond,
+		MaxBackoff:        10 * time.Millisecond, // 倒挂，应被修正为 InitialBackoff
+		BackoffMultiplier: 2.0,
+	}
+
+	eventCh, err := c.WatchWithRetry(ctx, "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	go func() {
+		watchChan <- clientv3.WatchResponse{
+			Events: []*clientv3.Event{
+				{Type: mvccpb.PUT, Kv: &mvccpb.KeyValue{Key: []byte("/key"), Value: []byte("v"), ModRevision: 1}},
+			},
+		}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	select {
+	case event := <-eventCh:
+		if event.Key != "/key" {
+			t.Errorf("event.Key = %v, want /key", event.Key)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+
+	<-eventCh // drain close
 }
 
 // TestWatchWithRetry_DefaultValues 测试零值配置触发默认值补充后正常运行。
@@ -142,13 +381,13 @@ func TestWatchWithRetry_ReconnectOnError(t *testing.T) {
 		}).
 		Times(2)
 
-	var retryCallbackCalled bool
+	var retryCallbackCalled atomic.Bool
 	cfg := RetryConfig{
 		InitialBackoff:    10 * time.Millisecond,
 		MaxBackoff:        50 * time.Millisecond,
 		BackoffMultiplier: 2.0,
 		OnRetry: func(attempt int, err error, nb time.Duration, lastRevision int64) {
-			retryCallbackCalled = true
+			retryCallbackCalled.Store(true)
 		},
 	}
 
@@ -194,12 +433,12 @@ func TestWatchWithRetry_ReconnectOnError(t *testing.T) {
 		t.Fatal("timeout waiting for event after reconnect")
 	}
 
-	if !retryCallbackCalled {
+	if !retryCallbackCalled.Load() {
 		t.Error("OnRetry callback was not called")
 	}
 }
 
-// TestWatchWithRetry_MaxRetries 测试达到最大重试次数后通道关闭。
+// TestWatchWithRetry_MaxRetries 测试达到最大重试次数后发送 ErrMaxRetriesExceeded 错误事件，然后关闭通道。
 func TestWatchWithRetry_MaxRetries(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -232,12 +471,86 @@ func TestWatchWithRetry_MaxRetries(t *testing.T) {
 		t.Fatalf("WatchWithRetry() error = %v, want nil", err)
 	}
 
-	// 通道在达到最大重试次数后应该关闭
+	// 应收到 ErrMaxRetriesExceeded 错误事件
+	select {
+	case event, ok := <-eventCh:
+		if !ok {
+			t.Fatal("channel closed without error event")
+		}
+		if !errors.Is(event.Error, ErrMaxRetriesExceeded) {
+			t.Errorf("event.Error = %v, want ErrMaxRetriesExceeded", event.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for error event after max retries")
+	}
+
+	// 随后通道应该关闭
+	select {
+	case _, ok := <-eventCh:
+		if ok {
+			t.Error("channel should be closed after error event")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for channel close")
+	}
+}
+
+// TestWatchWithRetry_WatchReturnsError_MaxRetries 测试 Watch() 方法本身返回错误时
+// 触发重试直到 MaxRetries 耗尽。
+// 覆盖 runWatchWithRetry 中 c.Watch 返回 err != nil → handleWatchRetry →
+// sendMaxRetriesErrorIfNeeded 路径。
+func TestWatchWithRetry_WatchReturnsError_MaxRetries(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	// 第一次 Watch 成功，返回立即关闭的通道触发 disconnect。
+	// 在 handleWatchRetry 退避期间关闭客户端，使后续 Watch 被 checkClosed 拦截。
+	callCount := 0
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, k string, opts ...clientv3.OpOption) clientv3.WatchChan {
+			callCount++
+			if callCount == 1 {
+				ch := make(chan clientv3.WatchResponse)
+				close(ch) // 立即关闭触发 disconnect
+				return ch
+			}
+			// 不应到达：后续调用被 checkClosed 拦截
+			ch := make(chan clientv3.WatchResponse)
+			close(ch)
+			return ch
+		}).AnyTimes()
+
+	// 关闭 client 底层 mock（Close 调用）
+	mockClient.EXPECT().Close().Return(nil).AnyTimes()
+
+	cfg := RetryConfig{
+		InitialBackoff:    1 * time.Millisecond,
+		MaxBackoff:        5 * time.Millisecond,
+		BackoffMultiplier: 2.0,
+		MaxRetries:        2,
+	}
+
+	eventCh, err := c.WatchWithRetry(context.Background(), "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	// 等待第一次 Watch 完成并进入退避，然后关闭客户端
+	time.Sleep(3 * time.Millisecond)
+	if closeErr := c.Close(context.Background()); closeErr != nil {
+		t.Fatalf("Close() error = %v", closeErr)
+	}
+
+	// 通道应关闭（客户端关闭导致 shouldStopWatch 返回 true）
 	select {
 	case <-eventCh:
-		// 通道已关闭或接收到事件
+		// 通道关闭或收到事件，正常
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for channel close after max retries")
+		t.Fatal("timeout")
 	}
 }
 
@@ -273,7 +586,7 @@ func TestWatchWithRetry_ClientClosed(t *testing.T) {
 
 	// 关闭客户端，应触发 closeCh 信号
 	time.Sleep(10 * time.Millisecond)
-	if closeErr := c.Close(); closeErr != nil {
+	if closeErr := c.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
 	}
 
@@ -373,6 +686,8 @@ func TestWatchWithRetry_WatchErrorWithRevision(t *testing.T) {
 }
 
 // TestNextBackoff 测试退避时间计算逻辑。
+// nextBackoff 包含 ±20% jitter，因此结果在 [base*0.8, base*1.2) 范围内。
+// 对于被 MaxBackoff 截断的场景，结果 ≤ MaxBackoff。
 func TestNextBackoff(t *testing.T) {
 	cfg := RetryConfig{
 		MaxBackoff:        30 * time.Second,
@@ -382,39 +697,74 @@ func TestNextBackoff(t *testing.T) {
 	tests := []struct {
 		name    string
 		current time.Duration
-		want    time.Duration
+		wantMin time.Duration // base * 0.8（含 jitter 下界）
+		wantMax time.Duration // min(base * 1.2, MaxBackoff)（含 jitter 上界）
 	}{
-		{"1s to 2s", 1 * time.Second, 2 * time.Second},
-		{"2s to 4s", 2 * time.Second, 4 * time.Second},
-		{"15s to 30s", 15 * time.Second, 30 * time.Second},
-		{"20s capped at 30s", 20 * time.Second, 30 * time.Second},
-		{"30s stays 30s", 30 * time.Second, 30 * time.Second},
+		{"1s to ~2s", 1 * time.Second, 1600 * time.Millisecond, 2400 * time.Millisecond},
+		{"2s to ~4s", 2 * time.Second, 3200 * time.Millisecond, 4800 * time.Millisecond},
+		{"15s capped at 30s", 15 * time.Second, 24 * time.Second, 30 * time.Second},
+		{"20s capped at 30s", 20 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"30s stays 30s", 30 * time.Second, 30 * time.Second, 30 * time.Second},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := nextBackoff(tt.current, cfg)
-			if got != tt.want {
-				t.Errorf("nextBackoff(%v) = %v, want %v", tt.current, got, tt.want)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("nextBackoff(%v) = %v, want in [%v, %v]",
+					tt.current, got, tt.wantMin, tt.wantMax)
 			}
 		})
 	}
 }
 
-// TestSleepWithContext_Normal 测试正常睡眠等待定时器触发。
-func TestSleepWithContext_Normal(t *testing.T) {
+// TestAddJitter 测试 addJitter 函数。
+func TestAddJitter(t *testing.T) {
+	t.Run("zero duration", func(t *testing.T) {
+		got := addJitter(0)
+		if got != 0 {
+			t.Errorf("addJitter(0) = %v, want 0", got)
+		}
+	})
+
+	t.Run("negative duration", func(t *testing.T) {
+		got := addJitter(-time.Second)
+		if got != -time.Second {
+			t.Errorf("addJitter(-1s) = %v, want -1s", got)
+		}
+	})
+
+	t.Run("jitter range", func(t *testing.T) {
+		d := 10 * time.Second
+		minExpected := 8 * time.Second  // d * 0.8
+		maxExpected := 12 * time.Second // d * 1.2
+
+		for i := 0; i < 100; i++ {
+			got := addJitter(d)
+			if got < minExpected || got > maxExpected {
+				t.Errorf("addJitter(%v) = %v, want in [%v, %v]",
+					d, got, minExpected, maxExpected)
+			}
+		}
+	})
+}
+
+// TestSleepWithCancel_Normal 测试正常睡眠等待定时器触发。
+func TestSleepWithCancel_Normal(t *testing.T) {
+	done := make(chan struct{})
 	start := time.Now()
-	sleepWithContext(context.Background(), 10*time.Millisecond)
+	sleepWithCancel(context.Background(), 10*time.Millisecond, done)
 	elapsed := time.Since(start)
 
 	if elapsed < 5*time.Millisecond {
-		t.Errorf("sleepWithContext() returned too quickly: %v", elapsed)
+		t.Errorf("sleepWithCancel() returned too quickly: %v", elapsed)
 	}
 }
 
-// TestSleepWithContext_ContextCancel 测试 context 取消时立即返回。
-func TestSleepWithContext_ContextCancel(t *testing.T) {
+// TestSleepWithCancel_ContextCancel 测试 context 取消时立即返回。
+func TestSleepWithCancel_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -422,11 +772,29 @@ func TestSleepWithContext_ContextCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	sleepWithContext(ctx, 10*time.Second)
+	sleepWithCancel(ctx, 10*time.Second, done)
 	elapsed := time.Since(start)
 
 	if elapsed > time.Second {
-		t.Errorf("sleepWithContext() should return quickly on cancel, took %v", elapsed)
+		t.Errorf("sleepWithCancel() should return quickly on cancel, took %v", elapsed)
+	}
+}
+
+// TestSleepWithCancel_DoneClosed 测试 done 通道关闭时立即返回。
+func TestSleepWithCancel_DoneClosed(t *testing.T) {
+	done := make(chan struct{})
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(done)
+	}()
+
+	start := time.Now()
+	sleepWithCancel(context.Background(), 10*time.Second, done)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("sleepWithCancel() should return quickly on done close, took %v", elapsed)
 	}
 }
 

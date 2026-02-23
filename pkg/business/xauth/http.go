@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -137,8 +138,8 @@ func (c *HTTPClient) request(
 		Operation: MetricsOpHTTPRequest,
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			{Key: "http.method", Value: method},
-			{Key: "http.path", Value: sanitizeURL(url)},
+			{Key: MetricsAttrHTTPMethod, Value: method},
+			{Key: MetricsAttrHTTPPath, Value: sanitizeURL(url)},
 		},
 	})
 	var err error
@@ -175,10 +176,19 @@ func (c *HTTPClient) request(
 // 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
 // baseURL 与 path 拼接时约定：baseURL 不含尾部斜杠，path 以斜杠开头。
 func (c *HTTPClient) buildURL(path string) string {
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+	if isAbsoluteURL(path) {
 		return path
 	}
 	return c.baseURL + path
+}
+
+// isAbsoluteURL 判断 path 是否为绝对 URL（大小写不敏感）。
+// HTTP scheme 规范（RFC 3986 §3.1）要求 scheme 大小写不敏感。
+func isAbsoluteURL(path string) bool {
+	if len(path) >= 8 && strings.EqualFold(path[:8], "https://") {
+		return true
+	}
+	return len(path) >= 7 && strings.EqualFold(path[:7], "http://")
 }
 
 // sanitizeURL 移除 URL 中的查询参数，避免观测指标高基数问题。
@@ -217,11 +227,15 @@ func (c *HTTPClient) buildRequestBody(body any) (io.Reader, error) {
 }
 
 // setHeaders 设置请求头。
+// 设计决策: 仅在 headers 中未包含 Content-Type 时才设置默认值，
+// 避免 JSON 默认值覆盖表单编码等其他内容类型。
 func (c *HTTPClient) setHeaders(req *http.Request, headers map[string]string) {
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 }
 
@@ -264,6 +278,7 @@ func (c *HTTPClient) parseAPIError(statusCode int, respBody []byte) error {
 }
 
 // RequestWithAuth 发送带认证的请求。
+// headers 会被克隆，不会修改调用方的原始 map。
 func (c *HTTPClient) RequestWithAuth(
 	ctx context.Context,
 	method, path string,
@@ -271,11 +286,10 @@ func (c *HTTPClient) RequestWithAuth(
 	headers map[string]string,
 	body, response any,
 ) error {
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-	headers["Authorization"] = "Bearer " + token
-	return c.request(ctx, method, path, headers, body, response)
+	h := make(map[string]string, len(headers)+1)
+	maps.Copy(h, headers)
+	h["Authorization"] = "Bearer " + token
+	return c.request(ctx, method, path, h, body, response)
 }
 
 // Client 返回底层 HTTP 客户端。

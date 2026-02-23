@@ -11,16 +11,20 @@
 //   - Done() channel：Shutdown 超时返回后可等待残留 worker 最终完成
 //   - 可注入自定义日志记录器（WithLogger）
 //   - 多实例场景下可设置名称以区分日志来源（WithName）
+//   - panic 日志默认安全（仅记录 task 类型），可通过 WithLogTaskValue 启用完整值输出
 //
 // # 注意事项
 //
 //   - Submit 是非阻塞的，队列满时返回 ErrQueueFull
 //   - Close 会等待所有队列中的任务处理完成
 //   - Close/Shutdown 不可在 handler 内调用，否则会死锁
+//   - handler 不应无限阻塞；若 handler 因外部依赖永久阻塞，对应的 worker
+//     goroutine 将无法退出。如需支持取消，可在 T 中嵌入 context.Context
+//     或使用闭包捕获取消信号
 //   - 任务处理器应设计为幂等的，因为同一逻辑任务可能被多次提交
 //   - panic 的任务不会被重试——仅记录日志后丢弃；
-//     panic 恢复日志包含完整 task 值，若 task 包含敏感信息，
-//     应通过 WithLogger 注入带脱敏的 logger 或在 handler 内自行 recover
+//     panic 恢复日志默认仅记录 task 类型（避免敏感信息泄露），
+//     如需记录完整 task 值以便调试，可通过 WithLogTaskValue() 显式启用
 //   - New 创建后自动启动 worker，无需手动 Start
 //   - handler 参数不能为 nil，否则返回 ErrNilHandler
 //   - workers 和 queueSize 超出有效范围时返回错误（而非 panic）
@@ -39,6 +43,11 @@
 //   - 虽然 Go 支持参数化接口（如 type Pool[T any] interface{...}），
 //     但 xpool 作为轻量级工具包，不需要多实现替换，返回具体类型更简洁
 //   - 编译期通过 io.Closer 断言确保关闭契约
+//
+// handler 签名为 func(T) 而非 func(context.Context, T)：
+//   - 保持 API 简洁，适用于大多数场景
+//   - 需要 context 传播的用户可在 T 中嵌入 context.Context 或使用闭包
+//   - 参见注意事项中关于 handler 不应永久阻塞的说明
 //
 // Submit 队列满时返回 ErrQueueFull：
 //   - 这是有意设计，确保 Submit 永不阻塞

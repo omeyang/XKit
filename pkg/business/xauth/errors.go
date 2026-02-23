@@ -10,6 +10,9 @@ import (
 // =============================================================================
 
 var (
+	// ErrNilClient 表示传入的 Client 为 nil。
+	ErrNilClient = errors.New("xauth: nil client")
+
 	// ErrNilConfig 表示传入的配置为 nil。
 	ErrNilConfig = errors.New("xauth: nil config")
 
@@ -27,8 +30,18 @@ var (
 	// 如需在开发/测试环境中使用 HTTP，请设置 Config.AllowInsecure = true。
 	ErrInsecureHost = errors.New("xauth: host must use https:// (set AllowInsecure=true for development)")
 
+	// ErrInvalidHost 表示 Host 格式无效。
+	// Host 必须包含协议和主机名，例如 "https://auth.example.com"。
+	ErrInvalidHost = errors.New("xauth: invalid host: must include scheme and host (e.g., https://auth.example.com)")
+
 	// ErrNilRedisClient 表示 Redis 客户端为 nil。
 	ErrNilRedisClient = errors.New("xauth: nil redis client")
+
+	// ErrNilHTTPClient 表示 HTTP 客户端为 nil。
+	ErrNilHTTPClient = errors.New("xauth: nil http client")
+
+	// ErrNilCache 表示缓存为 nil。
+	ErrNilCache = errors.New("xauth: nil cache")
 )
 
 // =============================================================================
@@ -36,6 +49,9 @@ var (
 // =============================================================================
 
 var (
+	// ErrNilRequest 表示传入的请求为 nil。
+	ErrNilRequest = errors.New("xauth: nil request")
+
 	// ErrMissingTenantID 表示租户 ID 未提供。
 	ErrMissingTenantID = errors.New("xauth: missing tenant_id")
 
@@ -181,6 +197,10 @@ func (e *PermanentError) Retryable() bool {
 }
 
 // IsRetryable 检查错误是否可重试。
+// 设计决策: 重试基础设施（IsRetryable/RetryableError/TemporaryError/PermanentError）
+// 是提供给调用方使用的构建块——调用方根据自身场景决定重试策略（最大次数、退避算法等）。
+// 库内部仅实现 401 自动重试（见 EnableAutoRetryOn401），不做通用自动重试，
+// 避免在不同业务场景下产生不合适的重试行为。
 //
 // 规则：
 //   - nil 错误：不需要重试（视为成功）

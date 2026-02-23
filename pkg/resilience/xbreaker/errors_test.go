@@ -88,31 +88,25 @@ func TestBreakerError_Error(t *testing.T) {
 
 func TestWrapBreakerError_AlreadyWrapped(t *testing.T) {
 	original := &BreakerError{Err: ErrOpenState, Name: "inner", State: StateOpen}
-	wrapped := wrapBreakerError(original, "outer", StateClosed)
+	wrapped := wrapBreakerError(original, "outer")
 	// 应保留原始 BreakerError，不重复包装
 	var be *BreakerError
 	assert.True(t, errors.As(wrapped, &be))
 	assert.Equal(t, "inner", be.Name)
 }
 
-func TestErrFailedByPolicy(t *testing.T) {
-	assert.EqualError(t, errFailedByPolicy, "xbreaker: operation marked as failed by success policy")
+func TestWrapBreakerError(t *testing.T) {
+	t.Run("nil error returns nil", func(t *testing.T) {
+		assert.NoError(t, wrapBreakerError(nil, "test"))
+	})
+
+	t.Run("non-sentinel error passes through", func(t *testing.T) {
+		original := errors.New("business error")
+		result := wrapBreakerError(original, "test")
+		assert.Equal(t, original, result)
+	})
 }
 
-func TestIsRecoverable(t *testing.T) {
-	t.Run("ErrOpenState is recoverable", func(t *testing.T) {
-		assert.True(t, IsRecoverable(ErrOpenState))
-	})
-
-	t.Run("ErrTooManyRequests is recoverable", func(t *testing.T) {
-		assert.True(t, IsRecoverable(ErrTooManyRequests))
-	})
-
-	t.Run("other error is not recoverable", func(t *testing.T) {
-		assert.False(t, IsRecoverable(errors.New("business error")))
-	})
-
-	t.Run("nil error is not recoverable", func(t *testing.T) {
-		assert.False(t, IsRecoverable(nil))
-	})
+func TestErrFailedByPolicy(t *testing.T) {
+	assert.EqualError(t, errFailedByPolicy, "xbreaker: operation marked as failed by success policy")
 }

@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,10 @@ import (
 //
 // 提供限流检查和资源清理的基本能力。
 // 实现应该是并发安全的。
+//
+// Allow/AllowN 的返回契约：
+//   - err == nil 时，返回的 *Result 必非 nil
+//   - err != nil 时，*Result 可能为 nil，也可能携带拒绝信息（如 FallbackClose）
 type Limiter interface {
 	// Allow 检查是否允许单个请求通过
 	// 如果被限流，返回的 Result.Allowed 为 false
@@ -25,7 +30,8 @@ type Limiter interface {
 	AllowN(ctx context.Context, key Key, n int) (*Result, error)
 
 	// Close 关闭限流器，释放资源
-	Close() error
+	// 设计决策: 保留 ctx 参数（D-02），当前未使用但预留用于未来超时控制。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================
@@ -126,7 +132,11 @@ func New(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
 	distributed := newLimiterCore(backend, matcher, cfg)
 
 	if cfg.config.Fallback != "" {
-		localBackend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider)
+		// 设计决策: FallbackLocal + 默认 PodCount=1 + 无 PodCountProvider 时输出启动告警。
+		// 多 Pod 部署下每个 Pod 按完整配额执行本地限流，总放行量可达 N 倍。
+		// 不设为硬错误是因为单 Pod 场景（开发/测试/小型服务）默认值合理。
+		warnDefaultPodCount(cfg)
+		localBackend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider, cfg.logger)
 		local := newLimiterCore(localBackend, matcher, cfg)
 		return newFallbackLimiter(distributed, local, cfg), nil
 	}
@@ -159,7 +169,7 @@ func NewLocal(opts ...Option) (Limiter, error) {
 	}
 
 	matcher := newRuleMatcher(cfg.config.Rules)
-	backend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider)
+	backend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider, cfg.logger)
 	return newLimiterCore(backend, matcher, cfg), nil
 }
 
@@ -167,8 +177,26 @@ func NewLocal(opts ...Option) (Limiter, error) {
 //
 // 当 Redis 不可用时自动降级到本地限流。
 // 这是推荐的生产环境使用方式。
+//
+// 设计决策: 默认降级策略 prepend 到用户选项之前，确保用户通过 opts 传入的
+// WithFallback 优先级更高（后执行的 Option 覆盖先执行的）。
 func NewWithFallback(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
-	// 确保启用降级
-	opts = append(opts, WithFallback(FallbackLocal))
+	// 将默认降级策略放在前面，用户选项后执行可覆盖
+	opts = append([]Option{WithFallback(FallbackLocal)}, opts...)
 	return New(rdb, opts...)
+}
+
+// warnDefaultPodCount 在 FallbackLocal + 默认 PodCount + 无 PodCountProvider 时输出启动告警。
+// 多 Pod 部署下每个 Pod 按完整配额执行本地限流，总放行量可达 N 倍配额。
+func warnDefaultPodCount(cfg *options) {
+	if cfg.config.Fallback != FallbackLocal {
+		return
+	}
+	if cfg.podCountProvider != nil || cfg.config.LocalPodCount > 1 {
+		return
+	}
+	slog.Warn("xlimit: FallbackLocal with default PodCount=1; " +
+		"in multi-pod deployments each pod gets the full quota, " +
+		"total throughput may reach N × limit. " +
+		"Use WithPodCount or WithPodCountProvider to set the real pod count.")
 }

@@ -52,11 +52,11 @@ func HasParent(ctx context.Context) (value bool, ok bool) {
 	return v, ok
 }
 
-// MustHasParent 从 context 提取 has_parent 标志，不存在则返回 false
+// HasParentOrDefault 从 context 提取 has_parent 标志，不存在则返回 false（零值）。
 //
 // 语义：简化版获取函数，适用于只关心"是否有上级"而不关心"是否设置"的场景。
 // 如果需要区分"未设置"和"设置为false"，请使用 HasParent。
-func MustHasParent(ctx context.Context) bool {
+func HasParentOrDefault(ctx context.Context) bool {
 	v, _ := HasParent(ctx)
 	return v
 }
@@ -110,7 +110,12 @@ func UnclassRegionID(ctx context.Context) string {
 //
 // 用于批量获取平台信息，替代多参数函数。
 //
-// 注意：HasParent 的零值为 false，与"未设置"状态不可区分。
+// 设计决策: Platform 不提供 Validate()/IsComplete() 方法（与 Identity/Trace 不同），原因：
+//   - HasParent 是 bool 类型，零值 false 与"未设置"在结构体层面不可区分
+//   - UnclassRegionID 是可选字段，无必填约束
+//   - 如需验证 HasParent 是否显式设置，应使用 HasParent(ctx) 函数（返回 value, ok）
+//   - 添加 Validate() 会暗示存在必填校验，但实际无法准确表达，可能误导调用方
+//
 // 如需区分"未设置"和"显式设置为 false"，请使用 HasParent(ctx) 函数（返回 value, ok）。
 type Platform struct {
 	HasParent       bool
@@ -120,6 +125,7 @@ type Platform struct {
 // GetPlatform 从 context 批量获取平台信息
 //
 // 返回 Platform 结构体。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 注意：HasParent 默认为 false，无法区分"未设置"和"设置为false"。
 // 如需区分，请使用 HasParent(ctx) 函数。
 func GetPlatform(ctx context.Context) Platform {
@@ -134,6 +140,11 @@ func GetPlatform(ctx context.Context) Platform {
 //
 // 注意：HasParent 总是会被注入（即使为 false），UnclassRegionID 仅在非空时注入。
 // 如果 ctx 为 nil，返回 ErrNilContext。
+//
+// 设计决策: 未复用 applyOptionalFields（与 WithIdentity/WithTrace 不同），原因：
+//   - HasParent 是 bool 类型，不适配 contextFieldSetter 的 string 专用机制
+//   - HasParent 总是注入（无论 true/false），而 applyOptionalFields 跳过空值
+//   - 错误分支当前不可达（nil ctx 已在入口拦截），但保留作为防御性编程
 func WithPlatform(ctx context.Context, p Platform) (context.Context, error) {
 	if ctx == nil {
 		return nil, ErrNilContext

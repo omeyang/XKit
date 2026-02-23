@@ -36,7 +36,9 @@ func applyOptions(opts []Option) *config {
 		autoGenerate: true, // 默认自动生成
 	}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 	return cfg
 }
@@ -50,6 +52,9 @@ func applyOptions(opts []Option) *config {
 // 包含两层信息：
 //   - 解析后的字段（TraceID、SpanID、TraceFlags）：用于业务逻辑和 context 注入
 //   - 原始传输层字段（Traceparent、Tracestate）：用于透传和手动注入
+//
+// 注意：如果手动修改了 TraceID/SpanID 后调用 InjectTraceToHeader，
+// 应同步清空 Traceparent 字段，否则 resolveTraceparent 会优先使用原始 Traceparent。
 //
 // 设计决策: 当 traceparent 解析成功时，TraceID/SpanID/TraceFlags 来自 traceparent 解析结果，
 // Traceparent 保留原始字符串用于透传场景（如 InjectTraceToHeader）。
@@ -98,6 +103,23 @@ func TraceFlags(ctx context.Context) string {
 	return xctx.TraceFlags(ctx)
 }
 
+// TraceInfoFromContext 从 context 提取完整的追踪信息。
+//
+// 与 ExtractFromHTTPHeader/ExtractFromMetadata 对称：
+//   - ExtractFromHTTPHeader/ExtractFromMetadata: 从传输层提取到 TraceInfo
+//   - TraceInfoFromContext: 从 context 提取到 TraceInfo
+//
+// 返回的 TraceInfo 不包含 Traceparent 和 Tracestate 字段，
+// 因为 context 中只存储解析后的各字段，不存储原始传输层头。
+func TraceInfoFromContext(ctx context.Context) TraceInfo {
+	return TraceInfo{
+		TraceID:    xctx.TraceID(ctx),
+		SpanID:     xctx.SpanID(ctx),
+		RequestID:  xctx.RequestID(ctx),
+		TraceFlags: xctx.TraceFlags(ctx),
+	}
+}
+
 // =============================================================================
 // 内部辅助函数 — Context 注入
 // =============================================================================
@@ -125,7 +147,7 @@ func injectID(ctx context.Context, value string, autoGenerate bool, inj idInject
 	if value != "" {
 		if inj.validate(value) {
 			ctx, err = inj.inject(ctx, value)
-			if err != nil {
+			if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 				xlog.Warn(ctx, "xtrace: failed to inject "+inj.name,
 					slog.String(inj.name, value), slog.Any("error", err))
 			}
@@ -134,14 +156,14 @@ func injectID(ctx context.Context, value string, autoGenerate bool, inj idInject
 				slog.String(inj.name, value))
 			if autoGenerate {
 				ctx, err = inj.ensure(ctx)
-				if err != nil {
+				if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 					xlog.Warn(ctx, "xtrace: failed to ensure "+inj.name, slog.Any("error", err))
 				}
 			}
 		}
 	} else if autoGenerate {
 		ctx, err = inj.ensure(ctx)
-		if err != nil {
+		if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 			xlog.Warn(ctx, "xtrace: failed to ensure "+inj.name, slog.Any("error", err))
 		}
 	}
@@ -209,7 +231,7 @@ func injectTraceFlags(ctx context.Context, traceFlags string) context.Context {
 	}
 	var err error
 	ctx, err = xctx.WithTraceFlags(ctx, strings.ToLower(traceFlags))
-	if err != nil {
+	if err != nil { // 防御性处理：正常流程不会触发（仅 nil context）
 		xlog.Warn(ctx, "xtrace: failed to inject trace_flags",
 			slog.String("trace_flags", traceFlags), slog.Any("error", err))
 	}
@@ -235,20 +257,28 @@ func hasTraceparentSeparators(s string) bool {
 	return s[2] == '-' && s[35] == '-' && s[52] == '-'
 }
 
-// 使用固定索引解析，避免 strings.SplitN 的堆分配。
-func parseTraceparent(traceparent string) (traceID, spanID, traceFlags string, ok bool) {
+// validateTraceparentStructure 验证 traceparent 的结构（长度、分隔符、版本、版本长度约束）。
+func validateTraceparentStructure(traceparent string) bool {
 	// W3C 规范：最小长度 55 字符（{2}-{32}-{16}-{2}）
 	if len(traceparent) < 55 || !hasTraceparentSeparators(traceparent) {
-		return "", "", "", false
+		return false
 	}
-
 	version := traceparent[0:2]
 	if !isValidTraceparentVersion(version) {
-		return "", "", "", false
+		return false
 	}
 	// W3C 规范：version 00 必须恰好 55 字符，不允许额外字段
-	// 未来版本（> 00）可以包含额外字段
-	if version == "00" && len(traceparent) != 55 {
+	if version == "00" {
+		return len(traceparent) == 55
+	}
+	// W3C 前向兼容：未知版本如果长度超过 55，第 56 位（索引 55）必须是 '-'
+	// 这确保扩展字段使用正确的分隔符格式
+	return len(traceparent) <= 55 || traceparent[55] == '-'
+}
+
+// 使用固定索引解析，避免 strings.SplitN 的堆分配。
+func parseTraceparent(traceparent string) (traceID, spanID, traceFlags string, ok bool) {
+	if !validateTraceparentStructure(traceparent) {
 		return "", "", "", false
 	}
 
@@ -289,6 +319,9 @@ func isValidTraceFlags(flags string) bool {
 // 解析端容错：同时接受大写和小写，确保与不同实现的互操作性。
 // 输出端（formatTraceparent）会统一转换为小写，确保符合 W3C 规范。
 func isValidHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		isDigit := c >= '0' && c <= '9'
@@ -330,6 +363,11 @@ const traceparentLen = 55
 //
 // W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
 // 本函数使用固定大小的字节数组减少内存分配。
+//
+// 设计决策: strings.ToLower 在 Go 1.20+ 对纯 ASCII 小写输入有快速路径（直接返回原字符串，
+// 零分配）。由于 parseTraceparent 输出的 traceID/spanID 绝大多数已是小写，
+// 实际运行中 strings.ToLower 几乎不产生额外分配。逐字节小写方案被 gosec G602 阻断，
+// 收益不足以引入 nolint 注解。
 func formatTraceparent(traceID, spanID, traceFlags string) string {
 	if !isValidTraceID(traceID) || !isValidSpanID(spanID) {
 		return ""
@@ -350,4 +388,61 @@ func formatTraceparent(traceID, spanID, traceFlags string) string {
 	copy(buf[52:53], "-")
 	copy(buf[53:55], strings.ToLower(traceFlags))
 	return string(buf[:])
+}
+
+// resolveTraceparent 解析 TraceInfo 中的 traceparent 并返回规范化的 v00 格式。
+//
+// 优先从 info.Traceparent 解析；解析失败或为空时，从 TraceID/SpanID/TraceFlags 生成。
+// 返回空字符串表示无法生成有效的 traceparent。
+//
+// 设计决策: 无论 info.Traceparent 是否包含非 v00 版本，
+// 始终以 v00 格式重新生成 traceparent。这与 formatTraceparent 的设计决策一致：
+// 本包作为 v00 实现，按 W3C 规范应以自身支持的版本重新生成。
+func resolveTraceparent(info TraceInfo) string {
+	if info.Traceparent != "" {
+		if traceID, spanID, traceFlags, ok := parseTraceparent(info.Traceparent); ok {
+			return formatTraceparent(traceID, spanID, traceFlags)
+		}
+		// 无效时静默丢弃，回退到 TraceID/SpanID 生成
+	}
+	return formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags)
+}
+
+// =============================================================================
+// 传输层共享注入逻辑
+// =============================================================================
+
+// transportKeys 不同传输协议使用的 key 名称。
+type transportKeys struct {
+	traceID     string
+	spanID      string
+	requestID   string
+	traceparent string
+	tracestate  string
+}
+
+// injectTraceInfoTo 将 TraceInfo 的各字段通过 set 函数注入到传输层。
+// 这是 InjectTraceToHeader 和 InjectTraceToMetadata 的共享实现。
+//
+// 设计决策: W3C 规范要求 tracestate 不得在无有效 traceparent 时发送。
+// 仅当 traceparent 已成功写入时才注入 tracestate，避免下游收到不完整的 Trace Context。
+func injectTraceInfoTo(set func(key, value string), info TraceInfo, keys transportKeys) {
+	if info.TraceID != "" {
+		set(keys.traceID, info.TraceID)
+	}
+	if info.SpanID != "" {
+		set(keys.spanID, info.SpanID)
+	}
+	if info.RequestID != "" {
+		set(keys.requestID, info.RequestID)
+	}
+
+	traceparent := resolveTraceparent(info)
+	if traceparent != "" {
+		set(keys.traceparent, traceparent)
+	}
+
+	if info.Tracestate != "" && traceparent != "" {
+		set(keys.tracestate, info.Tracestate)
+	}
 }

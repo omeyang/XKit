@@ -57,6 +57,8 @@ func assertSingleAttr(t *testing.T, attrs []slog.Attr, wantKey, wantValue string
 }
 
 func TestIdentityAttrs(t *testing.T) {
+	t.Parallel()
+
 	cases := []testAttrCase{
 		{"全部为空", []string{"", "", ""}, 0},
 		{"只有平台", []string{"p1", "", ""}, 1},
@@ -81,6 +83,8 @@ func TestIdentityAttrs(t *testing.T) {
 }
 
 func TestAppendIdentityAttrs_NilContext(t *testing.T) {
+	t.Parallel()
+
 	var nilCtx context.Context
 	attrs := make([]slog.Attr, 0, 3)
 	result := xctx.AppendIdentityAttrs(attrs, nilCtx)
@@ -88,6 +92,8 @@ func TestAppendIdentityAttrs_NilContext(t *testing.T) {
 }
 
 func TestAppendTraceAttrs_NilContext(t *testing.T) {
+	t.Parallel()
+
 	var nilCtx context.Context
 	attrs := make([]slog.Attr, 0, 4)
 	result := xctx.AppendTraceAttrs(attrs, nilCtx)
@@ -95,6 +101,8 @@ func TestAppendTraceAttrs_NilContext(t *testing.T) {
 }
 
 func TestAppendPlatformAttrs_NilContext(t *testing.T) {
+	t.Parallel()
+
 	var nilCtx context.Context
 	attrs := make([]slog.Attr, 0, 2)
 	result := xctx.AppendPlatformAttrs(attrs, nilCtx)
@@ -102,6 +110,8 @@ func TestAppendPlatformAttrs_NilContext(t *testing.T) {
 }
 
 func TestTraceAttrs(t *testing.T) {
+	t.Parallel()
+
 	cases := []testAttrCase{
 		{"全部为空", []string{"", "", ""}, 0},
 		{"只有 trace", []string{"t1", "", ""}, 1},
@@ -124,6 +134,8 @@ func TestTraceAttrs(t *testing.T) {
 	runAttrTests(t, "TraceAttrs", cases, setters, getAttrs)
 
 	t.Run("包含TraceFlags", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithTraceID(context.Background(), "t1")
 		ctx, _ = xctx.WithTraceFlags(ctx, "01")
 		attrs := xctx.TraceAttrs(ctx)
@@ -141,7 +153,11 @@ func TestTraceAttrs(t *testing.T) {
 }
 
 func TestDeploymentAttrs(t *testing.T) {
+	t.Parallel()
+
 	t.Run("有效部署类型", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithDeploymentType(context.Background(), xctx.DeploymentSaaS)
 		if err != nil {
 			t.Fatalf("WithDeploymentType() error = %v", err)
@@ -162,6 +178,8 @@ func TestDeploymentAttrs(t *testing.T) {
 	})
 
 	t.Run("空部署类型返回错误", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := xctx.DeploymentAttrs(context.Background())
 		if !errors.Is(err, xctx.ErrMissingDeploymentType) {
 			t.Errorf("DeploymentAttrs(empty) error = %v, want %v", err, xctx.ErrMissingDeploymentType)
@@ -169,6 +187,8 @@ func TestDeploymentAttrs(t *testing.T) {
 	})
 
 	t.Run("nil context返回错误", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.DeploymentAttrs(nilCtx)
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -178,29 +198,41 @@ func TestDeploymentAttrs(t *testing.T) {
 }
 
 func TestPlatformAttrs(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回nil", func(t *testing.T) {
+		t.Parallel()
+
 		assert.Nil(t, xctx.PlatformAttrs(context.Background()), "PlatformAttrs(empty)")
 	})
 
 	t.Run("HasParent=true", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithHasParent(context.Background(), true)
 		require.NoError(t, err, "WithHasParent()")
 		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyHasParent, "true")
 	})
 
 	t.Run("HasParent=false仍输出字段", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithHasParent(context.Background(), false)
 		require.NoError(t, err, "WithHasParent()")
 		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyHasParent, "false")
 	})
 
 	t.Run("UnclassRegionID", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithUnclassRegionID(context.Background(), "region-001")
 		require.NoError(t, err, "WithUnclassRegionID()")
 		assertSingleAttr(t, xctx.PlatformAttrs(ctx), xctx.KeyUnclassRegionID, "region-001")
 	})
 
 	t.Run("组合字段", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithHasParent(context.Background(), true)
 		require.NoError(t, err, "WithHasParent()")
 		ctx, err = xctx.WithUnclassRegionID(ctx, "region-002")
@@ -213,6 +245,8 @@ func TestPlatformAttrs(t *testing.T) {
 }
 
 func TestLogAttrs(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		identity   bool
@@ -233,6 +267,8 @@ func TestLogAttrs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := buildLogAttrsContext(t, tt.identity, tt.trace, tt.deployment, tt.platform)
 			attrs, err := xctx.LogAttrs(ctx)
 			if tt.wantErr != nil {
@@ -272,6 +308,8 @@ func buildLogAttrsContext(t *testing.T, identity, trace, deployment, platform bo
 }
 
 func TestLogAttrs_Values(t *testing.T) {
+	t.Parallel()
+
 	ctx, _ := xctx.WithPlatformID(context.Background(), "platform-abc")
 	ctx, _ = xctx.WithTenantID(ctx, "tenant-123")
 	ctx, _ = xctx.WithTenantName(ctx, "TestTenant")
@@ -316,6 +354,8 @@ func TestLogAttrs_Values(t *testing.T) {
 }
 
 func TestLogAttrs_NilContext(t *testing.T) {
+	t.Parallel()
+
 	var nilCtx context.Context
 	if len(xctx.IdentityAttrs(nilCtx)) != 0 {
 		t.Errorf("IdentityAttrs(nil) should return empty")
@@ -337,6 +377,8 @@ func TestLogAttrs_NilContext(t *testing.T) {
 // =============================================================================
 
 func TestKeyConstants(t *testing.T) {
+	t.Parallel()
+
 	// Identity keys
 	if xctx.KeyPlatformID != "platform_id" {
 		t.Errorf("KeyPlatformID = %q, want %q", xctx.KeyPlatformID, "platform_id")

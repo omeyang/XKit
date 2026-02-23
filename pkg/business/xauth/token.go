@@ -2,6 +2,7 @@ package xauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -48,16 +49,25 @@ type TokenManagerConfig struct {
 }
 
 // NewTokenManager 创建 TokenManager。
-// 设计决策: 通过 NewClient 创建时，所有依赖已经过验证；
-// 直接使用时，nil Config/HTTP/Cache 会在此处 panic，属于编程错误（同 sync.Mutex 使用前不初始化）。
-func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
+// Config、HTTP 和 Cache 为必填依赖，缺失时返回错误。
+func NewTokenManager(cfg TokenManagerConfig) (*TokenManager, error) {
+	if cfg.Config == nil {
+		return nil, ErrNilConfig
+	}
+	if cfg.HTTP == nil {
+		return nil, ErrNilHTTPClient
+	}
+	if cfg.Cache == nil {
+		return nil, ErrNilCache
+	}
+
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 	if cfg.Observer == nil {
 		cfg.Observer = xmetrics.NoopObserver{}
 	}
-	if cfg.RefreshThreshold <= 0 && cfg.Config != nil {
+	if cfg.RefreshThreshold <= 0 {
 		cfg.RefreshThreshold = cfg.Config.TokenRefreshThreshold
 	}
 	if cfg.RefreshThreshold <= 0 {
@@ -76,7 +86,7 @@ func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
 		enableBackgroundRefresh: cfg.EnableBackgroundRefresh,
 		ctx:                     ctx,
 		cancel:                  cancel,
-	}
+	}, nil
 }
 
 // GetToken 获取指定租户的 Token。
@@ -192,11 +202,14 @@ func (m *TokenManager) obtainAPIKeyToken(ctx context.Context, tenantID string) (
 		return nil, ErrTokenNotFound
 	}
 
+	// 设计决策: API Key Token 响应中不包含 expires_in 字段（APIAccessTokenResponse.Data 仅有 access_token），
+	// 因此使用 DefaultTokenCacheTTL（6 小时）作为默认有效期。如果服务端实际有效期短于此值，
+	// 客户端会在 Token 过期后收到 401 并通过 EnableAutoRetryOn401 机制自动重试。
+	// 如需调整此默认值，可通过 Config.APIKeyTokenTTL 配置（未来扩展）。
 	token := &TokenInfo{
 		AccessToken: resp.Data.AccessToken,
 		ObtainedAt:  time.Now(),
-		// API Key Token 通常有较长的有效期，默认设置为 6 小时
-		ExpiresIn: int64(DefaultTokenCacheTTL.Seconds()),
+		ExpiresIn:   int64(DefaultTokenCacheTTL.Seconds()),
 	}
 	token.ExpiresAt = token.ObtainedAt.Add(DefaultTokenCacheTTL)
 
@@ -259,7 +272,7 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 		token.ExpiresAt = token.ObtainedAt.Add(time.Duration(token.ExpiresIn) * time.Second)
 	}
 
-	m.logger.Info("refreshed token",
+	m.logger.Debug("refreshed token",
 		slog.String("tenant_id", tenantID),
 		slog.Int64("expires_in", token.ExpiresIn),
 	)
@@ -268,6 +281,9 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 }
 
 // VerifyToken 验证 Token。
+// 设计决策: 完全委托认证服务端校验 Token 有效性。客户端不做本地 exp/issuer/audience
+// 校验，因为服务端是 Token 状态的唯一权威来源（可能有 grace period、吊销等机制），
+// 客户端冗余校验反而可能导致与服务端判定不一致。
 func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInfo, error) {
 	if token == "" {
 		return nil, ErrMissingToken
@@ -303,10 +319,12 @@ func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInf
 		return nil, verifyErr
 	}
 
-	// 构建 TokenInfo
+	// 构建 TokenInfo，保留服务端返回的完整声明供调用方授权决策
+	claims := resp.Data
 	tokenInfo := &TokenInfo{
 		AccessToken: token,
 		ExpiresAt:   time.Unix(resp.Data.Exp, 0),
+		Claims:      &claims,
 	}
 
 	return tokenInfo, nil
@@ -335,10 +353,16 @@ func (m *TokenManager) backgroundRefresh(tenantID string) {
 	// 获取当前 Token
 	currentToken, _, err := m.cache.Get(ctx, tenantID)
 	if err != nil {
-		m.logger.Debug("background refresh: get current token failed",
-			slog.String("tenant_id", tenantID),
-			slog.String("error", err.Error()),
-		)
+		if errors.Is(err, ErrCacheMiss) {
+			m.logger.Debug("background refresh: cache miss, skipping",
+				slog.String("tenant_id", tenantID),
+			)
+		} else {
+			m.logger.Warn("background refresh: get current token failed",
+				slog.String("tenant_id", tenantID),
+				slog.String("error", err.Error()),
+			)
+		}
 		return
 	}
 
@@ -399,4 +423,22 @@ func (m *TokenManager) calculateTokenTTL(token *TokenInfo) time.Duration {
 // InvalidateToken 使 Token 失效（从缓存删除）。
 func (m *TokenManager) InvalidateToken(ctx context.Context, tenantID string) error {
 	return m.cache.Delete(ctx, tenantID)
+}
+
+// VerifyTokenForTenant 验证 Token 有效性并校验租户一致性。
+// 如果 Token 有效但其声明中的 TenantID 与期望的 tenantID 不匹配，返回错误。
+// 这是一个便捷方法，等价于 VerifyToken + 手动校验 Claims.TenantID。
+func VerifyTokenForTenant(ctx context.Context, c Client, token, tenantID string) (*TokenInfo, error) {
+	if c == nil {
+		return nil, ErrNilClient
+	}
+	info, err := c.VerifyToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if info.Claims != nil && info.Claims.TenantID != "" && info.Claims.TenantID != tenantID {
+		return nil, fmt.Errorf("%w: token tenant_id %q does not match expected %q",
+			ErrTokenInvalid, info.Claims.TenantID, tenantID)
+	}
+	return info, nil
 }

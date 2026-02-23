@@ -122,6 +122,14 @@ func (s *nilNilCacheStore) SetPlatformData(ctx context.Context, tenantID string,
 	return nil
 }
 
+func (s *nilNilCacheStore) DeleteToken(_ context.Context, _ string) error {
+	return nil
+}
+
+func (s *nilNilCacheStore) DeletePlatformData(_ context.Context, _ string) error {
+	return nil
+}
+
 func (s *nilNilCacheStore) Delete(ctx context.Context, tenantID string) error {
 	return nil
 }

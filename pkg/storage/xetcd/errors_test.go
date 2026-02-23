@@ -93,3 +93,39 @@ func TestErrWatchDisconnected(t *testing.T) {
 		t.Error("wrapped ErrWatchDisconnected should be detectable via errors.Is")
 	}
 }
+
+func TestErrInvalidRetryConfig(t *testing.T) {
+	err := ErrInvalidRetryConfig
+	if !errors.Is(err, ErrInvalidRetryConfig) {
+		t.Error("errors.Is(ErrInvalidRetryConfig, ErrInvalidRetryConfig) should be true")
+	}
+
+	wrapped := fmt.Errorf("bad config: %w", ErrInvalidRetryConfig)
+	if !errors.Is(wrapped, ErrInvalidRetryConfig) {
+		t.Error("wrapped ErrInvalidRetryConfig should be detectable via errors.Is")
+	}
+}
+
+func TestErrNilContext(t *testing.T) {
+	err := ErrNilContext
+	if !errors.Is(err, ErrNilContext) {
+		t.Error("errors.Is(ErrNilContext, ErrNilContext) should be true")
+	}
+
+	wrapped := fmt.Errorf("operation failed: %w", ErrNilContext)
+	if !errors.Is(wrapped, ErrNilContext) {
+		t.Error("wrapped ErrNilContext should be detectable via errors.Is")
+	}
+}
+
+func TestErrMaxRetriesExceeded(t *testing.T) {
+	err := ErrMaxRetriesExceeded
+	if !errors.Is(err, ErrMaxRetriesExceeded) {
+		t.Error("errors.Is(ErrMaxRetriesExceeded, ErrMaxRetriesExceeded) should be true")
+	}
+
+	wrapped := fmt.Errorf("watch stopped: %w", ErrMaxRetriesExceeded)
+	if !errors.Is(wrapped, ErrMaxRetriesExceeded) {
+		t.Error("wrapped ErrMaxRetriesExceeded should be detectable via errors.Is")
+	}
+}

@@ -35,6 +35,11 @@ func TestWarmupScripts(t *testing.T) {
 
 	ctx := context.Background()
 
+	t.Run("nil context returns error", func(t *testing.T) {
+		err := WarmupScripts(nil, client) //nolint:staticcheck // 测试 nil context 校验
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
 	t.Run("nil client returns error", func(t *testing.T) {
 		err := WarmupScripts(ctx, nil)
 		assert.ErrorIs(t, err, ErrNilClient)

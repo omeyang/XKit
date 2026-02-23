@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -237,6 +238,26 @@ func TestEnsureDirWithPermNullByte(t *testing.T) {
 	}
 	if !errors.Is(err, ErrNullByte) {
 		t.Errorf("EnsureDir(含空字节) 错误 = %v, errors.Is(ErrNullByte) = false", err)
+	}
+}
+
+func TestEnsureDirWithPermMkdirFailure(t *testing.T) {
+	// 使用普通文件作为父路径，使 os.MkdirAll 在其下创建子目录时失败。
+	// 比 chmod 0500 方案更稳定：root/CAP_DAC_OVERRIDE 环境下权限检查可能不生效，
+	// 但"父路径是普通文件"在任何权限环境下都会导致 MkdirAll 失败。
+	tmpDir := t.TempDir()
+	blockingFile := filepath.Join(tmpDir, "blocker")
+	if err := os.WriteFile(blockingFile, []byte("block"), 0600); err != nil {
+		t.Fatalf("创建阻塞文件失败: %v", err)
+	}
+
+	err := EnsureDirWithPerm(filepath.Join(blockingFile, "subdir", "app.log"), 0750)
+	if err == nil {
+		t.Fatal("期望 os.MkdirAll 失败，但没有返回错误")
+	}
+	// 验证错误包含 xfile 上下文
+	if !strings.Contains(err.Error(), "xfile: create directory") {
+		t.Errorf("错误消息缺少 xfile 上下文: %v", err)
 	}
 }
 

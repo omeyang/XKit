@@ -103,8 +103,9 @@ func (s *Server) handleAcceptError(err error, backoff *acceptBackoff) bool {
 
 // handleNewConnection 处理新连接。
 func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
-	// 使用 CAS 循环原子地检查并递增会话数，避免 Load() 和 Add() 之间的竞态
-	// 添加退避机制防止高并发下 CPU 自旋
+	// 设计决策: CAS 循环无硬性退出上限。循环必然终止——要么 CAS 成功，要么 sessionCount
+	// 达到 MaxSessions 后 reject。调试服务并发度极低（MaxSessions 默认 1），CAS 竞争
+	// 几乎不会发生。Gosched 退避防止极端情况下的 CPU 自旋。
 	const maxCASRetries = 10
 	for i := 0; ; i++ {
 		current := s.sessionCount.Load()

@@ -31,6 +31,7 @@
 //   - 如果 context.Canceled 来自服务内部（causeCtx 未被取消），不过滤，直接返回
 //   - 当 Group 被取消且有显式 cause 时（如 SignalError），Wait() 返回该 cause
 //   - 当 Group 被取消且无显式 cause 时，Wait() 返回 nil
+//   - 即使所有服务返回 nil，Cancel(cause) 设置的显式 cause 仍会被返回
 //
 // # 设计决策
 //
@@ -65,8 +66,9 @@
 //
 //  8. HTTPServer 关闭错误传播：HTTPServer 辅助函数通过 buffered channel
 //     传递 Shutdown() 的返回值。当 ListenAndServe 返回 http.ErrServerClosed
-//     （正常关闭）时，通过 select 同时监听 shutdownErrCh 和 ctx.Done()，
-//     防止在外部直接调用 server.Shutdown/Close 的场景下永久阻塞。
+//     （正常关闭）时，通过三路 select 区分关闭来源：ctx 驱动的关闭等待
+//     shutdown 结果，外部直接调用 server.Shutdown/Close 时立即返回 nil
+//     并通知 shutdown goroutine 退出，防止 goroutine 泄漏。
 //     这确保关闭超时等错误不会被静默吞掉，同时保证函数始终能返回。
 //
 //  9. Ticker 输入校验：Ticker 的 interval 参数必须为正数，
@@ -89,6 +91,46 @@
 //
 //  13. WithSignals 防御性拷贝：WithSignals 在创建时拷贝输入切片，
 //     避免调用方后续修改切片导致配置漂移或并发数据竞争。
+//
+//  14. 公开 API 参数校验：Go/GoWithName 对 fn == nil 返回 ErrNilFunc，
+//     Ticker/Timer 同样校验 fn == nil，HTTPServer 校验 server == nil 返回
+//     ErrNilServer，RunServices/RunServicesWithOptions 校验 nil Service 返回
+//     ErrNilService。统一的 fail-fast 模式防止 goroutine 内部 nil panic 导致
+//     进程崩溃，与 ErrInvalidInterval/ErrInvalidDelay 保持一致。
+//
+//  15. Ticker/Timer 已取消 context 防护：Ticker 的 immediate 分支和
+//     Timer 的 zero-delay 分支在调用 fn 前先检查 ctx.Err()，
+//     确保已取消的 context 不会触发业务副作用。
+//
+//  16. WithoutSignalHandler 优先级：当 WithoutSignalHandler 和 WithSignals
+//     同时使用时，WithoutSignalHandler 优先生效，WithSignals 配置被忽略。
+//
+//  17. NewGroup nil context 归一化：NewGroup(nil) 将 nil context 归一化为
+//     context.Background()，防止 context.WithCancelCause(nil) panic。
+//     不改变 API 签名（保持与 errgroup.WithContext 对齐），选择静默归一化。
+//
+//  18. Wait() 释放 context 资源：Wait() 通过 defer cancel(nil) 确保
+//     causeCtx 的 context 资源在返回前被释放。CancelCauseFunc 是幂等的，
+//     若已通过 Cancel() 或信号处理调用过则为空操作。
+//
+//  19. nil Option 静默跳过：NewGroup 遍历 opts 时跳过 nil Option，
+//     与 WithLogger(nil)/WithName("") 的防御性行为一致。不返回错误
+//     以保持与 errgroup.WithContext 对齐的 (*Group, context.Context) 签名。
+//
+//  20. HTTPServerInterface 命名：接口名使用 Interface 后缀是因为
+//     HTTPServer 已被同名便捷函数占用，重命名函数为 ServeHTTP 会与
+//     http.Handler.ServeHTTP 混淆，权衡后保持现状。
+//
+//  21. Cancel(cause) 不应包装 context.Canceled：Wait() 使用 errors.Is 遍历
+//     整个错误链来过滤 context.Canceled。如果 cause 包装了 context.Canceled
+//     （如 fmt.Errorf("...: %w", context.Canceled)），Wait() 会将其视为普通取消
+//     并返回 nil，导致退出原因丢失。有语义的 cause 应使用独立错误类型。
+//
+//  22. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
+//     所有服务通过 context 并发启动和同时取消。有序启动可通过嵌套 Group
+//     或在服务内部使用 ready channel 实现；健康检查建议在 HTTPServer 的
+//     handler 中实现，xrun 不内置此功能。这遵循 YAGNI 原则——编排策略
+//     因业务而异，过早抽象会增加不必要的复杂性。
 //
 // [errgroup]: https://pkg.go.dev/golang.org/x/sync/errgroup
 package xrun

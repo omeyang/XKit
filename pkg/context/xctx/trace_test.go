@@ -16,6 +16,8 @@ import (
 // =============================================================================
 
 func TestTraceID(t *testing.T) {
+	t.Parallel()
+
 	if got := xctx.TraceID(context.Background()); got != "" {
 		t.Errorf("TraceID(empty) = %q, want empty", got)
 	}
@@ -49,6 +51,8 @@ func TestTraceID(t *testing.T) {
 }
 
 func TestSpanAndRequestID(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		testValue string
@@ -71,6 +75,8 @@ func TestSpanAndRequestID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			// 正常注入和提取
 			ctx, err := tt.setter(context.Background(), tt.testValue)
 			if err != nil {
@@ -104,7 +110,11 @@ func TestSpanAndRequestID(t *testing.T) {
 // =============================================================================
 
 func TestGetTrace(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回空结构体", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.GetTrace(context.Background())
 		if tr.TraceID != "" || tr.SpanID != "" || tr.RequestID != "" {
 			t.Errorf("GetTrace(empty) = %+v, want empty fields", tr)
@@ -112,6 +122,8 @@ func TestGetTrace(t *testing.T) {
 	})
 
 	t.Run("正常获取", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithTraceID(context.Background(), "t1")
 		ctx, _ = xctx.WithSpanID(ctx, "s1")
 		ctx, _ = xctx.WithRequestID(ctx, "r1")
@@ -130,7 +142,11 @@ func TestGetTrace(t *testing.T) {
 }
 
 func TestTrace_Validate(t *testing.T) {
+	t.Parallel()
+
 	t.Run("全部存在", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{TraceID: "t1", SpanID: "s1", RequestID: "r1"}
 		if err := tr.Validate(); err != nil {
 			t.Errorf("Validate() error = %v", err)
@@ -138,6 +154,8 @@ func TestTrace_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少TraceID", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{SpanID: "s1", RequestID: "r1"}
 		if err := tr.Validate(); !errors.Is(err, xctx.ErrMissingTraceID) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingTraceID)
@@ -145,6 +163,8 @@ func TestTrace_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少SpanID", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{TraceID: "t1", RequestID: "r1"}
 		if err := tr.Validate(); !errors.Is(err, xctx.ErrMissingSpanID) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingSpanID)
@@ -152,6 +172,8 @@ func TestTrace_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少RequestID", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{TraceID: "t1", SpanID: "s1"}
 		if err := tr.Validate(); !errors.Is(err, xctx.ErrMissingRequestID) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingRequestID)
@@ -160,6 +182,8 @@ func TestTrace_Validate(t *testing.T) {
 }
 
 func TestTrace_IsComplete(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		tr   xctx.Trace
@@ -172,9 +196,93 @@ func TestTrace_IsComplete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.tr.IsComplete(); got != tt.want {
 				t.Errorf("IsComplete() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+// =============================================================================
+// Require 函数测试（强制获取模式）
+// =============================================================================
+
+func TestRequireTraceFunctions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		testValue string
+		wantErr   error
+		setter    func(context.Context, string) (context.Context, error)
+		require   func(context.Context) (string, error)
+	}{
+		{
+			name:      "TraceID",
+			testValue: "trace-123",
+			wantErr:   xctx.ErrMissingTraceID,
+			setter:    xctx.WithTraceID,
+			require:   xctx.RequireTraceID,
+		},
+		{
+			name:      "SpanID",
+			testValue: "span-456",
+			wantErr:   xctx.ErrMissingSpanID,
+			setter:    xctx.WithSpanID,
+			require:   xctx.RequireSpanID,
+		},
+		{
+			name:      "RequestID",
+			testValue: "req-789",
+			wantErr:   xctx.ErrMissingRequestID,
+			setter:    xctx.WithRequestID,
+			require:   xctx.RequireRequestID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("存在则返回", func(t *testing.T) {
+				t.Parallel()
+
+				ctx, err := tt.setter(context.Background(), tt.testValue)
+				if err != nil {
+					t.Fatalf("setter() error = %v", err)
+				}
+				got, err := tt.require(ctx)
+				if err != nil {
+					t.Errorf("Require%s() error = %v", tt.name, err)
+				}
+				if got != tt.testValue {
+					t.Errorf("Require%s() = %q, want %q", tt.name, got, tt.testValue)
+				}
+			})
+
+			t.Run("不存在则返回错误", func(t *testing.T) {
+				t.Parallel()
+
+				_, err := tt.require(context.Background())
+				if err == nil {
+					t.Errorf("Require%s() should return error for empty context", tt.name)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("error = %v, want %v", err, tt.wantErr)
+				}
+			})
+
+			t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+				t.Parallel()
+
+				var nilCtx context.Context
+				_, err := tt.require(nilCtx)
+				if !errors.Is(err, xctx.ErrNilContext) {
+					t.Errorf("Require%s(nil) error = %v, want %v", tt.name, err, xctx.ErrNilContext)
+				}
+			})
 		})
 	}
 }
@@ -212,16 +320,22 @@ func testGenerateID(t *testing.T, name string, wantLen int, generator func() str
 }
 
 func TestGenerateTraceID(t *testing.T) {
+	t.Parallel()
+
 	// W3C 规范: 32位小写十六进制
 	testGenerateID(t, "TraceID", 32, xctx.GenerateTraceID)
 }
 
 func TestGenerateSpanID(t *testing.T) {
+	t.Parallel()
+
 	// W3C 规范: 16位小写十六进制
 	testGenerateID(t, "SpanID", 16, xctx.GenerateSpanID)
 }
 
 func TestGenerateRequestID(t *testing.T) {
+	t.Parallel()
+
 	// 与 TraceID 格式一致
 	testGenerateID(t, "RequestID", 32, xctx.GenerateRequestID)
 }
@@ -231,6 +345,8 @@ func TestGenerateRequestID(t *testing.T) {
 // =============================================================================
 
 func TestEnsureIDs(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		wantLen  int // 0 表示不检查长度
@@ -267,7 +383,11 @@ func TestEnsureIDs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			t.Run("空context自动生成", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := tt.ensure(context.Background())
 				if err != nil {
 					t.Fatalf("Ensure%s() error = %v", tt.name, err)
@@ -282,6 +402,8 @@ func TestEnsureIDs(t *testing.T) {
 			})
 
 			t.Run("已有值则沿用", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := tt.setter(context.Background(), tt.existing)
 				if err != nil {
 					t.Fatalf("setter() error = %v", err)
@@ -296,6 +418,8 @@ func TestEnsureIDs(t *testing.T) {
 			})
 
 			t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+				t.Parallel()
+
 				_, err := tt.ensure(nil)
 				if !errors.Is(err, xctx.ErrNilContext) {
 					t.Errorf("Ensure%s(nil) error = %v, want %v", tt.name, err, xctx.ErrNilContext)
@@ -306,7 +430,11 @@ func TestEnsureIDs(t *testing.T) {
 }
 
 func TestEnsureTrace(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context全部生成", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.EnsureTrace(context.Background())
 		require.NoError(t, err, "EnsureTrace()")
 		assert.NotEmpty(t, xctx.TraceID(ctx), "EnsureTrace() should generate TraceID")
@@ -315,6 +443,8 @@ func TestEnsureTrace(t *testing.T) {
 	})
 
 	t.Run("部分存在则部分生成", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithTraceID(context.Background(), "existing-trace")
 		ctx, err := xctx.EnsureTrace(ctx)
 		require.NoError(t, err, "EnsureTrace()")
@@ -327,6 +457,8 @@ func TestEnsureTrace(t *testing.T) {
 	})
 
 	t.Run("全部存在则全部沿用", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithTraceID(context.Background(), "t1")
 		ctx, _ = xctx.WithSpanID(ctx, "s1")
 		ctx, _ = xctx.WithRequestID(ctx, "r1")
@@ -339,6 +471,8 @@ func TestEnsureTrace(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.EnsureTrace(nilCtx)
 		assert.ErrorIs(t, err, xctx.ErrNilContext, "EnsureTrace(nil)")
@@ -380,7 +514,11 @@ func ExampleEnsureTrace() {
 // =============================================================================
 
 func TestWithTrace(t *testing.T) {
+	t.Parallel()
+
 	t.Run("全部字段非空", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{
 			TraceID:   "trace-001",
 			SpanID:    "span-002",
@@ -396,6 +534,8 @@ func TestWithTrace(t *testing.T) {
 	})
 
 	t.Run("部分字段为空", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{
 			TraceID: "trace-001",
 			// SpanID 和 RequestID 为空
@@ -411,6 +551,8 @@ func TestWithTrace(t *testing.T) {
 	})
 
 	t.Run("全部字段为空", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{}
 		ctx, err := xctx.WithTrace(context.Background(), tr)
 		require.NoError(t, err, "WithTrace()")
@@ -422,6 +564,8 @@ func TestWithTrace(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		tr := xctx.Trace{TraceID: "t1"}
 		_, err := xctx.WithTrace(nilCtx, tr)
@@ -434,22 +578,32 @@ func TestWithTrace(t *testing.T) {
 // =============================================================================
 
 func TestTraceFlags(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		assert.Empty(t, xctx.TraceFlags(context.Background()), "TraceFlags(empty)")
 	})
 
 	t.Run("nil context返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		assert.Empty(t, xctx.TraceFlags(nilCtx), "TraceFlags(nil)")
 	})
 
 	t.Run("正常注入和提取", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithTraceFlags(context.Background(), "01")
 		require.NoError(t, err, "WithTraceFlags()")
 		assert.Equal(t, "01", xctx.TraceFlags(ctx), "TraceFlags()")
 	})
 
 	t.Run("覆盖写入返回新值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithTraceFlags(context.Background(), "00")
 		require.NoError(t, err, "WithTraceFlags()")
 		ctx, err = xctx.WithTraceFlags(ctx, "01")
@@ -458,6 +612,8 @@ func TestTraceFlags(t *testing.T) {
 	})
 
 	t.Run("nil context注入返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.WithTraceFlags(nilCtx, "01")
 		assert.ErrorIs(t, err, xctx.ErrNilContext, "WithTraceFlags(nil)")
@@ -469,7 +625,11 @@ func TestTraceFlags(t *testing.T) {
 // =============================================================================
 
 func TestWithTrace_TraceFlags(t *testing.T) {
+	t.Parallel()
+
 	t.Run("TraceFlags 随 WithTrace 注入", func(t *testing.T) {
+		t.Parallel()
+
 		tr := xctx.Trace{
 			TraceID:    "trace-001",
 			SpanID:     "span-002",
@@ -484,6 +644,8 @@ func TestWithTrace_TraceFlags(t *testing.T) {
 	})
 
 	t.Run("空 TraceFlags 不注入", func(t *testing.T) {
+		t.Parallel()
+
 		// 先设置 TraceFlags
 		ctx, _ := xctx.WithTraceFlags(context.Background(), "01")
 		// 用空 TraceFlags 的 Trace 覆盖

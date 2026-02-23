@@ -23,6 +23,9 @@ type Rotator interface {
 
 	// Close 关闭轮转器，释放资源
 	// 重复调用应返回 [ErrClosed]
+	//
+	// 设计决策: 不使用 Close(ctx) 签名，保持 io.WriteCloser 兼容性，
+	// 使 Rotator 可直接作为 io.Writer/io.WriteCloser 传递给 xlog 等消费方。
 	Close() error
 
 	// Rotate 手动触发日志轮转

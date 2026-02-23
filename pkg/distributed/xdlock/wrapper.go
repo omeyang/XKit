@@ -2,12 +2,17 @@ package xdlock
 
 import (
 	"github.com/go-redsync/redsync/v4"
+	"github.com/omeyang/xkit/pkg/storage/xetcd"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 // =============================================================================
 // etcd 类型别名
 // =============================================================================
+
+// EtcdConfig etcd 客户端配置。
+// 这是 xetcd.Config 的类型别名，支持 JSON/YAML 反序列化。
+type EtcdConfig = xetcd.Config
 
 // Session 是 etcd concurrency.Session 的类型别名。
 // 用于 EtcdFactory.Session() 方法的返回类型。

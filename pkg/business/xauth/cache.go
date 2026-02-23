@@ -145,7 +145,23 @@ func (s *RedisCacheStore) SetPlatformData(ctx context.Context, tenantID string, 
 	return nil
 }
 
-// Delete 删除租户相关的所有缓存。
+// DeleteToken 仅删除 Token 缓存。
+func (s *RedisCacheStore) DeleteToken(ctx context.Context, tenantID string) error {
+	if err := s.client.Del(ctx, s.tokenKey(tenantID)).Err(); err != nil {
+		return fmt.Errorf("xauth: redis del token failed: %w", err)
+	}
+	return nil
+}
+
+// DeletePlatformData 仅删除平台数据缓存。
+func (s *RedisCacheStore) DeletePlatformData(ctx context.Context, tenantID string) error {
+	if err := s.client.Del(ctx, s.platformKey(tenantID)).Err(); err != nil {
+		return fmt.Errorf("xauth: redis del platform data failed: %w", err)
+	}
+	return nil
+}
+
+// Delete 删除租户相关的所有缓存（Token + 平台数据）。
 func (s *RedisCacheStore) Delete(ctx context.Context, tenantID string) error {
 	keys := []string{
 		s.tokenKey(tenantID),
@@ -184,6 +200,16 @@ func (NoopCacheStore) GetPlatformData(_ context.Context, _, _ string) (string, e
 
 // SetPlatformData 空操作。
 func (NoopCacheStore) SetPlatformData(_ context.Context, _, _, _ string, _ time.Duration) error {
+	return nil
+}
+
+// DeleteToken 空操作。
+func (NoopCacheStore) DeleteToken(_ context.Context, _ string) error {
+	return nil
+}
+
+// DeletePlatformData 空操作。
+func (NoopCacheStore) DeletePlatformData(_ context.Context, _ string) error {
 	return nil
 }
 

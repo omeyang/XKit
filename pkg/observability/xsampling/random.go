@@ -31,5 +31,5 @@ func randomFloat64() float64 {
 		// 详见上方设计决策说明
 		panic("xsampling: crypto/rand.Read failed: " + err.Error())
 	}
-	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
+	return float64(binary.LittleEndian.Uint64(buf[:])>>(64-floatBits)) * floatScale
 }

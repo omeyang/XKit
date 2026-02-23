@@ -268,6 +268,88 @@ func TestEnsureSpanContext_InvalidSpanIDFormat(t *testing.T) {
 	assert.False(t, sc.IsValid())
 }
 
+func TestEnsureSpanContext_RespectsTraceFlags_NotSampled(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "00")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.False(t, sc.IsSampled(), "TraceFlags 00 should not be sampled")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_Sampled(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "01")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "TraceFlags 01 should be sampled")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_HighBitOnly(t *testing.T) {
+	// W3C trace-flags "02" = bit 1 set, bit 0 (sampled) unset
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "02")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.False(t, sc.IsSampled(), "TraceFlags 02 (bit 0 unset) should not be sampled")
+	assert.Equal(t, trace.TraceFlags(0x02), sc.TraceFlags(), "should preserve full bit field")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_AllBitsSet(t *testing.T) {
+	// W3C trace-flags "ff" = all bits set, including bit 0 (sampled)
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "ff")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "TraceFlags ff should be sampled (bit 0 set)")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_InvalidHex(t *testing.T) {
+	// 非法 hex 值应 fallback 到默认 FlagsSampled
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "zz")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "invalid hex should default to sampled")
+}
+
+func TestEnsureSpanContext_DefaultSampled_NoTraceFlags(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	// 不设置 TraceFlags
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "missing TraceFlags should default to sampled")
+}
+
 // =============================================================================
 // syncTraceToXctx Tests
 // =============================================================================
@@ -298,6 +380,24 @@ func TestSyncTraceToXctx_ValidSpanContext(t *testing.T) {
 	// 应同步到 xctx
 	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
 	assert.Equal(t, "b7ad6b7169203331", xctx.SpanID(result))
+	assert.Equal(t, "01", xctx.TraceFlags(result), "TraceFlags should be synced")
+}
+
+func TestSyncTraceToXctx_TraceFlags_NotSampled(t *testing.T) {
+	traceID, _ := trace.TraceIDFromHex("0af7651916cd43dd8448eb211c80319c")
+	spanID, _ := trace.SpanIDFromHex("b7ad6b7169203331")
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: 0, // not sampled
+		Remote:     true,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), spanContext)
+
+	result := syncTraceToXctx(ctx)
+
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
+	assert.Equal(t, "00", xctx.TraceFlags(result), "TraceFlags 00 (not sampled) should be synced")
 }
 
 // =============================================================================

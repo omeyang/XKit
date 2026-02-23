@@ -39,7 +39,7 @@ func TestDistributedLimiter_Allow(t *testing.T) {
 		WithFallback(""), // 禁用降级，测试纯分布式
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -75,7 +75,7 @@ func TestDistributedLimiter_AllowN(t *testing.T) {
 		WithFallback(""),
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -102,7 +102,7 @@ func TestDistributedLimiter_Reset(t *testing.T) {
 		WithFallback(""),
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
@@ -143,7 +143,7 @@ func TestDistributedLimiter_MultipleRules(t *testing.T) {
 		WithFallback(""),
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -185,7 +185,7 @@ func TestDistributedLimiter_Override(t *testing.T) {
 		WithFallback(""),
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -223,7 +223,7 @@ func TestDistributedLimiter_Callback(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err, "failed to create limiter")
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "callback-tenant"}
@@ -260,7 +260,7 @@ func BenchmarkDistributedLimiter_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "bench-tenant"}

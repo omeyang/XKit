@@ -32,7 +32,7 @@ func setupGRPCTestLimiter(t *testing.T, limit int) Limiter {
 	}
 
 	t.Cleanup(func() {
-		_ = limiter.Close() //nolint:errcheck // cleanup
+		_ = limiter.Close(context.Background()) //nolint:errcheck // cleanup
 		_ = client.Close()  //nolint:errcheck // cleanup
 		mr.Close()
 	})
@@ -334,6 +334,34 @@ func (m *mockServerStream) Context() context.Context {
 	return m.ctx
 }
 
+func TestUnaryServerInterceptor_NilLimiterPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil limiter")
+		}
+		msg, ok := r.(string)
+		if !ok || msg != "xlimit: UnaryServerInterceptor requires a non-nil Limiter" {
+			t.Errorf("unexpected panic message: %v", r)
+		}
+	}()
+	UnaryServerInterceptor(nil)
+}
+
+func TestStreamServerInterceptor_NilLimiterPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil limiter")
+		}
+		msg, ok := r.(string)
+		if !ok || msg != "xlimit: StreamServerInterceptor requires a non-nil Limiter" {
+			t.Errorf("unexpected panic message: %v", r)
+		}
+	}()
+	StreamServerInterceptor(nil)
+}
+
 func BenchmarkUnaryServerInterceptor(b *testing.B) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -351,7 +379,7 @@ func BenchmarkUnaryServerInterceptor(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	interceptor := UnaryServerInterceptor(limiter)
 

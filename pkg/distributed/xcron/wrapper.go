@@ -3,7 +3,7 @@ package xcron
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -57,8 +57,9 @@ func (w *jobWrapper) Run() {
 		// 需要锁但未获取到
 		if w.stats != nil {
 			if lockErr != nil {
-				// 锁服务异常，计入失败（而非跳过），便于健康检查发现问题
-				w.stats.recordExecution(w.opts.name, 0, lockErr)
+				// 设计决策: 锁服务异常独立统计（recordLockError），不计入 recordExecution。
+				// 任务未实际执行，计入 TotalExecutions/Duration/SuccessRate 会污染执行统计语义。
+				w.stats.recordLockError(w.opts.name)
 			} else {
 				// 锁竞争失败（正常跳过）
 				w.stats.recordSkip(w.opts.name)
@@ -82,20 +83,23 @@ func (w *jobWrapper) Run() {
 	// 4. 执行钩子 BeforeJob（正序），每个钩子独立 panic 保护
 	taskCtx = w.runBeforeHooks(taskCtx)
 
-	// 5. 执行任务（可能带重试）
+	// 5. 记录开始日志
+	w.logDebug(taskCtx, "job starting", "job", w.opts.name)
+
+	// 6. 执行任务（可能带重试）
 	err := w.executeJob(taskCtx, rh)
 	duration := time.Since(startTime)
 
-	// 6. 执行钩子 AfterJob（逆序，类似 defer），每个钩子独立 panic 保护
+	// 7. 执行钩子 AfterJob（逆序，类似 defer），每个钩子独立 panic 保护
 	w.runAfterHooks(taskCtx, duration, err)
 
-	// 7. 记录统计
+	// 8. 记录统计
 	if w.stats != nil {
 		w.stats.recordExecution(w.opts.name, duration, err)
 	}
 
-	// 8. 记录日志结果
-	w.logResult(taskCtx, span, err)
+	// 9. 记录日志结果
+	w.logResult(taskCtx, span, duration, err)
 }
 
 // tryAcquireLock 尝试获取分布式锁。
@@ -118,7 +122,7 @@ func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.Canc
 		defer cancel()
 	}
 
-	handle, err := w.locker.TryLock(lockCtx, w.opts.name, w.opts.lockTTL)
+	handle, err := w.safeTryLock(lockCtx)
 	if err != nil {
 		w.logWarn(ctx, "lock service error",
 			"job", w.opts.name, "error", err)
@@ -134,6 +138,18 @@ func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.Canc
 	return w.startRenew(ctx, taskCancel, handle), nil
 }
 
+// safeTryLock 安全调用 TryLock，将 panic 转为 error。
+// 设计决策: 防止 Locker 实现（第三方/基础设施）panic 导致调度器 goroutine 崩溃。
+func (w *jobWrapper) safeTryLock(ctx context.Context) (handle LockHandle, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			handle = nil
+			err = fmt.Errorf("xcron: locker.TryLock panicked: %v", r)
+		}
+	}()
+	return w.locker.TryLock(ctx, w.opts.name, w.opts.lockTTL)
+}
+
 // applyTimeout 应用超时控制
 func (w *jobWrapper) applyTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if w.opts.timeout > 0 {
@@ -142,12 +158,22 @@ func (w *jobWrapper) applyTimeout(ctx context.Context) (context.Context, context
 	return ctx, nil
 }
 
-// startSpan 启动链路追踪
-func (w *jobWrapper) startSpan(ctx context.Context) (context.Context, Span) {
-	if w.opts.tracer != nil {
-		return w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
+// startSpan 启动链路追踪。
+// 设计决策: 独立 panic 隔离，防止 tracer 实现 panic 导致跳过 executeJob（从而跳过 Unlock），
+// 锁虽有 TTL 兜底，但显式释放可避免不必要的等待。
+func (w *jobWrapper) startSpan(ctx context.Context) (resultCtx context.Context, resultSpan Span) {
+	if w.opts.tracer == nil {
+		return ctx, nil
 	}
-	return ctx, nil
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "tracer.Start panicked",
+				"job", w.opts.name, "panic", r)
+			resultCtx = ctx
+			resultSpan = nil
+		}
+	}()
+	return w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
 }
 
 // executeJob 执行任务（可能带重试），包含 panic 恢复
@@ -180,16 +206,16 @@ func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) (err error
 }
 
 // logResult 记录任务执行结果
-func (w *jobWrapper) logResult(ctx context.Context, span Span, err error) {
+func (w *jobWrapper) logResult(ctx context.Context, span Span, duration time.Duration, err error) {
 	if err != nil {
 		w.logError(ctx, "job failed",
-			"job", w.opts.name, "error", err)
+			"job", w.opts.name, "duration", duration, "error", err)
 		if span != nil {
 			span.RecordError(err)
 		}
 	} else {
 		w.logDebug(ctx, "job completed",
-			"job", w.opts.name)
+			"job", w.opts.name, "duration", duration)
 	}
 }
 
@@ -219,10 +245,14 @@ func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 
 		// 等待退避时间
 		if backoff > 0 {
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				return ctx.Err()
-			case <-time.After(backoff):
+			case <-timer.C:
 			}
 		}
 	}
@@ -259,6 +289,17 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 	rh.wg.Add(1)
 	go func() {
 		defer rh.wg.Done()
+		// 设计决策: panic 隔离防止 lockHandle.Renew 实现 panic 导致进程崩溃，
+		// 续期协程 panic 后取消任务，与续期失败行为一致。
+		defer func() {
+			if r := recover(); r != nil {
+				w.logError(ctx, "lock renewal panicked, canceling task",
+					"job", w.opts.name, "panic", r)
+				if taskCancel != nil {
+					taskCancel()
+				}
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -267,7 +308,16 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 			case <-renewCtx.Done():
 				return
 			case <-ticker.C:
-				if err := lockHandle.Renew(renewCtx, w.opts.lockTTL); err != nil {
+				// 设计决策: 每次续期使用独立超时（取 lockTimeout 和 lockTTL/3 的较小值），
+				// 防止后端响应慢导致续期协程卡住，进而导致 stopRenew 的 wg.Wait() 阻塞。
+				renewTimeout := min(w.opts.lockTimeout, w.opts.lockTTL/3)
+				if renewTimeout <= 0 {
+					renewTimeout = 5 * time.Second
+				}
+				callCtx, callCancel := context.WithTimeout(renewCtx, renewTimeout)
+				err := lockHandle.Renew(callCtx, w.opts.lockTTL)
+				callCancel()
+				if err != nil {
 					w.logError(ctx, "lock renewal failed, canceling task to prevent concurrent execution",
 						"job", w.opts.name, "error", err)
 					// 续期失败时取消任务执行，防止锁过期后并发执行
@@ -295,8 +345,8 @@ func (w *jobWrapper) stopRenew(rh *renewHandle) {
 // 日志辅助方法
 
 // logDebug 记录调试日志。
-// 设计决策: 无 logger 时静默丢弃（不回退到 log.Printf），因为 Debug 日志通常量大，
-// 输出到标准库 log 会造成噪音。logWarn/logError 回退是因为警告和错误不应被静默忽略。
+// 设计决策: 无 logger 时静默丢弃（不回退到 slog），因为 Debug 日志通常量大，
+// 输出到默认 logger 会造成噪音。logWarn/logError 回退到 slog 是因为警告和错误不应被静默忽略。
 func (w *jobWrapper) logDebug(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Debug(ctx, msg, args...)
@@ -307,7 +357,7 @@ func (w *jobWrapper) logWarn(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Warn(ctx, msg, args...)
 	} else {
-		log.Printf("[WARN] xcron: %s %v", msg, args)
+		slog.WarnContext(ctx, "xcron: "+msg, args...)
 	}
 }
 
@@ -315,7 +365,7 @@ func (w *jobWrapper) logError(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Error(ctx, msg, args...)
 	} else {
-		log.Printf("[ERROR] xcron: %s %v", msg, args)
+		slog.ErrorContext(ctx, "xcron: "+msg, args...)
 	}
 }
 

@@ -52,7 +52,7 @@ func BenchmarkNewRedisFactory(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_ = factory.Close()
+		_ = factory.Close(context.Background())
 	}
 }
 
@@ -66,7 +66,7 @@ func BenchmarkRedisFactory_Health(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -94,7 +94,7 @@ func BenchmarkRedisFactory_Lock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -123,7 +123,7 @@ func BenchmarkRedisFactory_TryLock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -154,7 +154,7 @@ func BenchmarkRedisFactory_Unlock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -191,7 +191,7 @@ func BenchmarkRedisLockHandle_Extend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -225,7 +225,7 @@ func BenchmarkRedisFactory_LockUnlock_Cycle(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -261,7 +261,7 @@ func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 	var counter atomic.Int64
@@ -301,7 +301,7 @@ func BenchmarkRedisFactory_Lock_Contention(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -343,7 +343,7 @@ func BenchmarkRedisFactory_Health_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -473,7 +473,7 @@ func BenchmarkRedlock_ThreeNodes(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -508,7 +508,7 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 	opts := []xdlock.MutexOption{

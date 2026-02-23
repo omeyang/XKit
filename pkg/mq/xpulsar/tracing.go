@@ -26,6 +26,10 @@ type TracingProducer struct {
 // WrapProducer 包装 Producer 以注入追踪信息。
 // producer 不能为 nil，否则返回 ErrNilProducer。
 // topic 为空时自动从 producer.Topic() 获取。
+//
+// 设计决策: 4 个参数均为必需且类型各异，不适用 Functional Options 模式。
+// producer 是被包装对象，topic/tracer/observer 是装饰行为的必要依赖。
+// API 已稳定，无新增参数需求。
 func WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error) {
 	if producer == nil {
 		return nil, ErrNilProducer
@@ -77,7 +81,13 @@ func (p *TracingProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage)
 		Attrs:     pulsarAttrs(p.topic),
 	})
 	defer func() {
-		span.End(xmetrics.Result{Err: err})
+		result := xmetrics.Result{Err: err}
+		if id != nil {
+			result.Attrs = []xmetrics.Attr{
+				xmetrics.String("messaging.message.id", id.String()),
+			}
+		}
+		span.End(result)
 	}()
 
 	id, err = p.Producer.Send(ctx, msg)
@@ -85,6 +95,9 @@ func (p *TracingProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage)
 }
 
 // SendAsync 异步发送消息并注入追踪信息。
+//
+// 设计决策: span 在异步回调中结束，其生命周期受 Pulsar SDK 的 SendTimeout 约束
+// （默认 30s）。如需控制 span 最大存活时间，请配置 ProducerOptions.SendTimeout。
 func (p *TracingProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMessage, callback func(pulsar.MessageID, *pulsar.ProducerMessage, error)) {
 	if msg == nil {
 		if callback != nil {
@@ -106,7 +119,13 @@ func (p *TracingProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMes
 	})
 
 	wrappedCallback := func(id pulsar.MessageID, m *pulsar.ProducerMessage, err error) {
-		span.End(xmetrics.Result{Err: err})
+		result := xmetrics.Result{Err: err}
+		if id != nil {
+			result.Attrs = []xmetrics.Attr{
+				xmetrics.String("messaging.message.id", id.String()),
+			}
+		}
+		span.End(result)
 		if callback != nil {
 			callback(id, m, err)
 		}
@@ -132,6 +151,7 @@ type TracingConsumer struct {
 // 设计决策: 与 WrapProducer 不同，topic 为空时不自动回填。
 // pulsar.Consumer 可订阅多个 topic（Topics/TopicsPattern），无单一 Topic() 方法。
 // 使用 NewTracingConsumer 时会通过 topicFromConsumerOptions 自动推导。
+// 4 个参数均为必需且类型各异（同 WrapProducer），不适用 Functional Options 模式。
 func WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error) {
 	if consumer == nil {
 		return nil, ErrNilConsumer
@@ -196,8 +216,16 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	}
 
 	attrs := pulsarAttrs(c.topic)
+	// 多 topic / pattern 消费时，补充实际消息来源 topic 以支持精确定位。
+	// c.topic 记录配置维度（如 "multi"/"pattern"），msg.Topic() 记录消息维度。
+	if actualTopic := msg.Topic(); actualTopic != "" && actualTopic != c.topic {
+		attrs = append(attrs, xmetrics.String("messaging.pulsar.message.topic", actualTopic))
+	}
 	if sub := c.Subscription(); sub != "" {
 		attrs = append(attrs, xmetrics.String("messaging.consumer.group.name", sub))
+	}
+	if id := msg.ID(); id != nil {
+		attrs = append(attrs, xmetrics.String("messaging.message.id", id.String()))
 	}
 
 	var ackErr error
@@ -246,10 +274,20 @@ func (c *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 //   - handler: 消息处理函数
 //   - backoff: 退避策略，nil 时使用默认 xretry.ExponentialBackoff
 func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
+	if handler == nil {
+		return ErrNilHandler
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	consume := func(ctx context.Context) error {
 		return c.Consume(ctx, handler)
 	}
 
+	// 设计决策: 不注入 mqcore.WithOnError 进行错误计数。xpulsar 的可观测性以
+	// OTel Span 为中心，Consume 内部通过 span.End(result) 记录每次消费的成功/失败，
+	// 与 xkafka 的 metric-centric（errorsCount 原子计数器）策略不同。
 	var opts []mqcore.ConsumeLoopOption
 	if backoff != nil {
 		opts = append(opts, mqcore.WithBackoff(backoff))

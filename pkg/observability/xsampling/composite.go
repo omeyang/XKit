@@ -37,7 +37,9 @@ func (m CompositeMode) String() string {
 //   - ModeAND: 所有子采样器都返回 true 时才采样
 //   - ModeOR: 任一子采样器返回 true 时即采样
 //
-// 组合采样器支持短路求值以提高性能。
+// 组合采样器使用短路求值：AND 模式遇到 false 立即返回，OR 模式遇到 true 立即返回。
+// 设计决策: 有状态子采样器（如 CountSampler）的内部状态仅在实际被求值时更新，
+// 因此子采样器的排列顺序可能影响有状态采样器的行为。
 type CompositeSampler struct {
 	samplers []Sampler
 	mode     CompositeMode
@@ -49,6 +51,11 @@ type CompositeSampler struct {
 // samplers 是要组合的子采样器列表。
 //
 // 非法 mode 返回 ErrInvalidMode，nil 子采样器返回 ErrNilSampler。
+//
+// 注意：组合采样器使用短路求值——ModeAND 遇到 false 立即返回，ModeOR 遇到 true 立即返回。
+// 有状态子采样器（如 CountSampler）仅在被实际求值时更新内部状态，因此子采样器的排列顺序
+// 会影响有状态采样器的行为。例如 All(rateSampler, countSampler) 中，当 rateSampler
+// 返回 false 时 countSampler 不会被求值，其计数器不会递增。
 //
 // 示例：
 //
@@ -90,7 +97,8 @@ func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSam
 
 func (s *CompositeSampler) ShouldSample(ctx context.Context) bool {
 	if len(s.samplers) == 0 {
-		// 空列表：AND 返回 true（恒等元），OR 返回 false（恒等元）
+		// 设计决策: 空列表遵循逻辑恒等元语义（AND→true, OR→false），
+		// 与 Python all()/any() 一致。不采用 fail-fast，因为空列表是合法状态。
 		return s.mode == ModeAND
 	}
 

@@ -14,12 +14,15 @@ import (
 
 // ClickHouse 定义 ClickHouse 包装器接口。
 type ClickHouse interface {
-	// Conn 返回底层 ClickHouse 连接。
+	// Client 返回底层 ClickHouse 连接。
 	// 可用于执行任意 ClickHouse 操作。
-	Conn() driver.Conn
+	// 关闭后仍可调用，但底层连接操作会返回驱动层错误。
+	// 方法名与 xmongo.Mongo.Client()、xcache.Redis.Client() 保持一致。
+	Client() driver.Conn
 
 	// Health 执行健康检查。
 	// 通过 Ping 检测连接状态。
+	// 关闭后调用返回 ErrClosed。
 	Health(ctx context.Context) error
 
 	// Stats 返回统计信息。
@@ -30,6 +33,10 @@ type ClickHouse interface {
 	Close() error
 
 	// QueryPage 分页查询。
+	// 设计决策: 方法名 QueryPage（而非 FindPage）遵循 SQL 领域惯用语。
+	// xmongo 使用 FindPage 是 MongoDB 惯用语（find）。各存储包遵循自身领域命名，
+	// 而非强制统一，以降低领域切换的认知负担。BatchInsert 同理（ClickHouse 使用 Batch 概念）。
+	//
 	// query 是 SQL 查询语句（不含 LIMIT/OFFSET），opts 指定分页参数。
 	//
 	// 注意事项：
@@ -42,12 +49,14 @@ type ClickHouse interface {
 	//   - COUNT 查询使用子查询包装方式（SELECT COUNT(*) FROM (原查询) AS _count_subquery）
 	//   - 这种方式能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）
 	//   - 对于简单查询可能比直接改写 SELECT 列表性能略差
-	//   - 性能敏感场景建议直接使用 Conn() 执行优化的 COUNT 语句
+	//   - 性能敏感场景建议直接使用 Client() 执行优化的 COUNT 语句
 	//   - Stats().QueryCount 会 +2（COUNT 和分页各计一次）
+	//   - 关闭后调用返回 ErrClosed
 	QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (*PageResult, error)
 
 	// BatchInsert 批量插入。
 	// table 是目标表名，rows 是待插入的数据切片。
+	// 关闭后调用返回 ErrClosed。
 	BatchInsert(ctx context.Context, table string, rows []any, opts BatchOptions) (*BatchResult, error)
 }
 
@@ -56,11 +65,14 @@ type ClickHouse interface {
 // =============================================================================
 
 // PageOptions 分页查询选项。
+// 零值不可用：Page 和 PageSize 必须为正数，
+// 否则返回 ErrInvalidPage 或 ErrInvalidPageSize。
 type PageOptions struct {
-	// Page 是页码，从 1 开始。
+	// Page 是页码，从 1 开始。必须为正数，零值返回 ErrInvalidPage。
 	Page int64
 
-	// PageSize 是每页大小。
+	// PageSize 是每页大小。必须为正数，零值返回 ErrInvalidPageSize。
+	// 不得超过 MaxPageSize（默认 10000），否则返回 ErrPageSizeTooLarge。
 	PageSize int64
 }
 
@@ -92,7 +104,8 @@ type PageResult struct {
 // BatchOptions 批量操作选项。
 type BatchOptions struct {
 	// BatchSize 是每批大小。
-	// 如果为 0，使用默认值 10000。
+	// 如果为 0 或负值，使用默认值 DefaultBatchSize（10000）。
+	// 不得超过 MaxBatchSize（100000），否则返回 ErrBatchSizeTooLarge。
 	BatchSize int
 }
 
@@ -131,7 +144,8 @@ type BatchResult struct {
 // =============================================================================
 
 // New 创建 ClickHouse 包装器。
-// conn 是已创建的 ClickHouse 连接，opts 是可选配置。
+// client 是已创建的 ClickHouse 连接，opts 是可选配置。
+// 参数名 client 而非 conn，与 Client() 方法及 ErrNilClient 命名保持一致。
 //
 // 示例：
 //
@@ -147,9 +161,9 @@ type BatchResult struct {
 //	    log.Fatal(err)
 //	}
 //	defer ch.Close()
-func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
-	if conn == nil {
-		return nil, ErrNilConn
+func New(client driver.Conn, opts ...Option) (ClickHouse, error) {
+	if client == nil {
+		return nil, ErrNilClient
 	}
 
 	options := defaultOptions()
@@ -158,17 +172,20 @@ func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 	}
 
 	// 创建慢查询检测器
-	detector := newSlowQueryDetector(options)
+	detector, err := newSlowQueryDetector(options)
+	if err != nil {
+		return nil, err
+	}
 
 	return &clickhouseWrapper{
-		conn:              conn,
+		conn:              client,
 		options:           options,
 		slowQueryDetector: detector,
 	}, nil
 }
 
 // newSlowQueryDetector 创建慢查询检测器。
-func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQueryInfo] {
+func newSlowQueryDetector(opts *options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
 	// 构建 storageopt 的慢查询选项
 	sqOpts := storageopt.SlowQueryOptions[SlowQueryInfo]{
 		Threshold:           opts.SlowQueryThreshold,

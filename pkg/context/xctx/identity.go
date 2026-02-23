@@ -32,7 +32,10 @@ const (
 
 // WithPlatformID 将 platform ID 注入 context
 //
-// 如果 ctx 为 nil，返回 ErrNilContext。
+// 设计决策: 返回 error 而非 panic（项目规范：构造函数统一返回 error），
+// 虽然唯一错误条件是 nil ctx，但保持所有 WithXxx 签名一致，便于中间件链统一处理。
+// 不校验 value 有效性（如空字符串），因为 xctx 是纯存取层（见 doc.go 校验策略）。
+// 如需确认值存在，请使用 RequirePlatformID。
 func WithPlatformID(ctx context.Context, platformID string) (context.Context, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -168,6 +171,9 @@ type Identity struct {
 
 // Validate 校验 Identity 必填字段是否完整，缺失时返回对应的哨兵错误。
 //
+// 采用 fail-fast 策略：仅返回第一个缺失字段的错误（按 PlatformID → TenantID → TenantName 顺序）。
+// 如需一次性获取所有缺失字段，请逐字段调用 RequireXxx 或自行遍历检查。
+//
 // 与 IsComplete() 检查相同条件，区别在于返回类型：
 //   - Validate() 返回 error，适用于中间件/业务层的错误处理链
 //   - IsComplete() 返回 bool，适用于条件判断和日志记录
@@ -195,7 +201,9 @@ func (i Identity) IsComplete() bool {
 }
 
 // GetIdentity 从 context 批量获取所有身份信息
+//
 // 返回 Identity 结构体，字段可能为空字符串。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 使用 Validate() 检查必填字段，使用 IsComplete() 检查是否全部存在。
 func GetIdentity(ctx context.Context) Identity {
 	return Identity{

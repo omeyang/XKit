@@ -46,7 +46,7 @@ func ExampleNew() {
 	}
 
 	// 直接使用底层连接进行操作
-	rows, err := ch.Conn().Query(ctx, "SELECT 1")
+	rows, err := ch.Client().Query(ctx, "SELECT 1")
 	if err != nil {
 		log.Printf("query error: %v", err)
 	}

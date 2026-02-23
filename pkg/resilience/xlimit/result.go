@@ -54,7 +54,14 @@ func (r *Result) Headers() map[string]string {
 }
 
 // SetHeaders 将限流响应头写入 http.ResponseWriter
+//
+// 设计决策: 当 Limit <= 0 时跳过写入配额头。
+// Limit=0 表示无有效配额信息（如 FallbackOpen 或无匹配规则），
+// 写入 X-RateLimit-Limit: 0 会误导客户端认为配额为零。
 func (r *Result) SetHeaders(w http.ResponseWriter) {
+	if r.Limit <= 0 {
+		return
+	}
 	for key, value := range r.Headers() {
 		w.Header().Set(key, value)
 	}

@@ -10,4 +10,6 @@ var (
 	ErrCreateHistogram = errors.New("xmetrics: create histogram failed")
 	// ErrInvalidBuckets 表示 Histogram 桶边界配置无效。
 	ErrInvalidBuckets = errors.New("xmetrics: invalid histogram buckets")
+	// ErrNilOption 表示传入了 nil 的 Option 函数。
+	ErrNilOption = errors.New("xmetrics: nil option")
 )

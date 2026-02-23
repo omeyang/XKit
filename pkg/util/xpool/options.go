@@ -6,8 +6,9 @@ import "log/slog"
 type Option func(*options)
 
 type options struct {
-	logger *slog.Logger
-	name   string
+	logger       *slog.Logger
+	name         string
+	logTaskValue bool
 }
 
 func defaultOptions() options {
@@ -31,5 +32,16 @@ func WithLogger(logger *slog.Logger) Option {
 func WithName(name string) Option {
 	return func(o *options) {
 		o.name = name
+	}
+}
+
+// WithLogTaskValue 启用 panic 恢复日志中的完整任务值输出。
+//
+// 设计决策: 默认仅记录任务类型（如 "int"、"*MyStruct"），避免泛型 T
+// 可能包含的敏感信息（密码、Token 等）泄露到日志系统。
+// 启用后，panic 日志将包含完整的 task 值，适用于任务不含敏感信息的调试场景。
+func WithLogTaskValue() Option {
+	return func(o *options) {
+		o.logTaskValue = true
 	}
 }

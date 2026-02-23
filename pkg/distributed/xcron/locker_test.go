@@ -118,7 +118,7 @@ func TestSanitizeK8sName(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.input, func(t *testing.T) {
-				result := sanitizeK8sName(tt.input)
+				result := sanitizeK8sName(tt.input, 0)
 				assert.Equal(t, tt.expected, result)
 				assert.LessOrEqual(t, len(result), 63)
 			})
@@ -140,7 +140,7 @@ func TestSanitizeK8sName(t *testing.T) {
 
 		for _, input := range inputs {
 			t.Run(input, func(t *testing.T) {
-				result := sanitizeK8sName(input)
+				result := sanitizeK8sName(input, 0)
 				assert.LessOrEqual(t, len(result), 63)
 				// 结果应包含 hash 后缀（8 个十六进制字符）
 				assert.Regexp(t, `^[a-z0-9-]+-[a-f0-9]{8}$`, result)
@@ -150,9 +150,27 @@ func TestSanitizeK8sName(t *testing.T) {
 
 	t.Run("long names get hash suffix", func(t *testing.T) {
 		longName := "this-is-a-very-long-name-that-exceeds-the-maximum-length-allowed-by-kubernetes-for-resource-names"
-		result := sanitizeK8sName(longName)
+		result := sanitizeK8sName(longName, 0)
 		assert.LessOrEqual(t, len(result), 63)
 		assert.Regexp(t, `^[a-z0-9-]+-[a-f0-9]{8}$`, result)
+	})
+
+	t.Run("respects prefix length to keep total under 63", func(t *testing.T) {
+		// 模拟 prefix="xcron-" (6 字符) 的场景
+		prefixLen := 6
+		longName := "this-is-a-very-long-clean-name-that-is-exactly-at-the-boundary"
+		result := sanitizeK8sName(longName, prefixLen)
+		// 最终名称（prefix + result）不超过 63
+		assert.LessOrEqual(t, prefixLen+len(result), 63)
+	})
+
+	t.Run("long clean name with default prefix stays under 63", func(t *testing.T) {
+		// 实际使用场景：通过 leaseName 方法测试整体约束
+		prefix := "xcron-"
+		// 57 字符的 clean key（prefix 6 + key 57 = 63，刚好满足）
+		longKey := "abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrst"
+		result := prefix + sanitizeK8sName(longKey, len(prefix))
+		assert.LessOrEqual(t, len(result), 63, "total lease name must not exceed 63 chars, got %d: %s", len(result), result)
 	})
 
 	t.Run("prevents collision from different separators", func(t *testing.T) {
@@ -161,7 +179,7 @@ func TestSanitizeK8sName(t *testing.T) {
 		names := []string{"my.job", "my/job", "my:job", "my_job", "my job"}
 		results := make(map[string]bool)
 		for _, name := range names {
-			result := sanitizeK8sName(name)
+			result := sanitizeK8sName(name, 0)
 			assert.False(t, results[result],
 				"collision detected: %q produces duplicate result %q", name, result)
 			results[result] = true
@@ -171,7 +189,7 @@ func TestSanitizeK8sName(t *testing.T) {
 	t.Run("deterministic output", func(t *testing.T) {
 		// 同一输入始终产生相同输出
 		for i := 0; i < 10; i++ {
-			assert.Equal(t, sanitizeK8sName("my.job"), sanitizeK8sName("my.job"))
+			assert.Equal(t, sanitizeK8sName("my.job", 0), sanitizeK8sName("my.job", 0))
 		}
 	})
 }

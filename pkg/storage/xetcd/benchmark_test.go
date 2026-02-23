@@ -2,6 +2,7 @@ package xetcd
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -266,6 +267,8 @@ func BenchmarkDispatchEvents_Large(b *testing.B) {
 }
 
 // BenchmarkConvertEvent_Parallel 并行测试事件转换性能。
+// 设计决策: 使用 goroutine 局部 sink + runtime.KeepAlive（而非共享 benchSink），
+// 避免多 goroutine 并发写入 any 接口的数据竞争，与 xplatform 等包保持一致。
 func BenchmarkConvertEvent_Parallel(b *testing.B) {
 	event := &clientv3.Event{
 		Type: mvccpb.PUT,
@@ -281,6 +284,6 @@ func BenchmarkConvertEvent_Parallel(b *testing.B) {
 		for pb.Next() {
 			e = convertEvent(event)
 		}
-		benchSink = e
+		runtime.KeepAlive(e)
 	})
 }

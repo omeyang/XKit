@@ -32,7 +32,7 @@ func newTestRedisForError(t *testing.T, opts ...RedisOption) (Redis, *miniredis.
 	cache, err := NewRedis(client, opts...)
 	require.NoError(t, err)
 
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	return cache, mr
 }
@@ -391,6 +391,127 @@ func TestLoader_LoadHash_WithDistLock_CacheHitAfterLockAcquired(t *testing.T) {
 	// Then
 	require.NoError(t, err)
 	assert.True(t, string(value) == "precached_hash_value" || string(value) == "loaded_hash_value")
+}
+
+// =============================================================================
+// handleLockError 运行时路径测试
+// =============================================================================
+
+func TestLoader_Load_WithExternalLock_ReturningInvalidLockTTL_WrapsAsErrInvalidConfig(t *testing.T) {
+	// Given - ExternalLock 返回 ErrInvalidLockTTL，handleLockError 应包装为 ErrInvalidConfig
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, ErrInvalidLockTTL
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "ttlerr-key", loadFn, time.Hour)
+
+	// Then - 应返回 ErrInvalidConfig 包装的 ErrInvalidLockTTL
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
+}
+
+func TestLoader_Load_WithExternalLock_ReturningInvalidConfig_ReturnsDirectly(t *testing.T) {
+	// Given - ExternalLock 返回 ErrInvalidConfig，handleLockError 应直接返回
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, ErrInvalidConfig
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "cfgerr-key", loadFn, time.Hour)
+
+	// Then - 应直接返回 ErrInvalidConfig
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
+func TestLoader_Load_WithExternalLock_ReturningDeadlineExceeded_ReturnsDirectly(t *testing.T) {
+	// Given - ExternalLock 返回 context.DeadlineExceeded，handleLockError 应直接返回
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, context.DeadlineExceeded
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "deadline-key", loadFn, time.Hour)
+
+	// Then - 应直接返回 context.DeadlineExceeded
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestLoader_Load_WithExternalLock_ReturningNilUnlocker_ReturnsInvalidConfig(t *testing.T) {
+	// Given - ExternalLock 返回 (nil, nil)，acquireLock 应转为 ErrInvalidConfig
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, nil // 错误的锁实现
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "nil-unlocker-key", loadFn, time.Hour)
+
+	// Then - 应返回 ErrInvalidConfig
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 // =============================================================================

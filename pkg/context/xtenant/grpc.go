@@ -44,6 +44,10 @@ const (
 //
 // 所有字段都是可选的，未设置的字段保持零值。
 // Metadata 值会自动去除首尾空白。
+//
+// 设计决策: 本函数仅做 TrimSpace，不校验长度、字符集或控制字符。
+// 租户 ID/名称的格式因系统而异，格式校验应由中间件选项或业务层负责，
+// Extract 函数保持为无策略的薄提取层。
 func ExtractFromMetadata(md metadata.MD) TenantInfo {
 	if md == nil {
 		return TenantInfo{}
@@ -175,7 +179,9 @@ func WithGRPCEnsureTrace() GRPCInterceptorOption {
 func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -202,7 +208,9 @@ func GRPCStreamServerInterceptor() grpc.StreamServerInterceptor {
 func GRPCStreamServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -334,16 +342,19 @@ func injectTraceMetadata(ctx context.Context, md metadata.MD) {
 // 用于手动构造 Metadata 的场景。
 // 采用增量写入语义：只 Set 非空字段，不清除已有的键。
 // 如需"以 context 为准"的清理语义，请使用 InjectToOutgoingContext。
+//
+// 对 TenantID/TenantName 做 TrimSpace 后再判空和 Set，
+// 与包内其他写入路径（WithTenantID、ExtractFromMetadata 等）的归一化语义一致。
 func InjectTenantToMetadata(md metadata.MD, info TenantInfo) {
 	if md == nil {
 		return
 	}
 
-	if info.TenantID != "" {
-		md.Set(MetaTenantID, info.TenantID)
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		md.Set(MetaTenantID, tid)
 	}
-	if info.TenantName != "" {
-		md.Set(MetaTenantName, info.TenantName)
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		md.Set(MetaTenantName, tname)
 	}
 }
 
@@ -400,24 +411,31 @@ func getMetadataValue(md metadata.MD, key string) string {
 }
 
 // injectTenantToContext 从 incoming context 提取租户信息和追踪信息并注入
+//
+// 设计决策: 一次性提取 incoming metadata，避免 ExtractFromIncomingContext 和
+// ExtractTraceFromIncomingContext 各自调用 metadata.FromIncomingContext 导致
+// 重复的 metadata map 复制开销。
 func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (context.Context, error) {
+	// 一次性提取 incoming metadata
+	md, _ := metadata.FromIncomingContext(ctx)
+
 	// 提取并验证租户信息
-	info := ExtractFromIncomingContext(ctx)
+	info := ExtractFromMetadata(md)
 	if err := validateGRPCTenantInfo(info, cfg); err != nil {
 		return nil, err
 	}
 
 	// 注入租户信息到 context（复用公开 API）
 	ctx, err := WithTenantInfo(ctx, info)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	// 处理追踪信息
-	trace := ExtractTraceFromIncomingContext(ctx)
+	trace := ExtractTraceFromMetadata(md)
 	ctx, err = injectGRPCTraceToContext(ctx, trace, cfg.ensureTrace)
-	if err != nil {
-		return nil, err
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return ctx, nil
@@ -438,16 +456,17 @@ func validateGRPCTenantInfo(info TenantInfo, cfg *grpcInterceptorConfig) error {
 }
 
 // injectGRPCTraceToContext 处理追踪信息并注入 context
+//
+// 设计决策: 返回原始 error 而非 status.Error，由调用方 injectTenantToContext
+// 统一转换为 gRPC status error。与 HTTP 路径（injectHTTPTraceToContext 返回原始
+// error，由 injectTenantToHTTPContext 统一转换为 HTTP 状态码）保持一致的错误包装策略。
 func injectGRPCTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
 	ctx, err := xctx.WithTrace(ctx, trace)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
+		return nil, err
 	}
 	if ensureTrace {
-		ctx, err = xctx.EnsureTrace(ctx)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
+		return xctx.EnsureTrace(ctx)
 	}
 	return ctx, nil
 }

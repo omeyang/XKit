@@ -1,6 +1,9 @@
 package xmac
 
-import "net"
+import (
+	"fmt"
+	"net"
+)
 
 // Addr 表示 48 位 MAC 地址（EUI-48/MAC-48）。
 //
@@ -93,6 +96,16 @@ func (a Addr) Prev() (Addr, error) {
 		}
 	}
 	return prev, nil
+}
+
+// GoString 实现 [fmt.GoStringer]，返回 Go 语法表示。
+// 用于 %#v 格式化，输出形如 xmac.MustParse("aa:bb:cc:dd:ee:ff")。
+// 无效地址返回 xmac.Addr{}。
+func (a Addr) GoString() string {
+	if !a.IsValid() {
+		return "xmac.Addr{}"
+	}
+	return fmt.Sprintf("xmac.MustParse(%q)", a.String())
 }
 
 // HardwareAddr 返回 [net.HardwareAddr] 表示。

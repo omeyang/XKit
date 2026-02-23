@@ -48,8 +48,14 @@ type Client interface {
 	// 用于 Token 被服务端撤销或权限变更后强制重新获取。
 	InvalidateToken(ctx context.Context, tenantID string) error
 
+	// InvalidatePlatformCache 主动使指定租户的平台数据缓存失效。
+	// 用于平台信息变更后强制重新获取，避免等待 TTL 过期。
+	InvalidatePlatformCache(ctx context.Context, tenantID string) error
+
 	// Close 关闭客户端，释放资源。
-	Close() error
+	// ctx 当前未使用，保留参数是为了与项目统一生命周期接口约定（D-02）一致，
+	// 并为将来带超时的优雅关闭预留扩展空间。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================
@@ -83,6 +89,12 @@ type TokenInfo struct {
 	// 因为 ObtainedAt 有 json:"-" 标签，反序列化后会丢失，
 	// 此字段用于在 Redis 中保存并恢复真实的获取时间。
 	ObtainedAtUnix int64 `json:"obtained_at_unix,omitempty"`
+
+	// Claims 服务端返回的完整验证声明。
+	// 仅在 VerifyToken 调用成功时填充，包含租户、用户、权限等信息，
+	// 用于调用方执行租户一致性校验和授权决策。
+	// 通过 GetToken 获取的 Token 此字段为 nil。
+	Claims *VerifyData `json:"claims,omitempty"`
 }
 
 // IsExpired 判断 Token 是否已过期。
@@ -127,6 +139,8 @@ type VerifyResponse struct {
 }
 
 // VerifyData Token 验证详细信息。
+// 设计决策: JSON tag 与认证服务 API 响应字段名对齐（混用 camelCase 和 snake_case），
+// 并非自定义命名，不可随意修改。
 type VerifyData struct {
 	// Active Token 是否有效。
 	Active bool `json:"active"`
@@ -234,25 +248,23 @@ type CacheStore interface {
 	// SetPlatformData 将平台数据写入缓存。
 	SetPlatformData(ctx context.Context, tenantID string, field, value string, ttl time.Duration) error
 
-	// Delete 删除缓存。
+	// DeleteToken 仅删除 Token 缓存。
+	// 用于 Token 失效时不影响平台数据缓存。
+	DeleteToken(ctx context.Context, tenantID string) error
+
+	// DeletePlatformData 仅删除平台数据缓存。
+	// 用于平台信息变更时不影响 Token 缓存。
+	DeletePlatformData(ctx context.Context, tenantID string) error
+
+	// Delete 删除租户的所有缓存（Token + 平台数据）。
 	Delete(ctx context.Context, tenantID string) error
 }
 
 // =============================================================================
-// API 响应类型
+// API 响应类型（内部使用，映射服务端 JSON 响应）
+// 设计决策: 这些类型导出是为了便于测试构造 mock 服务端响应。
+// 不保证兼容性——字段可能随服务端 API 变更而调整。
 // =============================================================================
-
-// APIResponse 通用 API 响应。
-type APIResponse[T any] struct {
-	// Code 响应码。
-	Code int `json:"code"`
-
-	// Message 响应消息。
-	Message string `json:"message"`
-
-	// Data 响应数据。
-	Data T `json:"data"`
-}
 
 // APIAccessTokenResponse API Key 获取 Token 的响应。
 type APIAccessTokenResponse struct {

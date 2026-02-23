@@ -5,7 +5,20 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+// newBenchmarkTracerProvider 创建用于基准测试的 TracerProvider（无导出器，最小开销）。
+func newBenchmarkTracerProvider() *sdktrace.TracerProvider {
+	return sdktrace.NewTracerProvider()
+}
+
+// newBenchmarkMeterProvider 创建用于基准测试的 MeterProvider（无导出器，最小开销）。
+func newBenchmarkMeterProvider() *sdkmetric.MeterProvider {
+	return sdkmetric.NewMeterProvider()
+}
 
 // sinkAttr 防止编译器死代码消除（DCE）优化掉基准测试中的函数调用。
 var sinkAttr Attr
@@ -241,6 +254,108 @@ func BenchmarkStart_NilObserverParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			_, span := Start(ctx, nil, opts)
+			span.End(Result{})
+		}
+	})
+}
+
+// ============================================================================
+// OTel Observer 基准测试
+// ============================================================================
+
+func BenchmarkOTelObserver_StartEnd(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_test",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, span := obs.Start(ctx, opts)
+		span.End(Result{})
+	}
+}
+
+func BenchmarkOTelObserver_StartEndWithAttrs(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_attrs",
+		Kind:      KindClient,
+		Attrs: []Attr{
+			String("db.system", "redis"),
+			Int("db.port", 6379),
+			Bool("db.tls", true),
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, span := obs.Start(ctx, opts)
+		span.End(Result{
+			Status: StatusOK,
+			Attrs:  []Attr{String("cache", "hit")},
+		})
+	}
+}
+
+func BenchmarkOTelObserver_StartEndParallel(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_parallel",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, span := obs.Start(ctx, opts)
 			span.End(Result{})
 		}
 	})

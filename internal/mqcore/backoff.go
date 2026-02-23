@@ -2,6 +2,7 @@ package mqcore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
@@ -34,9 +35,12 @@ func WithBackoff(backoff xretry.BackoffPolicy) ConsumeLoopOption {
 }
 
 // WithOnError 设置错误回调。
+// nil 值会被忽略，与 WithBackoff 的 nil 处理保持一致。
 func WithOnError(onError func(err error)) ConsumeLoopOption {
 	return func(o *ConsumeLoopOptions) {
-		o.OnError = onError
+		if onError != nil {
+			o.OnError = onError
+		}
 	}
 }
 
@@ -58,6 +62,13 @@ func DefaultBackoff() xretry.BackoffPolicy {
 //  3. 如果失败（err != nil），应用退避延迟后重试
 //  4. 循环直到 ctx 取消
 //
+// 重要: consume 函数在无消息时必须自行阻塞（如 poll with timeout），而非立即返回 nil。
+// 成功路径不插入延迟，依赖 consume 自身的阻塞语义避免忙等。
+// 如果 consume 在无消息时立即返回 nil，循环将进入无延迟的紧密自旋，导致 CPU 100%。
+//
+// 建议: 调用方通过 WithOnError 注入错误回调进行错误计数或日志记录，
+// 以获得消费循环的可观测性。参考 xkafka 的 runConsumeLoop 实现。
+//
 // 参数：
 //   - ctx: 上下文，取消时退出循环
 //   - consume: 消费函数
@@ -66,6 +77,13 @@ func DefaultBackoff() xretry.BackoffPolicy {
 // 返回：
 //   - ctx 取消时返回 ctx.Err()
 func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoopOption) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if consume == nil {
+		return ErrNilHandler
+	}
+
 	// 应用配置
 	options := &ConsumeLoopOptions{
 		Backoff: DefaultBackoff(),
@@ -82,30 +100,41 @@ func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoo
 			return ctx.Err()
 		default:
 			if err := consume(ctx); err != nil {
-				attempt++
-
-				// 触发错误回调
-				if options.OnError != nil {
-					options.OnError(err)
+				// ErrClosed 是终态错误，客户端已关闭，无需退避重试。
+				// 如果不检查此错误，Close() 后 ConsumeLoop 会持续退避重试 ErrClosed，
+				// 直到外部 ctx 被取消，导致关闭流程不完整。
+				if errors.Is(err, ErrClosed) {
+					return err
 				}
-
-				// 应用退避延迟
-				delay := options.Backoff.NextDelay(attempt)
-				timer := time.NewTimer(delay)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return ctx.Err()
-				case <-timer.C:
+				attempt++
+				if err := waitBackoff(ctx, options, attempt, err); err != nil {
+					return err
 				}
 			} else {
 				// 成功消费，重置退避
 				attempt = 0
-				// 如果退避策略支持重置，调用 Reset()
 				if resettable, ok := options.Backoff.(xretry.ResettableBackoff); ok {
 					resettable.Reset()
 				}
 			}
 		}
+	}
+}
+
+// waitBackoff 处理消费错误：触发回调并等待退避延迟。
+// 返回非 nil 错误表示 ctx 已取消，调用方应退出循环。
+func waitBackoff(ctx context.Context, options *ConsumeLoopOptions, attempt int, consumeErr error) error {
+	if options.OnError != nil {
+		options.OnError(consumeErr)
+	}
+
+	delay := options.Backoff.NextDelay(attempt)
+	timer := time.NewTimer(delay)
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }

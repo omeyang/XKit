@@ -19,6 +19,10 @@ var (
 	// ErrUnderflow 表示地址运算下溢（低于 00:00:00:00:00:00）。
 	ErrUnderflow = errors.New("xmac: address underflow")
 
+	// ErrUnsupportedType 表示 [Addr.Scan] 接收到不支持的类型。
+	// 支持的类型为 string、[]byte 和 nil。
+	ErrUnsupportedType = errors.New("xmac: unsupported scan type")
+
 	// ErrNilReceiver 表示在 nil *Addr 接收者上调用了需要写入的方法。
 	ErrNilReceiver = errors.New("xmac: nil Addr receiver")
 )

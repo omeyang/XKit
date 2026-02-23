@@ -19,7 +19,8 @@ type RetryPolicy interface {
 
 	// ShouldRetry 判断是否应该重试
 	//
-	// ctx: 上下文，可用于取消
+	// ctx: 上下文（供自定义实现读取 context 值；内置策略不检查 ctx.Err()，
+	//       context 取消由 retry-go 的 Context(ctx) 选项在 sleep 阶段统一处理）
 	// attempt: 当前尝试次数（从 1 开始）
 	// err: 上次执行的错误
 	ShouldRetry(ctx context.Context, attempt int, err error) bool
@@ -36,10 +37,11 @@ type BackoffPolicy interface {
 // ResettableBackoff 可重置的退避策略接口。
 // 实现此接口的 BackoffPolicy 可通过 Reset() 重置内部状态。
 //
-// 设计决策: Retryer 当前不自动调用 Reset()，因为唯一的实现
+// 消费方: internal/mqcore 在消费成功后通过类型断言调用 Reset() 重置退避状态。
+//
+// 设计决策: Retryer 当前不自动调用 Reset()，因为内置实现
 // ExponentialBackoff.Reset() 是空操作（crypto/rand 无状态）。
-// 此接口保留为扩展点，供有状态的自定义 BackoffPolicy 使用。
-// 如需在成功后重置状态，调用方应手动执行类型断言调用 Reset()。
+// 此接口供有状态的自定义 BackoffPolicy 实现，用于在成功后重置内部状态。
 type ResettableBackoff interface {
 	BackoffPolicy
 	Reset()

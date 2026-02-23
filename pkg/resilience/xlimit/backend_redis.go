@@ -74,7 +74,7 @@ func (b *redisBackend) Query(ctx context.Context, key string, limit, burst int, 
 }
 
 // Close 关闭后端
-func (b *redisBackend) Close() error {
+func (b *redisBackend) Close(_ context.Context) error {
 	return nil
 }
 

@@ -164,17 +164,10 @@ func classifyError(err error) string {
 }
 
 // isNetworkError 检查是否是网络相关错误
+//
+// 设计决策: 仅检查 net.Error 接口，net.OpError 和 net.DNSError 均实现了该接口，
+// 无需单独检查。与 xsemaphore 的 isNetworkError 保持一致。
 func isNetworkError(err error) bool {
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return true
-	}
-
-	var dnsErr *net.DNSError
-	return errors.As(err, &dnsErr)
+	return errors.As(err, &netErr)
 }

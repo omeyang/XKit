@@ -109,6 +109,46 @@ func TestConfig_Validate_EndpointFormats(t *testing.T) {
 	}
 }
 
+// TestConfig_Validate_TrimSpaceEndpoints 测试 Validate 接受带空白的 endpoint（内部 TrimSpace 后校验），
+// 但不修改原始 Config（TrimSpace 归一化在 applyDefaults 中执行）。
+func TestConfig_Validate_TrimSpaceEndpoints(t *testing.T) {
+	cfg := &Config{
+		Endpoints: []string{"  localhost:2379  ", "\tetcd.example.com:2379\n"},
+	}
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v, want nil", err)
+	}
+	// Validate 不应修改原始 Config
+	if cfg.Endpoints[0] != "  localhost:2379  " {
+		t.Errorf("Validate() should not modify original: Endpoints[0] = %q", cfg.Endpoints[0])
+	}
+
+	// TrimSpace 归一化在 applyDefaults 中执行
+	applied := cfg.applyDefaults()
+	if applied.Endpoints[0] != "localhost:2379" {
+		t.Errorf("applyDefaults() Endpoints[0] = %q, want %q", applied.Endpoints[0], "localhost:2379")
+	}
+	if applied.Endpoints[1] != "etcd.example.com:2379" {
+		t.Errorf("applyDefaults() Endpoints[1] = %q, want %q", applied.Endpoints[1], "etcd.example.com:2379")
+	}
+	// 确认 applyDefaults 不修改原始 Config
+	if cfg.Endpoints[0] != "  localhost:2379  " {
+		t.Errorf("applyDefaults() should not modify original: Endpoints[0] = %q", cfg.Endpoints[0])
+	}
+}
+
+// TestConfig_Validate_WhitespaceOnlyEndpoint 测试纯空白 endpoint 在 TrimSpace 后被检测为空。
+func TestConfig_Validate_WhitespaceOnlyEndpoint(t *testing.T) {
+	cfg := &Config{
+		Endpoints: []string{"  \t  "},
+	}
+	err := cfg.Validate()
+	if !errors.Is(err, ErrInvalidEndpoint) {
+		t.Errorf("Validate() error = %v, want ErrInvalidEndpoint", err)
+	}
+}
+
 func TestConfig_Validate_NegativeDuration(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -239,5 +279,28 @@ func TestConfig_String(t *testing.T) {
 				t.Errorf("String() = %q, should not contain %q", s, tt.wantExcludes)
 			}
 		})
+	}
+}
+
+func TestConfig_String_AllFields(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Endpoints = []string{"localhost:2379"}
+	cfg.Username = "admin"
+	cfg.Password = "secret"
+	cfg.AutoSyncInterval = 5 * time.Second
+
+	s := cfg.String()
+
+	requiredFields := []string{
+		"DialKeepAliveTime:",
+		"DialKeepAliveTimeout:",
+		"AutoSyncInterval:",
+		"RejectOldCluster:",
+		"PermitWithoutStream:",
+	}
+	for _, field := range requiredFields {
+		if !strings.Contains(s, field) {
+			t.Errorf("String() = %q, should contain %q", s, field)
+		}
 	}
 }

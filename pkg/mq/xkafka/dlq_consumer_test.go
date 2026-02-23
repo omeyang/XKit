@@ -246,6 +246,19 @@ func TestDLQPolicy_Validate_WithCallbacks(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestDLQPolicy_Validate_WithDLQFlushTimeout(t *testing.T) {
+	policy := &DLQPolicy{
+		DLQTopic:        "dlq-topic",
+		RetryPolicy:     xretry.NewFixedRetry(3),
+		DLQFlushTimeout: 30 * time.Second,
+	}
+
+	err := policy.Validate()
+
+	assert.NoError(t, err)
+	assert.Equal(t, 30*time.Second, policy.DLQFlushTimeout)
+}
+
 // =============================================================================
 // Error Constants Tests
 // =============================================================================

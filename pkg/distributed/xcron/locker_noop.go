@@ -5,9 +5,18 @@ import (
 	"time"
 )
 
+// noopIndicator 标记 Locker 为无操作实现。
+// 设计决策: 使用 sentinel 接口而非具体类型断言（*noopLocker），
+// 使第三方实现的无操作 Locker 也能正确跳过任务名校验。
+type noopIndicator interface {
+	isNoop()
+}
+
 // noopLocker 无锁实现，用于单副本场景。
 // 所有锁操作都直接返回成功，不做任何实际锁定。
 type noopLocker struct{}
+
+func (*noopLocker) isNoop() {} // 实现 noopIndicator 接口
 
 // noopLockHandle 无锁实现的 LockHandle
 type noopLockHandle struct {

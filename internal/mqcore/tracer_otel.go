@@ -2,6 +2,7 @@ package mqcore
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 
@@ -86,12 +87,20 @@ func ensureSpanContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	// 设计决策: 默认设置 FlagsSampled，因为显式注入追踪上下文意味着调用方期望该链路被采样。
-	// TraceFlags(0) 会导致下游服务可能丢弃该链路。
+	// 设计决策: 按 W3C Trace Context 规范，trace-flags 是 1 字节位域（bit 0 = sampled）。
+	// 使用 ParseUint + 类型转换保留完整位域语义，兼容未来扩展的高位标志。
+	// 缺失或非法值时默认 FlagsSampled（显式注入意味着调用方期望链路被采样）。
+	flags := trace.FlagsSampled
+	if tf := xctx.TraceFlags(ctx); tf != "" {
+		if b, err := strconv.ParseUint(tf, 16, 8); err == nil {
+			flags = trace.TraceFlags(b)
+		}
+	}
+
 	parent := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    parsedTraceID,
 		SpanID:     parsedSpanID,
-		TraceFlags: trace.FlagsSampled,
+		TraceFlags: flags,
 		Remote:     true,
 	})
 
@@ -109,6 +118,11 @@ func syncTraceToXctx(ctx context.Context) context.Context {
 		ctx = newCtx
 	}
 	newCtx, err = xctx.WithSpanID(ctx, spanContext.SpanID().String())
+	if err == nil {
+		ctx = newCtx
+	}
+	// 同步 TraceFlags 到 xctx，确保下游日志 LogAttrs 包含采样决策信息。
+	newCtx, err = xctx.WithTraceFlags(ctx, spanContext.TraceFlags().String())
 	if err == nil {
 		ctx = newCtx
 	}

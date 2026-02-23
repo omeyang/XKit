@@ -72,6 +72,9 @@ func Err(err error) slog.Attr {
 
 // Duration 创建耗时属性
 //
+// 输出人类可读的字符串格式（如 "5s"、"1m30s"），与 LazyDuration 行为一致。
+// 如需机器解析的数值格式（如按耗时排序），使用 slog.Int64("duration_ms", d.Milliseconds())。
+//
 // 示例：
 //
 //	start := time.Now()

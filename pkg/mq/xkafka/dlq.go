@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
@@ -29,6 +30,18 @@ const (
 	HeaderFailureReason = "x-failure-reason"
 )
 
+// maxFailureReasonLen 失败原因字符串的最大长度。
+// 超出此长度会被截断并附加 "...(truncated)" 后缀。
+const maxFailureReasonLen = 1024
+
+// DefaultDLQTopic 返回基于原始 Topic 名称的默认 DLQ Topic 名称。
+// 命名约定为 "{topic}.dlq"，例如 "orders" → "orders.dlq"。
+// 提供此函数是为了统一多服务接入时的 DLQ Topic 命名，
+// 便于监控面板和告警规则的标准化复用。用户也可以自定义 DLQ Topic 名称。
+func DefaultDLQTopic(topic string) string {
+	return topic + ".dlq"
+}
+
 // DLQPolicy Kafka 死信队列策略
 type DLQPolicy struct {
 	// DLQTopic 死信 Topic 名称（必须）
@@ -51,6 +64,16 @@ type DLQPolicy struct {
 
 	// OnRetry 消息重试时的回调（可选）
 	OnRetry func(msg *kafka.Message, attempt int, err error)
+
+	// DLQFlushTimeout DLQ Producer 关闭时的刷新超时（可选，默认 10s）。
+	// 控制 Close() 时等待 DLQ 消息发送完成的最长时间。
+	DLQFlushTimeout time.Duration
+
+	// FailureReasonFormatter 自定义失败原因格式化函数（可选）。
+	// 用于控制写入 Kafka Header（x-failure-reason）的错误文本内容。
+	// 默认行为：使用 err.Error() 并截断至 1024 字符，防止敏感信息泄露。
+	// 如需保留完整错误文本，可设置为 func(err error) string { return err.Error() }。
+	FailureReasonFormatter func(error) string
 }
 
 // Validate 验证策略配置
@@ -127,50 +150,64 @@ type ConsumerWithDLQ interface {
 	DLQStats() DLQStats
 }
 
-// dlqStatsCollector DLQ 统计收集器
+// dlqStatsCollector DLQ 统计收集器。
+// 纯计数器使用 atomic.Int64 实现无锁递增（与 producerWrapper/consumerWrapper 一致）；
+// ByTopic (map) 和 LastDLQTime (非原子 time.Time) 保留 RWMutex 保护。
 type dlqStatsCollector struct {
-	stats DLQStats
-	mu    sync.RWMutex
+	totalMessages      atomic.Int64
+	retriedMessages    atomic.Int64
+	deadLetterMessages atomic.Int64
+	successAfterRetry  atomic.Int64
+
+	// mu 仅保护 byTopic (map) 和 lastDLQTime (非原子 time.Time)
+	mu          sync.RWMutex
+	lastDLQTime time.Time
+	byTopic     map[string]int64
 }
 
 func newDLQStatsCollector() *dlqStatsCollector {
 	return &dlqStatsCollector{
-		stats: DLQStats{
-			ByTopic: make(map[string]int64),
-		},
+		byTopic: make(map[string]int64),
 	}
 }
 
 func (c *dlqStatsCollector) incTotal() {
-	c.mu.Lock()
-	c.stats.TotalMessages++
-	c.mu.Unlock()
+	c.totalMessages.Add(1)
 }
 
 func (c *dlqStatsCollector) incRetried() {
-	c.mu.Lock()
-	c.stats.RetriedMessages++
-	c.mu.Unlock()
+	c.retriedMessages.Add(1)
 }
 
 func (c *dlqStatsCollector) incDeadLetter(topic string) {
+	c.deadLetterMessages.Add(1)
 	c.mu.Lock()
-	c.stats.DeadLetterMessages++
-	c.stats.LastDLQTime = time.Now()
-	c.stats.ByTopic[topic]++
+	c.lastDLQTime = time.Now()
+	c.byTopic[topic]++
 	c.mu.Unlock()
 }
 
 func (c *dlqStatsCollector) incSuccessAfterRetry() {
-	c.mu.Lock()
-	c.stats.SuccessAfterRetry++
-	c.mu.Unlock()
+	c.successAfterRetry.Add(1)
 }
 
 func (c *dlqStatsCollector) get() DLQStats {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.stats.Clone()
+	byTopic := make(map[string]int64, len(c.byTopic))
+	for k, v := range c.byTopic {
+		byTopic[k] = v
+	}
+	lastDLQTime := c.lastDLQTime
+	c.mu.RUnlock()
+
+	return DLQStats{
+		TotalMessages:      c.totalMessages.Load(),
+		RetriedMessages:    c.retriedMessages.Load(),
+		DeadLetterMessages: c.deadLetterMessages.Load(),
+		SuccessAfterRetry:  c.successAfterRetry.Load(),
+		LastDLQTime:        lastDLQTime,
+		ByTopic:            byTopic,
+	}
 }
 
 // Helper functions for message headers
@@ -213,12 +250,25 @@ func getHeader(msg *kafka.Message, key string) string {
 	return ""
 }
 
-// buildDLQMessageFromPolicy 根据策略构建 DLQ 消息
-// 这是一个纯函数，用于测试和复用
+// dlqMetadataSkipKeys 构建 DLQ 消息时需要跳过的元数据 Header 键。
+// 这些键会被新值覆盖，不从原始消息复制。
+// 提取为包级变量避免每次调用 buildDLQMessageFromPolicy 时分配。
+var dlqMetadataSkipKeys = map[string]bool{
+	HeaderRetryCount:        true,
+	HeaderLastFailTime:      true,
+	HeaderFirstFailTime:     true,
+	HeaderFailureReason:     true,
+	HeaderOriginalTopic:     true,
+	HeaderOriginalPartition: true,
+	HeaderOriginalOffset:    true,
+}
+
+// buildDLQMessageFromPolicy 根据策略构建 DLQ 消息。
+// reasonStr 是已格式化的失败原因字符串（由调用方通过 FailureReasonFormatter 预处理）。
 //
 // 注意：当消息来自重试队列时，会保留已有的 x-original-* 头部，
 // 而不是使用当前消息的 TopicPartition（那指向的是重试队列）。
-func buildDLQMessageFromPolicy(original *kafka.Message, dlqTopic string, reason error, retryCount int) *kafka.Message {
+func buildDLQMessageFromPolicy(original *kafka.Message, dlqTopic string, reasonStr string, retryCount int) *kafka.Message {
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
@@ -261,23 +311,14 @@ func buildDLQMessageFromPolicy(original *kafka.Message, dlqTopic string, reason 
 		kafka.Header{Key: HeaderOriginalPartition, Value: []byte(originalPartition)},
 		kafka.Header{Key: HeaderOriginalOffset, Value: []byte(originalOffset)},
 		kafka.Header{Key: HeaderRetryCount, Value: []byte(strconv.Itoa(retryCount))},
-		kafka.Header{Key: HeaderFailureReason, Value: []byte(errorString(reason))},
+		kafka.Header{Key: HeaderFailureReason, Value: []byte(reasonStr)},
 		kafka.Header{Key: HeaderFirstFailTime, Value: []byte(firstFailTime)},
 		kafka.Header{Key: HeaderLastFailTime, Value: []byte(nowStr)},
 	)
 
 	// 保留原始 Headers（排除会被覆盖的）
-	skipKeys := map[string]bool{
-		HeaderRetryCount:        true,
-		HeaderLastFailTime:      true,
-		HeaderFirstFailTime:     true,
-		HeaderFailureReason:     true,
-		HeaderOriginalTopic:     true,
-		HeaderOriginalPartition: true,
-		HeaderOriginalOffset:    true,
-	}
 	for _, h := range original.Headers {
-		if !skipKeys[h.Key] {
+		if !dlqMetadataSkipKeys[h.Key] {
 			headers = append(headers, h)
 		}
 	}
@@ -293,13 +334,13 @@ func buildDLQMessageFromPolicy(original *kafka.Message, dlqTopic string, reason 
 	}
 }
 
-// buildDLQMetadataFromMessage 从消息构建 DLQ 元数据
-// 这是一个纯函数，用于测试和复用
+// buildDLQMetadataFromMessage 从消息构建 DLQ 元数据。
+// reasonStr 是已格式化的失败原因字符串。
 //
 // 注意：当消息来自重试队列时，会优先使用 x-original-* 头部中的值，
 // 而不是使用当前消息的 TopicPartition（那指向的是重试队列）。
 // 这与 buildDLQMessageFromPolicy 保持一致。
-func buildDLQMetadataFromMessage(msg *kafka.Message, reason error, retryCount int) DLQMetadata {
+func buildDLQMetadataFromMessage(msg *kafka.Message, reasonStr string, retryCount int) DLQMetadata {
 	// 确定原始主题
 	originalTopic := getHeader(msg, HeaderOriginalTopic)
 	if originalTopic == "" && msg.TopicPartition.Topic != nil {
@@ -316,7 +357,7 @@ func buildDLQMetadataFromMessage(msg *kafka.Message, reason error, retryCount in
 		OriginalPartition: originalPartition,
 		OriginalOffset:    originalOffset,
 		OriginalTimestamp: msg.Timestamp,
-		FailureReason:     errorString(reason),
+		FailureReason:     reasonStr,
 		FailureCount:      retryCount + 1,
 		FirstFailureTime:  firstFailTime,
 		LastFailureTime:   time.Now(),
@@ -363,23 +404,32 @@ func parseFirstFailTime(msg *kafka.Message) time.Time {
 	return parsed
 }
 
-// errorString 安全地获取错误字符串，nil 返回空字符串
-func errorString(err error) string {
+// defaultFailureReasonFormatter 默认的失败原因格式化函数。
+// 使用 err.Error() 并截断至 maxFailureReasonLen 字符，防止敏感信息泄露到 Kafka Header。
+//
+// 设计决策: 默认使用截断而非错误分类码，因为库无法可靠分类任意用户错误。
+// 截断 + 可配置 FailureReasonFormatter 是库层面的合理折中：
+// 需要完全脱敏的场景应通过 FailureReasonFormatter 显式 opt-in。
+func defaultFailureReasonFormatter(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	s := err.Error()
+	if len(s) > maxFailureReasonLen {
+		return s[:maxFailureReasonLen] + "...(truncated)"
+	}
+	return s
 }
 
-// updateRetryHeaders 更新重试相关的消息头
-// 这是一个纯函数，用于测试和复用
-func updateRetryHeaders(msg *kafka.Message, err error) {
+// updateRetryHeaders 更新重试相关的消息头。
+// reasonStr 是已格式化的失败原因字符串。
+func updateRetryHeaders(msg *kafka.Message, reasonStr string) {
 	count := getRetryCount(msg) + 1
 	now := time.Now().Format(time.RFC3339)
 
 	setHeader(msg, HeaderRetryCount, strconv.Itoa(count))
 	setHeader(msg, HeaderLastFailTime, now)
-	setHeader(msg, HeaderFailureReason, errorString(err))
+	setHeader(msg, HeaderFailureReason, reasonStr)
 
 	// 首次失败时设置原始信息
 	if count == 1 {

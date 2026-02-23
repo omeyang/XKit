@@ -179,7 +179,7 @@ func FuzzNewRedisFactory(f *testing.F) {
 			t.Errorf("unexpected error creating factory: %v", err)
 			return
 		}
-		defer func() { _ = factory.Close() }()
+		defer func() { _ = factory.Close(context.Background()) }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -281,7 +281,7 @@ func FuzzTryLock_KeyName(f *testing.F) {
 		if err != nil {
 			t.Fatalf("failed to create factory: %v", err)
 		}
-		defer func() { _ = factory.Close() }()
+		defer func() { _ = factory.Close(context.Background()) }()
 
 		// 对于非空 key，尝试获取和释放锁
 		if key != "" && len(key) < 1000 {
@@ -465,7 +465,7 @@ func FuzzTryLock_CombinedOptions(f *testing.F) {
 		if err != nil {
 			return
 		}
-		defer func() { _ = factory.Close() }()
+		defer func() { _ = factory.Close(context.Background()) }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
@@ -557,7 +557,7 @@ func FuzzLockHandle_Operations(f *testing.F) {
 		}
 		defer mr.Close()
 		defer func() { _ = client.Close() }()
-		defer func() { _ = factory.Close() }()
+		defer func() { _ = factory.Close(context.Background()) }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
@@ -608,7 +608,7 @@ func FuzzTryLock_ContextTimeout(f *testing.F) {
 		if err != nil {
 			return
 		}
-		defer func() { _ = factory.Close() }()
+		defer func() { _ = factory.Close(context.Background()) }()
 
 		timeout := time.Duration(timeoutNs)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -649,7 +649,7 @@ func FuzzFactoryClose_Operations(f *testing.F) {
 		}
 
 		if closeFirst {
-			_ = factory.Close()
+			_ = factory.Close(context.Background())
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -668,7 +668,7 @@ func FuzzFactoryClose_Operations(f *testing.F) {
 		}
 
 		if !closeFirst {
-			_ = factory.Close()
+			_ = factory.Close(context.Background())
 		}
 	})
 }

@@ -2,8 +2,23 @@ package xmetrics
 
 import (
 	"context"
+	"reflect"
 	"strconv"
 )
+
+// isNilInterface 检测接口值是否为 nil 或 typed-nil（例如 (*T)(nil) 赋给接口）。
+//
+// 设计决策: 使用 reflect 而非仅检查 == nil。
+// 自定义 Observer/TracerProvider 可能返回 typed-nil（接口内部 type 非空但 value 为 nil），
+// 仅 == nil 检查会遗漏此情况，后续方法调用可能 panic。
+// reflect 检查仅在 Start 路径使用（非热路径），性能开销可忽略。
+func isNilInterface(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
+}
 
 // Kind 表示观测跨度类型。
 type Kind int
@@ -63,7 +78,8 @@ type SpanOptions struct {
 	Operation string
 	// Kind 标识跨度类型。
 	Kind Kind
-	// Attrs 附加属性。
+	// Attrs 附加到 trace span 的自定义属性（不影响 metrics 维度）。
+	// 注意：component / operation / status 是保留键，使用这些键的属性会被静默过滤。
 	Attrs []Attr
 }
 
@@ -73,7 +89,8 @@ type Result struct {
 	Status Status
 	// Err 表示操作错误。
 	Err error
-	// Attrs 附加属性。
+	// Attrs 附加到 trace span 的自定义属性（不影响 metrics 维度）。
+	// 注意：component / operation / status 是保留键，使用这些键的属性会被静默过滤。
 	Attrs []Attr
 }
 
@@ -107,21 +124,27 @@ type NoopSpan struct{}
 func (NoopSpan) End(_ Result) {}
 
 // Start 使用 observer 开始观测，nil observer 时返回空跨度。
-// Start 保证返回非 nil 的 context.Context（nil ctx 会被替换为 context.Background()）。
+// Start 保证返回非 nil 的 context.Context 和非 nil 的 Span。
+// nil ctx 会被替换为 context.Background()；
+// 若自定义 Observer 返回 nil 或 typed-nil Span，Start 会兜底为 [NoopSpan]。
 //
 // 设计决策: ctx 在入口统一归一化，而非仅在 observer == nil 分支处理。
 // 这确保即使自定义 Observer 未处理 nil context，也不会导致 panic。
-// 同时对返回的 context 做兜底检查，防止自定义 Observer 返回 nil context。
+// 同时对返回的 context 和 span 做 nil/typed-nil 兜底检查，
+// 防止自定义 Observer 返回 nil 值导致调用方 panic。
 func Start(ctx context.Context, observer Observer, opts SpanOptions) (context.Context, Span) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if observer == nil {
+	if isNilInterface(observer) {
 		return ctx, NoopSpan{}
 	}
 	retCtx, span := observer.Start(ctx, opts)
 	if retCtx == nil {
 		retCtx = ctx
+	}
+	if isNilInterface(span) {
+		span = NoopSpan{}
 	}
 	return retCtx, span
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/observability/xtrace"
+	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -158,6 +159,30 @@ func TestExtractFromHTTPHeader(t *testing.T) {
 			),
 			want: xtrace.TraceInfo{
 				Traceparent: "02-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-extra-field",
+				TraceID:     "0af7651916cd43dd8448eb211c80319c",
+				SpanID:      "b7ad6b7169203331",
+				TraceFlags:  "01",
+			},
+		},
+		{
+			name: "W3C 版本前向兼容 - 未来版本扩展字段分隔符非 '-' 拒绝",
+			header: makeHeader(
+				// 未知版本 len>55 时第 56 位必须是 '-'，此处为 'x'
+				xtrace.HeaderTraceparent, "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01x",
+			),
+			want: xtrace.TraceInfo{
+				Traceparent: "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01x",
+				// 非法格式，不解析
+			},
+		},
+		{
+			name: "W3C 版本前向兼容 - 未来版本恰好 55 字符有效",
+			header: makeHeader(
+				// 未知版本恰好 55 字符（无扩展字段），按 v00 格式解析
+				xtrace.HeaderTraceparent, "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+			),
+			want: xtrace.TraceInfo{
+				Traceparent: "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 				TraceID:     "0af7651916cd43dd8448eb211c80319c",
 				SpanID:      "b7ad6b7169203331",
 				TraceFlags:  "01",
@@ -509,11 +534,49 @@ func TestInjectTraceToHeader(t *testing.T) {
 			t.Errorf("X-Span-ID should be empty, got %q", got)
 		}
 	})
+
+	t.Run("非 v00 traceparent 重新生成为 v00", func(t *testing.T) {
+		h := http.Header{}
+		// 传入 v02 版本的 traceparent（含扩展字段）
+		info := xtrace.TraceInfo{
+			TraceID:     "0af7651916cd43dd8448eb211c80319c",
+			SpanID:      "b7ad6b7169203331",
+			Traceparent: "02-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-vendordata",
+		}
+		xtrace.InjectTraceToHeader(h, info)
+
+		// 应该输出 v00 格式，不是原始 v02 字符串
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+		if got := h.Get(xtrace.HeaderTraceparent); got != want {
+			t.Errorf("traceparent = %q, want %q (should be regenerated as v00)", got, want)
+		}
+	})
 }
 
 // =============================================================================
 // HTTP 中间件 — 内部分支覆盖测试
 // =============================================================================
+
+func TestHTTPMiddleware_NilOptionIgnored(t *testing.T) {
+	// 覆盖 applyOptions: nil Option 被安全忽略，不 panic
+	var capturedTraceID string
+
+	handler := xtrace.HTTPMiddleware(nil, xtrace.WithAutoGenerate(false), nil)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xtrace.TraceID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// nil 选项被忽略，WithAutoGenerate(false) 应生效
+	if capturedTraceID != "" {
+		t.Errorf("TraceID should be empty when auto-generate is disabled, got %q", capturedTraceID)
+	}
+}
 
 func TestHTTPMiddleware_InvalidTraceIDAutoGenerate(t *testing.T) {
 	// 覆盖 injectID: invalid format + autoGenerate=true → discard + ensure
@@ -847,6 +910,133 @@ func TestInjectTraceToHeader_FormatTraceparentEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// W3C tracestate 防护测试
+// =============================================================================
+
+func TestInjectTraceToHeader_TracestateRequiresTraceparent(t *testing.T) {
+	t.Run("有 traceparent 时写入 tracestate", func(t *testing.T) {
+		h := http.Header{}
+		info := xtrace.TraceInfo{
+			TraceID:    "0af7651916cd43dd8448eb211c80319c",
+			SpanID:     "b7ad6b7169203331",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToHeader(h, info)
+
+		if got := h.Get(xtrace.HeaderTracestate); got != "vendor=opaque" {
+			t.Errorf("tracestate = %q, want %q", got, "vendor=opaque")
+		}
+	})
+
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		h := http.Header{}
+		// TraceID 无效（太短），无法生成 traceparent
+		info := xtrace.TraceInfo{
+			TraceID:    "short",
+			SpanID:     "also-short",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToHeader(h, info)
+
+		if got := h.Get(xtrace.HeaderTraceparent); got != "" {
+			t.Errorf("traceparent should be empty, got %q", got)
+		}
+		if got := h.Get(xtrace.HeaderTracestate); got != "" {
+			t.Errorf("tracestate should be empty when no valid traceparent, got %q", got)
+		}
+	})
+}
+
+func TestInjectTraceToMetadata_TracestateRequiresTraceparent(t *testing.T) {
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		md := metadata.MD{}
+		info := xtrace.TraceInfo{
+			TraceID:    "short",
+			SpanID:     "also-short",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToMetadata(md, info)
+
+		if vals := md.Get(xtrace.MetaTraceparent); len(vals) > 0 {
+			t.Errorf("traceparent should be empty, got %v", vals)
+		}
+		if vals := md.Get(xtrace.MetaTracestate); len(vals) > 0 {
+			t.Errorf("tracestate should be empty when no valid traceparent, got %v", vals)
+		}
+	})
+}
+
+// =============================================================================
+// 已有 traceparent 的覆盖行为测试
+// =============================================================================
+
+func TestInjectToRequest_OverwritesExistingTraceparent(t *testing.T) {
+	t.Run("新 traceparent 覆盖旧值", func(t *testing.T) {
+		// 已有 traceparent 的请求
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set(xtrace.HeaderTraceparent,
+			"00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+
+		// 注入新的追踪信息
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+		xtrace.InjectToRequest(ctx, req)
+
+		// 新 traceparent 应覆盖旧值
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		if got := req.Header.Get(xtrace.HeaderTraceparent); got != want {
+			t.Errorf("traceparent = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("空 context 不清除已有 traceparent", func(t *testing.T) {
+		// 设计决策: InjectToRequest 仅设置非空字段，不清除已有 header。
+		// 空 context 场景下，调用方通常使用新建的 http.Request，不存在旧值覆盖问题。
+		req := httptest.NewRequest("GET", "/test", nil)
+		oldTraceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+		req.Header.Set(xtrace.HeaderTraceparent, oldTraceparent)
+
+		// 空 context，没有追踪信息
+		ctx := context.Background()
+		xtrace.InjectToRequest(ctx, req)
+
+		// 旧 traceparent 保留（InjectToRequest 不清除已有 header）
+		if got := req.Header.Get(xtrace.HeaderTraceparent); got != oldTraceparent {
+			t.Errorf("traceparent = %q, want %q (should preserve old value)", got, oldTraceparent)
+		}
+	})
+}
+
+func TestInjectToOutgoingContext_OverwritesExistingTraceparent(t *testing.T) {
+	t.Run("新 traceparent 覆盖旧值", func(t *testing.T) {
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+
+		// 预设包含旧 traceparent 的 outgoing metadata
+		oldMD := metadata.Pairs(
+			xtrace.MetaTraceparent, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+		)
+		ctx = metadata.NewOutgoingContext(ctx, oldMD)
+
+		ctx = xtrace.InjectToOutgoingContext(ctx)
+
+		md, ok := metadata.FromOutgoingContext(ctx)
+		if !ok {
+			t.Fatal("metadata not found")
+		}
+
+		// 新 traceparent 应覆盖旧值
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		vals := md.Get(xtrace.MetaTraceparent)
+		if len(vals) != 1 || vals[0] != want {
+			t.Errorf("traceparent = %v, want [%q]", vals, want)
+		}
+	})
 }
 
 // =============================================================================

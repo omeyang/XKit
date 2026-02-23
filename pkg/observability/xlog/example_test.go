@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
@@ -13,9 +12,9 @@ import (
 )
 
 func Example() {
-	// 创建 Logger
+	var buf bytes.Buffer
 	logger, cleanup, _ := xlog.New().
-		SetOutput(os.Stdout).
+		SetOutput(&buf).
 		SetLevel(xlog.LevelInfo).
 		SetFormat("text").
 		SetEnrich(false). // 禁用 enrich 以获得可预测输出
@@ -25,7 +24,13 @@ func Example() {
 	// 记录日志
 	ctx := context.Background()
 	logger.Info(ctx, "hello xlog")
-	// Output 包含: level=INFO msg="hello xlog"
+
+	output := buf.String()
+	fmt.Println("has level:", strings.Contains(output, "level=INFO"))
+	fmt.Println("has msg:", strings.Contains(output, "hello xlog"))
+	// Output:
+	// has level: true
+	// has msg: true
 }
 
 func Example_withAttrs() {

@@ -447,6 +447,29 @@ func TestHTTPClient_Request_URLHandling(t *testing.T) {
 	})
 }
 
+func TestIsAbsoluteURL(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"http://example.com", true},
+		{"https://example.com", true},
+		{"HTTP://EXAMPLE.COM", true},
+		{"HTTPS://EXAMPLE.COM", true},
+		{"HtTp://example.com", true},
+		{"HtTpS://example.com", true},
+		{"/api/v1/test", false},
+		{"", false},
+		{"ftp://file.com", false},
+		{"http", false},
+	}
+	for _, tt := range tests {
+		if got := isAbsoluteURL(tt.input); got != tt.want {
+			t.Errorf("isAbsoluteURL(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestHTTPClient_ResponseTooLarge(t *testing.T) {
 	ctx := context.Background()
 

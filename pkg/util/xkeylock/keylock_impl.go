@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // hashSeed 是分片哈希的种子，进程级别唯一。
@@ -23,15 +24,29 @@ type keyLockImpl struct {
 	// testHookAfterTryAcquireSend 在 TryAcquire 的 channel 发送成功后、closed 检查前调用。
 	// 仅供测试使用，生产环境为 nil（零开销）。实例级字段避免并行测试的数据竞争。
 	testHookAfterTryAcquireSend func()
+
+	// testHookAfterDefaultReleaseRef 在 TryAcquire default 分支 releaseRef 后、closed 检查前调用。
+	// 仅供测试使用，与 testHookAfterTryAcquireSend 配合完整覆盖 TryAcquire 的两条竞态分支。
+	testHookAfterDefaultReleaseRef func()
+}
+
+// cacheLineSize 是目标架构的缓存行大小（字节）。
+const cacheLineSize = 64
+
+// shardPayload 包含 shard 的业务字段。独立类型使 unsafe.Sizeof 可用于
+// 自动计算 cache line padding，消除硬编码字节数和跨架构兼容性问题。
+type shardPayload struct {
+	mu      sync.Mutex
+	entries map[string]*lockEntry
 }
 
 type shard struct {
-	mu      sync.Mutex
-	entries map[string]*lockEntry
-	// 设计决策: 填充至 cache line 边界（64 字节），消除相邻 shard 之间的伪共享。
-	// shard 本体 ~16 字节（sync.Mutex 8 + map pointer 8），需补齐 48 字节。
-	// 内存代价可忽略（32 分片 × 64B = 2KB），在高核心数机器上可改善并发吞吐。
-	_ [64 - 16]byte //nolint:unused // cache line padding
+	shardPayload
+	// 设计决策: 填充至 cache line 边界消除相邻 shard 之间的伪共享。
+	// 使用 unsafe.Sizeof(shardPayload{}) 自动计算填充字节数，
+	// 适配不同架构（amd64: 16B payload → 48B padding; 386: 12B → 52B）。
+	// 编译期安全：若 shardPayload 增长超过 cacheLineSize，数组长度变负，编译即失败。
+	_ [cacheLineSize - unsafe.Sizeof(shardPayload{})]byte // cache line padding
 }
 
 // lockEntry 表示一个 key 的锁条目。
@@ -119,7 +134,7 @@ func (kl *keyLockImpl) releaseRef(key string, entry *lockEntry) {
 
 func (kl *keyLockImpl) Acquire(ctx context.Context, key string) (Handle, error) {
 	if ctx == nil {
-		panic("xkeylock: nil Context")
+		return nil, ErrNilContext
 	}
 	if key == "" {
 		return nil, ErrInvalidKey
@@ -181,6 +196,9 @@ func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	default: // 锁被占用
 		kl.releaseRef(key, entry)
+		if kl.testHookAfterDefaultReleaseRef != nil {
+			kl.testHookAfterDefaultReleaseRef()
+		}
 		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
 		// 避免将"已关闭"误报为"锁被占用"。
 		if kl.closed.Load() {

@@ -3,6 +3,7 @@ package xdlock_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,13 +27,14 @@ func TestErrors(t *testing.T) {
 	}{
 		{"ErrLockHeld", xdlock.ErrLockHeld, "xdlock: lock is held by another owner"},
 		{"ErrLockFailed", xdlock.ErrLockFailed, "xdlock: failed to acquire lock"},
-		{"ErrLockExpired", xdlock.ErrLockExpired, "xdlock: lock expired or stolen"},
 		{"ErrExtendFailed", xdlock.ErrExtendFailed, "xdlock: failed to extend lock"},
 		{"ErrNilClient", xdlock.ErrNilClient, "xdlock: client is nil"},
+		{"ErrNilContext", xdlock.ErrNilContext, "xdlock: context must not be nil"},
 		{"ErrSessionExpired", xdlock.ErrSessionExpired, "xdlock: session expired"},
 		{"ErrFactoryClosed", xdlock.ErrFactoryClosed, "xdlock: factory is closed"},
 		{"ErrNotLocked", xdlock.ErrNotLocked, "xdlock: not locked"},
 		{"ErrEmptyKey", xdlock.ErrEmptyKey, "xdlock: key must not be empty"},
+		{"ErrKeyTooLong", xdlock.ErrKeyTooLong, "xdlock: key exceeds maximum length of 512 bytes"},
 	}
 
 	for _, tt := range tests {
@@ -134,7 +136,7 @@ func (m *mockFactory) TryLock(_ context.Context, _ string, _ ...xdlock.MutexOpti
 func (m *mockFactory) Lock(_ context.Context, _ string, _ ...xdlock.MutexOption) (xdlock.LockHandle, error) {
 	return nil, nil
 }
-func (m *mockFactory) Close() error                   { return nil }
+func (m *mockFactory) Close(_ context.Context) error  { return nil }
 func (m *mockFactory) Health(_ context.Context) error { return nil }
 
 // mockEtcdFactory 用于编译时接口检查。
@@ -172,7 +174,7 @@ func TestNewRedisFactory_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	assert.NotNil(t, factory.Redsync())
 }
@@ -184,7 +186,7 @@ func TestRedisFactory_Health_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -224,7 +226,7 @@ func TestRedisFactory_HealthAfterClose_WithMiniredis(t *testing.T) {
 	require.NoError(t, err)
 
 	// 关闭工厂
-	err = factory.Close()
+	err = factory.Close(context.Background())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -243,9 +245,9 @@ func TestRedisFactory_CloseIdempotent_WithMiniredis(t *testing.T) {
 	require.NoError(t, err)
 
 	// 多次关闭不应报错
-	assert.NoError(t, factory.Close())
-	assert.NoError(t, factory.Close())
-	assert.NoError(t, factory.Close())
+	assert.NoError(t, factory.Close(context.Background()))
+	assert.NoError(t, factory.Close(context.Background()))
+	assert.NoError(t, factory.Close(context.Background()))
 }
 
 // =============================================================================
@@ -277,7 +279,7 @@ func TestNewRedisFactory_MultipleClients_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client1, client2, client3)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -304,7 +306,7 @@ func TestRedisFactory_HealthFailed_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -332,7 +334,7 @@ func TestRedisFactory_LockContextCanceled_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	// 第一个 handle 持有锁
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
@@ -362,7 +364,7 @@ func TestRedisFactory_Redsync_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	redsync := factory.Redsync()
 	assert.NotNil(t, redsync)
@@ -379,7 +381,7 @@ func TestRedisFactory_TryLock_Success_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -404,7 +406,7 @@ func TestRedisFactory_TryLock_LockHeld_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -428,7 +430,7 @@ func TestRedisFactory_Lock_Success_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -450,7 +452,7 @@ func TestRedisLockHandle_Extend_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -472,7 +474,7 @@ func TestRedisLockHandle_UnlockNotHeld_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -498,7 +500,7 @@ func TestRedisFactory_TryLockAfterClose_WithMiniredis(t *testing.T) {
 	require.NoError(t, err)
 
 	// 关闭工厂
-	err = factory.Close()
+	err = factory.Close(context.Background())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -518,7 +520,7 @@ func TestRedisFactory_LockAfterClose_Handle_WithMiniredis(t *testing.T) {
 	require.NoError(t, err)
 
 	// 关闭工厂
-	err = factory.Close()
+	err = factory.Close(context.Background())
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -540,7 +542,7 @@ func TestRedisLockHandle_ExtendAfterExpiry_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -571,7 +573,7 @@ func TestRedisLockHandle_ExtendAfterClose_WithMiniredis(t *testing.T) {
 	require.NotNil(t, handle)
 
 	// 关闭工厂后 Extend 仍可操作（Redis 连接由调用者管理）
-	_ = factory.Close()
+	_ = factory.Close(context.Background())
 
 	err = handle.Extend(ctx)
 	assert.NoError(t, err)
@@ -595,7 +597,7 @@ func TestRedisLockHandle_UnlockAfterClose_WithMiniredis(t *testing.T) {
 	require.NotNil(t, handle)
 
 	// 关闭工厂后 Unlock 仍可操作，避免锁悬挂
-	_ = factory.Close()
+	_ = factory.Close(context.Background())
 
 	err = handle.Unlock(ctx)
 	assert.NoError(t, err)
@@ -612,7 +614,7 @@ func TestRedisFactory_CreateMutexWithAllOptions_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -654,7 +656,7 @@ func TestRedisFactory_Lock_ContextPropagation_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	// 第一个 handle 持有锁
 	ctx1 := context.Background()
@@ -685,7 +687,7 @@ func TestRedisFactory_TryLock_EmptyKey_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -715,7 +717,7 @@ func TestRedisFactory_Lock_EmptyKey_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -735,7 +737,7 @@ func TestRedisFactory_Lock_RetriesExhausted_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -765,7 +767,7 @@ func TestRedisLockHandle_Unlock_ServerError_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -792,7 +794,7 @@ func TestRedisLockHandle_Extend_ServerError_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -819,7 +821,7 @@ func TestRedisLockHandle_Unlock_StolenLock_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -838,10 +840,10 @@ func TestRedisLockHandle_Unlock_StolenLock_WithMiniredis(t *testing.T) {
 	defer func() { _ = handle2.Unlock(ctx) }()
 
 	// handle1 尝试 Unlock — 锁已被 handle2 持有，值不匹配
-	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	// redsync 返回 ErrTaken → handle 层统一转为 ErrNotLocked（所有权已丢失）
 	err = handle1.Unlock(ctx)
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, xdlock.ErrLockHeld)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
 }
 
 func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
@@ -851,7 +853,7 @@ func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -870,9 +872,10 @@ func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
 	defer func() { _ = handle2.Unlock(ctx) }()
 
 	// handle1 尝试 Extend — 锁已被 handle2 持有
-	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	// redsync 返回 ErrTaken → handle 层统一转为 ErrNotLocked（所有权已丢失）
 	err = handle1.Extend(ctx)
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
 }
 
 func TestRedisLockHandle_Extend_PreservesErrExtendFailed_WithMiniredis(t *testing.T) {
@@ -882,7 +885,7 @@ func TestRedisLockHandle_Extend_PreservesErrExtendFailed_WithMiniredis(t *testin
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -902,4 +905,305 @@ func TestRedisLockHandle_Extend_PreservesErrExtendFailed_WithMiniredis(t *testin
 		assert.False(t, errors.Is(err, xdlock.ErrNotLocked),
 			"ErrExtendFailed should not be converted to ErrNotLocked")
 	}
+}
+
+// =============================================================================
+// Key 长度限制测试 (FG-M9)
+// =============================================================================
+
+func TestRedisFactory_TryLock_KeyTooLong_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		keyLen  int
+		wantErr error
+	}{
+		{"at limit (512)", 512, nil},
+		{"over limit (513)", 513, xdlock.ErrKeyTooLong},
+		{"way over limit (1024)", 1024, xdlock.ErrKeyTooLong},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := strings.Repeat("x", tt.keyLen)
+			handle, err := factory.TryLock(ctx, key)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, handle)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, handle)
+				_ = handle.Unlock(ctx)
+			}
+		})
+	}
+}
+
+func TestRedisFactory_Lock_KeyTooLong_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	key := strings.Repeat("x", 513)
+	handle, err := factory.Lock(ctx, key, xdlock.WithTries(1))
+	assert.ErrorIs(t, err, xdlock.ErrKeyTooLong)
+	assert.Nil(t, handle)
+}
+
+// =============================================================================
+// Unlock 清理上下文测试 (FG-S1)
+// =============================================================================
+
+func TestRedisLockHandle_Unlock_CanceledContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	// 使用正常 ctx 获取锁
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-cleanup-unlock", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 使用已取消的 ctx 调用 Unlock — 应该仍然成功（使用清理上下文）
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	err = handle.Unlock(canceledCtx)
+	assert.NoError(t, err)
+}
+
+func TestRedisLockHandle_Unlock_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-nil-ctx-unlock", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
+
+	err = handle.Unlock(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+}
+
+// =============================================================================
+// Redis nil context 测试（FG-S3 验证）
+// =============================================================================
+
+func TestRedisFactory_TryLock_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	handle, err := factory.TryLock(nil, "test-nil-ctx") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+	assert.Nil(t, handle)
+}
+
+func TestRedisFactory_Lock_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	handle, err := factory.Lock(nil, "test-nil-ctx", xdlock.WithTries(1)) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+	assert.Nil(t, handle)
+}
+
+func TestRedisLockHandle_Extend_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-nil-ctx-extend", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	defer func() { _ = handle.Unlock(ctx) }()
+
+	err = handle.Extend(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+}
+
+func TestRedisFactory_Health_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	err = factory.Health(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+}
+
+// =============================================================================
+// Redis unlocked 标记测试（FG-M8 验证）
+// =============================================================================
+
+// TestRedisLockHandle_Unlock_StolenLock_SetsUnlocked 验证 FG-M9 修复：
+// 当锁被其他持有者抢走后，Unlock 返回 ErrNotLocked 且设置 unlocked 标记，
+// 后续 Extend 也立即返回 ErrNotLocked，不再发送无意义的 Redis 请求。
+func TestRedisLockHandle_Unlock_StolenLock_SetsUnlocked_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	// handle1 获取锁
+	handle1, err := factory.TryLock(ctx, "test-stolen-unlocked", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// handle2 获取同一个锁（新的 value）
+	handle2, err := factory.TryLock(ctx, "test-stolen-unlocked", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle2)
+	defer func() { _ = handle2.Unlock(ctx) }()
+
+	// handle1 尝试 Unlock — 锁已被 handle2 持有
+	err = handle1.Unlock(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+
+	// FG-M9 修复验证：后续 Extend 应立即返回 ErrNotLocked（通过 unlocked 标记快速路径）
+	err = handle1.Extend(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+}
+
+func TestRedisLockHandle_DoubleUnlock_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-double-unlock", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 第一次 Unlock 成功
+	err = handle.Unlock(ctx)
+	assert.NoError(t, err)
+
+	// 第二次 Unlock 应返回 ErrNotLocked（unlocked 标记阻止重复操作）
+	err = handle.Unlock(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+}
+
+func TestRedisLockHandle_ExtendAfterUnlock_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-extend-after-unlock", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// Unlock 成功
+	err = handle.Unlock(ctx)
+	assert.NoError(t, err)
+
+	// Extend 已解锁的 handle 应返回 ErrNotLocked
+	err = handle.Extend(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+}
+
+// =============================================================================
+// Redis nil option 测试（FG-M7 验证）
+// =============================================================================
+
+func TestRedisFactory_TryLock_NilOption_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	// nil option 应被安全跳过，不 panic
+	handle, err := factory.TryLock(ctx, "test-nil-opt", nil, xdlock.WithExpiry(5*time.Second), nil)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+	_ = handle.Unlock(ctx)
+}
+
+func TestRedisLockHandle_Unlock_TimedOutContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	// 使用正常 ctx 获取锁
+	ctx := context.Background()
+	handle, err := factory.TryLock(ctx, "test-timeout-unlock", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 使用已超时的 ctx 调用 Unlock
+	timedOutCtx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond) // 确保超时
+
+	err = handle.Unlock(timedOutCtx)
+	assert.NoError(t, err)
 }

@@ -45,6 +45,9 @@ func (a Addr) IsZero() bool {
 // OUI 返回组织唯一标识符（Organizationally Unique Identifier）。
 // OUI 是 MAC 地址的前 3 字节，由 IEEE 分配给设备制造商。
 // 无效地址返回零值 [3]byte{}。
+//
+// 注意：返回值 [3]byte{} 与有效地址 00:00:00:xx:xx:xx 的 OUI 相同。
+// 如需区分，应先调用 [Addr.IsValid] 检查地址有效性。
 func (a Addr) OUI() [3]byte {
 	if !a.IsValid() {
 		return [3]byte{}
@@ -55,6 +58,9 @@ func (a Addr) OUI() [3]byte {
 // NIC 返回网络接口控制器标识（Network Interface Controller specific）。
 // NIC 是 MAC 地址的后 3 字节，由制造商分配。
 // 无效地址返回零值 [3]byte{}。
+//
+// 注意：返回值 [3]byte{} 与有效地址 xx:xx:xx:00:00:00 的 NIC 相同。
+// 如需区分，应先调用 [Addr.IsValid] 检查地址有效性。
 func (a Addr) NIC() [3]byte {
 	if !a.IsValid() {
 		return [3]byte{}

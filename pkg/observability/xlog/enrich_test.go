@@ -3,6 +3,7 @@ package xlog_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -65,7 +66,10 @@ func TestEnrichHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			base := slog.NewJSONHandler(&buf, nil)
-			handler := xlog.NewEnrichHandler(base)
+			handler, err := xlog.NewEnrichHandler(base)
+			if err != nil {
+				t.Fatalf("NewEnrichHandler() error: %v", err)
+			}
 			logger := slog.New(handler)
 
 			ctx := tt.setupCtx(context.Background())
@@ -100,7 +104,10 @@ func TestEnrichHandler(t *testing.T) {
 func TestEnrichHandler_WithAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	base := slog.NewJSONHandler(&buf, nil)
-	handler := xlog.NewEnrichHandler(base)
+	handler, err := xlog.NewEnrichHandler(base)
+	if err != nil {
+		t.Fatalf("NewEnrichHandler() error: %v", err)
+	}
 
 	enriched := handler.WithAttrs([]slog.Attr{slog.String("extra", "value")})
 	logger := slog.New(enriched)
@@ -119,7 +126,10 @@ func TestEnrichHandler_WithAttrs(t *testing.T) {
 func TestEnrichHandler_WithGroup(t *testing.T) {
 	var buf bytes.Buffer
 	base := slog.NewJSONHandler(&buf, nil)
-	handler := xlog.NewEnrichHandler(base)
+	handler, err := xlog.NewEnrichHandler(base)
+	if err != nil {
+		t.Fatalf("NewEnrichHandler() error: %v", err)
+	}
 
 	grouped := handler.WithGroup("request")
 	logger := slog.New(grouped)
@@ -137,7 +147,10 @@ func TestEnrichHandler_WithGroup(t *testing.T) {
 
 func TestEnrichHandler_Enabled(t *testing.T) {
 	base := slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelWarn})
-	handler := xlog.NewEnrichHandler(base)
+	handler, err := xlog.NewEnrichHandler(base)
+	if err != nil {
+		t.Fatalf("NewEnrichHandler() error: %v", err)
+	}
 
 	ctx := context.Background()
 	if handler.Enabled(ctx, slog.LevelInfo) {
@@ -148,18 +161,17 @@ func TestEnrichHandler_Enabled(t *testing.T) {
 	}
 }
 
-func TestNewEnrichHandler_NilBase_Panics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("NewEnrichHandler(nil) should panic")
-		}
-		msg, ok := r.(string)
-		if !ok || !strings.Contains(msg, "non-nil") {
-			t.Errorf("unexpected panic message: %v", r)
-		}
-	}()
-	xlog.NewEnrichHandler(nil)
+func TestNewEnrichHandler_NilBase_Error(t *testing.T) {
+	handler, err := xlog.NewEnrichHandler(nil)
+	if err == nil {
+		t.Fatal("NewEnrichHandler(nil) should return error")
+	}
+	if handler != nil {
+		t.Error("NewEnrichHandler(nil) should return nil handler")
+	}
+	if !errors.Is(err, xlog.ErrNilHandler) {
+		t.Errorf("error should be ErrNilHandler, got: %v", err)
+	}
 }
 
 // =============================================================================
@@ -188,7 +200,10 @@ func BenchmarkEnrichHandler(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			base := slog.NewJSONHandler(&bytes.Buffer{}, nil)
-			handler := xlog.NewEnrichHandler(base)
+			handler, err := xlog.NewEnrichHandler(base)
+			if err != nil {
+				b.Fatalf("NewEnrichHandler() error: %v", err)
+			}
 			logger := slog.New(handler)
 
 			ctx := tc.setupCtx(context.Background())

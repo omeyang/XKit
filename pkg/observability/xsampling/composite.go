@@ -52,6 +52,11 @@ type CompositeSampler struct {
 //
 // 非法 mode 返回 ErrInvalidMode，nil 子采样器返回 ErrNilSampler。
 //
+// 注意：组合采样器使用短路求值——ModeAND 遇到 false 立即返回，ModeOR 遇到 true 立即返回。
+// 有状态子采样器（如 CountSampler）仅在被实际求值时更新内部状态，因此子采样器的排列顺序
+// 会影响有状态采样器的行为。例如 All(rateSampler, countSampler) 中，当 rateSampler
+// 返回 false 时 countSampler 不会被求值，其计数器不会递增。
+//
 // 示例：
 //
 //	rateSampler, _ := NewRateSampler(0.1)

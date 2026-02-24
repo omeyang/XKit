@@ -53,8 +53,9 @@ func Example_withEvictionCallback() {
 		panic(err)
 	}
 	// 注意：此示例不调用 defer cache.Close()，
-	// 因为 Close 会 Purge 剩余条目并触发回调，干扰输出。
-	// 实际使用中，不带 fmt 副作用的回调应正常搭配 Close。
+	// 因为 Close 会 Purge 剩余条目并触发回调，干扰 Output 断言。
+	// 重要: 实际使用中务必调用 Close() 释放清理 goroutine，避免泄漏。
+	// 参见 Example() 中的 defer cache.Close() 用法。
 
 	// 填满缓存
 	cache.Set("key1", 100)

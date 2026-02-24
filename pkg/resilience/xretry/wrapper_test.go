@@ -331,16 +331,14 @@ func TestRetrierWithData_Function(t *testing.T) {
 }
 
 func TestDo_NilFn(t *testing.T) {
-	// nil fn 是编程错误，应 panic（Go 标准行为）
-	assert.Panics(t, func() {
-		_ = Do(context.Background(), nil, Attempts(1)) //nolint:errcheck // expected to panic
-	})
+	err := Do(context.Background(), nil, Attempts(1))
+	assert.ErrorIs(t, err, ErrNilFunc)
 }
 
 func TestDoWithData_NilFn(t *testing.T) {
-	assert.Panics(t, func() {
-		_, _ = DoWithData[int](context.Background(), nil, Attempts(1)) //nolint:errcheck // expected to panic
-	})
+	result, err := DoWithData[int](context.Background(), nil, Attempts(1))
+	assert.ErrorIs(t, err, ErrNilFunc)
+	assert.Equal(t, 0, result)
 }
 
 // TestCustomRetryIf 测试自定义 RetryIf 与 Do 函数的集成

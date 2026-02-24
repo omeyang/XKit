@@ -68,6 +68,7 @@ func TestSetFileLimit_HighValue(t *testing.T) {
 	assert.Equal(t, uint64(highLimit), soft)
 }
 
+// 不可 t.Parallel()：替换包级变量 getrlimit。
 func TestSetFileLimit_GetrlimitError(t *testing.T) {
 	origGet := getrlimit
 	defer func() { getrlimit = origGet }()
@@ -81,6 +82,7 @@ func TestSetFileLimit_GetrlimitError(t *testing.T) {
 	require.ErrorIs(t, err, mockErr)
 }
 
+// 不可 t.Parallel()：替换包级变量 setrlimit。
 func TestSetFileLimit_SetrlimitError(t *testing.T) {
 	origSet := setrlimit
 	defer func() { setrlimit = origSet }()
@@ -101,6 +103,7 @@ func TestGetFileLimit(t *testing.T) {
 	assert.GreaterOrEqual(t, hard, soft)
 }
 
+// 不可 t.Parallel()：替换包级变量 getrlimit。
 func TestGetFileLimit_GetrlimitError(t *testing.T) {
 	origGet := getrlimit
 	defer func() { getrlimit = origGet }()

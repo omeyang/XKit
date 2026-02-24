@@ -14,6 +14,24 @@ import (
 // 但失去跨进程一致性保证。
 type KeyFunc func(ctx context.Context) string
 
+// KeyBasedOption 配置 KeyBasedSampler 的可选参数
+type KeyBasedOption func(*KeyBasedSampler)
+
+// WithOnEmptyKey 设置空 key 回调函数
+//
+// 当 KeyFunc 返回空字符串时，在执行随机采样回退前调用此回调。
+// 用于指标计数或日志记录，帮助发现上下文传播链路断裂问题。
+//
+// 回调应当轻量（如原子计数器递增），避免阻塞采样热路径。
+// nil 回调会被忽略。
+func WithOnEmptyKey(fn func()) KeyBasedOption {
+	return func(s *KeyBasedSampler) {
+		if fn != nil {
+			s.onEmptyKey = fn
+		}
+	}
+}
+
 // KeyBasedSampler 基于 key 的一致性采样策略
 //
 // 设计决策: 工厂函数返回具体类型而非 Sampler 接口，因为 Rate() 方法提供了
@@ -25,14 +43,18 @@ type KeyFunc func(ctx context.Context) string
 //   - 按 tenant_id 采样，确保同一租户的请求采样行为一致
 //   - 按 user_id 采样，确保同一用户的请求采样行为一致
 type KeyBasedSampler struct {
-	rate    float64
-	keyFunc KeyFunc
+	rate       float64
+	keyFunc    KeyFunc
+	onEmptyKey func() // 空 key 回调，用于可观测性（指标/日志）
 }
 
 // NewKeyBasedSampler 创建基于 key 的一致性采样器
 //
 // rate 表示采样比率，范围 [0.0, 1.0]，超出范围或为 NaN 时返回 ErrInvalidRate。
 // keyFunc 用于从 context 中提取采样 key，不能为 nil（为 nil 时返回 ErrNilKeyFunc）。
+//
+// 当 keyFunc 返回空字符串时，采样器回退到随机采样（保持采样率语义但失去一致性）。
+// 可通过 WithOnEmptyKey 注册回调来监控空 key 事件，帮助排查上下文传播问题。
 //
 // 示例：
 //
@@ -41,21 +63,28 @@ type KeyBasedSampler struct {
 //	    return xctx.TraceID(ctx)
 //	})
 //
-//	// 按 tenant_id 采样
+//	// 按 tenant_id 采样，并监控空 key
+//	var emptyKeyCount atomic.Int64
 //	sampler, err := NewKeyBasedSampler(0.05, func(ctx context.Context) string {
 //	    return getTenantID(ctx)
-//	})
-func NewKeyBasedSampler(rate float64, keyFunc KeyFunc) (*KeyBasedSampler, error) {
-	if math.IsNaN(rate) || rate < 0 || rate > 1 {
-		return nil, ErrInvalidRate
+//	}, WithOnEmptyKey(func() {
+//	    emptyKeyCount.Add(1)
+//	}))
+func NewKeyBasedSampler(rate float64, keyFunc KeyFunc, opts ...KeyBasedOption) (*KeyBasedSampler, error) {
+	if err := validateRate(rate); err != nil {
+		return nil, err
 	}
 	if keyFunc == nil {
 		return nil, ErrNilKeyFunc
 	}
-	return &KeyBasedSampler{
+	s := &KeyBasedSampler{
 		rate:    rate,
 		keyFunc: keyFunc,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
@@ -73,6 +102,9 @@ func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
 	// key 提取失败（如缺少 trace ID）不应导致采样功能完全失效。
 	// 随机采样保持了近似的采样率语义，只是失去了跨进程一致性。
 	if key == "" {
+		if s.onEmptyKey != nil {
+			s.onEmptyKey()
+		}
 		return randomFloat64() < s.rate
 	}
 

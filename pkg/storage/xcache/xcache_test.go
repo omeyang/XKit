@@ -610,6 +610,25 @@ func TestRedisWrapper_LockAfterClose_ReturnsErrClosed(t *testing.T) {
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
+func TestRedisWrapper_Lock_WithEmptyKey_ReturnsError(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+	ctx := context.Background()
+
+	_, err := cache.Lock(ctx, "", 10*time.Second)
+	assert.ErrorIs(t, err, ErrEmptyKey)
+}
+
+func TestMemoryWrapper_Stats_AfterClose_ReturnsZero(t *testing.T) {
+	cache, err := NewMemory()
+	require.NoError(t, err)
+
+	_ = cache.Close()
+
+	// Stats() 应该返回零值而非 panic
+	stats := cache.Stats()
+	assert.Equal(t, MemoryStats{}, stats)
+}
+
 func TestMemoryWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
 	cache, err := NewMemory()
 	require.NoError(t, err)

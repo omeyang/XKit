@@ -68,6 +68,10 @@ func (s *Server) stopListening() error {
 	s.stopShutdownTimer()
 
 	// 关闭传输层（这会导致 acceptLoop 退出）
+	// 设计决策: transport.Close 错误仅写审计日志，不向调用方返回。
+	// 此时状态已从 Listening 转为 Started，新的 transport 即将创建（非自定义场景），
+	// 旧 transport 的关闭错误不影响后续 Enable→Listen 流程。
+	// 与 Stop() 不同，Disable() 是可恢复操作，调用方无需感知关闭细节。
 	s.transportMu.Lock()
 	if s.transport != nil {
 		if err := s.transport.Close(); err != nil {

@@ -69,6 +69,9 @@ func WithSignals(signals []os.Signal) Option {
 // 使用此选项后，Run/RunWithOptions/RunServices/RunServicesWithOptions
 // 不会注册信号监听，调用方需自行管理信号处理。
 //
+// 当与 WithSignals 同时使用时，WithoutSignalHandler 优先生效，
+// WithSignals 的配置被忽略。
+//
 // 示例：
 //
 //	xrun.RunWithOptions(ctx, []xrun.Option{

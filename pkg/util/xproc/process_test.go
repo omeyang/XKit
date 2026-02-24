@@ -3,7 +3,6 @@ package xproc
 import (
 	"errors"
 	"os"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,12 +12,6 @@ import (
 // 注意：本文件中的测试修改包级全局变量（osExecutable、os.Args、processNameOnce），
 // 不可使用 t.Parallel()。每个测试通过 defer 恢复原始状态以避免污染后续测试。
 
-// resetProcessName 重置进程名称缓存，仅供测试使用。
-func resetProcessName() {
-	processNameOnce = sync.Once{}
-	processNameValue = ""
-}
-
 func TestProcessID(t *testing.T) {
 	pid := ProcessID()
 	assert.Greater(t, pid, 0)
@@ -26,8 +19,8 @@ func TestProcessID(t *testing.T) {
 }
 
 func TestProcessName(t *testing.T) {
-	resetProcessName()
-	defer resetProcessName()
+	ResetProcessName()
+	defer ResetProcessName()
 
 	name := ProcessName()
 	assert.NotEmpty(t, name)
@@ -39,10 +32,10 @@ func TestProcessName_Cached(t *testing.T) {
 	origExec := osExecutable
 	defer func() {
 		osExecutable = origExec
-		resetProcessName()
+		ResetProcessName()
 	}()
 
-	resetProcessName()
+	ResetProcessName()
 	osExecutable = func() (string, error) {
 		return "/opt/bin/cached-app", nil
 	}

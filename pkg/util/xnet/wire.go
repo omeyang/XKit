@@ -8,10 +8,10 @@ import (
 )
 
 // WireRange 是 IP 范围的序列化格式。
-// 使用 JSON/BSON/YAML 标签 {"s":"start","e":"end"}。
+// 使用 JSON/BSON/YAML 标签 {"start":"...","end":"..."}。
 type WireRange struct {
-	Start string `json:"s" bson:"s" yaml:"s"`
-	End   string `json:"e" bson:"e" yaml:"e"`
+	Start string `json:"start" bson:"start" yaml:"start"`
+	End   string `json:"end" bson:"end" yaml:"end"`
 }
 
 // WireRangeFrom 从 [netipx.IPRange] 创建 WireRange，带有效性校验。

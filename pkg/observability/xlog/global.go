@@ -40,6 +40,8 @@ func defaultLogger() LoggerWithLevel {
 		if err != nil {
 			// 设计决策: 默认参数不应失败；如果失败则降级为最小可用 logger，
 			// 避免库代码 panic 终止宿主进程（项目约定：构造不 panic）。
+			// 注意：fallback logger 不包装 EnrichHandler，因此不注入 context 字段。
+			// 这是可接受的降级——此分支仅在 New().Build() 默认参数失败时触发（极其罕见）。
 			fmt.Fprintf(os.Stderr, "xlog: failed to build default logger: %v, using fallback\n", err)
 			fallbackHandler := slog.NewTextHandler(os.Stderr, nil)
 			var fallback LoggerWithLevel = &xlogger{
@@ -111,16 +113,16 @@ func globalLog(l LoggerWithLevel, ctx context.Context, level slog.Level, msg str
 		xl.logWithSkip(ctx, level, msg, attrs, 1)
 		return
 	}
-	// fallback：非 xlogger 实现（如用户自定义），使用标准方法
-	switch level {
-	case slog.LevelDebug:
+	// fallback：非 xlogger 实现（如用户自定义），按级别范围分发
+	// 与 slog 的级别语义对齐：自定义级别（如 INFO+2）路由到对应的标准级别
+	switch {
+	case level < slog.LevelInfo:
 		l.Debug(ctx, msg, attrs...)
-	case slog.LevelInfo:
+	case level < slog.LevelWarn:
 		l.Info(ctx, msg, attrs...)
-	case slog.LevelWarn:
+	case level < slog.LevelError:
 		l.Warn(ctx, msg, attrs...)
 	default:
-		// 包括 LevelError 和自定义级别，确保不丢失日志
 		l.Error(ctx, msg, attrs...)
 	}
 }

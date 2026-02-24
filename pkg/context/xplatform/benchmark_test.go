@@ -1,6 +1,7 @@
 package xplatform_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xplatform"
@@ -148,6 +149,10 @@ func BenchmarkGetConfig(b *testing.B) {
 
 // =============================================================================
 // 并发访问 Benchmark
+//
+// 使用 runtime.KeepAlive 消费 goroutine 本地结果，避免并发写入共享 sink 变量
+// 导致 go test -race 报告 DATA RACE。RunParallel 的多个 goroutine 共享
+// 包级变量写入不安全，runtime.KeepAlive 既能防止 DCE 又无竞态风险。
 // =============================================================================
 
 func BenchmarkPlatformID_Parallel(b *testing.B) {
@@ -161,9 +166,11 @@ func BenchmarkPlatformID_Parallel(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local string
 		for pb.Next() {
-			sinkString = xplatform.PlatformID()
+			local = xplatform.PlatformID()
 		}
+		runtime.KeepAlive(local)
 	})
 }
 
@@ -179,9 +186,11 @@ func BenchmarkHasParent_Parallel(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local bool
 		for pb.Next() {
-			sinkBool = xplatform.HasParent()
+			local = xplatform.HasParent()
 		}
+		runtime.KeepAlive(local)
 	})
 }
 
@@ -196,9 +205,54 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local bool
 		for pb.Next() {
-			sinkBool = xplatform.IsInitialized()
+			local = xplatform.IsInitialized()
 		}
+		runtime.KeepAlive(local)
+	})
+}
+
+func BenchmarkRequirePlatformID_Parallel(b *testing.B) {
+	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID: "platform-parallel",
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		var local string
+		for pb.Next() {
+			v, err := xplatform.RequirePlatformID()
+			if err != nil {
+				b.Fatal(err)
+			}
+			local = v
+		}
+		runtime.KeepAlive(local)
+	})
+}
+
+func BenchmarkUnclassRegionID_Parallel(b *testing.B) {
+	xplatform.Reset()
+	b.Cleanup(xplatform.Reset)
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "platform-parallel",
+		UnclassRegionID: "region-parallel",
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		var local string
+		for pb.Next() {
+			local = xplatform.UnclassRegionID()
+		}
+		runtime.KeepAlive(local)
 	})
 }
 

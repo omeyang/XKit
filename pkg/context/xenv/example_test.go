@@ -16,12 +16,12 @@ func Example_quickStart() {
 	xenv.Reset()
 
 	// 设置环境变量（实际场景由 K8s ConfigMap 注入）
-	if err := os.Setenv(xenv.EnvDeployType, "SAAS"); err != nil {
+	if err := os.Setenv(xenv.EnvDeploymentType, "SAAS"); err != nil {
 		fmt.Println("设置环境变量失败:", err)
 		return
 	}
 	defer func() {
-		if err := os.Unsetenv(xenv.EnvDeployType); err != nil {
+		if err := os.Unsetenv(xenv.EnvDeploymentType); err != nil {
 			fmt.Println("清理环境变量失败:", err)
 		}
 	}()
@@ -51,7 +51,7 @@ func Example_initWith() {
 	xenv.Reset()
 
 	// 测试场景：直接指定部署类型
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
 		fmt.Println("初始化失败:", err)
 		return
 	}
@@ -94,7 +94,7 @@ func ExampleParse_caseInsensitive() {
 // RequireType 在未初始化时返回错误，适用于必须明确知道部署类型的场景。
 func ExampleRequireType() {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
 		fmt.Println("初始化失败:", err)
 		return
 	}
@@ -105,21 +105,21 @@ func ExampleRequireType() {
 		fmt.Println("Error:", err)
 		return
 	}
-	fmt.Println("DeployType:", dt)
+	fmt.Println("DeploymentType:", dt)
 	// Output:
-	// DeployType: LOCAL
+	// DeploymentType: LOCAL
 }
 
 // ExampleParse_invalidInput 演示 Parse 函数的错误处理。
 func ExampleParse_invalidInput() {
-	// 无效输入返回包含输入值和合法值提示的 ErrInvalidType
+	// 无效输入返回包含输入值和合法值提示的 ErrInvalidDeploymentType
 	_, err := xenv.Parse("invalid")
-	fmt.Printf("无效输入: %v\n", errors.Is(err, xenv.ErrInvalidType))
+	fmt.Printf("无效输入: %v\n", errors.Is(err, xenv.ErrInvalidDeploymentType))
 	fmt.Printf("错误信息包含输入值: %v\n", err)
 
-	// 空输入返回 ErrInvalidType
+	// 空输入返回 ErrInvalidDeploymentType
 	_, err = xenv.Parse("")
-	fmt.Printf("空输入: %v\n", errors.Is(err, xenv.ErrInvalidType))
+	fmt.Printf("空输入: %v\n", errors.Is(err, xenv.ErrInvalidDeploymentType))
 
 	// Output:
 	// 无效输入: true

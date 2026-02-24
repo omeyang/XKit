@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -93,19 +94,20 @@ func (p *Pool[T]) worker() {
 func (p *Pool[T]) safeHandle(task T) {
 	defer func() {
 		if r := recover(); r != nil {
-			attrs := []any{
-				"panic", r,
-				"stack", string(debug.Stack()),
+			attrs := []slog.Attr{
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())),
 			}
 			if p.opts.logTaskValue {
-				attrs = append(attrs, "task", task)
+				attrs = append(attrs, slog.Any("task", task))
 			} else {
-				attrs = append(attrs, "task_type", fmt.Sprintf("%T", task))
+				attrs = append(attrs, slog.String("task_type", fmt.Sprintf("%T", task)))
 			}
 			if p.opts.name != "" {
-				attrs = append(attrs, "pool", p.opts.name)
+				attrs = append(attrs, slog.String("pool", p.opts.name))
 			}
-			p.opts.logger.Error("xpool: worker panic recovered", attrs...)
+			p.opts.logger.LogAttrs(context.Background(), slog.LevelError,
+				"xpool: worker panic recovered", attrs...)
 		}
 	}()
 	p.handler(task)
@@ -137,6 +139,9 @@ func (p *Pool[T]) Submit(task T) error {
 //
 // 注意事项：
 //   - 不可在 handler 内调用，否则会死锁
+//   - handler 不应无限阻塞；若 handler 因外部依赖永久阻塞，
+//     对应的 worker goroutine 将无法退出，导致资源泄漏。
+//     如需支持取消，可在 T 中嵌入 context.Context 或使用闭包捕获取消信号
 //   - ctx 超时返回后，残留的 worker goroutine 仍在后台运行，
 //     会继续处理队列中的剩余任务直到耗尽后自行退出；
 //     可通过 [Pool.Done] 等待所有 worker 最终完成
@@ -157,6 +162,9 @@ func (p *Pool[T]) Shutdown(ctx context.Context) error {
 	close(p.queue)
 	p.submitMu.Unlock()
 
+	// 设计决策: 监听 goroutine 的生命周期与 worker 一致——当所有 worker 退出后自动结束。
+	// 若 handler 永久阻塞导致 worker 无法退出，此 goroutine 也会阻塞，
+	// 但这是 handler 违反契约（不应永久阻塞）的结果，而非 pool 的设计缺陷。
 	go func() {
 		p.wg.Wait()
 		close(p.workersDone)

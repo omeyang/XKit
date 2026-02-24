@@ -43,7 +43,9 @@ type Client interface {
 
 // Stats 包含 Pulsar 客户端的统计信息。
 type Stats struct {
-	// Connected 是否已连接。
+	// Connected 表示客户端是否未关闭（即 Close() 尚未被调用）。
+	// 设计决策: 此字段不反映与 Broker 的实际网络连接状态。
+	// 若需检测实际连接健康状态，请使用 Health() 方法。
 	Connected bool
 	// ProducersCount 活跃的生产者数量。
 	ProducersCount int
@@ -113,7 +115,12 @@ type clientOptions struct {
 	TLSTrustCertsFilePath      string
 	TLSAllowInsecureConnection bool
 	HealthTimeout              time.Duration
+	HealthCheckTopic           string
 }
+
+// defaultHealthCheckTopic 默认健康检查 Topic。
+// 使用 non-persistent 避免创建持久化状态，public/default 是 Pulsar 标准命名空间。
+const defaultHealthCheckTopic = "non-persistent://public/default/__health_check__"
 
 func defaultOptions() *clientOptions {
 	return &clientOptions{
@@ -123,6 +130,7 @@ func defaultOptions() *clientOptions {
 		OperationTimeout:        30 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		HealthTimeout:           5 * time.Second,
+		HealthCheckTopic:        defaultHealthCheckTopic,
 	}
 }
 
@@ -194,6 +202,18 @@ func WithHealthTimeout(d time.Duration) Option {
 	return func(o *clientOptions) {
 		if d > 0 {
 			o.HealthTimeout = d
+		}
+	}
+}
+
+// WithHealthCheckTopic 设置健康检查使用的 Topic。
+// 默认为 "non-persistent://public/default/__health_check__"。
+// 在启用 ACL 或非 public/default 命名空间的集群中，
+// 需要配置为客户端有权限访问的 Topic。
+func WithHealthCheckTopic(topic string) Option {
+	return func(o *clientOptions) {
+		if topic != "" {
+			o.HealthCheckTopic = topic
 		}
 	}
 }

@@ -25,7 +25,7 @@ func (b *FixedBackoff) NextDelay(_ int) time.Duration {
 }
 
 // ExponentialBackoff 指数退避策略
-// delay = min(initialDelay * multiplier^(attempt-1) * (1 + jitter), maxDelay)
+// delay = min(initialDelay * multiplier^(attempt-1) * (1 + rand(-1,1) * jitter), maxDelay)
 type ExponentialBackoff struct {
 	initialDelay time.Duration
 	maxDelay     time.Duration
@@ -114,9 +114,9 @@ func (b *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 
 	// 设计决策: NaN 安全的延迟限制。当 attempt 极大时 math.Pow 溢出为 +Inf，
 	// 与 jitterFactor=0 相乘产生 NaN。IEEE 754 中 NaN 的所有比较均返回 false，
-	// 会绕过 maxDelay 限制。这里额外检查 NaN 和负数确保安全。
+	// 会绕过 maxDelay 限制。NaN/负数返回 maxDelay（语义为退避已达上限）。
 	if math.IsNaN(delay) || delay < 0 {
-		return 0
+		return b.maxDelay
 	}
 	if delay >= float64(b.maxDelay) {
 		return b.maxDelay
@@ -169,7 +169,8 @@ func (b *LinearBackoff) NextDelay(attempt int) time.Duration {
 	if b.increment > 0 && attempt > 1 {
 		available := b.maxDelay - b.initialDelay
 		if available < 0 {
-			// maxDelay < initialDelay 时（构造时已修正，但防御性检查）
+			// 设计决策: 防御性检查——构造函数已确保 maxDelay >= initialDelay，
+			// 但此守卫保护直接构造（绕过工厂）的场景。
 			return b.maxDelay
 		}
 		maxMultiplier := available / b.increment

@@ -37,11 +37,11 @@ func TestNewBreaker(t *testing.T) {
 	})
 
 	t.Run("with on state change", func(t *testing.T) {
-		var called bool
+		called := make(chan struct{})
 		b := NewBreaker("test",
 			WithTripPolicy(NewConsecutiveFailures(1)),
 			WithOnStateChange(func(name string, from, to State) {
-				called = true
+				defer close(called)
 				assert.Equal(t, "test", name)
 				assert.Equal(t, StateClosed, from)
 				assert.Equal(t, StateOpen, to)
@@ -52,7 +52,12 @@ func TestNewBreaker(t *testing.T) {
 		ctx := context.Background()
 		_ = b.Do(ctx, func() error { return errTest })
 
-		assert.True(t, called)
+		// 回调异步执行，等待完成
+		select {
+		case <-called:
+		case <-time.After(time.Second):
+			t.Fatal("OnStateChange callback not called within timeout")
+		}
 	})
 }
 
@@ -604,11 +609,11 @@ func (p *testExcludePolicy) IsExcluded(err error) bool {
 }
 
 func TestWithOnStateChange_NilIgnored(t *testing.T) {
-	var called bool
+	called := make(chan struct{})
 	b := NewBreaker("test",
 		WithTripPolicy(NewConsecutiveFailures(1)),
 		WithOnStateChange(func(name string, from, to State) {
-			called = true
+			close(called)
 		}),
 		WithOnStateChange(nil), // nil 不应覆盖之前设置的回调
 	)
@@ -616,5 +621,10 @@ func TestWithOnStateChange_NilIgnored(t *testing.T) {
 	ctx := context.Background()
 	_ = b.Do(ctx, func() error { return errTest })
 
-	assert.True(t, called, "original callback should still be active after nil WithOnStateChange")
+	// 回调异步执行，等待完成
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("original callback should still be active after nil WithOnStateChange")
+	}
 }

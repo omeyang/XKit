@@ -18,8 +18,8 @@
 //	    Operation: "do_work",
 //	    Kind:      xmetrics.KindClient,
 //	})
-//	result, bizErr := doWork(ctx)
-//	defer span.End(xmetrics.Result{Err: bizErr})
+//	defer func() { span.End(xmetrics.Result{Err: bizErr}) }()
+//	result, bizErr = doWork(ctx)
 //
 // # 统一指标
 //
@@ -37,6 +37,9 @@
 // 设计决策: metrics 仅记录 component/operation/status 三个低基数维度；
 // 通过 [SpanOptions.Attrs] 和 [Result.Attrs] 添加的自定义属性仅出现在 trace span 上。
 // 这避免了 metrics 因高基数自定义属性导致的时序膨胀。
+//
+// component / operation / status 是保留属性键，自定义属性中使用这些键会被静默过滤，
+// 以防止用户属性覆盖系统属性导致 trace 与 metrics 数据不一致。
 //
 // # component / operation 使用约束
 //

@@ -1696,17 +1696,19 @@ func TestOptionEdgeCases(t *testing.T) {
 			assert.Equal(t, -1, cfg.tenantQuota, "negative quota should be set")
 			assert.Error(t, cfg.validate(), "validate should catch negative quota")
 		}},
-		{"WithMaxRetries sets zero and validate catches it", func(t *testing.T) {
+		{"WithMaxRetries sets zero and validateRetryParams catches it", func(t *testing.T) {
 			cfg := defaultAcquireOptions()
 			WithMaxRetries(0)(cfg)
 			assert.Equal(t, 0, cfg.maxRetries, "zero maxRetries should be set")
-			assert.Error(t, cfg.validate(), "validate should catch zero maxRetries")
+			assert.NoError(t, cfg.validate(), "validate should not check maxRetries")
+			assert.Error(t, cfg.validateRetryParams(), "validateRetryParams should catch zero maxRetries")
 		}},
-		{"WithRetryDelay sets zero and validate catches it", func(t *testing.T) {
+		{"WithRetryDelay sets zero and validateRetryParams catches it", func(t *testing.T) {
 			cfg := defaultAcquireOptions()
 			WithRetryDelay(0)(cfg)
 			assert.Equal(t, time.Duration(0), cfg.retryDelay, "zero retryDelay should be set")
-			assert.Error(t, cfg.validate(), "validate should catch zero retryDelay")
+			assert.NoError(t, cfg.validate(), "validate should not check retryDelay")
+			assert.Error(t, cfg.validateRetryParams(), "validateRetryParams should catch zero retryDelay")
 		}},
 		{"WithMetadata ignores empty", func(t *testing.T) {
 			cfg := defaultAcquireOptions()

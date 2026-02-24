@@ -224,6 +224,9 @@ func TestAddr_Scan(t *testing.T) {
 		// []byte 二进制格式
 		{"bytes_binary", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}, MustParse("aa:bb:cc:dd:ee:ff"), nil},
 		{"bytes_binary_zero", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, Addr{}, nil},
+		// 6 字节可打印文本视为二进制（非文本解析），这是 Scan 的设计行为。
+		// "foobar" = {0x66, 0x6f, 0x6f, 0x62, 0x61, 0x72} → 66:6f:6f:62:61:72
+		{"bytes_binary_printable", []byte("foobar"), MustParse("66:6f:6f:62:61:72"), nil},
 
 		// nil 输入
 		{"nil", nil, Addr{}, nil},

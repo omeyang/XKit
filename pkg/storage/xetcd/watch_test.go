@@ -105,6 +105,25 @@ func TestConvertEvent_UnknownType(t *testing.T) {
 	}
 }
 
+func TestConvertEvent_NilKv(t *testing.T) {
+	etcdEvent := &clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   nil, // 异常情况：Kv 为 nil
+	}
+
+	event := convertEvent(etcdEvent)
+
+	if event.Type != EventUnknown {
+		t.Errorf("convertEvent() Type = %v, want EventUnknown", event.Type)
+	}
+	if event.Error == nil {
+		t.Error("convertEvent() Error should not be nil for nil Kv")
+	}
+	if event.Key != "" {
+		t.Errorf("convertEvent() Key = %v, want empty", event.Key)
+	}
+}
+
 func TestBuildWatchOptions_Empty(t *testing.T) {
 	c := &Client{}
 	opts := c.buildWatchOptions(&watchOptions{})

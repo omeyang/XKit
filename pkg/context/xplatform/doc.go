@@ -11,7 +11,7 @@
 // PlatformID()、HasParent()、UnclassRegionID() 全局访问平台信息。
 //
 // PlatformID 校验规则：不能为空/纯空白、不能包含空白字符或控制字符、最大长度 128 字节。
-// UnclassRegionID 校验规则（非空时）：不能包含空白字符或控制字符、最大长度 128 字节。
+// UnclassRegionID 校验规则（非空时）：纯空白视为未设置、不能包含空白字符或控制字符、最大长度 128 字节。
 //
 // # 查询
 //

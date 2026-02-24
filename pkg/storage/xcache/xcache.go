@@ -139,6 +139,9 @@ func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) 
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
+	if key == "" {
+		return nil, ErrEmptyKey
+	}
 	if ttl <= 0 {
 		return nil, ErrInvalidLockTTL
 	}
@@ -209,8 +212,10 @@ func (w *redisWrapper) lockWithRetry(ctx context.Context, key, value string, ttl
 			return true, nil
 		}
 
-		// 重置 timer 用于下次迭代
-		timer.Reset(w.options.LockRetryInterval)
+		// 重置 timer 用于下次迭代（最后一次迭代跳过，避免无消费的 timer）
+		if i < w.options.LockRetryCount-1 {
+			timer.Reset(w.options.LockRetryInterval)
+		}
 	}
 	return false, nil
 }
@@ -251,6 +256,9 @@ type memoryWrapper struct {
 }
 
 func (w *memoryWrapper) Stats() MemoryStats {
+	if w.closed.Load() {
+		return MemoryStats{}
+	}
 	metrics := w.cache.Metrics
 	if metrics == nil {
 		return MemoryStats{}

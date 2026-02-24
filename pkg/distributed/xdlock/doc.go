@@ -21,7 +21,8 @@
 // # etcd 后端
 //
 // 使用 NewEtcdClient 创建客户端，NewEtcdFactory 创建工厂。
-// etcd 使用 Session 实现自动续期，无需手动调用 Extend。
+// etcd 使用 Session KeepAlive 实现自动续期，无需像 Redis 那样手动调用 Extend 延长 TTL。
+// 但长时间运行的任务应定期调用 Extend 检测 Session 健康状态（见 LockHandle.Extend 文档）。
 // 也可使用 NewEtcdFactoryFromConfig 一步创建客户端和工厂。
 //
 // # Redis 后端
@@ -34,7 +35,7 @@
 //	| 特性 | etcd | Redis (redsync) |
 //	|------|------|-----------------|
 //	| 续期方式 | 自动（Session） | 手动（Extend） |
-//	| Extend() | 检查 Session 和锁状态（返回 nil、ErrSessionExpired 或 ErrNotLocked） | 延长锁 TTL |
+//	| Extend() | 检查 Session 健康状态和本地解锁标记（不延长 TTL） | 延长锁 TTL |
 //	| 多节点支持 | 原生（etcd 集群） | Redlock 算法 |
 //	| 锁释放 | 立即生效 | 立即生效 |
 //	| MutexOption | 仅 KeyPrefix 生效 | 全部生效 |

@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/omeyang/xkit/pkg/context/xtenant"
 )
 
 // GRPCKeyExtractor 从 gRPC 请求中提取限流键
@@ -24,7 +26,7 @@ type GRPCKeyExtractorOption func(*GRPCKeyExtractor)
 // DefaultGRPCKeyExtractor 创建默认的 gRPC 键提取器
 func DefaultGRPCKeyExtractor() *GRPCKeyExtractor {
 	return &GRPCKeyExtractor{
-		tenantHeader: "x-tenant-id",
+		tenantHeader: xtenant.MetaTenantID,
 		callerHeader: "x-caller-id",
 	}
 }
@@ -149,6 +151,10 @@ func WithGRPCStreamSkipFunc(skipFunc func(ctx context.Context, info *grpc.Stream
 //	    grpc.UnaryInterceptor(xlimit.UnaryServerInterceptor(limiter)),
 //	)
 func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
+	if limiter == nil {
+		panic("xlimit: UnaryServerInterceptor requires a non-nil Limiter")
+	}
+
 	options := defaultGRPCInterceptorOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -196,6 +202,10 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 //	    grpc.StreamInterceptor(xlimit.StreamServerInterceptor(limiter)),
 //	)
 func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
+	if limiter == nil {
+		panic("xlimit: StreamServerInterceptor requires a non-nil Limiter")
+	}
+
 	options := defaultGRPCInterceptorOptions()
 	for _, opt := range opts {
 		opt(options)

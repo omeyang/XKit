@@ -74,6 +74,9 @@ const (
 // ID 位布局常量（Sonyflake v2）
 // =============================================================================
 
+// 设计决策: 以下常量对应 Sonyflake v2 的固定位布局（39+8+16=63 bits），
+// 不随 sonyflake.Settings 配置变化。如果升级 Sonyflake 大版本且位布局改变，
+// 需同步更新这些常量和 Decompose 函数。
 const (
 	machineBits  = 16
 	sequenceBits = 8
@@ -241,28 +244,31 @@ func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	deadline := time.Now().Add(g.maxWaitDuration)
-	var lastErr error
+	// 快速路径：首次尝试成功则零额外分配（避免提前创建 timer）
+	id, err := g.generateID()
+	if err == nil {
+		return id, nil
+	}
 
-	// 复用 timer 减少 GC 压力（Go 1.23+ Reset 安全清空 channel）
+	return g.retryGenerateID(ctx, err)
+}
+
+// retryGenerateID 处理 NewWithRetry 的重试循环。
+// 从 NewWithRetry 中提取以降低 cyclomatic complexity（gocyclo ≤ 10）。
+func (g *Generator) retryGenerateID(ctx context.Context, firstErr error) (int64, error) {
+	// 不可恢复的溢出错误，立即返回
+	if errors.Is(firstErr, sonyflake.ErrOverTimeLimit) {
+		return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, firstErr)
+	}
+
+	// 惰性创建 timer：仅在需要重试时分配（Go 1.23+ Reset 安全清空 channel）
+	deadline := time.Now().Add(g.maxWaitDuration)
+	lastErr := firstErr
 	timer := time.NewTimer(0)
 	<-timer.C // 排空初始触发
 	defer timer.Stop()
 
 	for {
-		id, err := g.generateID()
-		if err == nil {
-			return id, nil
-		}
-		lastErr = err
-
-		// 重试策略：仅 ErrOverTimeLimit 不可恢复，立即返回。
-		// Sonyflake v2 的 NextID 只会返回 ErrOverTimeLimit（时钟回拨在内部处理），
-		// 因此"其余错误均重试"在实践中等价于"仅重试时钟回拨"。
-		if errors.Is(err, sonyflake.ErrOverTimeLimit) {
-			return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, err)
-		}
-
 		// 检查剩余时间，按"剩余时间"裁剪等待间隔，避免超过 maxWaitDuration
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -275,6 +281,19 @@ func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		case <-timer.C:
+		}
+
+		id, err := g.generateID()
+		if err == nil {
+			return id, nil
+		}
+		lastErr = err
+
+		// 重试策略：仅 ErrOverTimeLimit 不可恢复，立即返回。
+		// Sonyflake v2 的 NextID 只会返回 ErrOverTimeLimit（时钟回拨在内部处理），
+		// 因此"其余错误均重试"在实践中等价于"仅重试时钟回拨"。
+		if errors.Is(err, sonyflake.ErrOverTimeLimit) {
+			return 0, fmt.Errorf("%w: %w", ErrOverTimeLimit, err)
 		}
 	}
 }

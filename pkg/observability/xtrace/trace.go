@@ -98,6 +98,23 @@ func TraceFlags(ctx context.Context) string {
 	return xctx.TraceFlags(ctx)
 }
 
+// TraceInfoFromContext 从 context 提取完整的追踪信息。
+//
+// 与 ExtractFromHTTPHeader/ExtractFromMetadata 对称：
+//   - ExtractFromHTTPHeader/ExtractFromMetadata: 从传输层提取到 TraceInfo
+//   - TraceInfoFromContext: 从 context 提取到 TraceInfo
+//
+// 返回的 TraceInfo 不包含 Traceparent 和 Tracestate 字段，
+// 因为 context 中只存储解析后的各字段，不存储原始传输层头。
+func TraceInfoFromContext(ctx context.Context) TraceInfo {
+	return TraceInfo{
+		TraceID:    xctx.TraceID(ctx),
+		SpanID:     xctx.SpanID(ctx),
+		RequestID:  xctx.RequestID(ctx),
+		TraceFlags: xctx.TraceFlags(ctx),
+	}
+}
+
 // =============================================================================
 // 内部辅助函数 — Context 注入
 // =============================================================================
@@ -361,4 +378,61 @@ func formatTraceparent(traceID, spanID, traceFlags string) string {
 	copy(buf[52:53], "-")
 	copy(buf[53:55], strings.ToLower(traceFlags))
 	return string(buf[:])
+}
+
+// resolveTraceparent 解析 TraceInfo 中的 traceparent 并返回规范化的 v00 格式。
+//
+// 优先从 info.Traceparent 解析；解析失败或为空时，从 TraceID/SpanID/TraceFlags 生成。
+// 返回空字符串表示无法生成有效的 traceparent。
+//
+// 设计决策: 无论 info.Traceparent 是否包含非 v00 版本，
+// 始终以 v00 格式重新生成 traceparent。这与 formatTraceparent 的设计决策一致：
+// 本包作为 v00 实现，按 W3C 规范应以自身支持的版本重新生成。
+func resolveTraceparent(info TraceInfo) string {
+	if info.Traceparent != "" {
+		if traceID, spanID, traceFlags, ok := parseTraceparent(info.Traceparent); ok {
+			return formatTraceparent(traceID, spanID, traceFlags)
+		}
+		// 无效时静默丢弃，回退到 TraceID/SpanID 生成
+	}
+	return formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags)
+}
+
+// =============================================================================
+// 传输层共享注入逻辑
+// =============================================================================
+
+// transportKeys 不同传输协议使用的 key 名称。
+type transportKeys struct {
+	traceID     string
+	spanID      string
+	requestID   string
+	traceparent string
+	tracestate  string
+}
+
+// injectTraceInfoTo 将 TraceInfo 的各字段通过 set 函数注入到传输层。
+// 这是 InjectTraceToHeader 和 InjectTraceToMetadata 的共享实现。
+//
+// 设计决策: W3C 规范要求 tracestate 不得在无有效 traceparent 时发送。
+// 仅当 traceparent 已成功写入时才注入 tracestate，避免下游收到不完整的 Trace Context。
+func injectTraceInfoTo(set func(key, value string), info TraceInfo, keys transportKeys) {
+	if info.TraceID != "" {
+		set(keys.traceID, info.TraceID)
+	}
+	if info.SpanID != "" {
+		set(keys.spanID, info.SpanID)
+	}
+	if info.RequestID != "" {
+		set(keys.requestID, info.RequestID)
+	}
+
+	traceparent := resolveTraceparent(info)
+	if traceparent != "" {
+		set(keys.traceparent, traceparent)
+	}
+
+	if info.Tracestate != "" && traceparent != "" {
+		set(keys.tracestate, info.Tracestate)
+	}
 }

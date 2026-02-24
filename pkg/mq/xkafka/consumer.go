@@ -16,6 +16,7 @@ import (
 type consumerWrapper struct {
 	consumer *kafka.Consumer
 	options  *consumerOptions
+	groupID  string // consumer group 标识，用于可观测性 span 属性
 
 	// mu 保护 Assignment、Committed、QueryWatermarkOffsets、Close 等管理操作的并发访问。
 	// 设计决策: confluent-kafka-go 底层基于 librdkafka，其 API 是线程安全的。
@@ -43,6 +44,9 @@ func (w *consumerWrapper) Consumer() *kafka.Consumer {
 // 在此期间 Close() 会被短暂阻塞。这是可接受的权衡：HealthTimeout 默认 5s，
 // 且 Assignment/GetMetadata 通常在毫秒级完成。
 func (w *consumerWrapper) Health(ctx context.Context) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if w.closed.Load() {
 		return ErrClosed
 	}

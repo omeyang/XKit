@@ -289,19 +289,12 @@ func isRedisProtocolError(err error) bool {
 }
 
 // isNetworkError 检查是否是网络相关错误
+//
+// 设计决策: 仅检查 net.Error 接口即可覆盖所有网络错误类型。
+// *net.OpError 和 *net.DNSError 均实现 net.Error，无需单独检查。
 func isNetworkError(err error) bool {
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return true
-	}
-
-	var dnsErr *net.DNSError
-	return errors.As(err, &dnsErr)
+	return errors.As(err, &netErr)
 }
 
 // IsCapacityFull 检查是否是容量已满错误

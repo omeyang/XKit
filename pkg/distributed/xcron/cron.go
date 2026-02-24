@@ -121,6 +121,7 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	// 立即执行一次（如果配置了 WithImmediate）
 	// 使用 WaitGroup 追踪，确保 Stop() 时能等待完成
 	// 创建独立的包装器副本，使用可取消的上下文，以便 Stop() 时能中止
+	// 设计决策: 浅拷贝 *wrapper 共享 opts 指针，opts 在创建后为只读，无并发写入风险。
 	if jobOpts.immediate {
 		s.immediateWg.Add(1)
 		go func() {

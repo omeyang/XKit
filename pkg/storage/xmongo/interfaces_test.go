@@ -17,7 +17,9 @@ func TestAdaptCollection_WithRealCollection(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// 获取一个 collection
@@ -41,7 +43,9 @@ func TestBuildSlowQueryInfoFromOps_WithRealCollection(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// 获取一个 collection 并适配为接口
@@ -73,7 +77,9 @@ func TestCollectionAdapter_AllMethods(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// 获取一个 collection
@@ -113,7 +119,9 @@ func TestCollectionAdapter_OperationMethods(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// 获取一个 collection
@@ -139,7 +147,9 @@ func TestCollectionAdapter_OperationMethods(t *testing.T) {
 		t.Logf("Find failed (expected without MongoDB): %v", err)
 	} else {
 		assert.NotNil(t, cursor)
-		cursor.Close(ctx) //nolint:errcheck // test cleanup
+		if closeErr := cursor.Close(ctx); closeErr != nil {
+			t.Logf("cursor close: %v", closeErr)
+		}
 	}
 
 	// 测试 InsertMany

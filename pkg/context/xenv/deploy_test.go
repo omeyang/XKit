@@ -16,23 +16,23 @@ import (
 // setEnv 设置环境变量用于测试
 func setEnv(t testing.TB, value string) {
 	t.Helper()
-	if err := os.Setenv(xenv.EnvDeployType, value); err != nil {
-		t.Fatalf("os.Setenv(%q, %q) failed: %v", xenv.EnvDeployType, value, err)
+	if err := os.Setenv(xenv.EnvDeploymentType, value); err != nil {
+		t.Fatalf("os.Setenv(%q, %q) failed: %v", xenv.EnvDeploymentType, value, err)
 	}
 }
 
 // unsetEnv 删除环境变量用于测试
 func unsetEnv(t testing.TB) {
 	t.Helper()
-	if err := os.Unsetenv(xenv.EnvDeployType); err != nil {
-		t.Fatalf("os.Unsetenv(%q) failed: %v", xenv.EnvDeployType, err)
+	if err := os.Unsetenv(xenv.EnvDeploymentType); err != nil {
+		t.Fatalf("os.Unsetenv(%q) failed: %v", xenv.EnvDeploymentType, err)
 	}
 }
 
 // withEnvScope 临时设置环境变量并在测试结束后恢复
 func withEnvScope(t testing.TB, value string, shouldSet bool) {
 	t.Helper()
-	oldValue, hadOldValue := os.LookupEnv(xenv.EnvDeployType)
+	oldValue, hadOldValue := os.LookupEnv(xenv.EnvDeploymentType)
 	t.Cleanup(func() {
 		xenv.Reset() // 重置全局状态
 		if hadOldValue {
@@ -49,81 +49,81 @@ func withEnvScope(t testing.TB, value string, shouldSet bool) {
 }
 
 // =============================================================================
-// DeployType 类型方法测试
+// DeploymentType 类型方法测试
 // =============================================================================
 
-func TestDeployType_String(t *testing.T) {
+func TestDeploymentType_String(t *testing.T) {
 	tests := []struct {
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want string
 	}{
-		{xenv.DeployLocal, "LOCAL"},
-		{xenv.DeploySaaS, "SAAS"},
-		{xenv.DeployType("INVALID"), "INVALID"},
+		{xenv.DeploymentLocal, "LOCAL"},
+		{xenv.DeploymentSaaS, "SAAS"},
+		{xenv.DeploymentType("INVALID"), "INVALID"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			if got := tt.dt.String(); got != tt.want {
-				t.Errorf("DeployType.String() = %q, want %q", got, tt.want)
+				t.Errorf("DeploymentType.String() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDeployType_IsLocal(t *testing.T) {
+func TestDeploymentType_IsLocal(t *testing.T) {
 	tests := []struct {
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want bool
 	}{
-		{xenv.DeployLocal, true},
-		{xenv.DeploySaaS, false},
-		{xenv.DeployType("INVALID"), false},
+		{xenv.DeploymentLocal, true},
+		{xenv.DeploymentSaaS, false},
+		{xenv.DeploymentType("INVALID"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
 			if got := tt.dt.IsLocal(); got != tt.want {
-				t.Errorf("DeployType.IsLocal() = %v, want %v", got, tt.want)
+				t.Errorf("DeploymentType.IsLocal() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDeployType_IsSaaS(t *testing.T) {
+func TestDeploymentType_IsSaaS(t *testing.T) {
 	tests := []struct {
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want bool
 	}{
-		{xenv.DeployLocal, false},
-		{xenv.DeploySaaS, true},
-		{xenv.DeployType("INVALID"), false},
+		{xenv.DeploymentLocal, false},
+		{xenv.DeploymentSaaS, true},
+		{xenv.DeploymentType("INVALID"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
 			if got := tt.dt.IsSaaS(); got != tt.want {
-				t.Errorf("DeployType.IsSaaS() = %v, want %v", got, tt.want)
+				t.Errorf("DeploymentType.IsSaaS() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestDeployType_IsValid(t *testing.T) {
+func TestDeploymentType_IsValid(t *testing.T) {
 	tests := []struct {
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want bool
 	}{
-		{xenv.DeployLocal, true},
-		{xenv.DeploySaaS, true},
-		{xenv.DeployType("INVALID"), false},
-		{xenv.DeployType("local"), false}, // 区分大小写
+		{xenv.DeploymentLocal, true},
+		{xenv.DeploymentSaaS, true},
+		{xenv.DeploymentType("INVALID"), false},
+		{xenv.DeploymentType("local"), false}, // 区分大小写
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.dt), func(t *testing.T) {
 			if got := tt.dt.IsValid(); got != tt.want {
-				t.Errorf("DeployType(%q).IsValid() = %v, want %v", tt.dt, got, tt.want)
+				t.Errorf("DeploymentType(%q).IsValid() = %v, want %v", tt.dt, got, tt.want)
 			}
 		})
 	}
@@ -136,27 +136,27 @@ func TestDeployType_IsValid(t *testing.T) {
 func TestParse(t *testing.T) {
 	tests := []struct {
 		input string
-		want  xenv.DeployType
+		want  xenv.DeploymentType
 		err   error
 	}{
 		// LOCAL 变体
-		{"LOCAL", xenv.DeployLocal, nil},
-		{"local", xenv.DeployLocal, nil},
-		{"Local", xenv.DeployLocal, nil},
-		{"  LOCAL  ", xenv.DeployLocal, nil},
+		{"LOCAL", xenv.DeploymentLocal, nil},
+		{"local", xenv.DeploymentLocal, nil},
+		{"Local", xenv.DeploymentLocal, nil},
+		{"  LOCAL  ", xenv.DeploymentLocal, nil},
 
 		// SAAS 变体
-		{"SAAS", xenv.DeploySaaS, nil},
-		{"saas", xenv.DeploySaaS, nil},
-		{"SaaS", xenv.DeploySaaS, nil},
-		{"  SAAS  ", xenv.DeploySaaS, nil},
+		{"SAAS", xenv.DeploymentSaaS, nil},
+		{"saas", xenv.DeploymentSaaS, nil},
+		{"SaaS", xenv.DeploymentSaaS, nil},
+		{"  SAAS  ", xenv.DeploymentSaaS, nil},
 
 		// 无效值
-		{"", "", xenv.ErrInvalidType},
-		{"   ", "", xenv.ErrInvalidType},
-		{"invalid", "", xenv.ErrInvalidType},
-		{"LOCALx", "", xenv.ErrInvalidType},
-		{"SAAS2", "", xenv.ErrInvalidType},
+		{"", "", xenv.ErrInvalidDeploymentType},
+		{"   ", "", xenv.ErrInvalidDeploymentType},
+		{"invalid", "", xenv.ErrInvalidDeploymentType},
+		{"LOCALx", "", xenv.ErrInvalidDeploymentType},
+		{"SAAS2", "", xenv.ErrInvalidDeploymentType},
 	}
 
 	for _, tt := range tests {
@@ -187,17 +187,17 @@ func TestInit(t *testing.T) {
 		name     string
 		envValue string
 		unset    bool
-		want     xenv.DeployType
+		want     xenv.DeploymentType
 		err      error
 	}{
-		{"LOCAL", "LOCAL", false, xenv.DeployLocal, nil},
-		{"local", "local", false, xenv.DeployLocal, nil},
-		{"SAAS", "SAAS", false, xenv.DeploySaaS, nil},
-		{"saas", "saas", false, xenv.DeploySaaS, nil},
+		{"LOCAL", "LOCAL", false, xenv.DeploymentLocal, nil},
+		{"local", "local", false, xenv.DeploymentLocal, nil},
+		{"SAAS", "SAAS", false, xenv.DeploymentSaaS, nil},
+		{"saas", "saas", false, xenv.DeploymentSaaS, nil},
 		{"missing", "", true, "", xenv.ErrMissingEnv},
 		{"empty", "", false, "", xenv.ErrEmptyEnv},
 		{"whitespace_only", "   ", false, "", xenv.ErrEmptyEnv},
-		{"invalid", "invalid", false, "", xenv.ErrInvalidType},
+		{"invalid", "invalid", false, "", xenv.ErrInvalidDeploymentType},
 	}
 
 	for _, tt := range tests {
@@ -234,8 +234,8 @@ func TestMustInit(t *testing.T) {
 			}
 		}()
 		xenv.MustInit()
-		if xenv.Type() != xenv.DeployLocal {
-			t.Errorf("Type() = %q, want %q", xenv.Type(), xenv.DeployLocal)
+		if xenv.Type() != xenv.DeploymentLocal {
+			t.Errorf("Type() = %q, want %q", xenv.Type(), xenv.DeploymentLocal)
 		}
 	})
 
@@ -254,12 +254,12 @@ func TestMustInit(t *testing.T) {
 func TestInitWith(t *testing.T) {
 	tests := []struct {
 		name string
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		err  error
 	}{
-		{"LOCAL", xenv.DeployLocal, nil},
-		{"SAAS", xenv.DeploySaaS, nil},
-		{"INVALID", xenv.DeployType("INVALID"), xenv.ErrInvalidType},
+		{"LOCAL", xenv.DeploymentLocal, nil},
+		{"SAAS", xenv.DeploymentSaaS, nil},
+		{"INVALID", xenv.DeploymentType("INVALID"), xenv.ErrInvalidDeploymentType},
 	}
 
 	for _, tt := range tests {
@@ -288,8 +288,8 @@ func TestReset(t *testing.T) {
 	xenv.Reset()
 	t.Cleanup(xenv.Reset)
 
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		t.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	if !xenv.IsInitialized() {
 		t.Fatal("IsInitialized() = false after InitWith")
@@ -321,10 +321,10 @@ func TestInitAlreadyInitialized(t *testing.T) {
 		xenv.Reset()
 		t.Cleanup(xenv.Reset)
 
-		if err := xenv.InitWith(xenv.DeployLocal); err != nil {
+		if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
 			t.Fatalf("first InitWith() error = %v", err)
 		}
-		err := xenv.InitWith(xenv.DeploySaaS)
+		err := xenv.InitWith(xenv.DeploymentSaaS)
 		if !errors.Is(err, xenv.ErrAlreadyInitialized) {
 			t.Errorf("second InitWith() error = %v, want %v", err, xenv.ErrAlreadyInitialized)
 		}
@@ -344,7 +344,7 @@ func TestConcurrentInit(t *testing.T) {
 	for range goroutines {
 		go func() {
 			defer wg.Done()
-			errs <- xenv.InitWith(xenv.DeployLocal)
+			errs <- xenv.InitWith(xenv.DeploymentLocal)
 		}()
 	}
 
@@ -389,11 +389,11 @@ func TestType(t *testing.T) {
 		xenv.Reset()
 		t.Cleanup(xenv.Reset)
 
-		if err := xenv.InitWith(xenv.DeploySaaS); err != nil {
-			t.Fatalf("InitWith(DeploySaaS) error = %v", err)
+		if err := xenv.InitWith(xenv.DeploymentSaaS); err != nil {
+			t.Fatalf("InitWith(DeploymentSaaS) error = %v", err)
 		}
-		if got := xenv.Type(); got != xenv.DeploySaaS {
-			t.Errorf("Type() = %q, want %q", got, xenv.DeploySaaS)
+		if got := xenv.Type(); got != xenv.DeploymentSaaS {
+			t.Errorf("Type() = %q, want %q", got, xenv.DeploymentSaaS)
 		}
 	})
 }
@@ -401,11 +401,11 @@ func TestType(t *testing.T) {
 func TestIsLocal_Global(t *testing.T) {
 	tests := []struct {
 		name string
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want bool
 	}{
-		{"LOCAL", xenv.DeployLocal, true},
-		{"SAAS", xenv.DeploySaaS, false},
+		{"LOCAL", xenv.DeploymentLocal, true},
+		{"SAAS", xenv.DeploymentSaaS, false},
 	}
 
 	for _, tt := range tests {
@@ -435,11 +435,11 @@ func TestIsLocal_Global(t *testing.T) {
 func TestIsSaaS_Global(t *testing.T) {
 	tests := []struct {
 		name string
-		dt   xenv.DeployType
+		dt   xenv.DeploymentType
 		want bool
 	}{
-		{"LOCAL", xenv.DeployLocal, false},
-		{"SAAS", xenv.DeploySaaS, true},
+		{"LOCAL", xenv.DeploymentLocal, false},
+		{"SAAS", xenv.DeploymentSaaS, true},
 	}
 
 	for _, tt := range tests {
@@ -474,8 +474,8 @@ func TestIsInitialized(t *testing.T) {
 		t.Error("IsInitialized() = true, want false")
 	}
 
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		t.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	if !xenv.IsInitialized() {
 		t.Error("IsInitialized() = false, want true")
@@ -497,15 +497,15 @@ func TestRequireType(t *testing.T) {
 		xenv.Reset()
 		t.Cleanup(xenv.Reset)
 
-		if err := xenv.InitWith(xenv.DeploySaaS); err != nil {
-			t.Fatalf("InitWith(DeploySaaS) error = %v", err)
+		if err := xenv.InitWith(xenv.DeploymentSaaS); err != nil {
+			t.Fatalf("InitWith(DeploymentSaaS) error = %v", err)
 		}
 		got, err := xenv.RequireType()
 		if err != nil {
 			t.Fatalf("RequireType() error = %v", err)
 		}
-		if got != xenv.DeploySaaS {
-			t.Errorf("RequireType() = %q, want %q", got, xenv.DeploySaaS)
+		if got != xenv.DeploymentSaaS {
+			t.Errorf("RequireType() = %q, want %q", got, xenv.DeploymentSaaS)
 		}
 	})
 }
@@ -518,8 +518,8 @@ func TestConcurrentAccess(t *testing.T) {
 	xenv.Reset()
 	t.Cleanup(xenv.Reset)
 
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		t.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		t.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 
 	const goroutines = 100
@@ -545,14 +545,14 @@ func TestConcurrentAccess(t *testing.T) {
 // =============================================================================
 
 func TestConstants(t *testing.T) {
-	if xenv.EnvDeployType != "DEPLOYMENT_TYPE" {
-		t.Errorf("EnvDeployType = %q, want %q", xenv.EnvDeployType, "DEPLOYMENT_TYPE")
+	if xenv.EnvDeploymentType != "DEPLOYMENT_TYPE" {
+		t.Errorf("EnvDeploymentType = %q, want %q", xenv.EnvDeploymentType, "DEPLOYMENT_TYPE")
 	}
-	if string(xenv.DeployLocal) != "LOCAL" {
-		t.Errorf("DeployLocal = %q, want %q", xenv.DeployLocal, "LOCAL")
+	if string(xenv.DeploymentLocal) != "LOCAL" {
+		t.Errorf("DeploymentLocal = %q, want %q", xenv.DeploymentLocal, "LOCAL")
 	}
-	if string(xenv.DeploySaaS) != "SAAS" {
-		t.Errorf("DeploySaaS = %q, want %q", xenv.DeploySaaS, "SAAS")
+	if string(xenv.DeploymentSaaS) != "SAAS" {
+		t.Errorf("DeploymentSaaS = %q, want %q", xenv.DeploymentSaaS, "SAAS")
 	}
 }
 

@@ -236,6 +236,33 @@ func TestClientOptions_WithTLS_InsecureOnly(t *testing.T) {
 }
 
 // =============================================================================
+// WithHealthCheckTopic Tests
+// =============================================================================
+
+func TestClientOptions_WithHealthCheckTopic(t *testing.T) {
+	opts := defaultOptions()
+
+	WithHealthCheckTopic("non-persistent://my-tenant/my-ns/__health__")(opts)
+
+	assert.Equal(t, "non-persistent://my-tenant/my-ns/__health__", opts.HealthCheckTopic)
+}
+
+func TestClientOptions_WithHealthCheckTopic_Empty(t *testing.T) {
+	opts := defaultOptions()
+	original := opts.HealthCheckTopic
+
+	WithHealthCheckTopic("")(opts)
+
+	assert.Equal(t, original, opts.HealthCheckTopic, "空字符串不应覆盖默认值")
+}
+
+func TestClientOptions_WithHealthCheckTopic_Default(t *testing.T) {
+	opts := defaultOptions()
+
+	assert.Equal(t, defaultHealthCheckTopic, opts.HealthCheckTopic)
+}
+
+// =============================================================================
 // Client Interface Tests
 // =============================================================================
 

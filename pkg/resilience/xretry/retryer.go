@@ -100,6 +100,9 @@ func (r *Retryer) Do(ctx context.Context, fn func(ctx context.Context) error) er
 	if r == nil {
 		return ErrNilRetryer
 	}
+	if fn == nil {
+		return ErrNilFunc
+	}
 	// 构建 retry-go 的选项
 	opts := r.buildOptions(ctx)
 
@@ -117,6 +120,10 @@ func DoWithResult[T any](ctx context.Context, r *Retryer, fn func(ctx context.Co
 	if r == nil {
 		var zero T
 		return zero, ErrNilRetryer
+	}
+	if fn == nil {
+		var zero T
+		return zero, ErrNilFunc
 	}
 	// 构建 retry-go 的选项
 	opts := r.buildOptions(ctx)
@@ -198,9 +205,11 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 使用 retry-go 的完整功能。
 // 如果接收者为 nil，使用默认配置创建实例。
 //
-// WARNING: 返回的实例为一次性使用。内部 RetryIf 闭包维护了 attemptCount 状态，
+// 设计决策: 返回的实例为一次性使用。内部 RetryIf 闭包维护了 attemptCount 状态，
 // 对同一实例多次调用 Do 会导致计数累积，产生非预期的重试行为。
 // 每次需要重试时应重新调用 Retrier() 获取新实例。
+// 未改为返回工厂函数，因为 *retry.Retrier 是 retry-go 的原生类型，
+// 保持类型一致性比防止误用更重要（类比 strings.Builder 不可复用）。
 func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 	if r == nil {
 		return retry.New(Context(ctx))
@@ -219,12 +228,20 @@ func RetrierWithData[T any](ctx context.Context, r *Retryer) *retry.RetrierWithD
 	return retry.NewWithData[T](r.buildOptions(ctx)...)
 }
 
-// RetryPolicy 返回当前重试策略
+// RetryPolicy 返回当前重试策略。
+// nil 接收者返回 nil。
 func (r *Retryer) RetryPolicy() RetryPolicy {
+	if r == nil {
+		return nil
+	}
 	return r.retryPolicy
 }
 
-// BackoffPolicy 返回当前退避策略
+// BackoffPolicy 返回当前退避策略。
+// nil 接收者返回 nil。
 func (r *Retryer) BackoffPolicy() BackoffPolicy {
+	if r == nil {
+		return nil
+	}
 	return r.backoffPolicy
 }

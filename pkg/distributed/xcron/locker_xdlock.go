@@ -141,6 +141,9 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 //
 // 对于 etcd 后端，此操作返回 nil（etcd 使用 Session 自动续期）。
 // 对于 Redis 后端，调用 Extend 续期。
+//
+// 设计决策: ttl 参数被忽略，因为 xdlock.LockHandle.Extend 使用工厂创建时的 TTL 续期，
+// 不支持按次指定。若需自定义续期 TTL，请在创建 xdlock.Factory 时配置。
 func (h *xdlockHandle) Renew(ctx context.Context, _ time.Duration) error {
 	err := h.handle.Extend(ctx)
 	if err != nil {

@@ -266,24 +266,14 @@ func TestAcquireOptions_Validate(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "zero max retries",
+			name:      "zero max retries is valid for validate (checked by validateRetryParams)",
 			modify:    func(o *acquireOptions) { o.maxRetries = 0 },
-			wantError: true,
+			wantError: false,
 		},
 		{
-			name:      "negative max retries",
-			modify:    func(o *acquireOptions) { o.maxRetries = -1 },
-			wantError: true,
-		},
-		{
-			name:      "zero retry delay",
+			name:      "zero retry delay is valid for validate (checked by validateRetryParams)",
 			modify:    func(o *acquireOptions) { o.retryDelay = 0 },
-			wantError: true,
-		},
-		{
-			name:      "negative retry delay",
-			modify:    func(o *acquireOptions) { o.retryDelay = -1 },
-			wantError: true,
+			wantError: false,
 		},
 	}
 
@@ -359,14 +349,14 @@ func TestAcquireOptionFunctions(t *testing.T) {
 		WithMaxRetries(5)(opts)
 		assert.Equal(t, 5, opts.maxRetries)
 
-		// 无效值直接设置，由 validate 检测
+		// 无效值直接设置，由 validateRetryParams 检测（非 validate）
 		WithMaxRetries(0)(opts)
 		assert.Equal(t, 0, opts.maxRetries)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
 
 		WithMaxRetries(-1)(opts)
 		assert.Equal(t, -1, opts.maxRetries)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
 	})
 
 	t.Run("WithRetryDelay", func(t *testing.T) {
@@ -374,15 +364,67 @@ func TestAcquireOptionFunctions(t *testing.T) {
 		WithRetryDelay(500 * time.Millisecond)(opts)
 		assert.Equal(t, 500*time.Millisecond, opts.retryDelay)
 
-		// 无效值直接设置，由 validate 检测
+		// 无效值直接设置，由 validateRetryParams 检测（非 validate）
 		WithRetryDelay(0)(opts)
 		assert.Equal(t, time.Duration(0), opts.retryDelay)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidRetryDelay)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidRetryDelay)
 
 		WithRetryDelay(-1)(opts)
 		assert.Equal(t, time.Duration(-1), opts.retryDelay)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidRetryDelay)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidRetryDelay)
 	})
+}
+
+func TestAcquireOptions_ValidateRetryParams(t *testing.T) {
+	tests := []struct {
+		name      string
+		modify    func(*acquireOptions)
+		wantError bool
+		wantErr   error
+	}{
+		{
+			name:      "valid defaults",
+			modify:    func(o *acquireOptions) {},
+			wantError: false,
+		},
+		{
+			name:      "zero max retries",
+			modify:    func(o *acquireOptions) { o.maxRetries = 0 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "negative max retries",
+			modify:    func(o *acquireOptions) { o.maxRetries = -1 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "zero retry delay",
+			modify:    func(o *acquireOptions) { o.retryDelay = 0 },
+			wantError: true,
+			wantErr:   ErrInvalidRetryDelay,
+		},
+		{
+			name:      "negative retry delay",
+			modify:    func(o *acquireOptions) { o.retryDelay = -1 },
+			wantError: true,
+			wantErr:   ErrInvalidRetryDelay,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := defaultAcquireOptions()
+			tt.modify(opts)
+			err := opts.validateRetryParams()
+			if tt.wantError {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 // =============================================================================

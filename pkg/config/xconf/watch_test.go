@@ -521,6 +521,27 @@ func TestWatcher_HandleError(t *testing.T) {
 	}
 }
 
+// TestWatch_DirectoryDeletedBeforeWatch 验证 Watch 在目录不存在时返回 ErrWatchFailed
+// 覆盖 fsnotify.Add 失败 + errors.Join 路径
+func TestWatch_DirectoryDeletedBeforeWatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	// 先通过 New 加载（此时目录存在）
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	// 删除目录，使 fsnotify.Add 失败
+	err = os.RemoveAll(tmpDir)
+	require.NoError(t, err)
+
+	_, err = Watch(cfg, func(c Config, err error) {})
+	assert.ErrorIs(t, err, ErrWatchFailed)
+	assert.Contains(t, err.Error(), "failed to watch directory")
+}
+
 // TestWatcher_HandleErrorNilCallback 验证无回调时 handleError 不 panic
 func TestWatcher_HandleErrorNilCallback(t *testing.T) {
 	w := &Watcher{

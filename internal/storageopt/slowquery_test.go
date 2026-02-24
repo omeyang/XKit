@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // testSlowQueryInfo 测试用的慢查询信息结构
@@ -17,9 +18,10 @@ type testSlowQueryInfo struct {
 }
 
 func TestSlowQueryDetector_Disabled(t *testing.T) {
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 0, // 禁用
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "test", Duration: 1 * time.Hour}
@@ -30,12 +32,13 @@ func TestSlowQueryDetector_Disabled(t *testing.T) {
 
 func TestSlowQueryDetector_BelowThreshold(t *testing.T) {
 	var called bool
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			called = true
 		},
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "test", Duration: 50 * time.Millisecond}
@@ -49,13 +52,14 @@ func TestSlowQueryDetector_SyncHook(t *testing.T) {
 	var called bool
 	var captured testSlowQueryInfo
 
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			called = true
 			captured = info
 		},
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "SELECT * FROM test", Duration: 200 * time.Millisecond}
@@ -72,7 +76,7 @@ func TestSlowQueryDetector_AsyncHook(t *testing.T) {
 	wg.Add(1)
 
 	var captured testSlowQueryInfo
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		AsyncHook: func(info testSlowQueryInfo) {
 			captured = info
@@ -81,6 +85,7 @@ func TestSlowQueryDetector_AsyncHook(t *testing.T) {
 		AsyncWorkerPoolSize: 1,
 		AsyncQueueSize:      10,
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "SELECT * FROM test", Duration: 200 * time.Millisecond}
@@ -98,7 +103,7 @@ func TestSlowQueryDetector_BothHooks(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			syncCalled.Store(true)
@@ -110,6 +115,7 @@ func TestSlowQueryDetector_BothHooks(t *testing.T) {
 		AsyncWorkerPoolSize: 1,
 		AsyncQueueSize:      10,
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "test", Duration: 200 * time.Millisecond}
@@ -125,12 +131,13 @@ func TestSlowQueryDetector_BothHooks(t *testing.T) {
 
 func TestSlowQueryDetector_ExactThreshold(t *testing.T) {
 	var called bool
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			called = true
 		},
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	// 刚好等于阈值，应该触发（使用 >= 比较）
@@ -143,12 +150,13 @@ func TestSlowQueryDetector_ExactThreshold(t *testing.T) {
 
 func TestSlowQueryDetector_JustAboveThreshold(t *testing.T) {
 	var called bool
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			called = true
 		},
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	// 刚好超过阈值
@@ -161,7 +169,7 @@ func TestSlowQueryDetector_JustAboveThreshold(t *testing.T) {
 
 func TestSlowQueryDetector_Close(t *testing.T) {
 	var count atomic.Int32
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 1 * time.Nanosecond,
 		AsyncHook: func(info testSlowQueryInfo) {
 			count.Add(1)
@@ -169,6 +177,7 @@ func TestSlowQueryDetector_Close(t *testing.T) {
 		AsyncWorkerPoolSize: 1,
 		AsyncQueueSize:      10,
 	})
+	require.NoError(t, err)
 
 	// 触发一些慢查询
 	for i := 0; i < 5; i++ {
@@ -187,11 +196,12 @@ func TestSlowQueryDetector_Close(t *testing.T) {
 }
 
 func TestSlowQueryDetector_DefaultOptions(t *testing.T) {
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 		AsyncHook: func(info testSlowQueryInfo) {},
 		// 不设置 pool size 和 queue size
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	// 应该使用默认值
@@ -202,7 +212,7 @@ func TestSlowQueryDetector_DefaultOptions(t *testing.T) {
 func TestSlowQueryDetector_Concurrent(t *testing.T) {
 	var syncCount, asyncCount atomic.Int32
 
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 1 * time.Nanosecond,
 		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
 			syncCount.Add(1)
@@ -213,6 +223,7 @@ func TestSlowQueryDetector_Concurrent(t *testing.T) {
 		AsyncWorkerPoolSize: 4,
 		AsyncQueueSize:      100,
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	var wg sync.WaitGroup
@@ -238,9 +249,10 @@ func TestSlowQueryDetector_Concurrent(t *testing.T) {
 
 func TestSlowQueryDetector_NoHooks(t *testing.T) {
 	// 只有阈值，没有钩子
-	detector := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
 		Threshold: 100 * time.Millisecond,
 	})
+	require.NoError(t, err)
 	defer detector.Close()
 
 	info := testSlowQueryInfo{Query: "test", Duration: 200 * time.Millisecond}
@@ -248,4 +260,16 @@ func TestSlowQueryDetector_NoHooks(t *testing.T) {
 
 	// 超过阈值，但没有钩子，仍返回 true
 	assert.True(t, triggered)
+}
+
+func TestNewSlowQueryDetector_InvalidPoolParams(t *testing.T) {
+	// 超大 worker pool 应该返回错误
+	_, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+		Threshold:           100 * time.Millisecond,
+		AsyncHook:           func(info testSlowQueryInfo) {},
+		AsyncWorkerPoolSize: 1 << 17, // 超出 xpool 上限
+		AsyncQueueSize:      10,
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "storageopt: create async pool")
 }

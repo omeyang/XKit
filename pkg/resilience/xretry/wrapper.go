@@ -116,6 +116,7 @@ var (
 // 这是对 retry-go 的薄包装，提供与 xretry 一致的 API 风格。
 // fn 签名为 func() error（不接收 context），如需在回调中使用 context，
 // 通过闭包捕获即可。如需 fn 直接接收 context，请使用 Retryer.Do。
+// fn 为 nil 时返回 ErrNilFunc。
 //
 // 延迟语义：默认使用 retry-go 的 CombineDelay(BackOffDelay, RandomDelay)，
 // 即使设置 Delay(0)，MaxJitter 的默认值仍会引入随机延迟。
@@ -149,6 +150,9 @@ var (
 //	    return !errors.Is(err, ErrFatal)
 //	}))
 func Do(ctx context.Context, fn func() error, opts ...Option) error {
+	if fn == nil {
+		return ErrNilFunc
+	}
 	return retry.New(defaultOpts(ctx, opts)...).Do(fn)
 }
 
@@ -166,14 +170,19 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 // 此时 PermanentError/TemporaryError/Unrecoverable 将不会自动生效，
 // 调用方需要在自定义的 RetryIf 中处理这些情况。详见 Do 函数的文档说明。
 func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option) (T, error) {
+	if fn == nil {
+		var zero T
+		return zero, ErrNilFunc
+	}
 	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(fn)
 }
 
 // defaultOpts 构建带有默认 RetryIf 逻辑的选项列表。
 // 默认的 RetryIf 检查 IsRecoverable（Unrecoverable 错误）和 IsRetryable（PermanentError/TemporaryError）。
-// 用户传入的 opts 追加在后，如果包含 RetryIf 则会覆盖默认行为。
+// 默认 LastErrorOnly(true) 与 Retryer.Do 保持一致，简化调用方的错误处理。
+// 用户传入的 opts 追加在后，如果包含 RetryIf 或 LastErrorOnly 则会覆盖默认行为。
 func defaultOpts(ctx context.Context, opts []Option) []Option {
-	allOpts := make([]Option, 0, len(opts)+2)
+	allOpts := make([]Option, 0, len(opts)+3)
 	allOpts = append(allOpts, Context(ctx))
 	allOpts = append(allOpts, RetryIf(func(err error) bool {
 		if !IsRecoverable(err) {
@@ -181,6 +190,9 @@ func defaultOpts(ctx context.Context, opts []Option) []Option {
 		}
 		return IsRetryable(err)
 	}))
+	// 设计决策: 默认只返回最后一个错误，与 Retryer.Do 保持一致。
+	// 调用方可通过 LastErrorOnly(false) 覆盖以获取聚合错误。
+	allOpts = append(allOpts, LastErrorOnly(true))
 	return append(allOpts, opts...)
 }
 

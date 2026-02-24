@@ -294,6 +294,10 @@ func metricAttrs(component, operation string, status Status) []attribute.KeyValu
 	return attrs[:]
 }
 
+// 设计决策: 过滤保留键（component/operation/status），防止用户自定义属性
+// 与系统属性冲突导致 trace 与 metrics 数据不一致。
+// metrics 始终使用内部存储的 component/operation/status 值，
+// 若 trace span 上出现同名用户属性则会产生覆盖，造成排障困惑。
 func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 	if len(attrs) == 0 {
 		return nil
@@ -303,9 +307,16 @@ func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 		if attr.Key == "" || attr.Value == nil {
 			continue
 		}
+		if isReservedAttrKey(attr.Key) {
+			continue
+		}
 		converted = append(converted, toKeyValue(attr))
 	}
 	return converted
+}
+
+func isReservedAttrKey(key string) bool {
+	return key == AttrKeyComponent || key == AttrKeyOperation || key == AttrKeyStatus
 }
 
 func toKeyValue(attr Attr) attribute.KeyValue {
@@ -335,8 +346,9 @@ func toKeyValue(attr Attr) attribute.KeyValue {
 }
 
 func ensureParentSpan(ctx context.Context) context.Context {
-	span := trace.SpanFromContext(ctx)
-	if span != nil && span.SpanContext().IsValid() {
+	// trace.SpanFromContext 保证返回非 nil（无 span 时返回 noopSpan），
+	// 因此只需检查 SpanContext 是否有效。
+	if trace.SpanFromContext(ctx).SpanContext().IsValid() {
 		return ctx
 	}
 

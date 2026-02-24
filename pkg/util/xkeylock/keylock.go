@@ -25,7 +25,7 @@ type Locker interface {
 	// Acquire 阻塞式获取锁。
 	// 支持 ctx 超时/取消，ctx 取消时返回 [context.Canceled] 或 [context.DeadlineExceeded]。
 	// Locker 已关闭时返回 [ErrClosed]。key 不得为空字符串，否则返回 [ErrInvalidKey]。
-	// ctx 不得为 nil，否则 panic（与标准库 http.NewRequestWithContext 等一致）。
+	// ctx 不得为 nil，否则返回 [ErrNilContext]。
 	//
 	// 当 Acquire 处于阻塞等待时，若 Close 与 ctx 取消同时发生，
 	// 返回 [ErrClosed] 或 ctx.Err() 均有可能（Go select 语义）。
@@ -43,8 +43,9 @@ type Locker interface {
 	// key 不得为空字符串，否则返回 (nil, [ErrInvalidKey])。
 	TryAcquire(key string) (Handle, error)
 
-	// Len 返回当前活跃的 key 数量。
+	// Len 返回当前活跃的 key 数量（单次原子读取，瞬时快照）。
 	// 比 Keys() 更高效，适用于监控和指标采集。
+	// 并发场景下 Len() 与 len(Keys()) 可能不一致，属正常行为。
 	Len() int
 
 	// Keys 返回当前活跃条目的 key 列表（包含持有者和等待者），仅用于调试。

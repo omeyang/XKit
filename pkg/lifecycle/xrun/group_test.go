@@ -560,7 +560,7 @@ func TestSignalError(t *testing.T) {
 
 func TestSignalError_Error(t *testing.T) {
 	err := &SignalError{Signal: syscall.SIGINT}
-	expected := "received signal interrupt"
+	expected := "xrun: received signal interrupt"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -568,7 +568,7 @@ func TestSignalError_Error(t *testing.T) {
 
 func TestSignalError_Error_Nil(t *testing.T) {
 	err := &SignalError{Signal: nil}
-	expected := "received signal <nil>"
+	expected := "xrun: received signal <nil>"
 	if err.Error() != expected {
 		t.Errorf("expected %q, got %q", expected, err.Error())
 	}
@@ -1165,5 +1165,163 @@ func TestRunServicesWithOptions_SignalError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for RunServicesWithOptions to return")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// nil 参数校验
+// ----------------------------------------------------------------------------
+
+func TestTicker_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Ticker(time.Second, false, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTicker_NilFunc_Immediate(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Ticker(time.Second, true, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTimer_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Timer(time.Second, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestTimer_NilFunc_ZeroDelay(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(Timer(0, nil))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestHTTPServer_NilServer(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(HTTPServer(nil, time.Second))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilServer) {
+		t.Errorf("expected ErrNilServer, got %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// 已取消 context 下的 immediate/zero-delay 行为
+// ----------------------------------------------------------------------------
+
+func TestTicker_ImmediateCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	var executed atomic.Bool
+	g, _ := NewGroup(ctx)
+	g.Go(Ticker(time.Second, true, func(ctx context.Context) error {
+		executed.Store(true)
+		return nil
+	}))
+
+	// context.Canceled 会被过滤（Group 主动取消）
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if executed.Load() {
+		t.Error("fn should not be executed when context is already canceled")
+	}
+}
+
+func TestTimer_ZeroDelayCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	var executed atomic.Bool
+	g, _ := NewGroup(ctx)
+	g.Go(Timer(0, func(ctx context.Context) error {
+		executed.Store(true)
+		return nil
+	}))
+
+	// context.Canceled 会被过滤
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if executed.Load() {
+		t.Error("fn should not be executed when context is already canceled")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// nil context
+// ----------------------------------------------------------------------------
+
+func TestNewGroup_NilContext(t *testing.T) {
+	// nil context 应被归一化为 context.Background()，不 panic
+	g, ctx := NewGroup(nil) //nolint:staticcheck // 测试 nil context 归一化行为
+
+	g.Go(func(ctx context.Context) error {
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// context 应该有效
+	if ctx == nil {
+		t.Error("returned context should not be nil")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// WithoutSignalHandler 与 WithSignals 优先级
+// ----------------------------------------------------------------------------
+
+func TestWithoutSignalHandler_OverridesWithSignals(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx,
+			[]Option{
+				WithSignals([]os.Signal{syscall.SIGINT}),
+				WithoutSignalHandler(),
+			},
+			func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		)
+	}()
+
+	// 手动取消（没有信号处理，所以只能手动取消）
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		// WithoutSignalHandler 优先，应返回 nil（正常关闭）
+		if err != nil {
+			t.Errorf("expected nil, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
 	}
 }

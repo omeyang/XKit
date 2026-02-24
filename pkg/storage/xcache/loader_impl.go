@@ -331,8 +331,12 @@ func (l *loader) handleLockError(lockErr error, lockKey string, fallback func() 
 		return nil, lockErr
 	}
 	// 配置错误直接返回，不应被静默忽略
+	// 包括 ErrInvalidLockTTL（TTL 无效）和 ErrInvalidConfig（如 nil unlocker）
 	if errors.Is(lockErr, ErrInvalidLockTTL) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, lockErr)
+	}
+	if errors.Is(lockErr, ErrInvalidConfig) {
+		return nil, lockErr
 	}
 	// 区分锁竞争和运行时错误
 	if !errors.Is(lockErr, ErrLockFailed) {
@@ -369,11 +373,17 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 		return nil, err
 	}
 
-	// 写入缓存（best-effort，失败不影响业务返回）
+	// 设计决策: 缓存写入使用脱离取消链的 context + 独立短超时，确保回源数据不会
+	// 因调用方取消而丢失。singleflight 路径的 ctx 已经是 detached 的，但非
+	// singleflight 路径使用调用方原始 ctx，调用方取消可能导致缓存写入失败。
+	// 写入是 best-effort 操作，失败不影响业务返回。
+	writeCtx, writeCancel := context.WithTimeout(contextDetached(ctx), defaultOperationTimeout)
+	defer writeCancel()
+
 	cacheTTL := l.applyTTLJitter(ttl)
-	if setErr := l.cache.Client().Set(ctx, key, value, cacheTTL).Err(); setErr != nil {
+	if setErr := l.cache.Client().Set(writeCtx, key, value, cacheTTL).Err(); setErr != nil {
 		l.logWarn("xcache: cache set failed", "key", key, "error", setErr)
-		l.onCacheSetError(ctx, key, setErr)
+		l.onCacheSetError(writeCtx, key, setErr)
 	}
 
 	return value, nil
@@ -481,6 +491,11 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 		return nil, err
 	}
 
+	// 设计决策: 缓存写入使用脱离取消链的 context + 独立短超时（与 loadAndCache 对称），
+	// 确保回源数据不会因调用方取消而丢失。
+	writeCtx, writeCancel := context.WithTimeout(contextDetached(ctx), defaultOperationTimeout)
+	defer writeCancel()
+
 	// 写入缓存（best-effort，失败不影响业务返回）
 	// 设计决策: onCacheSetError 回调传递实际 Redis key（而非 hashFieldKey 合成格式），
 	// 与 loadAndCache 行为一致，便于监控系统关联到实际 Redis key。
@@ -489,26 +504,26 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 		// 设计决策: 使用 Pipeline 合并 HSet+Expire 为一次 roundtrip，
 		// 减少进程崩溃时 hash key 无 TTL 的风险窗口。
 		pipe := l.cache.Client().Pipeline()
-		pipe.HSet(ctx, key, field, value)
-		pipe.Expire(ctx, key, cacheTTL)
-		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil {
+		pipe.HSet(writeCtx, key, field, value)
+		pipe.Expire(writeCtx, key, cacheTTL)
+		if _, pipeErr := pipe.Exec(writeCtx); pipeErr != nil {
 			l.logWarn("xcache: hash set/expire pipeline failed", "key", key, "field", field, "error", pipeErr)
-			l.onCacheSetError(ctx, key, pipeErr)
+			l.onCacheSetError(writeCtx, key, pipeErr)
 		}
-	} else if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
+	} else if setErr := l.cache.Client().HSet(writeCtx, key, field, value).Err(); setErr != nil {
 		l.logWarn("xcache: hash set failed", "key", key, "field", field, "error", setErr)
-		l.onCacheSetError(ctx, key, setErr)
+		l.onCacheSetError(writeCtx, key, setErr)
 	} else if cacheTTL > 0 {
 		// HashTTLRefresh=false: 仅首次设置 TTL
 		// 设计决策: 此路径使用 HSet → TTL → Expire 三次 roundtrip（非 Pipeline），
 		// 因为需要先检查 TTL 再决定是否 Expire。虽然 HSet 和 Expire 之间存在
 		// TOCTOU 窗口（进程崩溃可能导致 Hash 无 TTL），但该路径仅在 HashTTLRefresh=false
 		// 时使用，且仅影响首次写入，风险极低。优化为 Lua 脚本可消除窗口但增加复杂度。
-		currentTTL, ttlErr := l.cache.Client().TTL(ctx, key).Result()
+		currentTTL, ttlErr := l.cache.Client().TTL(writeCtx, key).Result()
 		if ttlErr != nil {
 			l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
 		} else if currentTTL < 0 {
-			if expireErr := l.cache.Client().Expire(ctx, key, cacheTTL).Err(); expireErr != nil {
+			if expireErr := l.cache.Client().Expire(writeCtx, key, cacheTTL).Err(); expireErr != nil {
 				l.logWarn("xcache: hash expire failed", "key", key, "ttl", cacheTTL, "error", expireErr)
 			}
 		}
@@ -604,6 +619,8 @@ func (l *loader) waitAndRetryHGet(ctx context.Context, key, field string, loadFn
 }
 
 // backoffWithJitter 计算带抖动的指数退避时间。
+// 返回值范围为 [backoff * (1 - jitterFraction/2), backoff * (1 + jitterFraction/2)]，
+// 其中 jitterFraction=0.3，因此 wait ∈ [backoff*0.85, backoff*1.15]，始终为正。
 func backoffWithJitter(attempt int) time.Duration {
 	// 溢出保护：attempt 超过安全范围时直接使用 maxBackoff
 	// time.Duration 是 int64，baseBackoff(50ms) << 30 仍在安全范围内
@@ -636,11 +653,26 @@ func backoffWithJitter(attempt int) time.Duration {
 //
 // 注意：设置 WithExternalLock 会自动启用分布式锁（EnableDistributedLock = true），
 // 此时内置锁不会被使用。两种锁实现不会同时生效。
+//
+// 防御性校验：如果锁实现返回 (nil, nil)（unlock 为 nil 但无 error），
+// 转为返回 ErrInvalidConfig 错误，避免后续 defer unlock(...) 处 panic。
 func (l *loader) acquireLock(ctx context.Context, key string) (Unlocker, error) {
+	var unlock Unlocker
+	var err error
 	if l.options.ExternalLock != nil {
-		return l.options.ExternalLock(ctx, key, l.options.DistributedLockTTL)
+		unlock, err = l.options.ExternalLock(ctx, key, l.options.DistributedLockTTL)
+	} else {
+		unlock, err = l.cache.Lock(ctx, key, l.options.DistributedLockTTL)
 	}
-	return l.cache.Lock(ctx, key, l.options.DistributedLockTTL)
+	if err != nil {
+		return nil, err
+	}
+	// 设计决策: 防御性检查空 Unlocker，避免错误的锁实现导致 defer unlock(...) panic。
+	// 正常锁实现不应返回 (nil, nil)，但外部锁实现可能存在 bug。
+	if unlock == nil {
+		return nil, fmt.Errorf("%w: lock returned nil unlocker without error", ErrInvalidConfig)
+	}
+	return unlock, nil
 }
 
 // logInfo 记录信息日志（如果配置了 Logger）。

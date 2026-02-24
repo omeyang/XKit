@@ -14,7 +14,7 @@
 //
 // # 特性
 //
-//   - Context 支持：Acquire 支持超时和取消（ctx 不得为 nil，否则 panic）
+//   - Context 支持：Acquire 支持超时和取消（ctx 不得为 nil，否则返回 ErrNilContext）
 //   - Key 校验：空字符串 key 立即返回 ErrInvalidKey（fail-fast，防止误用）
 //   - TryAcquire：非阻塞获取，锁被占用时返回 ErrLockOccupied
 //   - Handle 语义：Unlock 幂等（首次返回 nil，后续返回 ErrLockNotHeld）

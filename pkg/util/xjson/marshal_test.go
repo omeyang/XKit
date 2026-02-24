@@ -55,6 +55,23 @@ func TestPrettyE(t *testing.T) {
 			exact: `""`,
 		},
 		{
+			name: "nested_struct",
+			input: struct {
+				Outer string `json:"outer"`
+				Inner struct {
+					Value int `json:"value"`
+				} `json:"inner"`
+			}{Outer: "a", Inner: struct {
+				Value int `json:"value"`
+			}{Value: 1}},
+			contains: `"inner": {`,
+		},
+		{
+			name:  "html_special_chars",
+			input: "<script>alert('xss')</script> & foo > bar",
+			exact: `"\u003cscript\u003ealert('xss')\u003c/script\u003e \u0026 foo \u003e bar"`,
+		},
+		{
 			name:    "error_NaN",
 			input:   math.NaN(),
 			wantErr: true,

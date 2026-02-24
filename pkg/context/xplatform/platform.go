@@ -64,6 +64,7 @@ type Config struct {
 	// UnclassRegionID 未分类区域 ID（可选）
 	//
 	// 校验规则（仅非空时校验）：
+	//   - 纯空白字符串视为未设置（跳过校验）
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
@@ -77,6 +78,7 @@ type Config struct {
 //   - PlatformID 不能包含空白字符 → ErrInvalidPlatformID
 //   - PlatformID 不能包含控制字符 → ErrInvalidPlatformID
 //   - PlatformID 长度不超过 128 字节 → ErrInvalidPlatformID
+//   - UnclassRegionID 纯空白字符串视为空（跳过校验）
 //   - UnclassRegionID（非空时）不能包含空白字符 → ErrInvalidUnclassRegionID
 //   - UnclassRegionID（非空时）不能包含控制字符 → ErrInvalidUnclassRegionID
 //   - UnclassRegionID（非空时）长度不超过 128 字节 → ErrInvalidUnclassRegionID
@@ -99,7 +101,8 @@ func (c Config) Validate() error {
 
 	// 设计决策: UnclassRegionID 用于 HTTP Header / gRPC Metadata 传播（xtenant 包），
 	// 必须校验空白字符和长度，防止 header 注入和溢出。允许空值（可选字段）。
-	if c.UnclassRegionID != "" {
+	// TrimSpace 归一化使纯空白输入等同于空字符串（未设置），与 PlatformID 的处理对称。
+	if strings.TrimSpace(c.UnclassRegionID) != "" {
 		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsSpace) {
 			return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
 		}

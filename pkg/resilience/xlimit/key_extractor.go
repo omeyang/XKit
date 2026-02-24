@@ -2,6 +2,8 @@ package xlimit
 
 import (
 	"net/http"
+
+	"github.com/omeyang/xkit/pkg/context/xtenant"
 )
 
 // HTTPKeyExtractor 从 HTTP 请求中提取限流键
@@ -20,7 +22,7 @@ type HTTPKeyExtractorOption func(*HTTPKeyExtractor)
 // 默认从 X-Tenant-ID 和 X-Caller-ID header 中提取信息
 func DefaultHTTPKeyExtractor() *HTTPKeyExtractor {
 	return &HTTPKeyExtractor{
-		tenantHeader: "X-Tenant-ID",
+		tenantHeader: xtenant.HeaderTenantID,
 		callerHeader: "X-Caller-ID",
 	}
 }

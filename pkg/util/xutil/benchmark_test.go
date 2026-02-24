@@ -2,28 +2,43 @@ package xutil
 
 import "testing"
 
+// 设计决策: 使用包级 sink 变量阻止编译器将内联纯函数的返回值丢弃后优化掉整个调用。
+// b.Loop() 有部分防优化机制，但对纯值传递的内联函数仍不够可靠。
+var (
+	sinkInt    int
+	sinkString string
+)
+
 func BenchmarkIf_True(b *testing.B) {
+	var r int
 	for b.Loop() {
-		_ = If(true, 1, 2)
+		r = If(true, 1, 2)
 	}
+	sinkInt = r
 }
 
 func BenchmarkIf_False(b *testing.B) {
+	var r int
 	for b.Loop() {
-		_ = If(false, 1, 2)
+		r = If(false, 1, 2)
 	}
+	sinkInt = r
 }
 
 func BenchmarkIfString_True(b *testing.B) {
+	var r string
 	for b.Loop() {
-		_ = If(true, "hello", "world")
+		r = If(true, "hello", "world")
 	}
+	sinkString = r
 }
 
 func BenchmarkIfString_False(b *testing.B) {
+	var r string
 	for b.Loop() {
-		_ = If(false, "hello", "world")
+		r = If(false, "hello", "world")
 	}
+	sinkString = r
 }
 
 func BenchmarkIfStruct(b *testing.B) {
@@ -32,9 +47,11 @@ func BenchmarkIfStruct(b *testing.B) {
 		Name string
 		Data [64]byte
 	}
-	a := Large{ID: 1, Name: "a"}
-	c := Large{ID: 2, Name: "b"}
+	x := Large{ID: 1, Name: "a"}
+	y := Large{ID: 2, Name: "b"}
+	var r Large
 	for b.Loop() {
-		_ = If(true, a, c)
+		r = If(true, x, y)
 	}
+	_ = r
 }

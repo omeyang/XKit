@@ -9,6 +9,9 @@ import (
 // 设计决策: 库代码不应因 nil 接收者/参数而 panic，统一返回显式错误。
 var ErrNilRetryer = errors.New("xretry: nil Retryer")
 
+// ErrNilFunc 表示传入了 nil 回调函数。
+var ErrNilFunc = errors.New("xretry: nil function")
+
 // RetryableError 可重试错误接口
 // 实现此接口的错误会被自动识别为可重试或不可重试
 type RetryableError interface {

@@ -842,19 +842,27 @@ func TestCache_OnEvicted_AsyncPattern(t *testing.T) {
 }
 
 func TestStopCleanupGoroutine_EdgeCases(t *testing.T) {
-	// nil 输入不应 panic
-	stopCleanupGoroutine(nil)
+	// nil 输入不应 panic，应返回 false
+	if stopCleanupGoroutine(nil) {
+		t.Error("nil input should return false")
+	}
 
-	// 非指针输入不应 panic
-	stopCleanupGoroutine(42)
+	// 非指针输入不应 panic，应返回 false
+	if stopCleanupGoroutine(42) {
+		t.Error("non-pointer input should return false")
+	}
 
-	// 无 done 字段的结构体不应 panic
+	// 无 done 字段的结构体不应 panic，应返回 false
 	type noDone struct{ Name string }
-	stopCleanupGoroutine(&noDone{Name: "test"})
+	if stopCleanupGoroutine(&noDone{Name: "test"}) {
+		t.Error("struct without done field should return false")
+	}
 
-	// done 字段类型不匹配不应 panic
+	// done 字段类型不匹配不应 panic，应返回 false
 	type wrongDone struct{ done int }
-	stopCleanupGoroutine(&wrongDone{done: 1})
+	if stopCleanupGoroutine(&wrongDone{done: 1}) {
+		t.Error("struct with wrong done type should return false")
+	}
 }
 
 func TestStopCleanupGoroutine_UpstreamStructAssert(t *testing.T) {

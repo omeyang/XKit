@@ -130,7 +130,7 @@ func (s *Server) Stop() error {
 	s.cleanupPprof()
 
 	// 关闭传输层和触发器
-	s.closeTransportAndTrigger()
+	closeErr := s.closeTransportAndTrigger()
 
 	// 等待所有 goroutine 完成
 	s.waitForGoroutines()
@@ -141,7 +141,7 @@ func (s *Server) Stop() error {
 	// 关闭审计日志
 	s.closeAuditLogger()
 
-	return nil
+	return closeErr
 }
 
 // Enable 启用调试服务（开始监听）。

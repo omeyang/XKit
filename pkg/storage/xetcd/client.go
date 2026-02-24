@@ -56,15 +56,17 @@ func NewClient(config *Config, opts ...Option) (*Client, error) {
 	cfg := config.applyDefaults()
 
 	// 构建 clientv3.Config
+	// 设计决策: keepalive 参数仅通过 DialOptions 设置，不同时设置 Config 字段。
+	// etcd 客户端内部会将 Config.DialKeepAliveTime/Timeout 转换为 gRPC DialOption，
+	// 与显式 DialOptions 合并时后者覆盖前者。去除冗余避免两处值不一致的隐患，
+	// 且显式 DialOptions 能控制 PermitWithoutStream 字段。
 	clientConfig := clientv3.Config{
-		Endpoints:            cfg.Endpoints,
-		DialTimeout:          cfg.DialTimeout,
-		DialKeepAliveTime:    cfg.DialKeepAliveTime,
-		DialKeepAliveTimeout: cfg.DialKeepAliveTimeout,
-		Username:             cfg.Username,
-		Password:             cfg.Password,
-		AutoSyncInterval:     cfg.AutoSyncInterval,
-		RejectOldCluster:     cfg.RejectOldCluster,
+		Endpoints:        cfg.Endpoints,
+		DialTimeout:      cfg.DialTimeout,
+		Username:         cfg.Username,
+		Password:         cfg.Password,
+		AutoSyncInterval: cfg.AutoSyncInterval,
+		RejectOldCluster: cfg.RejectOldCluster,
 		DialOptions: []grpc.DialOption{
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:                cfg.DialKeepAliveTime,

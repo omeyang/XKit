@@ -9,8 +9,9 @@ import (
 
 // 包级别错误定义。
 var (
-	// ErrNilConn 表示传入了 nil 连接。
-	ErrNilConn = errors.New("xclickhouse: nil connection")
+	// ErrNilClient 表示传入了 nil 连接。
+	// 命名与 xmongo.ErrNilClient、xcache.ErrNilClient 保持一致。
+	ErrNilClient = errors.New("xclickhouse: nil connection")
 
 	// ErrClosed 表示客户端已关闭。
 	ErrClosed = errors.New("xclickhouse: client closed")
@@ -47,13 +48,25 @@ var (
 	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
 	//
 	// 注意：检测使用正则匹配，可能对字符串字面量中的 FORMAT 产生误判。
-	// 如遇误判，请使用 Conn() 直接执行查询。
+	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsFormat = errors.New("xclickhouse: query contains FORMAT clause, not supported in QueryPage")
 
 	// ErrQueryContainsSettings 表示查询包含 SETTINGS 子句。
 	// QueryPage 使用子查询包装，SETTINGS 应通过连接参数配置。
 	//
 	// 注意：检测使用正则匹配，可能对字符串字面量中的 SETTINGS 产生误判。
-	// 如遇误判，请使用 Conn() 直接执行查询。
+	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsSettings = errors.New("xclickhouse: query contains SETTINGS clause, use connection options instead")
+
+	// ErrQueryContainsLimitOffset 表示查询包含 LIMIT 或 OFFSET 子句。
+	// QueryPage 自动管理分页，不接受包含 LIMIT/OFFSET 的查询。
+	//
+	// 注意：检测使用末尾正则匹配，仅检测查询末尾的 LIMIT/OFFSET。
+	// 子查询中的 LIMIT/OFFSET 不会被检测到。
+	ErrQueryContainsLimitOffset = errors.New("xclickhouse: query contains LIMIT/OFFSET clause, QueryPage manages pagination automatically")
+
+	// ErrOffsetTooLarge 表示分页偏移量超过允许的最大值。
+	// 大偏移量在 ClickHouse 中会导致扫描放大和性能下降。
+	// 如需大数据量分页，请使用 Client() 实现游标分页。
+	ErrOffsetTooLarge = errors.New("xclickhouse: offset exceeds maximum allowed, use cursor-based pagination via Client()")
 )

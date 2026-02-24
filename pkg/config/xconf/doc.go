@@ -2,6 +2,10 @@
 //
 // # 设计理念
 //
+// xconf 定位为最小化配置加载器，负责文件/字节数据的加载、反序列化和热重载。
+// 不负责配置治理（必选字段校验、默认值注入、环境变量覆盖），
+// 这些能力由上层业务框架按需实现。
+//
 // xconf 采用与 xcache/xmq 相同的设计模式：
 //   - 工厂函数：New, NewFromBytes
 //   - Client() 暴露底层 koanf 实例
@@ -15,7 +19,8 @@
 // # 并发安全
 //
 // 所有方法都是并发安全的：
-//   - Reload() 使用 atomic.Pointer 原子替换 koanf 实例
+//   - Reload() 通过 sync.Mutex 序列化并发调用，防止配置回退；
+//     解析成功后使用 atomic.Pointer 原子替换 koanf 实例
 //   - Client() 通过 atomic.Load 返回当前 koanf 实例指针（无锁）
 //   - Unmarshal() 通过 atomic.Load 获取实例后在 koanf 内部锁保护下反序列化
 //
@@ -26,7 +31,11 @@
 //
 // 推荐用法：每次需要时调用 Client()，不要长期缓存返回的指针。
 //
-// # MustUnmarshal
+// # Unmarshal
+//
+// Unmarshal 使用 mapstructure 进行反序列化，默认允许弱类型转换
+// （例如字符串 "8080" 可自动转为 int 8080）。
+// 如需严格类型校验，建议在 Unmarshal 后自行验证（如使用 go-playground/validator）。
 //
 // MustUnmarshal 是包级函数（非接口方法），适用于程序启动时的必要配置加载：
 //

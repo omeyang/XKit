@@ -84,6 +84,10 @@ func (q *QueryCounter) QueryErrors() int64 {
 // =============================================================================
 
 // MeasureOperation 测量操作耗时。
+//
+// 设计决策: 虽然当前实现等同于 time.Since(start)，保留此函数作为 storage 子包的
+// 统一度量入口点，便于未来扩展（如自动记录 metrics）且不破坏调用方。
+//
 // 使用方式：
 //
 //	start := time.Now()

@@ -316,6 +316,9 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 func (c *client) doAuthRequest(ctx context.Context, tenantID string, req *AuthRequest) error {
 	// 设计决策: 绝对 URL 必须使用 HTTPS（除非 AllowInsecure=true），
 	// 防止 Bearer Token 通过明文 HTTP 泄露到非安全通道。
+	// 绝对 HTTPS URL 允许跨主机——同一认证域内的服务可能部署在不同主机上，
+	// 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
+	// 不做主机白名单限制，因为 xauth 作为基础库不了解业务拓扑。
 	if !c.config.AllowInsecure && strings.HasPrefix(req.URL, "http://") {
 		return fmt.Errorf("%w: request URL must use https:// when carrying Bearer token", ErrInsecureHost)
 	}
@@ -398,20 +401,4 @@ func (c *client) resolveTenantID(tenantID string) string {
 		return tenantID
 	}
 	return GetTenantIDFromEnv()
-}
-
-// =============================================================================
-// 便捷函数
-// =============================================================================
-
-// MustNewClient 创建客户端，失败时 panic。
-//
-// Deprecated: 项目约定构造器应返回 error 而非 panic。请使用 NewClient 并处理错误。
-// 此函数保留仅为向后兼容。
-func MustNewClient(cfg *Config, opts ...Option) Client {
-	c, err := NewClient(cfg, opts...)
-	if err != nil {
-		panic(fmt.Sprintf("xauth: create client failed: %v", err))
-	}
-	return c
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -237,6 +238,33 @@ func TestEnsureDirWithPermNullByte(t *testing.T) {
 	}
 	if !errors.Is(err, ErrNullByte) {
 		t.Errorf("EnsureDir(含空字节) 错误 = %v, errors.Is(ErrNullByte) = false", err)
+	}
+}
+
+func TestEnsureDirWithPermMkdirFailure(t *testing.T) {
+	// 创建只读目录，使 os.MkdirAll 在其下创建子目录时失败
+	tmpDir := t.TempDir()
+	readonlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.MkdirAll(readonlyDir, 0750); err != nil {
+		t.Fatalf("创建 readonly 目录失败: %v", err)
+	}
+	if err := os.Chmod(readonlyDir, 0500); err != nil {
+		t.Fatalf("修改权限失败: %v", err)
+	}
+	t.Cleanup(func() {
+		// 恢复权限以便 t.TempDir() 能清理
+		if err := os.Chmod(readonlyDir, 0750); err != nil {
+			t.Logf("恢复权限失败: %v", err)
+		}
+	})
+
+	err := EnsureDirWithPerm(filepath.Join(readonlyDir, "subdir", "app.log"), 0750)
+	if err == nil {
+		t.Fatal("期望 os.MkdirAll 失败，但没有返回错误")
+	}
+	// 验证错误包含 xfile 上下文
+	if !strings.Contains(err.Error(), "xfile: create directory") {
+		t.Errorf("错误消息缺少 xfile 上下文: %v", err)
 	}
 }
 

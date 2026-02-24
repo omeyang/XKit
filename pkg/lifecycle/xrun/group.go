@@ -48,6 +48,13 @@ type Group struct {
 //	    xrun.WithLogger(logger),
 //	)
 func NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context) {
+	// 设计决策: nil context 归一化为 context.Background()，
+	// 防止 context.WithCancelCause(nil) panic（Go 标准库会 panic）。
+	// 不改变 API 签名（保持与 errgroup.WithContext 对齐），因此选择静默归一化。
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	options := defaultOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -336,6 +343,9 @@ func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Serv
 //	err := xrun.Run(ctx, xrun.HTTPServer(server, 10*time.Second))
 func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		if server == nil {
+			return ErrNilServer
+		}
 		// 用 buffered channel 传递 shutdown 结果
 		shutdownErrCh := make(chan error, 1)
 		// listenDone 用于通知 shutdown goroutine: ListenAndServe 已返回，

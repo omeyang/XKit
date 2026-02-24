@@ -268,20 +268,18 @@ func FuzzSlowQueryInfo(f *testing.F) {
 
 // FuzzStats 模糊测试 Stats 结构。
 func FuzzStats(f *testing.F) {
-	f.Add(int64(0), int64(0), int64(0), 0, 0, 0)
-	f.Add(int64(100), int64(5), int64(10), 50, 40, 10)
-	f.Add(int64(-1), int64(-1), int64(-1), -1, -1, -1)
-	f.Add(int64(1<<62), int64(1<<62), int64(1<<62), 1<<30, 1<<30, 1<<30)
+	f.Add(int64(0), int64(0), int64(0), 0)
+	f.Add(int64(100), int64(5), int64(10), 10)
+	f.Add(int64(-1), int64(-1), int64(-1), -1)
+	f.Add(int64(1<<62), int64(1<<62), int64(1<<62), 1<<30)
 
-	f.Fuzz(func(t *testing.T, pingCount, pingErrors, slowQueries int64, total, available, inUse int) {
+	f.Fuzz(func(t *testing.T, pingCount, pingErrors, slowQueries int64, inUse int) {
 		stats := Stats{
 			PingCount:   pingCount,
 			PingErrors:  pingErrors,
 			SlowQueries: slowQueries,
 			Pool: PoolStats{
-				TotalConnections:     total,
-				AvailableConnections: available,
-				InUseConnections:     inUse,
+				InUseConnections: inUse,
 			},
 		}
 
@@ -295,32 +293,24 @@ func FuzzStats(f *testing.F) {
 		if stats.SlowQueries != slowQueries {
 			t.Errorf("Stats.SlowQueries = %d, want %d", stats.SlowQueries, slowQueries)
 		}
-		if stats.Pool.TotalConnections != total {
-			t.Errorf("Stats.Pool.TotalConnections = %d, want %d", stats.Pool.TotalConnections, total)
+		if stats.Pool.InUseConnections != inUse {
+			t.Errorf("Stats.Pool.InUseConnections = %d, want %d", stats.Pool.InUseConnections, inUse)
 		}
 	})
 }
 
 // FuzzPoolStats 模糊测试 PoolStats 结构。
 func FuzzPoolStats(f *testing.F) {
-	f.Add(100, 90, 10)
-	f.Add(0, 0, 0)
-	f.Add(-1, -1, -1)
+	f.Add(10)
+	f.Add(0)
+	f.Add(-1)
 
-	f.Fuzz(func(t *testing.T, total, available, inUse int) {
+	f.Fuzz(func(t *testing.T, inUse int) {
 		pool := PoolStats{
-			TotalConnections:     total,
-			AvailableConnections: available,
-			InUseConnections:     inUse,
+			InUseConnections: inUse,
 		}
 
 		// 验证字段正确设置
-		if pool.TotalConnections != total {
-			t.Error("PoolStats.TotalConnections mismatch")
-		}
-		if pool.AvailableConnections != available {
-			t.Error("PoolStats.AvailableConnections mismatch")
-		}
 		if pool.InUseConnections != inUse {
 			t.Error("PoolStats.InUseConnections mismatch")
 		}

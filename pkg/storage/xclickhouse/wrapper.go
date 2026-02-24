@@ -45,16 +45,22 @@ const (
 
 	// MaxPageSize 分页查询允许的最大页大小。
 	// 限制单次查询返回的行数，防止超大 PageSize 导致内存暴涨或 ClickHouse 扫描压力过大。
-	// 如需更大的结果集，请使用 Conn() 直接执行查询或分多次请求。
+	// 如需更大的结果集，请使用 Client() 直接执行查询或分多次请求。
 	MaxPageSize int64 = 10000
+
+	// MaxOffset 分页查询允许的最大偏移量。
+	// ClickHouse 使用 OFFSET 分页时，大偏移量会导致扫描放大（先读取再丢弃行）。
+	// 超过此限制时返回 ErrOffsetTooLarge，引导调用方使用游标分页。
+	// 默认 100000：PageSize=100 时最多翻到第 1001 页，PageSize=10 时最多第 10001 页。
+	MaxOffset int64 = 100000
 )
 
-// Conn 返回底层 ClickHouse 连接。
+// Client 返回底层 ClickHouse 连接。
 //
-// 设计决策: Conn() 不检查 closed 状态。clickhouse-go driver.Conn 在关闭后
+// 设计决策: Client() 不检查 closed 状态。clickhouse-go driver.Conn 在关闭后
 // 操作会返回明确错误，无需在此层重复检查。修改返回签名为 (driver.Conn, error)
 // 会破坏 API 兼容性，且 Health/QueryPage/BatchInsert 已有 closed 检查。
-func (w *clickhouseWrapper) Conn() driver.Conn {
+func (w *clickhouseWrapper) Client() driver.Conn {
 	return w.conn
 }
 
@@ -208,8 +214,17 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 //   - WHERE name = 'FORMAT' → 会误判为包含 FORMAT 子句
 //   - 字符串字面量或注释中的关键字可能被误判
 //
-// 对于复杂查询场景，建议直接使用 Conn() 执行查询。
+// 对于复杂查询场景，建议直接使用 Client() 执行查询。
 var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
+
+// limitOffsetTailPattern 检测查询末尾的 LIMIT/OFFSET 子句。
+// 使用末尾锚定（$）避免误匹配子查询中的 LIMIT/OFFSET。
+//
+// 匹配示例：
+//   - "SELECT * FROM users LIMIT 10" → 匹配
+//   - "SELECT * FROM users LIMIT 10 OFFSET 5" → 匹配
+//   - "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub" → 不匹配（不在末尾）
+var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$`)
 
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
@@ -237,6 +252,11 @@ func validateQuerySyntax(query string) (string, error) {
 		}
 	}
 
+	// 检测末尾的 LIMIT/OFFSET 子句（QueryPage 自动管理分页）
+	if limitOffsetTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsLimitOffset
+	}
+
 	return normalized, nil
 }
 
@@ -252,10 +272,11 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	offset, validateErr := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if validateErr != nil {
 		// 转换为包级别错误（storageopt 只返回这三种错误）
-		switch validateErr {
-		case storageopt.ErrInvalidPage:
+		// 使用 errors.Is 而非 == 比较，确保即使 storageopt 将来包装错误也能正确匹配
+		switch {
+		case errors.Is(validateErr, storageopt.ErrInvalidPage):
 			return "", 0, ErrInvalidPage
-		case storageopt.ErrInvalidPageSize:
+		case errors.Is(validateErr, storageopt.ErrInvalidPageSize):
 			return "", 0, ErrInvalidPageSize
 		default:
 			return "", 0, ErrPageOverflow
@@ -265,6 +286,11 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 	// 限制页大小上限，防止超大 PageSize 导致 OOM
 	if opts.PageSize > MaxPageSize {
 		return "", 0, ErrPageSizeTooLarge
+	}
+
+	// 限制偏移量上限，防止大偏移量导致 ClickHouse 扫描放大
+	if offset > MaxOffset {
+		return "", 0, ErrOffsetTooLarge
 	}
 
 	return normalized, offset, nil
@@ -549,7 +575,7 @@ func (w *clickhouseWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryIn
 // 性能说明：
 // 子查询方式对于简单查询可能比直接改写 SELECT 列表性能略差，
 // 但能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）。
-// 对于性能敏感的简单查询，建议直接使用 Conn() 执行手写的 COUNT 语句。
+// 对于性能敏感的简单查询，建议直接使用 Client() 执行手写的 COUNT 语句。
 func buildCountQuery(query string) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS _count_subquery", query)
 }

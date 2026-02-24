@@ -336,6 +336,19 @@ func TestUnmarshal_Partial(t *testing.T) {
 	assert.True(t, app.Debug)
 }
 
+func TestUnmarshal_TypeMismatch(t *testing.T) {
+	// 将标量值反序列化到结构体指针会触发底层 mapstructure 错误
+	cfg, err := NewFromBytes([]byte(`key: just_a_string`), FormatYAML)
+	require.NoError(t, err)
+
+	type S struct {
+		Name string `koanf:"name"`
+	}
+	var s S
+	err = cfg.Unmarshal("key", &s)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+}
+
 func TestUnmarshal_NonexistentPath(t *testing.T) {
 	path := createTempFile(t, "config.yaml", testYAMLContent)
 
@@ -388,6 +401,28 @@ func TestUnmarshal_NilTarget(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cfg.Unmarshal("", nil)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NonPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// 非指针 target 应被 xconf 自身拦截（而非下层 mapstructure 报错）
+	var appCfg AppConfig
+	err = cfg.Unmarshal("", appCfg) // 注意：没有 &
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NilPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// nil 指针 target 应被拦截
+	var appCfg *AppConfig
+	err = cfg.Unmarshal("", appCfg)
 	assert.ErrorIs(t, err, ErrUnmarshalFailed)
 	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
 }
@@ -566,6 +601,44 @@ func TestEmptyConfigFile(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyConfigFile_JSON(t *testing.T) {
+	// 空 JSON 文件也应该可以加载（与 NewFromBytes 行为一致）
+	path := createTempFile(t, "config.json", "")
+
+	cfg, err := New(path)
+	require.NoError(t, err, "New(empty.json) should succeed like NewFromBytes(empty, JSON)")
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyData_ConsistentBehavior(t *testing.T) {
+	// 契约测试：New 和 NewFromBytes 对空数据的行为必须一致（包括 JSON 格式）
+	for _, format := range []struct {
+		name string
+		ext  string
+		fmt  Format
+	}{
+		{"YAML", "yaml", FormatYAML},
+		{"JSON", "json", FormatJSON},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			// New: 空文件
+			path := createTempFile(t, "empty."+format.ext, "")
+			cfgFile, err := New(path)
+			require.NoError(t, err, "New(empty.%s) should succeed", format.ext)
+
+			// NewFromBytes: 空数据
+			cfgBytes, err := NewFromBytes([]byte{}, format.fmt)
+			require.NoError(t, err, "NewFromBytes(empty, %s) should succeed", format.name)
+
+			// 两者都返回空配置
+			assert.Empty(t, cfgFile.Client().String("any.key"))
+			assert.Empty(t, cfgBytes.Client().String("any.key"))
+		})
+	}
 }
 
 func TestNestedConfig(t *testing.T) {

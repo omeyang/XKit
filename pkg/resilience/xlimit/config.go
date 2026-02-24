@@ -226,6 +226,12 @@ func (o Override) Validate() error {
 	if o.Limit <= 0 {
 		return fmt.Errorf("%w: limit must be positive", ErrInvalidRule)
 	}
+	if o.Window < 0 {
+		return fmt.Errorf("%w: window cannot be negative", ErrInvalidRule)
+	}
+	if o.Burst < 0 {
+		return fmt.Errorf("%w: burst cannot be negative", ErrInvalidRule)
+	}
 	return nil
 }
 

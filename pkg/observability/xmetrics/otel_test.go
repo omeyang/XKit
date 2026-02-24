@@ -436,6 +436,18 @@ func TestAttrsToOTel(t *testing.T) {
 		assert.Len(t, result, 1)
 	})
 
+	t.Run("skip_reserved_keys", func(t *testing.T) {
+		attrs := []Attr{
+			{Key: AttrKeyComponent, Value: "override"},
+			{Key: AttrKeyOperation, Value: "override"},
+			{Key: AttrKeyStatus, Value: "override"},
+			{Key: "valid", Value: "value"},
+		}
+		result := attrsToOTel(attrs)
+		assert.Len(t, result, 1)
+		assert.Equal(t, attribute.Key("valid"), result[0].Key)
+	})
+
 	t.Run("all_types", func(t *testing.T) {
 		attrs := []Attr{
 			String("str", "value"),
@@ -449,6 +461,33 @@ func TestAttrsToOTel(t *testing.T) {
 		result := attrsToOTel(attrs)
 		assert.Len(t, result, 7)
 	})
+}
+
+// ============================================================================
+// isReservedAttrKey 测试
+// ============================================================================
+
+func TestIsReservedAttrKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key      string
+		reserved bool
+	}{
+		{AttrKeyComponent, true},
+		{AttrKeyOperation, true},
+		{AttrKeyStatus, true},
+		{"service", false},
+		{"db.system", false},
+		{"", false},
+		{"Component", false}, // 大小写敏感
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			assert.Equal(t, tt.reserved, isReservedAttrKey(tt.key))
+		})
+	}
 }
 
 // ============================================================================

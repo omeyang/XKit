@@ -68,6 +68,16 @@ func TestSanitizePath(t *testing.T) {
 			input: "/var//log///app.log",
 			want:  "/var/log/app.log",
 		},
+		{
+			name:  "相对路径内部 .. 被规范化",
+			input: "a/../b/c.log",
+			want:  "b/c.log",
+		},
+		{
+			name:  "多层相对路径内部 .. 被规范化",
+			input: "a/b/../c/d.log",
+			want:  "a/c/d.log",
+		},
 
 		// 错误情况
 		{
@@ -479,6 +489,26 @@ func TestSafeJoin(t *testing.T) {
 }
 
 // TestSafeJoinVsSanitizePath 对比 SafeJoin 和 SanitizePath 的行为差异
+// TestJoinAndVerifyRelError 测试 joinAndVerify 中 filepath.Rel 失败的防御性分支。
+// filepath.Rel 对两个已清理的绝对路径在当前标准库实现中不会失败，
+// 此测试通过注入模拟实现覆盖该防御性代码路径。
+func TestJoinAndVerifyRelError(t *testing.T) {
+	original := filepathRelFn
+	t.Cleanup(func() { filepathRelFn = original })
+
+	filepathRelFn = func(_, _ string) (string, error) {
+		return "", errors.New("simulated Rel failure")
+	}
+
+	_, err := SafeJoin("/var/log", "app.log")
+	if err == nil {
+		t.Fatal("期望 filepathRelFn 失败时 SafeJoin 返回错误")
+	}
+	if !errors.Is(err, ErrPathEscaped) {
+		t.Errorf("期望 ErrPathEscaped，但得到: %v", err)
+	}
+}
+
 func TestSafeJoinVsSanitizePath(t *testing.T) {
 	t.Run("SanitizePath允许绝对路径穿越而SafeJoin不允许", func(t *testing.T) {
 		// SanitizePath 允许绝对路径穿越（已知的设计局限）

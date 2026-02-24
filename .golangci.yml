@@ -231,6 +231,11 @@ linters:
         linters:
           - gosec
         source: "uint64\\(s\\.n\\)"
+      # xkeylock: cache line padding field — blank identifier is intentional for struct alignment
+      - path: xkeylock/keylock_impl\.go
+        linters:
+          - unused
+        source: "cache line padding"
       # xkeylock: shardMask conversion safe — sc validated as positive power of 2 in [1, maxShardCount]
       - path: xkeylock/options\.go
         linters:

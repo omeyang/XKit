@@ -33,6 +33,10 @@ var (
 	// ErrMaxRetriesExceeded 达到最大重试次数。
 	// WatchWithRetry 在耗尽重试次数后，通过错误事件发送此错误。
 	ErrMaxRetriesExceeded = errors.New("xetcd: max retries exceeded")
+
+	// errNilKv 内部错误：收到 Kv 为 nil 的 etcd 事件。
+	// 正常协议中不应出现，但防御性处理以避免 goroutine panic。
+	errNilKv = errors.New("xetcd: received event with nil Kv")
 )
 
 // IsKeyNotFound 检查错误是否为键不存在。

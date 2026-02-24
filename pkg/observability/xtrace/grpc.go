@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/omeyang/xkit/pkg/context/xctx"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -182,13 +180,10 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // 注意：本函数不传播 tracestate。如需传播 tracestate，
 // 请使用 InjectTraceToMetadata 手动设置，或使用 OpenTelemetry SDK。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
-	traceID := xctx.TraceID(ctx)
-	spanID := xctx.SpanID(ctx)
-	requestID := xctx.RequestID(ctx)
-	traceFlags := xctx.TraceFlags(ctx)
+	info := TraceInfoFromContext(ctx)
 
 	// 如果没有任何信息，直接返回
-	if traceID == "" && spanID == "" && requestID == "" {
+	if info.TraceID == "" && info.SpanID == "" && info.RequestID == "" {
 		return ctx
 	}
 
@@ -201,19 +196,19 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 	}
 
 	// 使用 Set 覆盖（而非追加），避免多次调用产生重复值
-	if traceID != "" {
-		md.Set(MetaTraceID, traceID)
+	if info.TraceID != "" {
+		md.Set(MetaTraceID, info.TraceID)
 	}
-	if spanID != "" {
-		md.Set(MetaSpanID, spanID)
+	if info.SpanID != "" {
+		md.Set(MetaSpanID, info.SpanID)
 	}
-	if requestID != "" {
-		md.Set(MetaRequestID, requestID)
+	if info.RequestID != "" {
+		md.Set(MetaRequestID, info.RequestID)
 	}
 
 	// 生成 W3C traceparent（仅在 traceID 和 spanID 都有效时）
 	// 使用 context 中的 traceFlags，若无则默认 "00"
-	if traceparent := formatTraceparent(traceID, spanID, traceFlags); traceparent != "" {
+	if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
 		md.Set(MetaTraceparent, traceparent)
 	}
 
@@ -231,37 +226,15 @@ func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 	if md == nil {
 		return
 	}
-
-	if info.TraceID != "" {
-		md.Set(MetaTraceID, info.TraceID)
-	}
-	if info.SpanID != "" {
-		md.Set(MetaSpanID, info.SpanID)
-	}
-	if info.RequestID != "" {
-		md.Set(MetaRequestID, info.RequestID)
-	}
-
-	// 设计决策: 无论 info.Traceparent 是否包含非 v00 版本，
-	// 始终以 v00 格式重新生成 traceparent。这与 formatTraceparent 的设计决策一致：
-	// 本包作为 v00 实现，按 W3C 规范应以自身支持的版本重新生成。
-	if info.Traceparent != "" {
-		if traceID, spanID, traceFlags, ok := parseTraceparent(info.Traceparent); ok {
-			md.Set(MetaTraceparent, formatTraceparent(traceID, spanID, traceFlags))
-		}
-		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
-	}
-
-	// 如果没有设置有效的 Traceparent，尝试从 TraceID/SpanID 生成
-	if len(md.Get(MetaTraceparent)) == 0 {
-		if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
-			md.Set(MetaTraceparent, traceparent)
-		}
-	}
-
-	if info.Tracestate != "" {
-		md.Set(MetaTracestate, info.Tracestate)
-	}
+	injectTraceInfoTo(
+		func(key, value string) { md.Set(key, value) },
+		info, transportKeys{
+			traceID:     MetaTraceID,
+			spanID:      MetaSpanID,
+			requestID:   MetaRequestID,
+			traceparent: MetaTraceparent,
+			tracestate:  MetaTracestate,
+		})
 }
 
 // =============================================================================

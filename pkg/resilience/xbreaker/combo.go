@@ -69,6 +69,9 @@ func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) (*BreakerRetry
 //  5. 每次尝试的结果都被熔断器记录
 //  6. 如果在重试过程中触发熔断，后续重试将被阻断
 func (br *BreakerRetryer) DoWithRetry(ctx context.Context, fn func(ctx context.Context) error) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if fn == nil {
 		return ErrNilFunc
 	}
@@ -111,6 +114,12 @@ func ExecuteWithRetry[T any](ctx context.Context, br *BreakerRetryer, fn func() 
 	if br == nil {
 		return zero, ErrNilBreakerRetryer
 	}
+	if ctx == nil {
+		return zero, ErrNilContext
+	}
+	if fn == nil {
+		return zero, ErrNilFunc
+	}
 	return xretry.DoWithResult(ctx, br.retryer, func(ctx context.Context) (T, error) {
 		// 每次重试尝试都经过熔断器
 		return Execute(ctx, br.breaker, fn)
@@ -123,6 +132,12 @@ func ExecuteWithRetry[T any](ctx context.Context, br *BreakerRetryer, fn func() 
 // 与 DoWithRetry 不同，操作函数不接收 context。
 // 每次重试尝试都会经过熔断器检查和记录。
 func (br *BreakerRetryer) DoWithRetrySimple(ctx context.Context, fn func() error) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if fn == nil {
+		return ErrNilFunc
+	}
 	return br.retryer.Do(ctx, func(ctx context.Context) error {
 		// 每次重试尝试都经过熔断器
 		return br.breaker.Do(ctx, fn)
@@ -288,14 +303,21 @@ func (rtb *RetryThenBreak) Counts() Counts {
 	return rtb.tscb.Counts()
 }
 
-// toResultError 将 SuccessPolicy 的判断结果转换为 gobreaker v2 期望的 error 值
+// toResultError 将策略判断结果转换为 gobreaker v2 期望的 error 值
 //
 // gobreaker v2 的 done 回调签名为 func(err error)：
 //   - done(nil) 表示成功
-//   - done(err) 表示失败
+//   - done(err) 表示失败（或被排除）
 //
-// 此方法根据 SuccessPolicy 判断结果返回适当的 error 值
+// 设计决策: 先检查 ExcludePolicy，再检查 SuccessPolicy，
+// 与 gobreaker 内部 afterRequest 的优先级一致（先 isExcluded 再 isSuccessful）。
+// 若顺序相反，同时匹配两个策略的错误会被 SuccessPolicy 转为 nil，
+// 绕过 gobreaker 的 isExcluded 检查，错误地计入成功计数。
 func (rtb *RetryThenBreak) toResultError(err error) error {
+	// 被排除的错误原样传递，让 gobreaker 自行处理排除逻辑（不计入任何计数）
+	if rtb.breaker.IsExcluded(err) {
+		return err
+	}
 	if rtb.breaker.IsSuccessful(err) {
 		return nil
 	}

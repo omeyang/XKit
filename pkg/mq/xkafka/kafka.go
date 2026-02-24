@@ -180,12 +180,26 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 	return &consumerWrapper{
 		consumer: consumer,
 		options:  options,
+		groupID:  extractGroupID(clonedConfig),
 	}, nil
+}
+
+// extractGroupID 从 ConfigMap 中提取 group.id，用于可观测性 span 属性。
+func extractGroupID(config *kafka.ConfigMap) string {
+	v, err := config.Get("group.id", nil)
+	if err == nil && v != nil {
+		return fmt.Sprint(v)
+	}
+	return ""
 }
 
 // =============================================================================
 // 选项
 // =============================================================================
+
+// defaultFlushTimeout 是消息刷新的默认超时时间。
+// 在 Producer Close 和 DLQ Consumer Close 中共享此默认值。
+const defaultFlushTimeout = 10 * time.Second
 
 // producerOptions 包含 Kafka Producer 的配置选项。
 type producerOptions struct {
@@ -199,7 +213,7 @@ func defaultProducerOptions() *producerOptions {
 	return &producerOptions{
 		Tracer:        NoopTracer{},
 		Observer:      xmetrics.NoopObserver{},
-		FlushTimeout:  10 * time.Second,
+		FlushTimeout:  defaultFlushTimeout,
 		HealthTimeout: 5 * time.Second,
 	}
 }

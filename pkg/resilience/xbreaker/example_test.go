@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xbreaker"
@@ -113,9 +114,14 @@ func ExampleNewCompositePolicy() {
 
 // ExampleWithOnStateChange 演示状态变化回调
 func ExampleWithOnStateChange() {
+	// 回调异步执行，使用 WaitGroup 等待完成
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	breaker := xbreaker.NewBreaker("monitored-service",
 		xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(1)),
 		xbreaker.WithOnStateChange(func(name string, from, to xbreaker.State) {
+			defer wg.Done()
 			fmt.Printf("熔断器 %s: %s -> %s\n", name, from, to)
 		}),
 	)
@@ -126,6 +132,9 @@ func ExampleWithOnStateChange() {
 	_ = breaker.Do(ctx, func() error {
 		return errors.New("service unavailable")
 	})
+
+	// 等待异步回调完成
+	wg.Wait()
 
 	// Output: 熔断器 monitored-service: closed -> open
 }

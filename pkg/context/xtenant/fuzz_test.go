@@ -3,6 +3,7 @@ package xtenant_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
@@ -36,10 +37,11 @@ func FuzzWithTenantID(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取
+		// 验证能正确读取（WithTenantID 会 TrimSpace）
 		got := xtenant.TenantID(newCtx)
-		if got != tenantID {
-			t.Errorf("TenantID() = %q, want %q", got, tenantID)
+		want := strings.TrimSpace(tenantID)
+		if got != want {
+			t.Errorf("TenantID() = %q, want %q", got, want)
 		}
 	})
 }
@@ -64,10 +66,11 @@ func FuzzWithTenantName(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取
+		// 验证能正确读取（WithTenantName 会 TrimSpace）
 		got := xtenant.TenantName(newCtx)
-		if got != tenantName {
-			t.Errorf("TenantName() = %q, want %q", got, tenantName)
+		want := strings.TrimSpace(tenantName)
+		if got != want {
+			t.Errorf("TenantName() = %q, want %q", got, want)
 		}
 	})
 }
@@ -95,13 +98,15 @@ func FuzzWithTenantInfo(f *testing.F) {
 			return
 		}
 
-		// 验证能正确读取非空字段
+		// 验证能正确读取非空字段（WithTenantInfo 会 TrimSpace）
 		gotInfo := xtenant.GetTenantInfo(newCtx)
-		if tenantID != "" && gotInfo.TenantID != tenantID {
-			t.Errorf("TenantID = %q, want %q", gotInfo.TenantID, tenantID)
+		wantID := strings.TrimSpace(tenantID)
+		if wantID != "" && gotInfo.TenantID != wantID {
+			t.Errorf("TenantID = %q, want %q", gotInfo.TenantID, wantID)
 		}
-		if tenantName != "" && gotInfo.TenantName != tenantName {
-			t.Errorf("TenantName = %q, want %q", gotInfo.TenantName, tenantName)
+		wantName := strings.TrimSpace(tenantName)
+		if wantName != "" && gotInfo.TenantName != wantName {
+			t.Errorf("TenantName = %q, want %q", gotInfo.TenantName, wantName)
 		}
 	})
 }

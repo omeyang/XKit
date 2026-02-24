@@ -253,7 +253,11 @@ func defaultAcquireOptions() *acquireOptions {
 	}
 }
 
-// validate 验证获取选项
+// validate 验证获取选项（TryAcquire 和 Acquire 共用的校验）
+//
+// 设计决策: maxRetries 和 retryDelay 仅对 Acquire 有意义，不在此处校验。
+// TryAcquire 不使用重试参数，不应因用户传入了 WithMaxRetries(0) 而报错。
+// Acquire 通过 validateRetryParams 单独校验重试参数。
 func (o *acquireOptions) validate() error {
 	if o.capacity <= 0 {
 		return fmt.Errorf("%w: capacity must be positive, got %d", ErrInvalidCapacity, o.capacity)
@@ -267,6 +271,11 @@ func (o *acquireOptions) validate() error {
 	if o.tenantQuota > 0 && o.tenantQuota > o.capacity {
 		return fmt.Errorf("%w: tenant quota (%d) cannot exceed capacity (%d)", ErrInvalidTenantQuota, o.tenantQuota, o.capacity)
 	}
+	return nil
+}
+
+// validateRetryParams 验证重试相关参数（仅 Acquire 调用）
+func (o *acquireOptions) validateRetryParams() error {
 	if o.maxRetries <= 0 {
 		return fmt.Errorf("%w: max retries must be positive, got %d", ErrInvalidMaxRetries, o.maxRetries)
 	}
@@ -386,7 +395,8 @@ func (o *queryOptions) validate() error {
 	if o.tenantQuota < 0 {
 		return fmt.Errorf("%w: tenant quota cannot be negative, got %d", ErrInvalidTenantQuota, o.tenantQuota)
 	}
-	if o.tenantQuota > 0 && o.capacity > 0 && o.tenantQuota > o.capacity {
+	// 设计决策: o.capacity > 0 条件已由上方 capacity <= 0 校验保证，此处省略。
+	if o.tenantQuota > 0 && o.tenantQuota > o.capacity {
 		return fmt.Errorf("%w: tenant quota (%d) cannot exceed capacity (%d)", ErrInvalidTenantQuota, o.tenantQuota, o.capacity)
 	}
 	return nil

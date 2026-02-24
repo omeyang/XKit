@@ -50,8 +50,8 @@ func (c *Client) validateSocket() error {
 
 	// 校验 socket 所有者
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		uid := uint32(os.Getuid()) //nolint:gosec // Getuid 返回值在 Linux 上始终 ≥0，安全转换为 uint32
-		if stat.Uid != uid && stat.Uid != 0 {
+		uid := os.Getuid()
+		if int(stat.Uid) != uid && stat.Uid != 0 {
 			return fmt.Errorf("socket %s 的所有者 (UID=%d) 与当前用户 (UID=%d) 不匹配",
 				c.socketPath, stat.Uid, uid)
 		}

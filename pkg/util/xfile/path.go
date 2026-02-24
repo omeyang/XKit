@@ -39,6 +39,7 @@ func isASCIILetter(c byte) bool {
 
 // hasDotDotSegment 检测路径中是否包含 ".." 作为独立路径段。
 // 使用逐字符扫描实现零内存分配，避免 strings.FieldsFunc 的 []string 开销。
+// 同时将 '/' 和 '\' 视为分隔符，以检测 Windows 风格路径穿越（即使在 Linux 上）。
 func hasDotDotSegment(path string) bool {
 	i := 0
 	for i < len(path) {
@@ -62,6 +63,9 @@ func hasDotDotSegment(path string) bool {
 }
 
 // SanitizePath 对文件路径进行安全检查和规范化
+//
+// 安全边界：本函数仅做格式净化，不防护绝对路径穿越。
+// 如需将路径限制在特定目录内，请使用 [SafeJoin] 或 [SafeJoinWithOptions]。
 //
 // 功能：
 //   - 路径规范化（消除 . 和冗余斜杠）
@@ -259,13 +263,17 @@ func validatePath(path string) (string, error) {
 	return cleanPath, nil
 }
 
+// filepathRelFn 用于 joinAndVerify 中的路径关系计算。
+// 默认为 filepath.Rel，测试中可注入模拟实现以覆盖防御性错误分支。
+var filepathRelFn = filepath.Rel
+
 // joinAndVerify 拼接路径并验证结果仍在 base 内
 //
 // 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处的错误分支
 // 是防御性代码，防止标准库行为变更时出现静默安全漏洞。
 func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	joined := filepath.Join(cleanBase, cleanPath)
-	rel, err := filepath.Rel(cleanBase, joined)
+	rel, err := filepathRelFn(cleanBase, joined)
 	if err != nil {
 		return "", fmt.Errorf("failed to compute relative path (%v): %w", err, ErrPathEscaped)
 	}

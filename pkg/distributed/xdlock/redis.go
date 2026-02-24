@@ -208,8 +208,10 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 锁过期也视为"未持有锁"
-		if errors.Is(wrappedErr, ErrLockExpired) {
+		// 设计决策: ErrLockExpired 和 ErrLockHeld 统一转为 ErrNotLocked，
+		// 对 handle 而言两者含义相同——"你已不再持有该锁"。保持与接口契约和
+		// etcd 后端行为一致，调用方只需检查 ErrNotLocked 即可处理所有权丢失。
+		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
 			return ErrNotLocked
 		}
 		return wrappedErr
@@ -225,14 +227,14 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 // 设计决策: 允许在 factory 关闭后续期，与 Unlock 保持一致。
 // factory.Close() 不影响已持有锁的操作，仅阻止创建新锁。
 //
-// 设计决策: ErrLockExpired 转为 ErrNotLocked（锁已失去），
+// 设计决策: ErrLockExpired/ErrLockHeld 转为 ErrNotLocked（所有权已丢失），
 // ErrExtendFailed 保持原语义（续期操作失败，锁可能仍在），使调用方可区分两种情况。
 func (h *redisLockHandle) Extend(ctx context.Context) error {
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 锁已过期/被抢走 → 锁已失去
-		if errors.Is(wrappedErr, ErrLockExpired) {
+		// 锁已过期/被抢走 → 所有权已丢失
+		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
 			return ErrNotLocked
 		}
 		return wrappedErr

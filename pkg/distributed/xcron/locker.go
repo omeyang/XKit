@@ -3,6 +3,8 @@ package xcron
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 )
 
@@ -100,6 +102,13 @@ type Locker interface {
 // 当 Unlock 或 Renew 时锁已过期或被其他实例持有时返回此错误。
 var ErrLockNotHeld = errors.New("xcron: lock not held by this instance")
 
-// ErrLockAcquireFailed 表示获取锁失败（服务异常）。
-// 与 TryLock 返回 acquired=false 不同，此错误表示锁服务本身出现问题。
-var ErrLockAcquireFailed = errors.New("xcron: failed to acquire lock")
+// defaultIdentity 生成默认实例标识（hostname:pid）。
+// 用于 RedisLocker 和 K8sLocker 的默认 identity。
+func defaultIdentity() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	pid := os.Getpid()
+	return fmt.Sprintf("%s:%d", hostname, pid)
+}

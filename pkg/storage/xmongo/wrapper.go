@@ -82,7 +82,7 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
-	if err := w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
+	if err = w.clientOps.Ping(ctx, readpref.Primary()); err != nil {
 		w.healthCounter.IncPingError()
 		return fmt.Errorf("xmongo health: %w", err)
 	}
@@ -101,21 +101,7 @@ func (w *mongoWrapper) Stats() Stats {
 }
 
 // getPoolStats 获取连接池状态。
-//
-// 限制说明：
-// MongoDB Go driver v2 不直接暴露连接池详细信息（TotalConnections、AvailableConnections）。
-// 这是 driver 的设计决策，因为 MongoDB 使用连接池复用和会话管理，
-// 传统的"连接数"概念不能准确反映资源使用情况。
-//
-// 当前返回值：
-//   - InUseConnections: 使用 NumberSessionsInProgress() 返回活跃会话数作为近似值
-//   - TotalConnections: 始终为 0（driver 未暴露此信息）
-//   - AvailableConnections: 始终为 0（driver 未暴露此信息）
-//
-// 获取详细连接池信息的替代方案：
-//  1. 使用 MongoDB serverStatus 命令：db.runCommand({serverStatus: 1}).connections
-//  2. 监控 MongoDB 服务端指标（推荐用于生产环境）
-//  3. 使用 driver 的事件监控功能（PoolEvent）统计连接创建/关闭
+// 详细信息见 PoolStats 文档。
 func (w *mongoWrapper) getPoolStats() PoolStats {
 	if w.clientOps == nil {
 		return PoolStats{}
@@ -265,16 +251,8 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		return nil, fmt.Errorf("xmongo find_page count %s.%s: %w", info.Database, info.Collection, err)
 	}
 
-	// 构建查询选项
-	findOpts := options.Find().
-		SetSkip(skip).
-		SetLimit(opts.PageSize)
-	if len(opts.Sort) > 0 {
-		findOpts = findOpts.SetSort(opts.Sort)
-	}
-
 	// 执行查询
-	cursor, err := coll.Find(ctx, filter, findOpts)
+	cursor, err := coll.Find(ctx, filter, buildFindOptions(skip, opts))
 	if err != nil {
 		return nil, fmt.Errorf("xmongo find_page find %s.%s: %w", info.Database, info.Collection, err)
 	}
@@ -297,6 +275,20 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		PageSize:   opts.PageSize,
 		TotalPages: storageopt.CalculateTotalPages(total, opts.PageSize),
 	}, nil
+}
+
+// buildFindOptions 构建分页查询的 FindOptions。
+func buildFindOptions(skip int64, opts PageOptions) *options.FindOptionsBuilder {
+	findOpts := options.Find().
+		SetSkip(skip).
+		SetLimit(opts.PageSize)
+	if len(opts.Sort) > 0 {
+		findOpts = findOpts.SetSort(opts.Sort)
+	}
+	if len(opts.Projection) > 0 {
+		findOpts = findOpts.SetProjection(opts.Projection)
+	}
+	return findOpts
 }
 
 // bulkInsert 批量插入实现。

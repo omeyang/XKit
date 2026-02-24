@@ -928,6 +928,96 @@ func TestExecuteWithRetry_NilBreakerRetryer(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilBreakerRetryer)
 }
 
+// === FG-M2/M3 修复验证：nil ctx/fn 入口校验 ===
+
+func TestBreakerRetryer_DoWithRetry_NilArgs(t *testing.T) {
+	breaker := NewBreaker("test")
+	retryer := xretry.NewRetryer()
+	combo, err := NewBreakerRetryer(breaker, retryer)
+	require.NoError(t, err)
+
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		err := combo.DoWithRetry(nilCtx, func(_ context.Context) error { return nil })
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+func TestBreakerRetryer_DoWithRetrySimple_NilArgs(t *testing.T) {
+	breaker := NewBreaker("test")
+	retryer := xretry.NewRetryer()
+	combo, err := NewBreakerRetryer(breaker, retryer)
+	require.NoError(t, err)
+
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		err := combo.DoWithRetrySimple(nilCtx, func() error { return nil })
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("nil func", func(t *testing.T) {
+		err := combo.DoWithRetrySimple(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
+}
+
+func TestExecuteWithRetry_NilArgs(t *testing.T) {
+	breaker := NewBreaker("test")
+	retryer := xretry.NewRetryer()
+	combo, err := NewBreakerRetryer(breaker, retryer)
+	require.NoError(t, err)
+
+	t.Run("nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		_, err := ExecuteWithRetry(nilCtx, combo, func() (string, error) { return "", nil })
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("nil func", func(t *testing.T) {
+		_, err := ExecuteWithRetry[string](context.Background(), combo, nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
+}
+
+// === FG-M4 修复验证：ExcludePolicy 优先级 ===
+
+func TestRetryThenBreak_ExcludePolicyPriority(t *testing.T) {
+	// 场景：错误同时匹配 SuccessPolicy 和 ExcludePolicy
+	// 期望：ExcludePolicy 优先，错误不计入任何计数（而非计入成功）
+	errBoth := errors.New("both excluded and successful")
+
+	successPolicy := &customSuccessPolicy{
+		successErrors: []error{errBoth},
+	}
+	excludePolicy := &testExcludePolicy{
+		excludedErrors: []error{errBoth},
+	}
+
+	retryer := xretry.NewRetryer(
+		xretry.WithRetryPolicy(xretry.NewFixedRetry(1)),
+		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+	)
+	breaker := NewBreaker("test",
+		WithTripPolicy(NewConsecutiveFailures(2)),
+		WithSuccessPolicy(successPolicy),
+		WithExcludePolicy(excludePolicy),
+	)
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// 返回同时匹配两个策略的错误
+	err = rtb.Do(ctx, func(_ context.Context) error {
+		return errBoth
+	})
+	assert.ErrorIs(t, err, errBoth)
+
+	// 验证：错误应被排除在统计之外（ExcludePolicy 优先）
+	counts := rtb.Counts()
+	assert.Equal(t, uint32(0), counts.TotalSuccesses, "excluded error should not count as success")
+	assert.Equal(t, uint32(0), counts.TotalFailures, "excluded error should not count as failure")
+}
+
 func TestExecuteRetryThenBreak_NilRetryThenBreak(t *testing.T) {
 	_, err := ExecuteRetryThenBreak(context.Background(), nil, func() (string, error) {
 		return "hello", nil

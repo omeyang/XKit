@@ -77,7 +77,13 @@ func (p *TracingProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage)
 		Attrs:     pulsarAttrs(p.topic),
 	})
 	defer func() {
-		span.End(xmetrics.Result{Err: err})
+		result := xmetrics.Result{Err: err}
+		if id != nil {
+			result.Attrs = []xmetrics.Attr{
+				xmetrics.String("messaging.message.id", id.String()),
+			}
+		}
+		span.End(result)
 	}()
 
 	id, err = p.Producer.Send(ctx, msg)
@@ -198,6 +204,9 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	attrs := pulsarAttrs(c.topic)
 	if sub := c.Subscription(); sub != "" {
 		attrs = append(attrs, xmetrics.String("messaging.consumer.group.name", sub))
+	}
+	if id := msg.ID(); id != nil {
+		attrs = append(attrs, xmetrics.String("messaging.message.id", id.String()))
 	}
 
 	var ackErr error

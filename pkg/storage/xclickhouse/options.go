@@ -79,7 +79,7 @@ type Options struct {
 
 	// AsyncSlowQueryQueueSize 是异步慢查询任务队列大小。
 	// 仅当设置 AsyncSlowQueryHook 时生效。
-	// 默认为 1000。当队列满时，新任务将被丢弃并记录日志。
+	// 默认为 1000。当队列满时，新任务将被静默丢弃（不记录日志），属于可接受的降级行为。
 	AsyncSlowQueryQueueSize int
 
 	// Observer 是统一观测接口（metrics/tracing）。

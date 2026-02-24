@@ -14,6 +14,8 @@ func FuzzCache(f *testing.F) {
 	f.Add("key4", 999, uint8(4))
 	f.Add("key5", 0, uint8(5))
 
+	// 设计决策: 共享 Cache 实例（而非每次迭代创建新实例），以测试 Cache 在长期
+	// 并发使用下的稳定性。Cache 是并发安全的，Close 后操作安全降级。
 	cache, err := New[string, int](Config{Size: 100, TTL: time.Minute})
 	if err != nil {
 		f.Fatalf("New failed: %v", err)

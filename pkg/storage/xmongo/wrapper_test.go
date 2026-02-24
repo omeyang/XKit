@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -46,10 +47,13 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 模拟慢查询触发
@@ -76,10 +80,13 @@ func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
 		SlowQueryHook:      nil, // 无钩子
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	info := SlowQueryInfo{
@@ -105,10 +112,13 @@ func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时低于阈值
@@ -133,10 +143,13 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时高于阈值
@@ -161,10 +174,13 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	info := SlowQueryInfo{
@@ -223,8 +239,6 @@ func TestWrapper_GetPoolStats_NilClient(t *testing.T) {
 	}
 
 	stats := w.getPoolStats()
-	assert.Equal(t, 0, stats.TotalConnections)
-	assert.Equal(t, 0, stats.AvailableConnections)
 	assert.Equal(t, 0, stats.InUseConnections)
 }
 
@@ -246,10 +260,13 @@ func TestWrapper_SlowQueryCounter(t *testing.T) {
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 触发多次慢查询
@@ -273,10 +290,13 @@ func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时等于阈值也应该触发
@@ -411,17 +431,7 @@ func TestWrapper_GetPoolStats_WithMock(t *testing.T) {
 	assert.Equal(t, 10, stats.InUseConnections)
 }
 
-func TestWrapper_FindPage_NilCollection(t *testing.T) {
-	w := &mongoWrapper{
-		client:  nil,
-		options: defaultOptions(),
-	}
-
-	result, err := w.FindPage(context.Background(), nil, nil, PageOptions{Page: 1, PageSize: 10})
-	assert.Error(t, err)
-	assert.Equal(t, ErrNilCollection, err)
-	assert.Nil(t, result)
-}
+// TestFindPage_NilCollection 已在 pagination_test.go 中定义，此处不重复。
 
 func TestWrapper_FindPageInternal_InvalidPage(t *testing.T) {
 	mock := newMockCollectionOps()
@@ -497,17 +507,7 @@ func TestWrapper_FindPageInternal_FindError(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestWrapper_BulkInsert_NilCollection(t *testing.T) {
-	w := &mongoWrapper{
-		client:  nil,
-		options: defaultOptions(),
-	}
-
-	result, err := w.BulkInsert(context.Background(), nil, []any{1, 2, 3}, BulkOptions{})
-	assert.Error(t, err)
-	assert.Equal(t, ErrNilCollection, err)
-	assert.Nil(t, result)
-}
+// TestBulkInsert_NilCollection 已在 batch_test.go 中定义，此处不重复。
 
 func TestWrapper_BulkInsert_EmptyDocs(t *testing.T) {
 	w := &mongoWrapper{
@@ -679,10 +679,13 @@ func TestWrapper_BulkInsertInternal_WithSlowQueryHook(t *testing.T) {
 			captured = info
 		},
 	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	docs := []any{map[string]any{"name": "doc1"}}
@@ -693,13 +696,7 @@ func TestWrapper_BulkInsertInternal_WithSlowQueryHook(t *testing.T) {
 	assert.Equal(t, "bulkInsert", captured.Operation)
 }
 
-func TestBuildSlowQueryInfoFromOps(t *testing.T) {
-	// 测试 nil collection
-	info := buildSlowQueryInfoFromOps(nil, "find", map[string]any{"name": "test"})
-	assert.Equal(t, "", info.Database)
-	assert.Equal(t, "", info.Collection)
-	assert.Equal(t, "find", info.Operation)
-}
+// TestBuildSlowQueryInfoFromOps_Nil 已在上方定义，此处不重复。
 
 func TestAdaptCollection_Nil(t *testing.T) {
 	result := adaptCollection(nil)
@@ -768,7 +765,8 @@ func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
 		AsyncSlowQueryQueueSize: 10,
 	}
 
-	detector := newSlowQueryDetector(opts)
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
 	assert.NotNil(t, detector)
 
 	// 触发慢查询让异步钩子有机会执行
@@ -967,16 +965,69 @@ func TestWrapper_FindPageInternal_WithSlowQuery(t *testing.T) {
 			captured = info
 		},
 	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &mongoWrapper{
 		client:            nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{Page: 1, PageSize: 10})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "findPage", captured.Operation)
+}
+
+// =============================================================================
+// buildFindOptions 测试
+// =============================================================================
+
+func TestBuildFindOptions_Basic(t *testing.T) {
+	opts := PageOptions{
+		Page:     1,
+		PageSize: 10,
+	}
+	findOpts := buildFindOptions(0, opts)
+	assert.NotNil(t, findOpts)
+}
+
+func TestBuildFindOptions_WithProjection(t *testing.T) {
+	opts := PageOptions{
+		Page:       1,
+		PageSize:   10,
+		Sort:       bson.D{{Key: "name", Value: 1}},
+		Projection: bson.D{{Key: "name", Value: 1}, {Key: "age", Value: 1}},
+	}
+	findOpts := buildFindOptions(0, opts)
+	assert.NotNil(t, findOpts)
+}
+
+func TestWrapper_FindPageInternal_WithProjection(t *testing.T) {
+	docs := []any{
+		bson.M{"_id": "1", "name": "a"},
+		bson.M{"_id": "2", "name": "b"},
+	}
+	mock := &cursorCollectionOps{
+		docs:     docs,
+		count:    2,
+		collName: "test_coll",
+	}
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{
+		Page:       1,
+		PageSize:   10,
+		Projection: bson.D{{Key: "name", Value: 1}},
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Len(t, result.Data, 2)
 }
 
 // =============================================================================
@@ -1046,7 +1097,11 @@ func TestWrapper_FindPage_InvalidPage_WithRealCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+	defer func() {
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
+	}()
 
 	w := &mongoWrapper{
 		client:  client,
@@ -1068,7 +1123,11 @@ func TestWrapper_FindPage_InvalidPageSize_WithRealCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+	defer func() {
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
+	}()
 
 	w := &mongoWrapper{
 		client:  client,
@@ -1090,7 +1149,11 @@ func TestWrapper_FindPage_ValidParams_WithRealCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+	defer func() {
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
+	}()
 
 	w := &mongoWrapper{
 		client:  client,
@@ -1123,7 +1186,11 @@ func TestWrapper_BulkInsert_EmptyDocs_WithRealCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+	defer func() {
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
+	}()
 
 	w := &mongoWrapper{
 		client:  client,
@@ -1145,7 +1212,11 @@ func TestWrapper_BulkInsert_ValidParams_WithRealCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
-	defer func() { _ = client.Disconnect(context.Background()) }() //nolint:errcheck // cleanup in test
+	defer func() {
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
+	}()
 
 	w := &mongoWrapper{
 		client:  client,

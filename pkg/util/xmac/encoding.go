@@ -47,8 +47,9 @@ func (a Addr) MarshalJSON() ([]byte, error) {
 	if !a.IsValid() {
 		return []byte(`""`), nil
 	}
-	// 直接构造 19 字节: `"` + 17 字节 MAC + `"`，
-	// 复用 marshalColonBytes 的编码逻辑，仅 1 次堆分配。
+	// 设计决策: 手动内联 hex 编码逻辑（与 marshalColonBytes 重复），而非调用
+	// marshalColonBytes 后拼接引号。内联方式直接构造 19 字节（`"` + 17 字节 MAC + `"`），
+	// 仅 1 次堆分配；若调用 marshalColonBytes + 拼接引号则需 2 次堆分配。
 	b := a.bytes
 	buf := make([]byte, 19)
 	buf[0] = '"'
@@ -121,6 +122,9 @@ func (a Addr) Value() (driver.Value, error) {
 // 用于 SQL 数据库读取。
 // 支持 string、[]byte（字符串或 6 字节二进制）、nil 输入。
 // 对 nil 接收者返回 [ErrNilReceiver]。
+//
+// 对于 []byte 输入，恰好 6 字节时始终视为二进制 MAC（适用于 BINARY(6) 列），
+// 其他长度视为文本格式。如需强制文本解析 6 字节内容，应先转换为 string 再传入。
 func (a *Addr) Scan(src any) error {
 	if a == nil {
 		return ErrNilReceiver

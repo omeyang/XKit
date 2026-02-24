@@ -49,9 +49,11 @@
 //
 // # 选择指南
 //
-// 两种方式均使用 avast/retry-go/v5 作为底层引擎：
+// 两种方式均使用 avast/retry-go/v5 作为底层引擎，且共享一致的默认行为：
 //   - Retryer: 通过 RetryPolicy/BackoffPolicy 接口抽象，支持自定义策略和 mock
 //   - Do/DoWithData: 直接暴露 retry-go 选项，API 更简洁，适合一次性使用
+//   - 两者均默认 LastErrorOnly(true)，只返回最后一个错误
+//   - 两者均对 nil 回调函数返回 ErrNilFunc（不 panic）
 //
 // # 错误分类
 //

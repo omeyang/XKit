@@ -398,6 +398,20 @@ func (m *mockNilResultErrorLimiter) AllowN(_ context.Context, _ Key, _ int) (*Re
 
 func (m *mockNilResultErrorLimiter) Close() error { return nil }
 
+func TestHTTPMiddleware_NilLimiterPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil limiter")
+		}
+		msg, ok := r.(string)
+		if !ok || msg != "xlimit: HTTPMiddleware requires a non-nil Limiter" {
+			t.Errorf("unexpected panic message: %v", r)
+		}
+	}()
+	HTTPMiddleware(nil)
+}
+
 func BenchmarkHTTPMiddleware(b *testing.B) {
 	mr, err := miniredis.Run()
 	if err != nil {

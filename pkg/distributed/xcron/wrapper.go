@@ -118,7 +118,7 @@ func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.Canc
 		defer cancel()
 	}
 
-	handle, err := w.locker.TryLock(lockCtx, w.opts.name, w.opts.lockTTL)
+	handle, err := w.safeTryLock(lockCtx)
 	if err != nil {
 		w.logWarn(ctx, "lock service error",
 			"job", w.opts.name, "error", err)
@@ -134,6 +134,18 @@ func (w *jobWrapper) tryAcquireLock(ctx context.Context, taskCancel context.Canc
 	return w.startRenew(ctx, taskCancel, handle), nil
 }
 
+// safeTryLock 安全调用 TryLock，将 panic 转为 error。
+// 设计决策: 防止 Locker 实现（第三方/基础设施）panic 导致调度器 goroutine 崩溃。
+func (w *jobWrapper) safeTryLock(ctx context.Context) (handle LockHandle, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			handle = nil
+			err = fmt.Errorf("xcron: locker.TryLock panicked: %v", r)
+		}
+	}()
+	return w.locker.TryLock(ctx, w.opts.name, w.opts.lockTTL)
+}
+
 // applyTimeout 应用超时控制
 func (w *jobWrapper) applyTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if w.opts.timeout > 0 {
@@ -142,12 +154,22 @@ func (w *jobWrapper) applyTimeout(ctx context.Context) (context.Context, context
 	return ctx, nil
 }
 
-// startSpan 启动链路追踪
-func (w *jobWrapper) startSpan(ctx context.Context) (context.Context, Span) {
-	if w.opts.tracer != nil {
-		return w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
+// startSpan 启动链路追踪。
+// 设计决策: 独立 panic 隔离，防止 tracer 实现 panic 导致跳过 executeJob（从而跳过 Unlock），
+// 锁虽有 TTL 兜底，但显式释放可避免不必要的等待。
+func (w *jobWrapper) startSpan(ctx context.Context) (resultCtx context.Context, resultSpan Span) {
+	if w.opts.tracer == nil {
+		return ctx, nil
 	}
-	return ctx, nil
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "tracer.Start panicked",
+				"job", w.opts.name, "panic", r)
+			resultCtx = ctx
+			resultSpan = nil
+		}
+	}()
+	return w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
 }
 
 // executeJob 执行任务（可能带重试），包含 panic 恢复
@@ -259,6 +281,17 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 	rh.wg.Add(1)
 	go func() {
 		defer rh.wg.Done()
+		// 设计决策: panic 隔离防止 lockHandle.Renew 实现 panic 导致进程崩溃，
+		// 续期协程 panic 后取消任务，与续期失败行为一致。
+		defer func() {
+			if r := recover(); r != nil {
+				w.logError(ctx, "lock renewal panicked, canceling task",
+					"job", w.opts.name, "panic", r)
+				if taskCancel != nil {
+					taskCancel()
+				}
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 

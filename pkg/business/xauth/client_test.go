@@ -564,30 +564,6 @@ func TestClient_InvalidateToken(t *testing.T) {
 	})
 }
 
-func TestMustNewClient(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		cfg := testConfig()
-
-		// Should not panic
-		c := MustNewClient(cfg)
-		defer c.Close()
-
-		if c == nil {
-			t.Error("client should not be nil")
-		}
-	})
-
-	t.Run("panic on error", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected panic for nil config")
-			}
-		}()
-
-		MustNewClient(nil)
-	})
-}
-
 func TestClient_Request_GetTokenError(t *testing.T) {
 	ctx := context.Background()
 

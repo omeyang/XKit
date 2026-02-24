@@ -404,9 +404,16 @@ func getMetadataValue(md metadata.MD, key string) string {
 }
 
 // injectTenantToContext 从 incoming context 提取租户信息和追踪信息并注入
+//
+// 设计决策: 一次性提取 incoming metadata，避免 ExtractFromIncomingContext 和
+// ExtractTraceFromIncomingContext 各自调用 metadata.FromIncomingContext 导致
+// 重复的 metadata map 复制开销。
 func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (context.Context, error) {
+	// 一次性提取 incoming metadata
+	md, _ := metadata.FromIncomingContext(ctx)
+
 	// 提取并验证租户信息
-	info := ExtractFromIncomingContext(ctx)
+	info := ExtractFromMetadata(md)
 	if err := validateGRPCTenantInfo(info, cfg); err != nil {
 		return nil, err
 	}
@@ -418,7 +425,7 @@ func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (con
 	}
 
 	// 处理追踪信息
-	trace := ExtractTraceFromIncomingContext(ctx)
+	trace := ExtractTraceFromMetadata(md)
 	ctx, err = injectGRPCTraceToContext(ctx, trace, cfg.ensureTrace)
 	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, err

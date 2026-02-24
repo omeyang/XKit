@@ -18,6 +18,9 @@
 //   - Submit 是非阻塞的，队列满时返回 ErrQueueFull
 //   - Close 会等待所有队列中的任务处理完成
 //   - Close/Shutdown 不可在 handler 内调用，否则会死锁
+//   - handler 不应无限阻塞；若 handler 因外部依赖永久阻塞，对应的 worker
+//     goroutine 将无法退出。如需支持取消，可在 T 中嵌入 context.Context
+//     或使用闭包捕获取消信号
 //   - 任务处理器应设计为幂等的，因为同一逻辑任务可能被多次提交
 //   - panic 的任务不会被重试——仅记录日志后丢弃；
 //     panic 恢复日志默认仅记录 task 类型（避免敏感信息泄露），
@@ -40,6 +43,11 @@
 //   - 虽然 Go 支持参数化接口（如 type Pool[T any] interface{...}），
 //     但 xpool 作为轻量级工具包，不需要多实现替换，返回具体类型更简洁
 //   - 编译期通过 io.Closer 断言确保关闭契约
+//
+// handler 签名为 func(T) 而非 func(context.Context, T)：
+//   - 保持 API 简洁，适用于大多数场景
+//   - 需要 context 传播的用户可在 T 中嵌入 context.Context 或使用闭包
+//   - 参见注意事项中关于 handler 不应永久阻塞的说明
 //
 // Submit 队列满时返回 ErrQueueFull：
 //   - 这是有意设计，确保 Submit 永不阻塞

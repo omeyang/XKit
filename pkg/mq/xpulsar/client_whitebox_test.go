@@ -3,6 +3,7 @@ package xpulsar
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -465,6 +466,55 @@ func TestTrackedConsumer_Close_Idempotent(t *testing.T) {
 	tc.Close()
 	tc.Close()
 	assert.Equal(t, 1, closeCount, "onClose 只应执行一次")
+}
+
+// =============================================================================
+// trackedProducer/trackedConsumer Close 后 clientWrapper.Close 不导致负计数
+// =============================================================================
+
+func TestClientWrapper_Close_ThenTrackedClose_NoNegativeCount(t *testing.T) {
+	mc := &mockPulsarClient{}
+	w := &clientWrapper{
+		client:  mc,
+		options: defaultOptions(),
+	}
+
+	// 创建 producer 和 consumer
+	producer, err := w.CreateProducer(pulsar.ProducerOptions{Topic: "test"})
+	require.NoError(t, err)
+
+	consumer, err := w.Subscribe(pulsar.ConsumerOptions{Topic: "test", SubscriptionName: "sub"})
+	require.NoError(t, err)
+
+	// 先关闭 clientWrapper（计数器被重置为 0）
+	require.NoError(t, w.Close())
+	assert.Equal(t, 0, w.Stats().ProducersCount)
+	assert.Equal(t, 0, w.Stats().ConsumersCount)
+
+	// 再关闭仍持有引用的 producer/consumer，计数器不应变为负数
+	producer.Close()
+	consumer.Close()
+	assert.Equal(t, 0, w.Stats().ProducersCount, "计数器不应为负")
+	assert.Equal(t, 0, w.Stats().ConsumersCount, "计数器不应为负")
+}
+
+func TestDecrementIfPositive(t *testing.T) {
+	var counter atomic.Int32
+
+	// 从 0 开始递减不应变为负数
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
+
+	// 正常递减
+	counter.Store(2)
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(1), counter.Load())
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
+
+	// 再次递减不应变为负数
+	decrementIfPositive(&counter)
+	assert.Equal(t, int32(0), counter.Load())
 }
 
 // =============================================================================

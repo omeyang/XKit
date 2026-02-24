@@ -4,15 +4,15 @@
 //
 // xclickhouse 不包装底层客户端的所有 API，而是提供：
 //   - 统一的工厂方法（New）
-//   - 底层连接直接暴露（Conn() 方法）
+//   - 底层连接直接暴露（Client() 方法）
 //   - 增值功能（健康检查、统计、分页查询、批量插入、慢查询检测）
 //
-// 通过 Conn() 直接执行的操作不会进入统计和慢查询检测。
-// 异步插入（AsyncInsert）、Exec 等未封装的操作也应通过 Conn() 使用。
+// 通过 Client() 直接执行的操作不会进入统计和慢查询检测。
+// 异步插入（AsyncInsert）、Exec 等未封装的操作也应通过 Client() 使用。
 //
 // # 核心功能
 //
-//   - Conn()：暴露底层 driver.Conn（关闭后仍可调用，底层操作返回驱动层错误）
+//   - Client()：暴露底层 driver.Conn（关闭后仍可调用，底层操作返回驱动层错误）
 //   - Health()：健康检查（关闭后返回 ErrClosed）
 //   - Stats()：统计信息
 //   - QueryPage()：分页查询（关闭后返回 ErrClosed，统计为 2 次查询，PageSize 上限 MaxPageSize）
@@ -24,8 +24,10 @@
 // ## OFFSET 分页
 //
 // QueryPage 使用 LIMIT/OFFSET 分页。在 ClickHouse 中，大偏移量会导致
-// 扫描放大和性能下降。如需大数据量分页，请使用 Conn() 实现游标分页。
+// 扫描放大和性能下降。如需大数据量分页，请使用 Client() 实现游标分页。
 // PageSize 受 MaxPageSize（默认 10000）限制，超过时返回 ErrPageSizeTooLarge。
+// Offset 受 MaxOffset（默认 100000）限制，超过时返回 ErrOffsetTooLarge。
+// QueryPage 会检测查询末尾的 LIMIT/OFFSET 子句并返回 ErrQueryContainsLimitOffset。
 //
 // ## FORMAT/SETTINGS 检测
 //
@@ -33,13 +35,13 @@
 // 此方法是有意的设计权衡，而非 bug：
 //   - 正则检测可能对字符串字面量产生误判（如 WHERE name = 'FORMAT'）
 //   - 这是已知限制，复杂 SQL 解析成本过高
-//   - 遇到误判时，请使用 Conn() 直接执行查询
+//   - 遇到误判时，请使用 Client() 直接执行查询
 //
-// 相关错误：ErrQueryContainsFormat, ErrQueryContainsSettings
+// 相关错误：ErrQueryContainsFormat, ErrQueryContainsSettings, ErrQueryContainsLimitOffset
 //
 // ## 接口命名
 //
-// 设计决策: 接口名为 ClickHouse（而非 Client），虽然 xclickhouse.ClickHouse
-// 存在命名重复（stuttering），但为保持 API 稳定性暂不重命名。
-// 未来主版本升级时可考虑改为 Client。
+// 设计决策: 接口名为 ClickHouse 与 xmongo.Mongo 保持同一模式（使用技术名称），
+// 虽然 xclickhouse.ClickHouse 存在命名重复（stuttering），但与同级包一致。
+// 方法名 Client() 和错误名 ErrNilClient 已与 xmongo、xcache 统一。
 package xclickhouse

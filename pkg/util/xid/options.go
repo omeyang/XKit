@@ -21,11 +21,11 @@ type Option func(*options)
 
 // WithMachineID 设置自定义机器 ID 生成函数。
 //
-// 默认使用私有 IP 地址的低 16 位。
+// 默认使用 [DefaultMachineID] 的多层回退策略（环境变量 → Pod 名称哈希 →
+// 主机名哈希 → 私有 IP 低 16 位），详见 [DefaultMachineID] 文档。
 // 在以下场景可能需要自定义：
-//   - 使用 Host Network 模式的 K8s Pod
-//   - 需要基于其他信息（如环境变量、配置文件）确定机器 ID
-//   - 需要与外部服务协调机器 ID 分配
+//   - 需要与外部服务协调机器 ID 分配（如 etcd/ZooKeeper 注册）
+//   - 需要基于自定义信息确定机器 ID
 //
 // 函数返回的 ID 必须在 0-65535 范围内。
 func WithMachineID(fn func() (uint16, error)) Option {

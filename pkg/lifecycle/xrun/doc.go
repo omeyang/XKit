@@ -92,5 +92,20 @@
 //  13. WithSignals 防御性拷贝：WithSignals 在创建时拷贝输入切片，
 //     避免调用方后续修改切片导致配置漂移或并发数据竞争。
 //
+//  14. 公开 API 参数校验：Ticker/Timer 对 fn == nil 返回 ErrNilFunc，
+//     HTTPServer 对 server == nil 返回 ErrNilServer。与 ErrInvalidInterval/
+//     ErrInvalidDelay 保持一致的 fail-fast 模式，防止运行时 panic。
+//
+//  15. Ticker/Timer 已取消 context 防护：Ticker 的 immediate 分支和
+//     Timer 的 zero-delay 分支在调用 fn 前先检查 ctx.Err()，
+//     确保已取消的 context 不会触发业务副作用。
+//
+//  16. WithoutSignalHandler 优先级：当 WithoutSignalHandler 和 WithSignals
+//     同时使用时，WithoutSignalHandler 优先生效，WithSignals 配置被忽略。
+//
+//  17. NewGroup nil context 归一化：NewGroup(nil) 将 nil context 归一化为
+//     context.Background()，防止 context.WithCancelCause(nil) panic。
+//     不改变 API 签名（保持与 errgroup.WithContext 对齐），选择静默归一化。
+//
 // [errgroup]: https://pkg.go.dev/golang.org/x/sync/errgroup
 package xrun

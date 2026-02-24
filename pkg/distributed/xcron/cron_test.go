@@ -331,6 +331,110 @@ func TestJobWrapper_PanicRecovery(t *testing.T) {
 	})
 }
 
+// panicLocker 用于测试 TryLock panic 隔离
+type panicLocker struct{}
+
+func (l *panicLocker) TryLock(_ context.Context, _ string, _ time.Duration) (LockHandle, error) {
+	panic("locker panic in TryLock")
+}
+
+var _ Locker = (*panicLocker)(nil)
+
+// panicRenewHandle 用于测试 Renew panic 隔离
+type panicRenewHandle struct {
+	key string
+}
+
+func (h *panicRenewHandle) Unlock(_ context.Context) error { return nil }
+func (h *panicRenewHandle) Renew(_ context.Context, _ time.Duration) error {
+	panic("locker panic in Renew")
+}
+func (h *panicRenewHandle) Key() string { return h.key }
+
+// panicRenewLocker 正常获取锁，但 Renew 会 panic
+type panicRenewLocker struct{}
+
+func (l *panicRenewLocker) TryLock(_ context.Context, key string, _ time.Duration) (LockHandle, error) {
+	return &panicRenewHandle{key: key}, nil
+}
+
+var _ Locker = (*panicRenewLocker)(nil)
+
+// panicObserver 用于测试 tracer.Start panic 隔离
+type panicObserver struct{}
+
+func (o *panicObserver) Start(_ context.Context, _ string, _ ...any) (context.Context, Span) {
+	panic("observer panic in Start")
+}
+
+var _ Observer = (*panicObserver)(nil)
+
+func TestJobWrapper_PanicIsolation(t *testing.T) {
+	t.Run("TryLock panic is recovered", func(t *testing.T) {
+		job := JobFunc(func(_ context.Context) error {
+			return nil
+		})
+
+		stats := newStats()
+		opts := defaultJobOptions()
+		opts.name = "trylock-panic-job"
+		wrapper := newJobWrapper(job, &panicLocker{}, nil, stats, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// TryLock panic 转为锁服务异常，计入失败
+		assert.Equal(t, int64(1), stats.TotalExecutions())
+		assert.Equal(t, int64(1), stats.FailureCount())
+	})
+
+	t.Run("tracer.Start panic is recovered", func(t *testing.T) {
+		var executed bool
+		job := JobFunc(func(_ context.Context) error {
+			executed = true
+			return nil
+		})
+
+		opts := defaultJobOptions()
+		opts.tracer = &panicObserver{}
+		wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// tracer panic 不应阻止任务执行
+		assert.True(t, executed)
+	})
+
+	t.Run("Renew panic cancels task", func(t *testing.T) {
+		var taskCanceled atomic.Bool
+		job := JobFunc(func(ctx context.Context) error {
+			// 等待上下文被取消（续期 panic 会取消上下文）
+			select {
+			case <-ctx.Done():
+				taskCanceled.Store(true)
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+				return nil
+			}
+		})
+
+		opts := defaultJobOptions()
+		opts.name = "renew-panic-job"
+		opts.lockTTL = 3 * time.Second // 最小 TTL，续期间隔 1 秒
+		wrapper := newJobWrapper(job, &panicRenewLocker{}, nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+
+		// Renew panic 应导致任务被取消
+		assert.True(t, taskCanceled.Load())
+	})
+}
+
 func TestJobWrapper_ConcurrentExecution(t *testing.T) {
 	// 测试多个 wrapper 并发执行时，使用锁的情况
 	locker := newMockLocker()

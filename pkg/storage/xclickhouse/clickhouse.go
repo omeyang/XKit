@@ -14,10 +14,11 @@ import (
 
 // ClickHouse 定义 ClickHouse 包装器接口。
 type ClickHouse interface {
-	// Conn 返回底层 ClickHouse 连接。
+	// Client 返回底层 ClickHouse 连接。
 	// 可用于执行任意 ClickHouse 操作。
 	// 关闭后仍可调用，但底层连接操作会返回驱动层错误。
-	Conn() driver.Conn
+	// 方法名与 xmongo.Mongo.Client()、xcache.Redis.Client() 保持一致。
+	Client() driver.Conn
 
 	// Health 执行健康检查。
 	// 通过 Ping 检测连接状态。
@@ -44,7 +45,7 @@ type ClickHouse interface {
 	//   - COUNT 查询使用子查询包装方式（SELECT COUNT(*) FROM (原查询) AS _count_subquery）
 	//   - 这种方式能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）
 	//   - 对于简单查询可能比直接改写 SELECT 列表性能略差
-	//   - 性能敏感场景建议直接使用 Conn() 执行优化的 COUNT 语句
+	//   - 性能敏感场景建议直接使用 Client() 执行优化的 COUNT 语句
 	//   - Stats().QueryCount 会 +2（COUNT 和分页各计一次）
 	//   - 关闭后调用返回 ErrClosed
 	QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (*PageResult, error)
@@ -153,7 +154,7 @@ type BatchResult struct {
 //	defer ch.Close()
 func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 	if conn == nil {
-		return nil, ErrNilConn
+		return nil, ErrNilClient
 	}
 
 	options := defaultOptions()
@@ -162,7 +163,10 @@ func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 	}
 
 	// 创建慢查询检测器
-	detector := newSlowQueryDetector(options)
+	detector, err := newSlowQueryDetector(options)
+	if err != nil {
+		return nil, err
+	}
 
 	return &clickhouseWrapper{
 		conn:              conn,
@@ -172,7 +176,7 @@ func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 }
 
 // newSlowQueryDetector 创建慢查询检测器。
-func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQueryInfo] {
+func newSlowQueryDetector(opts *Options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
 	// 构建 storageopt 的慢查询选项
 	sqOpts := storageopt.SlowQueryOptions[SlowQueryInfo]{
 		Threshold:           opts.SlowQueryThreshold,

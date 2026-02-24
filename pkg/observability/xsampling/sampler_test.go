@@ -2,6 +2,7 @@ package xsampling
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -466,6 +467,49 @@ func TestKeyBasedSampler(t *testing.T) {
 		assertSamplingRateApprox(t, sampler, context.Background(), 0.5, 0.1)
 	})
 
+	t.Run("empty key callback", func(t *testing.T) {
+		var callCount atomic.Int64
+		sampler, err := NewKeyBasedSampler(0.5, func(ctx context.Context) string {
+			return "" // 返回空 key
+		}, WithOnEmptyKey(func() {
+			callCount.Add(1)
+		}))
+		require.NoError(t, err)
+
+		const total = 100
+		for range total {
+			sampler.ShouldSample(context.Background())
+		}
+		assert.Equal(t, int64(total), callCount.Load(),
+			"OnEmptyKey callback should be called for every empty key")
+	})
+
+	t.Run("empty key callback nil", func(t *testing.T) {
+		// nil 回调不应 panic
+		sampler, err := NewKeyBasedSampler(0.5, func(ctx context.Context) string {
+			return ""
+		}, WithOnEmptyKey(nil))
+		require.NoError(t, err)
+		assert.NotPanics(t, func() {
+			sampler.ShouldSample(context.Background())
+		})
+	})
+
+	t.Run("non-empty key no callback", func(t *testing.T) {
+		var callCount atomic.Int64
+		sampler, err := NewKeyBasedSampler(0.5, testKeyFunc, WithOnEmptyKey(func() {
+			callCount.Add(1)
+		}))
+		require.NoError(t, err)
+
+		ctx := context.WithValue(context.Background(), testKeyName, "has-key")
+		for range 100 {
+			sampler.ShouldSample(ctx)
+		}
+		assert.Equal(t, int64(0), callCount.Load(),
+			"OnEmptyKey callback should not be called when key is present")
+	})
+
 	t.Run("nil keyFunc", func(t *testing.T) {
 		_, err := NewKeyBasedSampler(0.5, nil)
 		assert.ErrorIs(t, err, ErrNilKeyFunc)
@@ -487,21 +531,35 @@ func TestKeyBasedSampler(t *testing.T) {
 	})
 
 	t.Run("distribution", func(t *testing.T) {
-		sampler, err := NewKeyBasedSampler(0.1, testKeyFunc)
-		require.NoError(t, err)
-		total := 10000
-		sampled := 0
-
-		for i := range total {
-			key := string(rune('a'+i%26)) + string(rune('0'+i/26%10)) + string(rune(i))
-			ctx := context.WithValue(context.Background(), testKeyName, key)
-			if sampler.ShouldSample(ctx) {
-				sampled++
-			}
+		tests := []struct {
+			rate      float64
+			total     int
+			tolerance float64
+		}{
+			{0.1, 10000, 0.05},
+			{0.01, 100000, 0.005},
+			{0.001, 1000000, 0.0005},
 		}
+		for _, tt := range tests {
+			sampler, err := NewKeyBasedSampler(tt.rate, testKeyFunc)
+			require.NoError(t, err)
+			sampled := 0
 
-		rate := float64(sampled) / float64(total)
-		assert.InDelta(t, 0.1, rate, 0.05, "Distribution should be around 0.1, got %f", rate)
+			for i := range tt.total {
+				u := uint64(i) //nolint:gosec // i is always non-negative (loop index)
+				key := fmt.Sprintf("%016x%016x", u*0x9e3779b97f4a7c15, u^0xdeadbeefcafebabe)
+				ctx := context.WithValue(context.Background(), testKeyName, key)
+				if sampler.ShouldSample(ctx) {
+					sampled++
+				}
+			}
+
+			actualRate := float64(sampled) / float64(tt.total)
+			assert.InDelta(t, tt.rate, actualRate, tt.tolerance,
+				"rate=%.4f: distribution should be around %f, got %f", tt.rate, tt.rate, actualRate)
+			assert.Greater(t, sampled, 0,
+				"rate=%.4f: should sample at least 1 event", tt.rate)
+		}
 	})
 
 	t.Run("rate accessor", func(t *testing.T) {

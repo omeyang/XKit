@@ -129,5 +129,5 @@ func ExampleWireRangeFrom() {
 	}
 	fmt.Println(string(data))
 	// Output:
-	// {"s":"192.168.1.1","e":"192.168.1.100"}
+	// {"start":"192.168.1.1","end":"192.168.1.100"}
 }

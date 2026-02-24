@@ -178,7 +178,7 @@ type Classification struct {
 	// IsSharedAddress 表示是否为共享地址空间（100.64.0.0/10, CGNAT）。
 	IsSharedAddress bool
 
-	// IsBenchmark 表示是否为基准测试地址（198.18.0.0/15）。
+	// IsBenchmark 表示是否为基准测试地址（IPv4: 198.18.0.0/15, IPv6: 2001:2::/48）。
 	IsBenchmark bool
 
 	// IsReserved 表示是否为保留地址（240.0.0.0/4, Class E）。
@@ -232,6 +232,12 @@ func (c Classification) String() string {
 //
 // 注意：私有地址虽然不可在公网路由，但在局域网内可路由，
 // 因此 IsRoutable 返回 true。如需判断公网可路由，请使用 IsGlobalUnicast。
+//
+// 设计决策: IsRoutable 仅检查协议层面的路由能力（排除环回、链路本地等），
+// 不排除 RFC 策略层面禁止路由的地址（文档地址 192.0.2.0/24、基准测试地址
+// 198.18.0.0/15、保留地址 240.0.0.0/4）。这些地址在技术上可被路由器转发，
+// 但 RFC 规定不应出现在实际路由表中。如需更严格过滤，请组合使用
+// [IsDocumentation]、[IsBenchmark]、[IsReserved] 进一步排除。
 func IsRoutable(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
@@ -319,17 +325,30 @@ func IsSharedAddress(addr netip.Addr) bool {
 }
 
 // IsBenchmark 报告 addr 是否为基准测试地址。
-// 基准测试地址：198.18.0.0/15
-// 用于网络设备基准测试，RFC 2544 定义。
+// 基准测试地址包括：
+//   - IPv4: 198.18.0.0/15 (RFC 2544)
+//   - IPv6: 2001:2::/48 (RFC 5180)
 //
-// 仅适用于 IPv4，无效地址或 IPv6 地址返回 false。
+// 无效地址返回 false。
 func IsBenchmark(addr netip.Addr) bool {
-	if !addr.Is4() && !addr.Is4In6() {
+	if !addr.IsValid() {
 		return false
 	}
-	v := ipv4ToUint32(addr)
-	// 198.18.0.0/15 = 0xC6120000 - 0xC613FFFF
-	return v >= 0xC6120000 && v <= 0xC613FFFF
+	if addr.Is4() || addr.Is4In6() {
+		v := ipv4ToUint32(addr)
+		// 198.18.0.0/15 = 0xC6120000 - 0xC613FFFF
+		return v >= 0xC6120000 && v <= 0xC613FFFF
+	}
+	return isIPv6Benchmark(addr)
+}
+
+// isIPv6Benchmark 检查 IPv6 地址是否为基准测试地址 (2001:0002::/48, RFC 5180)。
+func isIPv6Benchmark(addr netip.Addr) bool {
+	b := addr.As16()
+	// 检查前 6 字节是否为 2001:0002:0000（即 /48 前缀）
+	// 使用数组切片语法确保类型安全（与 isIPv6Documentation 一致）
+	prefix := [6]byte{b[0], b[1], b[2], b[3], b[4], b[5]}
+	return prefix == [6]byte{0x20, 0x01, 0x00, 0x02, 0x00, 0x00}
 }
 
 // IsReserved 报告 addr 是否为保留地址（Class E）。

@@ -85,93 +85,93 @@ func TestNewLumberjackWithDefaultOptions(t *testing.T) {
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
 		name      string
-		setup     func() (string, []LumberjackOption)
+		setup     func() (string, []Option)
 		wantErr   error
 		wantInMsg string
 	}{
 		{
 			name: "空文件名",
-			setup: func() (string, []LumberjackOption) {
+			setup: func() (string, []Option) {
 				return "", nil
 			},
 			wantErr: ErrEmptyFilename,
 		},
 		{
 			name: "MaxSizeMB 为零",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(0)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(0)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "0",
 		},
 		{
 			name: "MaxSizeMB 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(-1)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxBackups 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(-1)}
 			},
 			wantErr:   ErrInvalidMaxBackups,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxAgeDays 为负数",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxAge(-1)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxAge(-1)}
 			},
 			wantErr:   ErrInvalidMaxAge,
 			wantInMsg: "-1",
 		},
 		{
 			name: "MaxSizeMB 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxSize(10241)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxSize(10241)}
 			},
 			wantErr:   ErrInvalidMaxSize,
 			wantInMsg: "10241",
 		},
 		{
 			name: "MaxBackups 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(1025)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(1025)}
 			},
 			wantErr:   ErrInvalidMaxBackups,
 			wantInMsg: "1025",
 		},
 		{
 			name: "MaxAgeDays 超过上限",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxAge(3651)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxAge(3651)}
 			},
 			wantErr:   ErrInvalidMaxAge,
 			wantInMsg: "3651",
 		},
 		{
 			name: "MaxBackups 和 MaxAgeDays 同时为 0",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithMaxBackups(0), WithMaxAge(0)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithMaxBackups(0), WithMaxAge(0)}
 			},
 			wantErr:   ErrNoCleanupPolicy,
 			wantInMsg: "cannot both be 0",
 		},
 		{
 			name: "FileMode 包含文件类型位",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithFileMode(os.ModeDir | 0644)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithFileMode(os.ModeDir | 0644)}
 			},
 			wantErr:   ErrInvalidFileMode,
 			wantInMsg: "permission bits",
 		},
 		{
 			name: "FileMode 包含 setuid 位",
-			setup: func() (string, []LumberjackOption) {
-				return "/tmp/test.log", []LumberjackOption{WithFileMode(os.ModeSetuid | 0777)}
+			setup: func() (string, []Option) {
+				return "/tmp/test.log", []Option{WithFileMode(os.ModeSetuid | 0777)}
 			},
 			wantErr:   ErrInvalidFileMode,
 			wantInMsg: "permission bits",

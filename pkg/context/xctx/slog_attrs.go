@@ -166,7 +166,7 @@ func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	dt, err := GetDeploymentType(ctx)
 	if err != nil {
 		// 部署类型缺失/无效，尝试收集其他字段作为部分结果
-		var partial []slog.Attr
+		partial := make([]slog.Attr, 0, identityFieldCount+traceFieldCount+platformFieldCount)
 		partial = AppendIdentityAttrs(partial, ctx)
 		partial = AppendTraceAttrs(partial, ctx)
 		partial = AppendPlatformAttrs(partial, ctx)

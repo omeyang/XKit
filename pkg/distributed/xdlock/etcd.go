@@ -17,10 +17,24 @@ var _ LockHandle = (*etcdLockHandle)(nil)
 // etcd 工厂实现
 // =============================================================================
 
+// sessionProvider 定义 etcd factory 内部使用的 Session 操作。
+// 生产环境使用 *concurrency.Session，内部测试使用 mock 实现。
+type sessionProvider interface {
+	Done() <-chan struct{}
+	Close() error
+}
+
+// mutexUnlocker 定义 etcd handle 内部使用的 Mutex 解锁操作。
+// 生产环境使用 *concurrency.Mutex，内部测试使用 mock 实现。
+type mutexUnlocker interface {
+	Unlock(ctx context.Context) error
+}
+
 // etcdFactory 实现 EtcdFactory 接口。
 type etcdFactory struct {
 	client  *clientv3.Client
 	session *concurrency.Session
+	sp      sessionProvider // checkSession/Close 使用，通常等于 session
 	options *etcdFactoryOptions
 	closed  atomic.Bool
 }
@@ -50,6 +64,7 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 	return &etcdFactory{
 		client:  client,
 		session: session,
+		sp:      session,
 		options: options,
 	}, nil
 }
@@ -84,7 +99,7 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 
 	return &etcdLockHandle{
 		factory: f,
-		mutex:   mutex,
+		mu:      mutex,
 		key:     fullKey,
 	}, nil
 }
@@ -114,7 +129,7 @@ func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption)
 
 	return &etcdLockHandle{
 		factory: f,
-		mutex:   mutex,
+		mu:      mutex,
 		key:     fullKey,
 	}, nil
 }
@@ -125,7 +140,7 @@ func (f *etcdFactory) checkSession() error {
 		return ErrFactoryClosed
 	}
 	select {
-	case <-f.session.Done():
+	case <-f.sp.Done():
 		return ErrSessionExpired
 	default:
 		return nil
@@ -137,7 +152,7 @@ func (f *etcdFactory) Close() error {
 	if f.closed.Swap(true) {
 		return nil // 已关闭
 	}
-	return f.session.Close()
+	return f.sp.Close()
 }
 
 // Health 健康检查。
@@ -149,7 +164,7 @@ func (f *etcdFactory) Health(ctx context.Context) error {
 
 	// 检查 Session 是否已过期
 	select {
-	case <-f.session.Done():
+	case <-f.sp.Done():
 		return ErrSessionExpired
 	default:
 	}
@@ -176,7 +191,7 @@ func (f *etcdFactory) Session() Session {
 // 每次成功获取锁时创建，封装了唯一的锁标识。
 type etcdLockHandle struct {
 	factory  *etcdFactory
-	mutex    *concurrency.Mutex
+	mu       mutexUnlocker // Unlock 使用，通常为 *concurrency.Mutex
 	key      string
 	unlocked atomic.Bool // 标记锁是否已被显式释放
 }
@@ -189,8 +204,6 @@ type etcdLockHandle struct {
 // 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
 // 避免锁残留到 Lease TTL 到期（默认 60s）。
 func (h *etcdLockHandle) Unlock(ctx context.Context) error {
-	h.unlocked.Store(true)
-
 	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
@@ -198,17 +211,26 @@ func (h *etcdLockHandle) Unlock(ctx context.Context) error {
 		defer cancel()
 	}
 
-	if err := h.mutex.Unlock(ctx); err != nil {
+	if err := h.mu.Unlock(ctx); err != nil {
 		return wrapEtcdError(err)
 	}
+	// 设计决策: unlocked 标记放在成功解锁之后，避免 Unlock 失败时 Extend 误判为
+	// "锁已释放"。网络抖动时 Unlock 可能失败但锁仍由 Session KeepAlive 维持，
+	// 此时 Extend 应继续报告锁状态正常，而非错误返回 ErrNotLocked。
+	h.unlocked.Store(true)
 	return nil
 }
 
-// Extend 检查 Session 和锁所有权状态。
+// Extend 检查 Session 健康状态和本地解锁标记。
 //
 // etcd 使用 Session 自动续期（keep-alive），无需手动续期。
 // 此方法验证 Session 是否仍然有效且锁未被显式释放，
 // 若 Session 已过期返回 [ErrSessionExpired]，若锁已释放返回 [ErrNotLocked]。
+//
+// 设计决策: 此方法不执行 etcd 远程所有权校验（revision/txn compare），
+// 仅检查本地 unlocked 标记和 Session.Done() channel。在 Session 存活期间，
+// Lease 保护 key 不被回收，因此本地检查已足够。外部直接删除 etcd key 属于
+// 越过锁 API 的越权操作，不在检测范围内。
 //
 // 与 Redis 后端不同，etcd 的续期完全自动，调用此方法不会延长锁的有效期，
 // 而是检查锁状态是否健康。推荐在长时间运行的任务中定期调用以检测锁状态。

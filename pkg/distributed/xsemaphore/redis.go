@@ -179,6 +179,11 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		return nil, err
 	}
 
+	// 校验重试参数（仅 Acquire 需要，TryAcquire 不使用重试）
+	if err := cfg.validateRetryParams(); err != nil {
+		return nil, err
+	}
+
 	// 创建 span
 	ctx, span := startSpan(ctx, s.opts.tracer, spanNameAcquire)
 	defer span.End()

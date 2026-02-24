@@ -3,6 +3,10 @@ package xkeylock
 import "errors"
 
 var (
+	// ErrNilContext 表示传入的 context 为 nil。
+	// Acquire 在 ctx 为 nil 时返回此错误。
+	ErrNilContext = errors.New("xkeylock: nil context")
+
 	// ErrLockNotHeld 表示锁已被释放。
 	// Unlock 第二次及后续调用时返回此错误。
 	ErrLockNotHeld = errors.New("xkeylock: lock not held")

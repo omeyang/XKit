@@ -42,15 +42,14 @@ type LockHandle interface {
 
 	// Extend 续期锁。
 	//
-	// 延长锁的 TTL，用于长时间运行的任务。
-	// 续期时间使用创建锁时配置的 Expiry。
+	// Redis 后端：延长锁的 TTL，续期时间使用创建锁时配置的 Expiry。
+	// etcd 后端：检查 Session 健康状态和本地解锁标记（etcd 使用 Session 自动续期）。
 	//
-	// 注意：etcd 使用 Session 自动续期，调用此方法检查 Session 健康状态和锁所有权，
-	// 若 Session 有效且锁未被释放返回 nil，若 Session 已过期返回 [ErrSessionExpired]，
-	// 若锁已被显式释放返回 [ErrNotLocked]。
-	//
-	// 返回 [ErrNotLocked] 表示锁已过期或被其他获取覆盖（所有权已丢失）。
-	// 返回 [ErrExtendFailed] 表示续期操作失败（锁可能仍在，可重试）。
+	// 返回值：
+	//   - nil: 锁状态正常
+	//   - [ErrNotLocked]: 锁已过期、被释放或被其他获取覆盖（所有权已丢失）
+	//   - [ErrExtendFailed]: 续期操作失败（锁可能仍在，可重试）
+	//   - [ErrSessionExpired]: etcd Session 已过期
 	Extend(ctx context.Context) error
 
 	// Key 返回锁的 key。

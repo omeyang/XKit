@@ -7,6 +7,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -86,14 +87,14 @@ func TestClose_Error(t *testing.T) {
 	assert.True(t, conn.closed)
 }
 
-func TestConn_ReturnsMockConn(t *testing.T) {
+func TestClient_ReturnsMockConn(t *testing.T) {
 	conn := newMockConn()
 	w := &clickhouseWrapper{
 		conn:    conn,
 		options: defaultOptions(),
 	}
 
-	result := w.Conn()
+	result := w.Client()
 
 	assert.Equal(t, conn, result)
 }
@@ -290,13 +291,16 @@ func TestQueryPage_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              conn,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
-	_, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+	_, err = w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
 		Page:     1,
 		PageSize: 10,
 	})
@@ -452,15 +456,18 @@ func TestBatchInsert_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              conn,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	rows := []any{struct{ ID int }{ID: 1}}
 
-	_, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{})
+	_, err = w.BatchInsert(context.Background(), "users", rows, BatchOptions{})
 
 	assert.NoError(t, err)
 	assert.Contains(t, captured.Query, "INSERT INTO users")
@@ -474,7 +481,7 @@ func TestNew_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, ch)
-	assert.Equal(t, conn, ch.Conn())
+	assert.Equal(t, conn, ch.Client())
 }
 
 func TestNew_WithAllOptions(t *testing.T) {
@@ -651,13 +658,16 @@ func TestClose_WithSlowQueryDetector(t *testing.T) {
 	opts.SlowQueryThreshold = 100 * time.Millisecond
 	opts.SlowQueryHook = func(_ context.Context, _ SlowQueryInfo) {}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              conn,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
-	err := w.Close()
+	err = w.Close()
 
 	assert.NoError(t, err)
 	assert.True(t, conn.closed)

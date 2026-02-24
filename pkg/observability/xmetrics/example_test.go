@@ -16,7 +16,7 @@ func ExampleNewOTelObserver() {
 
 	ctx, span := xmetrics.Start(context.Background(), obs, xmetrics.SpanOptions{
 		Component: "myservice",
-		Operation: "DoWork",
+		Operation: "do_work",
 		Kind:      xmetrics.KindClient,
 		Attrs:     []xmetrics.Attr{xmetrics.String("db.system", "redis")},
 	})
@@ -57,7 +57,7 @@ func ExampleResult_withError() {
 	obs := xmetrics.NoopObserver{}
 	_, span := obs.Start(context.Background(), xmetrics.SpanOptions{
 		Component: "myservice",
-		Operation: "FetchData",
+		Operation: "fetch_data",
 	})
 
 	err := errors.New("connection refused")

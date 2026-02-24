@@ -41,6 +41,9 @@ func (w *producerWrapper) Producer() *kafka.Producer {
 // 在此期间 Close() 会被短暂阻塞。这是可接受的权衡：HealthTimeout 默认 5s，
 // 且 GetMetadata 通常在毫秒级完成。
 func (w *producerWrapper) Health(ctx context.Context) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if w.closed.Load() {
 		return ErrClosed
 	}

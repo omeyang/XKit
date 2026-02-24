@@ -20,7 +20,7 @@ import (
 // 设计决策: 使用 deploy.Type 的类型别名（而非独立类型），用于请求级 context 传播。
 // internal/deploy 包是 xctx 和 xenv 共享部署类型定义的内部实现，
 // 避免了代码重复且不会暴露给外部消费者（internal 路径保护）。
-// 如需进程级环境配置，请使用 xenv.DeployType。
+// 如需进程级环境配置，请使用 xenv.DeploymentType。
 type DeploymentType = deploy.Type
 
 const (
@@ -87,6 +87,8 @@ func DeploymentTypeRaw(ctx context.Context) DeploymentType {
 	case DeploymentType:
 		return v
 	case string:
+		// 设计决策: 此分支仅在外部代码通过 context.WithValue 绕过 WithDeploymentType API
+		// 直接注入 string 类型值时触发。保留作为防御性编程，已有白盒测试覆盖。
 		return DeploymentType(v)
 	default:
 		return ""

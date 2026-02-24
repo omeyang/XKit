@@ -789,6 +789,67 @@ func TestSession_InvalidProtocol(t *testing.T) {
 	}
 }
 
+func TestSession_PanicCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAutoShutdown(0),
+		WithAuditLogger(NewNoopAuditLogger()),
+		WithMaxSessions(2),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// 注册一个会 panic 的命令
+	srv.RegisterCommand(NewCommandFunc("boom", "panics", func(_ context.Context, _ []string) (string, error) {
+		panic("test panic from command")
+	}))
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	//nolint:errcheck // test cleanup
+	defer func() { _ = srv.Stop() }()
+
+	if err := srv.Enable(); err != nil {
+		t.Fatalf("Enable() error = %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	client := newTestClient(socketPath)
+
+	// 执行 panic 命令 — 应返回错误响应而非崩溃进程
+	resp, err := client.execute("boom", nil)
+	if err != nil {
+		t.Fatalf("execute boom error = %v", err)
+	}
+	if resp.Success {
+		t.Error("panic command should return failure response")
+	}
+	if resp.Error == "" {
+		t.Error("should have error message about panic")
+	}
+
+	// 服务器应该仍然在运行
+	if !srv.IsListening() {
+		t.Error("server should still be listening after command panic")
+	}
+
+	// 后续命令应该正常工作
+	resp, err = client.execute("help", nil)
+	if err != nil {
+		t.Fatalf("execute help after panic error = %v", err)
+	}
+	if !resp.Success {
+		t.Errorf("help command after panic should succeed, got error: %s", resp.Error)
+	}
+}
+
 func TestSession_ReadTimeout(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")

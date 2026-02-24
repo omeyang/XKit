@@ -535,6 +535,60 @@ func TestGenerator_NewWithRetry_OverTimeLimit_Immediate(t *testing.T) {
 	assert.Less(t, elapsed, 100*time.Millisecond, "should return immediately for non-retryable error")
 }
 
+func TestGenerator_NewWithRetry_SuccessOnRetry(t *testing.T) {
+	// 覆盖 retryGenerateID 内部循环中的成功路径：
+	// 首次返回可重试错误 → 进入重试循环 → 第二次成功
+	sf, err := sonyflake.New(sonyflake.Settings{
+		MachineID: func() (int, error) { return 1, nil },
+	})
+	require.NoError(t, err)
+	callCount := 0
+	g := &Generator{
+		sf:              sf,
+		maxWaitDuration: 1 * time.Second,
+		retryInterval:   5 * time.Millisecond,
+	}
+	g.generateID = func() (int64, error) {
+		callCount++
+		if callCount == 1 {
+			return 0, errors.New("transient error")
+		}
+		return 42, nil
+	}
+
+	id, err := g.NewWithRetry(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), id)
+	assert.Equal(t, 2, callCount)
+}
+
+func TestGenerator_NewWithRetry_OverTimeLimitDuringRetry(t *testing.T) {
+	// 覆盖 retryGenerateID 内部循环中的 ErrOverTimeLimit 分支：
+	// 首次返回可重试错误 → 进入重试循环 → 第二次返回 ErrOverTimeLimit
+	sf, err := sonyflake.New(sonyflake.Settings{
+		MachineID: func() (int, error) { return 1, nil },
+	})
+	require.NoError(t, err)
+	callCount := 0
+	g := &Generator{
+		sf:              sf,
+		maxWaitDuration: 1 * time.Second,
+		retryInterval:   5 * time.Millisecond,
+	}
+	g.generateID = func() (int64, error) {
+		callCount++
+		if callCount == 1 {
+			return 0, errors.New("transient error")
+		}
+		return 0, sonyflake.ErrOverTimeLimit
+	}
+
+	_, err = g.NewWithRetry(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOverTimeLimit)
+	assert.GreaterOrEqual(t, callCount, 2)
+}
+
 func TestGenerator_NewString_Error(t *testing.T) {
 	gen := newOverflowGenerator(t)
 

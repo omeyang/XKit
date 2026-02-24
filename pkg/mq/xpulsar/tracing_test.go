@@ -667,3 +667,61 @@ func TestTracingConsumer_Consume_IncludesSubscription(t *testing.T) {
 
 	assert.NoError(t, consumeErr)
 }
+
+// =============================================================================
+// mockMessageID — 实现 pulsar.MessageID 接口
+// =============================================================================
+
+type mockMessageID struct{}
+
+func (m mockMessageID) Serialize() []byte   { return []byte{1, 2, 3} }
+func (m mockMessageID) LedgerID() int64     { return 1 }
+func (m mockMessageID) EntryID() int64      { return 2 }
+func (m mockMessageID) BatchIdx() int32     { return 0 }
+func (m mockMessageID) PartitionIdx() int32 { return 0 }
+func (m mockMessageID) BatchSize() int32    { return 0 }
+func (m mockMessageID) String() string      { return "1:2:0:0" }
+
+// =============================================================================
+// TracingProducer.Send — message ID 记录到 span
+// =============================================================================
+
+func TestTracingProducer_Send_RecordsMessageID(t *testing.T) {
+	mp := &mockProducer{sendID: mockMessageID{}}
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
+	id, sendErr := producer.Send(context.Background(), msg)
+
+	assert.NoError(t, sendErr)
+	assert.NotNil(t, id)
+	assert.Equal(t, "1:2:0:0", id.String())
+}
+
+// =============================================================================
+// TracingConsumer.Consume — message ID 记录到 span
+// =============================================================================
+
+// mockMessageWithID 是带 message ID 的 mock 消息
+type mockMessageWithID struct {
+	mockMessage
+}
+
+func (m *mockMessageWithID) ID() pulsar.MessageID { return mockMessageID{} }
+
+func TestTracingConsumer_Consume_RecordsMessageID(t *testing.T) {
+	msg := &mockMessageWithID{
+		mockMessage: mockMessage{properties: map[string]string{}},
+	}
+	mc := &mockConsumer{receiveMsg: msg}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		assert.NotNil(t, m.ID())
+		return nil
+	})
+
+	assert.NoError(t, consumeErr)
+}

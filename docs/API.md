@@ -470,8 +470,7 @@ XKit 遵循 Go 语言的可见性规则：
 
 **工厂函数**：
 - `NewClient(cfg *Config, opts ...Option) (Client, error)`
-- `MustNewClient(cfg *Config, opts ...Option) Client`
-- `NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) *RedisCacheStore`
+- `NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) (*RedisCacheStore, error)`
 - `AsContextClient(c Client) ContextClient`
 
 ### pkg/debug/xdbg
@@ -534,8 +533,12 @@ XKit 遵循 Go 语言的可见性规则：
 
 ### pkg/util/xjson
 
+**错误**：
+- `ErrMarshal` - JSON 序列化失败哨兵错误，支持 `errors.Is` 判断
+
 **函数**：
-- `Pretty(v any) string` - 格式化 JSON 输出（用于日志和调试）
+- `PrettyE(v any) (string, error)` - 格式化 JSON 输出，失败时返回 `ErrMarshal` 包装的错误（业务流程用）
+- `Pretty(v any) string` - 格式化 JSON 输出（日志和调试用），失败时返回 `<marshal error: ...>` 标记字符串
 
 ### pkg/util/xkeylock
 
@@ -596,7 +599,7 @@ XKit 遵循 Go 语言的可见性规则：
 
 **函数**：
 - `ProcessID() int` - 返回当前进程 ID
-- `ProcessName() string` - 返回当前进程名称（不含路径）
+- `ProcessName() string` - 返回当前进程名称（不含路径），极端情况下可能返回空字符串，调用方应做兜底处理
 
 ### pkg/util/xsys
 

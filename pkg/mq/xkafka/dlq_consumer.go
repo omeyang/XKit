@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -18,6 +19,12 @@ type dlqConsumer struct {
 	dlqProducer *kafka.Producer
 
 	stats *dlqStatsCollector
+
+	// closeMu 保护 processMessage/SendToDLQ 与 Close 的并发。
+	// processMessage/SendToDLQ 持有读锁，Close 持有写锁。
+	// 确保 Close 等待所有进行中的消息处理完成后再关闭资源，
+	// 避免 DLQ 消息已投递但 offset 未提交的竞态条件。
+	closeMu sync.RWMutex
 }
 
 // NewConsumerWithDLQ 创建支持 DLQ 的消费者。
@@ -76,6 +83,9 @@ func (c *dlqConsumer) ConsumeWithRetry(ctx context.Context, handler MessageHandl
 	if handler == nil {
 		return ErrNilHandler
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if c.closed.Load() {
 		return ErrClosed
 	}
@@ -109,6 +119,9 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 	if handler == nil {
 		return ErrNilHandler
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	consume := func(ctx context.Context) error {
 		return c.ConsumeWithRetry(ctx, handler)
 	}
@@ -120,6 +133,12 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 // 因为 dlqConsumer 直接调用底层 consumer.ReadMessage（不经过 TracingConsumer.ReadMessage），
 // 避免双重计数。如果未来重构为使用 TracingConsumer，需移除此处的统计递增。
 func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) error {
+	c.closeMu.RLock()
+	defer c.closeMu.RUnlock()
+	if c.closed.Load() {
+		return ErrClosed
+	}
+
 	c.stats.incTotal()
 
 	// 更新消费统计
@@ -135,7 +154,7 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		Component: componentName,
 		Operation: "consume",
 		Kind:      xmetrics.KindConsumer,
-		Attrs:     kafkaMessageAttrs(msg),
+		Attrs:     kafkaConsumerMessageAttrs(msg, c.groupID),
 	})
 	// 执行处理
 	err := handler(msgCtx, msg)
@@ -159,7 +178,11 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		return c.sendToDLQInternal(msgCtx, msg, err, retryCount)
 	}
 
-	// 需要重试
+	return c.handleRetry(msgCtx, msg, attempt, err)
+}
+
+// handleRetry 处理消息重试逻辑：触发回调、等待退避延迟、重新投递。
+func (c *dlqConsumer) handleRetry(ctx context.Context, msg *kafka.Message, attempt int, err error) error {
 	c.stats.incRetried()
 	if c.policy.OnRetry != nil {
 		c.policy.OnRetry(msg, attempt, err)
@@ -171,17 +194,19 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 	if c.policy.BackoffPolicy != nil {
 		delay := c.policy.BackoffPolicy.NextDelay(attempt)
 		if delay > 0 {
+			timer := time.NewTimer(delay)
 			select {
-			case <-msgCtx.Done():
-				return msgCtx.Err()
-			case <-time.After(delay):
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
 			}
 		}
 	}
 
 	// 更新 Header 并重新投递
 	c.incrementRetryCount(msg, err)
-	return c.redeliverMessage(msgCtx, msg)
+	return c.redeliverMessage(ctx, msg)
 }
 
 // SendToDLQ 手动发送消息到 DLQ
@@ -189,6 +214,11 @@ func (c *dlqConsumer) SendToDLQ(ctx context.Context, msg *kafka.Message, reason 
 	if msg == nil {
 		return ErrNilMessage
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.closeMu.RLock()
+	defer c.closeMu.RUnlock()
 	if c.closed.Load() {
 		return ErrClosed
 	}
@@ -302,15 +332,20 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 }
 
 // Close 关闭消费者和 DLQ Producer。
-// 关闭顺序：先关闭消费者（提交 offset），再刷新并关闭 DLQ Producer。
+// 关闭顺序：先获取写锁等待进行中的消息处理完成，再关闭消费者（提交 offset），
+// 最后刷新并关闭 DLQ Producer。
 func (c *dlqConsumer) Close() error {
+	// 获取写锁，等待所有进行中的 processMessage/SendToDLQ 完成
+	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
+
 	// 先关闭消费者，确保 offset 被提交
 	consumerErr := c.consumerWrapper.Close()
 
 	// 刷新 DLQ Producer 队列中的消息，避免丢失
 	flushTimeout := c.policy.DLQFlushTimeout
 	if flushTimeout <= 0 {
-		flushTimeout = 10 * time.Second // 默认 10s
+		flushTimeout = defaultFlushTimeout
 	}
 	remaining := c.dlqProducer.Flush(int(flushTimeout.Milliseconds()))
 	c.dlqProducer.Close()

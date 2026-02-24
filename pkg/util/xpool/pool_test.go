@@ -142,7 +142,7 @@ func TestWorkerPool_InvalidConfig(t *testing.T) {
 		{"queueSize too large", 1, maxQueueSize + 1, ErrInvalidQueueSize},
 		{"queueSize=MaxInt", 1, math.MaxInt, ErrInvalidQueueSize},
 		// handler 校验在前，workers 次之
-		{"both invalid returns first error", 0, 0, ErrInvalidWorkers},
+		{"workers and queueSize both zero returns ErrInvalidWorkers", 0, 0, ErrInvalidWorkers},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

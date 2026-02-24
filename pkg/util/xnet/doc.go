@@ -42,14 +42,14 @@
 //	r, _ := xnet.ParseRange("192.168.1.1-192.168.1.100")
 //	w, _ := xnet.WireRangeFrom(r)
 //	data, _ := json.Marshal(w)
-//	fmt.Println(string(data))  // {"s":"192.168.1.1","e":"192.168.1.100"}
+//	fmt.Println(string(data))  // {"start":"192.168.1.1","end":"192.168.1.100"}
 //
 // # 设计决策
 //
 //   - 直接使用 [netip.Addr] 值类型，零分配比较，可做 map key
 //   - 使用 [netipx.IPRange] 和 [*netipx.IPSet]，无需自研集合与搜索逻辑
 //   - [*netipx.IPSet] 提供 O(log n) 的高效范围查询
-//   - [WireRange] 提供 JSON/BSON/YAML 序列化，字段格式 {"s":"start","e":"end"}
+//   - [WireRange] 提供 JSON/BSON/YAML 序列化，字段格式 {"start":"...","end":"..."}
 //   - 所有可失败函数返回 error，预定义错误变量支持 errors.Is
 //   - 掩码格式解析（parseRangeWithMask）已包含连续性校验，拒绝非法掩码如 "255.0.255.0"
 //
@@ -87,6 +87,8 @@
 // [Classify] 返回地址的各种分类信息，包括 [IsReserved]（240.0.0.0/4, Class E）。
 // 分类标志不互斥，例如 240.0.0.1 同时满足 IsGlobalUnicast 和 IsReserved。
 // [Classification.String] 按优先级返回最特殊的分类标签。
+// [IsBenchmark] 同时覆盖 IPv4 (198.18.0.0/15, RFC 2544) 和 IPv6 (2001:2::/48, RFC 5180)。
+// [IsSharedAddress] 和 [IsReserved] 仅适用于 IPv4（无对应 IPv6 范围）。
 //
 // # 输入行为说明
 //
@@ -105,11 +107,12 @@
 //
 // # IPv4-mapped IPv6 地址处理
 //
-// [ParseRange] 对 IPv4-mapped IPv6 CIDR（如 "::ffff:192.168.1.0/120"）统一转为纯 IPv4 范围：
-//   - 前缀位 ≥ 96：转为 IPv4 前缀（bits-96），如 /120 → IPv4 /24
-//   - 前缀位 < 96：拒绝并返回错误（前缀超出 IPv4-mapped 范围，语义模糊）
-//   - 掩码格式（如 "::ffff:192.168.1.0/255.255.255.0"）同样转为纯 IPv4
-//   - 这确保 CIDR 和掩码两种格式的输出地址族一致
+// [ParseRange] 对所有语法的 IPv4-mapped IPv6 地址统一归一化为纯 IPv4：
+//   - 单 IP: "::ffff:192.168.1.1" → 纯 IPv4 范围 192.168.1.1-192.168.1.1
+//   - CIDR: "::ffff:192.168.1.0/120" → 纯 IPv4 /24（bits ≥ 96 时转换，< 96 时拒绝）
+//   - 掩码: "::ffff:192.168.1.0/255.255.255.0" → 纯 IPv4 范围
+//   - 显式范围: "::ffff:192.168.1.1-::ffff:192.168.1.100" → 纯 IPv4 范围
+//   - 这确保四种格式的输出地址族一致，避免规则集合中的匹配偏差
 //
 // [ParseFullIP] 接受 IPv4-mapped IPv6 地址（如 "::ffff:192.168.1.1"）：
 //   - 此格式的点分特征会触发 IPv4 解析尝试，但首段含 ":" 导致失败

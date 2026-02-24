@@ -4,7 +4,7 @@
 //   - 简化的 KV 操作 (Get/Put/Delete/List/Exists/Count)
 //   - PutWithTTL 带租约的键值写入
 //   - Watch 功能，监听键值变化
-//   - WatchWithRetry 带自动重连和指数退避的 Watch
+//   - WatchWithRetry 带自动重连和指数退避（含随机抖动）的 Watch
 //   - 与 xdlock 分布式锁的集成
 //
 // # 设计边界

@@ -14,7 +14,7 @@ func ExamplePool_Shutdown() {
 		// 处理任务
 	})
 	if err != nil {
-		panic(err)
+		panic(err) // 仅示例简化; 生产代码应处理 error
 	}
 
 	for i := range 5 {
@@ -43,7 +43,7 @@ func Example() {
 		count.Add(1)
 	})
 	if err != nil {
-		panic(err)
+		panic(err) // 仅示例简化; 生产代码应处理 error
 	}
 
 	for i := range 5 {
@@ -70,7 +70,7 @@ func Example_withLogTaskValue() {
 		}
 	}, xpool.WithLogTaskValue())
 	if err != nil {
-		panic(err)
+		panic(err) // 仅示例简化; 生产代码应处理 error
 	}
 
 	for i := range 3 {
@@ -95,7 +95,7 @@ func Example_gracefulShutdown() {
 		sum.Add(int64(n))
 	})
 	if err != nil {
-		panic(err)
+		panic(err) // 仅示例简化; 生产代码应处理 error
 	}
 
 	// 提交任务

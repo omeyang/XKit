@@ -144,8 +144,10 @@ type Semaphore interface {
 	Query(ctx context.Context, resource string, opts ...QueryOption) (*ResourceInfo, error)
 
 	// Close 关闭信号量，释放底层资源。
-	// 关闭后不应再创建新的许可。
-	// ctx 可用于设置关闭超时（如等待活跃许可释放）。
+	// 关闭后不应再创建新的许可。已获取的许可仍可正常 Release 和 Extend。
+	//
+	// 设计决策: ctx 参数当前未使用，仅为接口统一而保留。
+	// 关闭操作是幂等的，重复调用直接返回 nil。
 	Close(ctx context.Context) error
 
 	// Health 健康检查。

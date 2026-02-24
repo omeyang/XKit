@@ -55,8 +55,12 @@ func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 		return fmt.Errorf("directory permission %04o missing owner execute bit: %w", perm, ErrInvalidPerm)
 	}
 	dir := filepath.Dir(filename)
-	if dir == "" || dir == "." {
+	// filepath.Dir 对非空字符串至少返回 "."，不会返回 ""（filename 已在前面校验非空）
+	if dir == "." {
 		return nil
 	}
-	return os.MkdirAll(dir, perm)
+	if err := os.MkdirAll(dir, perm); err != nil {
+		return fmt.Errorf("xfile: create directory %s: %w", dir, err)
+	}
+	return nil
 }

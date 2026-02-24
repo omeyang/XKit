@@ -351,6 +351,14 @@ func TestClassify(t *testing.T) {
 			wantBenchmark: true,
 		},
 		{
+			addr:          "2001:2::1",
+			wantVersion:   V6,
+			wantString:    "benchmark",
+			wantGlobal:    true,
+			wantRoutable:  true,
+			wantBenchmark: true,
+		},
+		{
 			addr:         "240.0.0.1",
 			wantVersion:  V4,
 			wantString:   "reserved",
@@ -518,8 +526,14 @@ func TestIsBenchmark(t *testing.T) {
 		{"198.20.0.0", false},     // 刚好在范围外
 		{"192.168.1.1", false},
 
-		// IPv6 不适用
+		// IPv6 基准测试地址 (2001:2::/48, RFC 5180)
+		{"2001:2::1", true},
+		{"2001:2::ffff", true},
+		{"2001:2:0:ffff:ffff:ffff:ffff:ffff", true},
+		// IPv6 非基准测试地址
 		{"2001:db8::1", false},
+		{"2001:3::1", false},
+		{"2001:1::1", false},
 
 		// IPv4-mapped IPv6 (基准测试地址)
 		{"::ffff:198.18.0.1", true},

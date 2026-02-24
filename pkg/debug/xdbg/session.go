@@ -22,7 +22,13 @@ type Session struct {
 	cancel context.CancelFunc
 
 	mu     sync.Mutex
-	closed bool
+	closed bool // 阻止进一步写入（由 writeData 在写失败时设置，或由 Close 设置）
+
+	// 设计决策: closed 与 connClosed 分离。writeData 写失败时仅设置 closed 阻止后续写入，
+	// 但不执行资源清理。connClosed 确保 cancel()/audit(SessionEnd)/conn.Close() 恰好执行一次。
+	// 若合并为单个标志，writeData 设置 closed=true 后，Run() defer 的 Close() 会因已关闭
+	// 而跳过资源清理，导致 FD 泄漏和会话审计丢失。
+	connClosed bool // 确保资源清理（cancel + audit + conn.Close）仅执行一次
 }
 
 // newSession 创建新会话。
@@ -162,8 +168,8 @@ func (s *Session) handleRequest(req *Request) {
 	cmdCtx, cancel := context.WithTimeout(s.ctx, s.server.opts.CommandTimeout)
 	defer cancel()
 
-	// 执行命令
-	output, err := cmd.Execute(cmdCtx, req.Args)
+	// 执行命令（带 panic 保护）
+	output, err := s.executeCommand(cmdCtx, cmd, req.Args)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -182,6 +188,19 @@ func (s *Session) handleRequest(req *Request) {
 	// 检查是否需要截断输出
 	resp := TruncateOutput(output, s.server.opts.MaxOutputSize)
 	s.sendResponse(resp)
+}
+
+// executeCommand 在隔离边界内执行命令，捕获 panic 防止调试命令崩溃主进程。
+//
+// 设计决策: 调试通道不应成为故障放大器。任何命令（尤其是用户自定义命令）的 panic
+// 应被转换为错误响应并记录审计日志，而非传播到主进程导致崩溃。
+func (s *Session) executeCommand(ctx context.Context, cmd Command, args []string) (output string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("command panicked: %v", r)
+		}
+	}()
+	return cmd.Execute(ctx, args)
 }
 
 // sendError 发送错误响应。
@@ -260,15 +279,17 @@ func (s *Session) writeData(data []byte) {
 	}
 }
 
-// Close 关闭会话。
+// Close 关闭会话，释放所有资源。
+// 即使 writeData 已设置 closed=true（写失败），Close 仍会执行资源清理。
 func (s *Session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
+	if s.connClosed {
 		return nil
 	}
-	s.closed = true
+	s.connClosed = true
+	s.closed = true // 同时阻止后续写入
 
 	s.cancel()
 

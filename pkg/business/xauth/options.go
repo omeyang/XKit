@@ -105,6 +105,11 @@ func WithCache(cache CacheStore) Option {
 
 // WithHTTPClient 设置自定义 HTTP 客户端。
 // 可用于配置自定义的传输层、代理等。
+//
+// 设计决策: 注入自定义 Client 后，Config.TLS 和 Config.Timeout 不再生效——
+// 调用方既然选择自行构造 Client，就应当自行保证其 TLS 版本和超时策略满足安全要求。
+// 不对外部 Client 做事后校验，因为 http.Client 的 Transport 可以是任意实现，
+// 无法可靠地提取 TLS 配置进行断言。
 func WithHTTPClient(client *http.Client) Option {
 	return func(o *Options) {
 		o.HTTPClient = client

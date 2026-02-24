@@ -63,6 +63,16 @@ func TestMergeTraceContext_WithRequestID(t *testing.T) {
 	assert.Equal(t, "req-12345", xctx.RequestID(result))
 }
 
+func TestMergeTraceContext_WithTraceFlags(t *testing.T) {
+	base := context.Background()
+	extracted, err := xctx.WithTraceFlags(context.Background(), "01")
+	require.NoError(t, err)
+
+	result := MergeTraceContext(base, extracted)
+
+	assert.Equal(t, "01", xctx.TraceFlags(result))
+}
+
 func TestMergeTraceContext_WithAllFields(t *testing.T) {
 	base := context.Background()
 	extracted := context.Background()
@@ -73,12 +83,15 @@ func TestMergeTraceContext_WithAllFields(t *testing.T) {
 	require.NoError(t, err)
 	extracted, err = xctx.WithRequestID(extracted, "req-12345")
 	require.NoError(t, err)
+	extracted, err = xctx.WithTraceFlags(extracted, "01")
+	require.NoError(t, err)
 
 	result := MergeTraceContext(base, extracted)
 
 	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
 	assert.Equal(t, "b7ad6b7169203331", xctx.SpanID(result))
 	assert.Equal(t, "req-12345", xctx.RequestID(result))
+	assert.Equal(t, "01", xctx.TraceFlags(result))
 }
 
 func TestMergeTraceContext_EmptyExtracted(t *testing.T) {

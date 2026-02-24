@@ -80,8 +80,11 @@ func getScripts() *scripts {
 //
 // 建议在应用启动时调用，避免首次执行时的编译开销。
 // 如果 Redis 不可用，返回错误但不影响后续使用（会在首次执行时重试）。
-// 如果 client 为 nil，返回 ErrNilClient。
+// 如果 ctx 为 nil，返回 [ErrNilContext]；如果 client 为 nil，返回 [ErrNilClient]。
 func WarmupScripts(ctx context.Context, client redis.UniversalClient) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if client == nil {
 		return ErrNilClient
 	}

@@ -27,6 +27,8 @@
 //   - InitWith: 直接指定部署类型，适用于测试或不依赖环境变量的场景
 //
 // 初始化只能执行一次，重复调用返回 ErrAlreadyInitialized。
+// 不提供隐式默认值：环境变量未设置返回 ErrMissingEnv，
+// 空值返回 ErrEmptyEnv，非法值返回 ErrInvalidDeploymentType。
 // 测试场景可使用 Reset() 重置状态（该函数仅在 go test 期间可用）。
 //
 // # 查询

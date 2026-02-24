@@ -641,7 +641,9 @@ func TestAcquireOptions_InvalidValues(t *testing.T) {
 	opts = defaultAcquireOptions()
 	WithMaxRetries(0)(opts)
 	assert.Equal(t, 0, opts.maxRetries)
-	assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+	// maxRetries 校验已移至 validateRetryParams（仅 Acquire 调用）
+	assert.NoError(t, opts.validate())
+	assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
 }
 
 // =============================================================================

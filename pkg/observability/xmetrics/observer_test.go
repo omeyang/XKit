@@ -299,7 +299,8 @@ func TestStart_NilContext(t *testing.T) {
 type nilCtxObserver struct{}
 
 func (nilCtxObserver) Start(_ context.Context, _ SpanOptions) (context.Context, Span) {
-	return nil, NoopSpan{} //nolint:staticcheck // 故意返回 nil context 以测试兜底逻辑
+	var nilCtx context.Context // 故意返回 nil context 以测试兜底逻辑
+	return nilCtx, NoopSpan{}
 }
 
 func TestStart_ObserverReturnsNilContext(t *testing.T) {
@@ -320,7 +321,8 @@ func TestStart_ObserverReturnsNilContext(t *testing.T) {
 type nilSpanObserver struct{}
 
 func (nilSpanObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
-	return ctx, nil //nolint:staticcheck // 故意返回 nil span 以测试兜底逻辑
+	var nilSpan Span // 故意返回 nil span 以测试兜底逻辑
+	return ctx, nilSpan
 }
 
 func TestStart_ObserverReturnsNilSpan(t *testing.T) {

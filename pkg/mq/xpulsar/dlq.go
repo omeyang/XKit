@@ -86,10 +86,19 @@ func ToPulsarNackBackoff(policy xretry.BackoffPolicy) pulsar.NackBackoffPolicy {
 // Next 返回下次重试的延迟时间
 // 实现 pulsar.NackBackoffPolicy 接口
 func (b *xretryNackBackoff) Next(redeliveryCount uint32) time.Duration {
-	// Pulsar 的 redeliveryCount 从 0 开始
-	// xretry 的 attempt 从 1 开始
-	return b.policy.NextDelay(int(redeliveryCount) + 1)
+	// Pulsar 的 redeliveryCount 从 0 开始，xretry 的 attempt 从 1 开始。
+	// 在 32 位架构上 int 为 32 位，直接 int(uint32_max)+1 会溢出为负数或零。
+	// 使用 maxNackAttempt 上界保护，超过上界的 redeliveryCount 统一使用最大退避延迟。
+	attempt := int(redeliveryCount) + 1
+	if attempt <= 0 {
+		attempt = maxNackAttempt
+	}
+	return b.policy.NextDelay(attempt)
 }
+
+// maxNackAttempt Nack 退避的最大 attempt 上界。
+// 在正常的退避策略中，此值已远超 MaxDelay 收敛点，不影响实际行为。
+const maxNackAttempt = 1 << 30
 
 // 确保实现接口
 var _ pulsar.NackBackoffPolicy = (*xretryNackBackoff)(nil)

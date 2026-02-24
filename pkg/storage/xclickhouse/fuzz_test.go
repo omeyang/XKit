@@ -181,8 +181,8 @@ func FuzzNew_NilConn(f *testing.F) {
 			WithSlowQueryThreshold(slowThreshold),
 		)
 
-		if err != ErrNilConn {
-			t.Errorf("New(nil) error = %v, want %v", err, ErrNilConn)
+		if err != ErrNilClient {
+			t.Errorf("New(nil) error = %v, want %v", err, ErrNilClient)
 		}
 		if ch != nil {
 			t.Error("New(nil) should return nil ClickHouse")
@@ -194,8 +194,8 @@ func FuzzNew_NilConn(f *testing.F) {
 // 错误类型 Fuzz 测试
 // =============================================================================
 
-// FuzzIsErrNilConn 模糊测试 ErrNilConn 错误匹配。
-func FuzzIsErrNilConn(f *testing.F) {
+// FuzzIsErrNilClient 模糊测试 ErrNilClient 错误匹配。
+func FuzzIsErrNilClient(f *testing.F) {
 	f.Add("")
 	f.Add("some error")
 	f.Add("xclickhouse: nil connection")
@@ -207,7 +207,7 @@ func FuzzIsErrNilConn(f *testing.F) {
 		}
 
 		// 验证 errors.Is 对于非匹配错误不会 panic
-		_ = (err == ErrNilConn)
+		_ = (err == ErrNilClient)
 	})
 }
 
@@ -300,6 +300,8 @@ func FuzzValidateQuerySyntax(f *testing.F) {
 	f.Add("SELECT SETTINGS_KEY FROM config")
 	f.Add("SELECT '\x00' FROM users")
 	f.Add("SELECT * FROM 测试表")
+	f.Add("SELECT * FROM users LIMIT 10")
+	f.Add("SELECT * FROM users LIMIT 10 OFFSET 5")
 
 	f.Fuzz(func(t *testing.T, query string) {
 		// validateQuerySyntax 不应 panic
@@ -319,6 +321,8 @@ func FuzzValidateQuerySyntax(f *testing.F) {
 				// 预期：包含 FORMAT
 			case ErrQueryContainsSettings:
 				// 预期：包含 SETTINGS
+			case ErrQueryContainsLimitOffset:
+				// 预期：包含 LIMIT/OFFSET
 			default:
 				t.Errorf("validateQuerySyntax(%q) returned unexpected error: %v", query, err)
 			}

@@ -12,7 +12,6 @@ package xenv
 func Reset() {
 	globalMu.Lock()
 	initialized.Store(false)
-	globalType.Store(DeployType(""))
+	globalType.Store(DeploymentType(""))
 	globalMu.Unlock()
 }
-

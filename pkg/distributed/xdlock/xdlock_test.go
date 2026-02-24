@@ -840,10 +840,10 @@ func TestRedisLockHandle_Unlock_StolenLock_WithMiniredis(t *testing.T) {
 	defer func() { _ = handle2.Unlock(ctx) }()
 
 	// handle1 尝试 Unlock — 锁已被 handle2 持有，值不匹配
-	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	// redsync 返回 ErrTaken → handle 层统一转为 ErrNotLocked（所有权已丢失）
 	err = handle1.Unlock(ctx)
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, xdlock.ErrLockHeld)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
 }
 
 func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
@@ -872,9 +872,10 @@ func TestRedisLockHandle_Extend_StolenLock_WithMiniredis(t *testing.T) {
 	defer func() { _ = handle2.Unlock(ctx) }()
 
 	// handle1 尝试 Extend — 锁已被 handle2 持有
-	// redsync 返回 ErrTaken → 包装为 ErrLockHeld（非 ErrLockExpired，覆盖 wrappedErr 返回路径）
+	// redsync 返回 ErrTaken → handle 层统一转为 ErrNotLocked（所有权已丢失）
 	err = handle1.Extend(ctx)
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
 }
 
 func TestRedisLockHandle_Extend_PreservesErrExtendFailed_WithMiniredis(t *testing.T) {

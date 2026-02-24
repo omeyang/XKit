@@ -420,6 +420,57 @@ func TestParseRangeIPv4MappedCIDR(t *testing.T) {
 	}
 }
 
+func TestParseRangeMappedNormalizationConsistency(t *testing.T) {
+	// FG-M1/FG-L2: 验证所有 ParseRange 语法对 IPv4-mapped IPv6 的归一化行为一致。
+	// 四种语法应产生相同的纯 IPv4 范围，不保留 IPv4-mapped IPv6 形式。
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "单 IP: mapped 归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+		{
+			name:      "CIDR: mapped /128 归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1/128",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+		{
+			name:      "掩码: mapped 地址归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.0/255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "显式范围: mapped 地址归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1-::ffff:192.168.1.100",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+
+			// 验证结果与纯 IPv4 输入一致
+			pureV4, err := ParseRange(tt.wantStart + "-" + tt.wantEnd)
+			require.NoError(t, err)
+			assert.Equal(t, pureV4.From(), r.From(), "mapped 和纯 IPv4 应产生相同 From")
+			assert.Equal(t, pureV4.To(), r.To(), "mapped 和纯 IPv4 应产生相同 To")
+		})
+	}
+}
+
 func TestParseRangesErrorIndex(t *testing.T) {
 	// ParseRanges 错误信息应包含元素索引
 	_, err := ParseRanges([]string{"10.0.0.1", "invalid", "192.168.1.0/24"})

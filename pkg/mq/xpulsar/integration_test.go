@@ -51,7 +51,9 @@ func setupPulsar(t *testing.T) (string, func()) {
 	serviceURL := "pulsar://" + host + ":" + port.Port()
 
 	cleanup := func() {
-		container.Terminate(ctx)
+		if err := container.Terminate(ctx); err != nil {
+			t.Logf("warning: failed to terminate container: %v", err)
+		}
 	}
 
 	return serviceURL, cleanup

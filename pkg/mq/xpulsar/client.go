@@ -94,7 +94,7 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		// Pulsar 客户端没有直接的健康检查 API，
 		// 但创建 reader 会验证与 broker 的连接
 		reader, err := w.client.CreateReader(pulsar.ReaderOptions{
-			Topic:          "non-persistent://public/default/__health_check__",
+			Topic:          w.options.HealthCheckTopic,
 			StartMessageID: pulsar.EarliestMessageID(),
 		})
 		resultCh <- healthCheckResult{err: err, reader: reader}
@@ -142,9 +142,7 @@ func (w *clientWrapper) CreateProducer(options pulsar.ProducerOptions) (pulsar.P
 	w.producersCount.Add(1)
 	return &trackedProducer{
 		Producer: producer,
-		onClose: func() {
-			w.producersCount.Add(-1)
-		},
+		onClose:  func() { decrementIfPositive(&w.producersCount) },
 	}, nil
 }
 
@@ -160,9 +158,7 @@ func (w *clientWrapper) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consum
 	w.consumersCount.Add(1)
 	return &trackedConsumer{
 		Consumer: consumer,
-		onClose: func() {
-			w.consumersCount.Add(-1)
-		},
+		onClose:  func() { decrementIfPositive(&w.consumersCount) },
 	}, nil
 }
 
@@ -223,6 +219,23 @@ func (c *trackedConsumer) Close() {
 			c.onClose()
 		}
 	})
+}
+
+// decrementIfPositive 使用 CAS 循环将计数器安全递减，确保不低于 0。
+//
+// 设计决策: clientWrapper.Close() 调用底层 client.Close() 后手动重置计数器为 0。
+// 如果用户之后再关闭仍持有引用的 trackedProducer/trackedConsumer，
+// 简单的 Add(-1) 会导致计数器为负值。CAS 循环确保计数器语义不变式。
+func decrementIfPositive(counter *atomic.Int32) {
+	for {
+		old := counter.Load()
+		if old <= 0 {
+			return
+		}
+		if counter.CompareAndSwap(old, old-1) {
+			return
+		}
+	}
 }
 
 // 确保实现接口

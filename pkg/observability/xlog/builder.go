@@ -34,9 +34,11 @@ import (
 type ReplaceAttrFunc func(groups []string, a slog.Attr) slog.Attr
 
 // Builder 日志配置构建器
+//
+// Builder 不是并发安全的，应在单个 goroutine 中完成链式调用后 Build。
 type Builder struct {
-	output   io.Writer
-	levelVar *slog.LevelVar
+	output         io.Writer
+	levelVar       *slog.LevelVar
 	format         string
 	addSource      bool
 	enableEnrich   bool                // 是否启用 context 信息自动注入
@@ -53,8 +55,8 @@ func New() *Builder {
 	levelVar.Set(slog.LevelInfo)
 
 	return &Builder{
-		output:   os.Stderr,
-		levelVar: levelVar,
+		output:       os.Stderr,
+		levelVar:     levelVar,
 		format:       "text",
 		enableEnrich: true, // 默认启用 context 信息注入
 	}
@@ -77,6 +79,9 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 
 // SetLevel 设置日志级别
 func (b *Builder) SetLevel(level Level) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.levelVar.Set(slog.Level(level))
 	return b
 }
@@ -115,6 +120,9 @@ func (b *Builder) SetFormat(format string) *Builder {
 
 // SetAddSource 是否在日志中添加源码位置
 func (b *Builder) SetAddSource(enable bool) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.addSource = enable
 	return b
 }
@@ -123,6 +131,9 @@ func (b *Builder) SetAddSource(enable bool) *Builder {
 //
 // 默认启用。当启用时，日志会自动从 context 中提取 xctx（trace/identity）信息。
 func (b *Builder) SetEnrich(enable bool) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.enableEnrich = enable
 	return b
 }
@@ -132,7 +143,7 @@ func (b *Builder) SetEnrich(enable bool) *Builder {
 // 注意：会同时设置 output 为 rotator，覆盖之前的 SetOutput 设置。
 // 同理，SetRotation 之后再调用 SetOutput 会覆盖 rotator 的输出。
 // Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
-func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption) *Builder {
+func (b *Builder) SetRotation(filename string, opts ...xrotate.Option) *Builder {
 	if b.err != nil {
 		return b
 	}
@@ -166,6 +177,9 @@ func (b *Builder) SetRotation(filename string, opts ...xrotate.LumberjackOption)
 //		}).
 //		Build()
 func (b *Builder) SetOnError(fn func(error)) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.onError = fn
 	return b
 }
@@ -200,6 +214,9 @@ func (b *Builder) SetOnError(fn func(error)) *Builder {
 //		}).
 //		Build()
 func (b *Builder) SetReplaceAttr(fn ReplaceAttrFunc) *Builder {
+	if b.err != nil {
+		return b
+	}
 	b.replaceAttr = fn
 	return b
 }
@@ -291,7 +308,11 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 
 	// 启用 context 信息注入
 	if b.enableEnrich {
-		handler = NewEnrichHandler(handler)
+		enriched, err := NewEnrichHandler(handler)
+		if err != nil {
+			return nil, nil, err
+		}
+		handler = enriched
 	}
 
 	// 添加部署类型固定属性（在 Build 时一次性注入，避免热路径检查）

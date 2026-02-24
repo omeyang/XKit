@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/knadh/koanf/parsers/json"
@@ -19,11 +21,12 @@ import (
 // koanf 内部已有 sync.RWMutex，外层再加一层会导致双重加锁（cache line bouncing）。
 // atomic.Pointer 实现无锁读取，Reload 使用 Store 原子替换，性能更优。
 type koanfConfig struct {
-	k       atomic.Pointer[koanf.Koanf]
-	path    string
-	format  Format
-	opts    *options
-	isBytes bool // 标记是否从字节数据创建
+	k        atomic.Pointer[koanf.Koanf]
+	reloadMu sync.Mutex // 序列化 Reload 调用，防止并发重载导致配置回退
+	path     string
+	format   Format
+	opts     *options
+	isBytes  bool // 标记是否从字节数据创建
 }
 
 // New 从文件路径创建配置实例。
@@ -61,8 +64,12 @@ func New(path string, opts ...Option) (Config, error) {
 	}
 
 	k := koanf.New(options.delim)
-	if err := loadData(k, data, format); err != nil {
-		return nil, err
+
+	// 空数据时创建空配置，与 NewFromBytes 行为一致
+	if len(data) > 0 {
+		if err := loadData(k, data, format); err != nil {
+			return nil, err
+		}
 	}
 
 	cfg := &koanfConfig{
@@ -127,6 +134,10 @@ func (c *koanfConfig) Unmarshal(path string, target any) error {
 	if target == nil {
 		return fmt.Errorf("%w: target must be a non-nil pointer", ErrUnmarshalFailed)
 	}
+	rv := reflect.ValueOf(target)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return fmt.Errorf("%w: target must be a non-nil pointer, got %T", ErrUnmarshalFailed, target)
+	}
 
 	k := c.k.Load()
 
@@ -139,10 +150,17 @@ func (c *koanfConfig) Unmarshal(path string, target any) error {
 }
 
 // Reload 重新加载配置文件。
+//
+// 设计决策: reloadMu 序列化并发 Reload 调用，防止配置回退。
+// 场景：Goroutine A 读取 v2 → Goroutine B 读取 v3 并 Store → Goroutine A Store v2，v3 被回退。
+// Mutex 仅保护 Reload 路径，不影响 Client/Unmarshal 的无锁读取性能。
 func (c *koanfConfig) Reload() error {
 	if c.isBytes {
 		return ErrNotFromFile
 	}
+
+	c.reloadMu.Lock()
+	defer c.reloadMu.Unlock()
 
 	data, err := os.ReadFile(c.path)
 	if err != nil {

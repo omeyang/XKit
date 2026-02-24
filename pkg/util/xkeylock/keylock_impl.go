@@ -26,21 +26,24 @@ type keyLockImpl struct {
 	testHookAfterTryAcquireSend func()
 }
 
-type shard struct {
+// cacheLineSize 是目标架构的缓存行大小（字节）。
+const cacheLineSize = 64
+
+// shardPayload 包含 shard 的业务字段。独立类型使 unsafe.Sizeof 可用于
+// 自动计算 cache line padding，消除硬编码字节数和跨架构兼容性问题。
+type shardPayload struct {
 	mu      sync.Mutex
 	entries map[string]*lockEntry
-	// 设计决策: 填充至 cache line 边界（64 字节），消除相邻 shard 之间的伪共享。
-	// shard 本体 ~16 字节（sync.Mutex 8 + map pointer 8），需补齐 48 字节。
-	// 内存代价可忽略（32 分片 × 64B = 2KB），在高核心数机器上可改善并发吞吐。
-	// 下方编译期断言确保此假设成立，若 Go 未来版本改变 sync.Mutex 大小将编译失败。
-	_ [64 - 16]byte //nolint:unused // cache line padding
 }
 
-// 编译期断言：确保 shard 恰好占 64 字节（一个缓存行）。
-// 如果 sync.Mutex 或 map 指针大小发生变化，以下两行之一将编译失败，
-// 提醒开发者更新 shard 的填充字节数。
-var _ [64 - unsafe.Sizeof(shard{})]byte             //nolint:unused
-var _ [unsafe.Sizeof(shard{}) - 64]byte             //nolint:unused
+type shard struct {
+	shardPayload
+	// 设计决策: 填充至 cache line 边界消除相邻 shard 之间的伪共享。
+	// 使用 unsafe.Sizeof(shardPayload{}) 自动计算填充字节数，
+	// 适配不同架构（amd64: 16B payload → 48B padding; 386: 12B → 52B）。
+	// 编译期安全：若 shardPayload 增长超过 cacheLineSize，数组长度变负，编译即失败。
+	_ [cacheLineSize - unsafe.Sizeof(shardPayload{})]byte // cache line padding
+}
 
 // lockEntry 表示一个 key 的锁条目。
 // ch 是 size=1 的 channel，用作互斥量：
@@ -127,7 +130,7 @@ func (kl *keyLockImpl) releaseRef(key string, entry *lockEntry) {
 
 func (kl *keyLockImpl) Acquire(ctx context.Context, key string) (Handle, error) {
 	if ctx == nil {
-		panic("xkeylock: nil Context")
+		return nil, ErrNilContext
 	}
 	if key == "" {
 		return nil, ErrInvalidKey

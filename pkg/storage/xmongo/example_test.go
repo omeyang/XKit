@@ -89,11 +89,12 @@ func ExampleMongo_FindPage() {
 	// ctx := context.Background()
 	// coll := m.Client().Database("mydb").Collection("users")
 	//
-	// // 分页查询第一页，每页 10 条，按创建时间倒序
+	// // 分页查询第一页，每页 10 条，按创建时间倒序，只返回 name 和 email 字段
 	// result, err := m.FindPage(ctx, coll, bson.M{"status": "active"}, xmongo.PageOptions{
-	//     Page:     1,
-	//     PageSize: 10,
-	//     Sort:     bson.D{{"created_at", -1}},
+	//     Page:       1,
+	//     PageSize:   10,
+	//     Sort:       bson.D{{"created_at", -1}},
+	//     Projection: bson.D{{"name", 1}, {"email", 1}}, // 可选：字段投影
 	// })
 	// if err != nil {
 	//     log.Fatal(err)

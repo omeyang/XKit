@@ -179,6 +179,27 @@ func ExampleCountSampler_Reset() {
 	// Output: true
 }
 
+func ExampleWithOnEmptyKey() {
+	// 监控空 key 事件，帮助排查上下文传播问题
+	var emptyKeyCount int
+	sampler, err := xsampling.NewKeyBasedSampler(0.5, func(ctx context.Context) string {
+		if v, ok := ctx.Value(traceIDKey).(string); ok {
+			return v
+		}
+		return ""
+	}, xsampling.WithOnEmptyKey(func() {
+		emptyKeyCount++
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 空 key 场景（context 中没有 trace_id）
+	sampler.ShouldSample(context.Background())
+	fmt.Printf("Empty key events: %d\n", emptyKeyCount)
+	// Output: Empty key events: 1
+}
+
 // 演示日志采样场景
 func Example_logSampling() {
 	// 高 QPS 服务使用 1% 采样率

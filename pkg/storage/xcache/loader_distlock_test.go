@@ -1224,6 +1224,43 @@ func TestLoader_LoadHash_WithDistLock_UnlockError(t *testing.T) {
 // 外部锁 (ExternalLock) 测试
 // =============================================================================
 
+func TestLoader_Load_WithExternalLock_NilUnlocker_ReturnsConfigError(t *testing.T) {
+	// Given - 外部锁返回 (nil, nil)，应该返回配置错误而非 panic
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { mr.Close() })
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client, WithLockKeyPrefix(""))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cache.Close() })
+
+	// 模拟错误的外部锁实现：返回 nil unlocker 但无 error
+	buggyLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, nil
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithDistributedLock(true),
+		WithDistributedLockTTL(5*time.Second),
+		WithExternalLock(buggyLock),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}
+
+	// When - 不应 panic，应返回配置错误后降级重试
+	_, err = loader.Load(context.Background(), "nilunlock", loadFn, time.Hour)
+
+	// Then - handleLockError 将 ErrInvalidConfig 直接返回（不降级）
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 func TestWithExternalLock_SetsOption(t *testing.T) {
 	opts := defaultLoaderOptions()
 	assert.Nil(t, opts.ExternalLock)
@@ -1234,6 +1271,23 @@ func TestWithExternalLock_SetsOption(t *testing.T) {
 	WithExternalLock(fn)(opts)
 
 	assert.NotNil(t, opts.ExternalLock)
+	assert.True(t, opts.EnableDistributedLock)
+}
+
+func TestWithExternalLock_Nil_ClearsDistributedLock(t *testing.T) {
+	opts := defaultLoaderOptions()
+
+	// 先设置外部锁
+	fn := func(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
+		return func(ctx context.Context) error { return nil }, nil
+	}
+	WithExternalLock(fn)(opts)
+	assert.True(t, opts.EnableDistributedLock)
+
+	// 传入 nil 应同步清除分布式锁标志
+	WithExternalLock(nil)(opts)
+	assert.Nil(t, opts.ExternalLock)
+	assert.False(t, opts.EnableDistributedLock)
 }
 
 func TestLoader_Load_WithExternalLock_UsesExternalLock(t *testing.T) {

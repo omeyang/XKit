@@ -208,6 +208,16 @@ func WithMaxRequests(n uint32) BreakerOption {
 //
 // 当熔断器状态发生变化时会调用此回调。
 // 可用于日志记录、监控告警等。
+//
+// 设计决策: 回调通过 goroutine 异步执行，避免与 gobreaker 内部 mutex 产生死锁。
+// gobreaker 在 setState 方法中持有 sync.Mutex 期间调用 OnStateChange 回调，
+// 若回调同步调用同一 Breaker 的 State()/Counts()/Do() 方法会导致不可恢复的死锁。
+// 异步执行的代价是回调可能在状态变化后稍有延迟执行，且多次状态变化的回调顺序不保证。
+//
+// 注意：
+//   - 回调异步执行，不阻塞熔断器状态转换
+//   - 多次快速状态变化时，回调执行顺序不保证
+//   - 回调中获取的 State()/Counts() 可能已是更新后的值
 func WithOnStateChange(f func(name string, from, to State)) BreakerOption {
 	return func(b *Breaker) {
 		if f != nil {
@@ -268,10 +278,12 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 		}
 	}
 
-	// 如果有状态变化回调
+	// 设计决策: 回调通过 goroutine 异步执行，避免在 gobreaker 内部 mutex 持有期间
+	// 同步调用回调导致死锁。详见 WithOnStateChange 文档。
 	if b.onStateChange != nil {
+		cb := b.onStateChange
 		st.OnStateChange = func(name string, from, to gobreaker.State) {
-			b.onStateChange(name, from, to)
+			go cb(name, from, to)
 		}
 	}
 

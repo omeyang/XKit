@@ -23,7 +23,6 @@ func TestFindPage_NilCollection(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilCollection)
 }
 
-
 func TestPageOptions_Defaults(t *testing.T) {
 	opts := PageOptions{}
 
@@ -31,6 +30,18 @@ func TestPageOptions_Defaults(t *testing.T) {
 	assert.Equal(t, int64(0), opts.Page)
 	assert.Equal(t, int64(0), opts.PageSize)
 	assert.Nil(t, opts.Sort)
+	assert.Nil(t, opts.Projection)
+}
+
+func TestPageOptions_WithProjection(t *testing.T) {
+	opts := PageOptions{
+		Page:       1,
+		PageSize:   10,
+		Sort:       bson.D{{Key: "created_at", Value: -1}},
+		Projection: bson.D{{Key: "name", Value: 1}, {Key: "age", Value: 1}},
+	}
+
+	assert.Len(t, opts.Projection, 2)
 }
 
 func TestPageOptions_WithSort(t *testing.T) {
@@ -73,4 +84,3 @@ func TestPageResult_TotalPages(t *testing.T) {
 		})
 	}
 }
-

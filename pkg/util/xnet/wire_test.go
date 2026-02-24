@@ -211,7 +211,7 @@ func TestWireRangeJSON(t *testing.T) {
 	// Marshal
 	data, err := json.Marshal(w)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"s":"192.168.1.1","e":"192.168.1.100"}`, string(data))
+	assert.JSONEq(t, `{"start":"192.168.1.1","end":"192.168.1.100"}`, string(data))
 
 	// Unmarshal
 	var w2 WireRange

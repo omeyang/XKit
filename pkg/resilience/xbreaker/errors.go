@@ -20,10 +20,10 @@ var (
 	ErrNilRetryer = errors.New("xbreaker: retryer cannot be nil")
 
 	// ErrNilBreakerRetryer 传入的 BreakerRetryer 为 nil
-	ErrNilBreakerRetryer = errors.New("xbreaker: BreakerRetryer cannot be nil")
+	ErrNilBreakerRetryer = errors.New("xbreaker: breaker-retryer cannot be nil")
 
 	// ErrNilRetryThenBreak 传入的 RetryThenBreak 为 nil
-	ErrNilRetryThenBreak = errors.New("xbreaker: RetryThenBreak cannot be nil")
+	ErrNilRetryThenBreak = errors.New("xbreaker: retry-then-break cannot be nil")
 
 	// ErrNilContext 传入的 context 为 nil
 	ErrNilContext = errors.New("xbreaker: context cannot be nil")

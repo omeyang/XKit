@@ -83,6 +83,11 @@ func TestConfig_Validate(t *testing.T) {
 			err:    nil,
 		},
 		{
+			name:   "UnclassRegionID为纯空白（等同于空）",
+			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "   "},
+			err:    nil,
+		},
+		{
 			name:   "UnclassRegionID有效",
 			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "region-001"},
 			err:    nil,

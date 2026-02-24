@@ -1,6 +1,9 @@
 package xsampling
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 // 采样器创建相关的错误
 var (
@@ -19,3 +22,11 @@ var (
 	// ErrNilSampler 表示 CompositeSampler 的子采样器为 nil
 	ErrNilSampler = errors.New("xsampling: sampler must not be nil")
 )
+
+// validateRate 校验采样比率是否在 [0.0, 1.0] 范围内
+func validateRate(rate float64) error {
+	if math.IsNaN(rate) || rate < 0 || rate > 1 {
+		return ErrInvalidRate
+	}
+	return nil
+}

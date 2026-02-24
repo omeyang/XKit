@@ -35,5 +35,12 @@
 // 可通过 WithExcludePolicy 设置错误排除策略。
 // 若需将特定错误标记为"成功"（计入成功计数），请使用 WithSuccessPolicy。
 //
+// # 状态变化回调
+//
+// WithOnStateChange 注册的回调通过 goroutine 异步执行，
+// 避免与 gobreaker 内部 mutex 产生死锁。回调中可安全调用
+// Breaker 的 State()/Counts()/Do() 等方法。
+// 注意回调执行顺序不保证，且获取的状态可能已是更新后的值。
+//
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

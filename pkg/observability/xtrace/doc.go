@@ -37,6 +37,7 @@
 // gRPC：使用 GRPCUnaryServerInterceptor(...Option) 服务端拦截器，
 // GRPCUnaryClientInterceptor() 客户端拦截器。
 // HTTP 和 gRPC 共用同一套 Option 类型（如 WithAutoGenerate）。
+// 使用 TraceInfoFromContext() 从 context 提取完整追踪信息（与 ExtractFromHTTPHeader 对称）。
 //
 // # W3C Trace Context
 //
@@ -62,6 +63,10 @@
 //   - 存储：tracestate 不自动存入 context（需手动处理）
 //   - 传播：InjectToRequest/InjectToOutgoingContext 不自动传播 tracestate
 //   - 手动透传：可通过 InjectTraceToHeader/InjectTraceToMetadata 手动设置
+//
+// W3C 规范要求：tracestate 不得在无有效 traceparent 时发送。
+// InjectTraceToHeader/InjectTraceToMetadata 会自动遵守此约束：
+// 仅当 traceparent 成功写入时才注入 tracestate。
 //
 // 设计理由：tracestate 内容与厂商相关，中间服务盲目传递可能导致问题。
 // 如需完整 tracestate 支持，建议使用 OpenTelemetry SDK。

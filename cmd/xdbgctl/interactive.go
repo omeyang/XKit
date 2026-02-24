@@ -13,6 +13,9 @@ import (
 
 // cmdInteractive 交互模式（REPL）。
 func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	// 测试连接
@@ -30,6 +33,8 @@ func cmdInteractive(ctx context.Context, socketPath string, timeout time.Duratio
 // startInputReader 启动输入读取 goroutine。
 // 设计决策: inputCh 无缓冲，使用 select 保护发送，
 // 防止 context 取消后 goroutine 在 inputCh 发送端永久阻塞。
+// 注意: scanner.Scan() 阻塞在 os.Stdin.Read() 上，不可被 context 取消。
+// 该 goroutine 在进程退出时由 OS 回收，对 CLI 工具而言这是可接受的权衡。
 func startInputReader(ctx context.Context) (<-chan string, <-chan error) {
 	inputCh := make(chan string)
 	errCh := make(chan error, 1) // 缓冲区为 1，避免读取 goroutine 在 context 取消后泄漏
@@ -96,7 +101,11 @@ func processLine(ctx context.Context, exec executor, line string) bool {
 	}
 
 	// 解析命令和参数
-	parts := parseCommandLine(line)
+	parts, err := parseCommandLine(line)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "语法错误: %v\n", err)
+		return false
+	}
 	if len(parts) == 0 {
 		return false
 	}
@@ -130,7 +139,8 @@ func executeAndPrint(ctx context.Context, exec executor, command string, args []
 }
 
 // parseCommandLine 解析命令行，支持引号和反斜杠转义。
-func parseCommandLine(line string) []string {
+// 未闭合的引号或尾部转义符返回错误。
+func parseCommandLine(line string) ([]string, error) {
 	var parts []string
 	var current strings.Builder
 	var inQuote bool
@@ -166,11 +176,26 @@ func parseCommandLine(line string) []string {
 		}
 	}
 
+	if err := validateParseState(escaped, inQuote, quoteChar); err != nil {
+		return nil, err
+	}
+
 	if current.Len() > 0 {
 		parts = append(parts, current.String())
 	}
 
-	return parts
+	return parts, nil
+}
+
+// validateParseState 校验解析结束状态。
+func validateParseState(escaped, inQuote bool, quoteChar rune) error {
+	if escaped {
+		return fmt.Errorf("尾部转义符未完成")
+	}
+	if inQuote {
+		return fmt.Errorf("引号未闭合（%c）", quoteChar)
+	}
+	return nil
 }
 
 func isQuoteStart(r rune, inQuote bool) bool {

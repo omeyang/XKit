@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -151,7 +152,7 @@ func (l *K8sLocker) TryLock(ctx context.Context, key string, ttl time.Duration) 
 	// 每次获取生成唯一 token，包含实例标识便于调试
 	token := fmt.Sprintf("%s:%s", l.identity, uuid.New().String())
 	now := metav1.NewMicroTime(time.Now())
-	leaseDuration := int32(ttl.Seconds())
+	leaseDuration := int32(math.Ceil(ttl.Seconds()))
 
 	// 尝试获取现有 Lease
 	lease, err := l.client.CoordinationV1().Leases(l.namespace).Get(ctx, leaseName, metav1.GetOptions{})
@@ -330,7 +331,7 @@ func (h *k8sLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
 
 	// 更新续期时间和租期
 	now := metav1.NewMicroTime(time.Now())
-	leaseDuration := int32(ttl.Seconds())
+	leaseDuration := int32(math.Ceil(ttl.Seconds()))
 	lease.Spec.RenewTime = &now
 	lease.Spec.LeaseDurationSeconds = &leaseDuration
 

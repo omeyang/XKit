@@ -44,9 +44,11 @@ func TestAcquireNilContext(t *testing.T) {
 	kl := newForTest(t)
 	defer func() { require.NoError(t, kl.Close()) }()
 
-	assert.PanicsWithValue(t, "xkeylock: nil Context", func() {
-		kl.Acquire(nil, "key1") // nil ctx panic 行为
-	})
+	_, err := kl.Acquire(nil, "key1") //nolint:staticcheck // 故意传入 nil ctx 以验证 ErrNilContext
+	assert.ErrorIs(t, err, ErrNilContext)
+
+	// 确认没有残留 entry
+	assert.Equal(t, 0, kl.Len())
 }
 
 func TestAcquireAndUnlock(t *testing.T) {

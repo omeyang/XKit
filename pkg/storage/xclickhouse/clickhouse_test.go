@@ -10,7 +10,7 @@ func TestNew_NilConn(t *testing.T) {
 	ch, err := New(nil)
 
 	assert.Nil(t, ch)
-	assert.ErrorIs(t, err, ErrNilConn)
+	assert.ErrorIs(t, err, ErrNilClient)
 }
 
 func TestClickHouseInterface(t *testing.T) {

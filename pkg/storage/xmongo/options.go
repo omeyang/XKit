@@ -24,6 +24,9 @@ type SlowQueryInfo struct {
 	Operation string
 
 	// Filter 查询过滤条件。
+	//
+	// ⚠️ 安全提示：Filter 包含原始查询条件，可能含有敏感信息（如密码查询条件）。
+	// 在 SlowQueryHook 实现中写入日志时，请注意脱敏处理。
 	Filter any
 
 	// Duration 操作耗时。
@@ -85,7 +88,7 @@ type Options struct {
 
 	// AsyncSlowQueryQueueSize 异步慢查询任务队列大小。
 	// 仅当设置 AsyncSlowQueryHook 时生效。
-	// 默认为 1000。当队列满时，新任务将被丢弃并记录日志。
+	// 默认为 1000。当队列满时，新任务将被静默丢弃（不记录日志），属于可接受的降级行为。
 	AsyncSlowQueryQueueSize int
 
 	// Observer 是统一观测接口（metrics/tracing）。

@@ -4,6 +4,8 @@ package xdbg
 
 import (
 	"context"
+	"errors"
+	"net"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -912,6 +914,51 @@ func TestServer_AuditNilLogger(t *testing.T) {
 	// Should not panic with nil logger
 	srv.audit(AuditEventCommand, nil, "test", nil, 0, nil)
 }
+
+// FG-M3: 验证 Stop 返回 transport/trigger 关闭错误。
+func TestServer_Stop_ReturnsTransportCloseError(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// 替换 transport 为一个 Close 会失败的 mock
+	srv.transportMu.Lock()
+	srv.transport = &failCloseTransport{}
+	srv.transportMu.Unlock()
+
+	err = srv.Stop()
+	if err == nil {
+		t.Error("Stop() should return error when transport close fails")
+	}
+}
+
+// failCloseTransport Close 返回错误的 mock 传输层。
+type failCloseTransport struct{}
+
+func (t *failCloseTransport) Listen(_ context.Context) error { return nil }
+
+func (t *failCloseTransport) Accept() (net.Conn, *PeerIdentity, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (t *failCloseTransport) Close() error {
+	return errors.New("mock transport close error")
+}
+
+func (t *failCloseTransport) Addr() string { return "" }
 
 // testAuditLogger 用于测试的审计日志器。
 type testAuditLogger struct {

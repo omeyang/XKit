@@ -90,16 +90,24 @@ func RequireTenantName(ctx context.Context) (string, error) {
 //
 // 如果 ctx 为 nil，返回错误。
 // 底层使用 xctx.WithTenantID。
+//
+// 设计决策: 对 tenantID 做 TrimSpace 后再注入，与 WithTenantInfo 和
+// Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
+// 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantID。
 func WithTenantID(ctx context.Context, tenantID string) (context.Context, error) {
-	return xctx.WithTenantID(ctx, tenantID)
+	return xctx.WithTenantID(ctx, strings.TrimSpace(tenantID))
 }
 
 // WithTenantName 将租户名称注入 context
 //
 // 如果 ctx 为 nil，返回错误。
 // 底层使用 xctx.WithTenantName。
+//
+// 设计决策: 对 tenantName 做 TrimSpace 后再注入，与 WithTenantInfo 和
+// Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
+// 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantName。
 func WithTenantName(ctx context.Context, tenantName string) (context.Context, error) {
-	return xctx.WithTenantName(ctx, tenantName)
+	return xctx.WithTenantName(ctx, strings.TrimSpace(tenantName))
 }
 
 // WithTenantInfo 将 TenantInfo 批量注入 context

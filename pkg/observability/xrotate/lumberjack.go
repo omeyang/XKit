@@ -28,20 +28,20 @@ const (
 	// DefaultLocalTime 默认是否使用本地时间（false 表示 UTC）
 	DefaultLocalTime = false
 
-	// sizeMBUpperBound 单个日志文件大小上限（10 GB）
-	sizeMBUpperBound = 10240
+	// maxSizeMB 单个日志文件大小上限（10 GB）
+	maxSizeMB = 10240
 
-	// backupsUpperBound 备份文件数量上限
-	backupsUpperBound = 1024
+	// maxBackups 备份文件数量上限
+	maxBackups = 1024
 
-	// ageDaysUpperBound 备份保留天数上限（约 10 年）
-	ageDaysUpperBound = 3650
+	// maxAgeDays 备份保留天数上限（约 10 年）
+	maxAgeDays = 3650
 )
 
-// LumberjackConfig lumberjack 轮转器配置
+// lumberjackConfig lumberjack 轮转器配置
 //
 // 基于文件大小的轮转策略，适用于大多数日志场景。
-type LumberjackConfig struct {
+type lumberjackConfig struct {
 	// MaxSizeMB 单个日志文件最大大小（MB）
 	// 超过此大小时触发轮转
 	// 默认值 DefaultMaxSizeMB，必须 > 0
@@ -86,40 +86,40 @@ type LumberjackConfig struct {
 	OnError func(error)
 }
 
-// LumberjackOption lumberjack 配置选项函数
-type LumberjackOption func(*LumberjackConfig)
+// Option lumberjack 配置选项函数
+type Option func(*lumberjackConfig)
 
 // WithMaxSize 设置单个日志文件最大大小（MB）
-func WithMaxSize(mb int) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithMaxSize(mb int) Option {
+	return func(c *lumberjackConfig) {
 		c.MaxSizeMB = mb
 	}
 }
 
 // WithMaxBackups 设置保留的备份文件数量
-func WithMaxBackups(n int) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithMaxBackups(n int) Option {
+	return func(c *lumberjackConfig) {
 		c.MaxBackups = n
 	}
 }
 
 // WithMaxAge 设置保留备份的天数
-func WithMaxAge(days int) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithMaxAge(days int) Option {
+	return func(c *lumberjackConfig) {
 		c.MaxAgeDays = days
 	}
 }
 
 // WithCompress 设置是否压缩备份文件
-func WithCompress(compress bool) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithCompress(compress bool) Option {
+	return func(c *lumberjackConfig) {
 		c.Compress = compress
 	}
 }
 
 // WithLocalTime 设置备份文件名是否使用本地时间
-func WithLocalTime(local bool) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithLocalTime(local bool) Option {
+	return func(c *lumberjackConfig) {
 		c.LocalTime = local
 	}
 }
@@ -131,8 +131,8 @@ func WithLocalTime(local bool) LumberjackOption {
 //
 // 注意：权限调整在文件创建/写入后通过 chmod 实现，
 // 存在短暂时间窗口文件权限为 lumberjack 默认值 0600。
-func WithFileMode(mode os.FileMode) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithFileMode(mode os.FileMode) Option {
+	return func(c *lumberjackConfig) {
 		c.FileMode = mode
 	}
 }
@@ -144,8 +144,8 @@ func WithFileMode(mode os.FileMode) LumberjackOption {
 // 设计决策: 不使用 slog 等日志库记录内部错误，避免 Rotator 作为日志输出目标时
 // 产生递归写入（写失败 → 打日志 → 再写失败 → 栈溢出/死锁）。
 // 回调函数不得向同一 Rotator 写入数据。
-func WithOnError(fn func(error)) LumberjackOption {
-	return func(c *LumberjackConfig) {
+func WithOnError(fn func(error)) Option {
+	return func(c *lumberjackConfig) {
 		c.OnError = fn
 	}
 }
@@ -187,13 +187,13 @@ type lumberjackRotator struct {
 // 安全说明:
 //   - 会对文件路径进行规范化和安全检查
 //   - 自动创建不存在的父目录（权限 0750）
-func NewLumberjack(filename string, opts ...LumberjackOption) (Rotator, error) {
+func NewLumberjack(filename string, opts ...Option) (Rotator, error) {
 	if filename == "" {
 		return nil, ErrEmptyFilename
 	}
 
 	// 构建配置（使用默认值）
-	cfg := LumberjackConfig{
+	cfg := lumberjackConfig{
 		MaxSizeMB:  DefaultMaxSizeMB,
 		MaxBackups: DefaultMaxBackups,
 		MaxAgeDays: DefaultMaxAgeDays,
@@ -209,7 +209,7 @@ func NewLumberjack(filename string, opts ...LumberjackOption) (Rotator, error) {
 	}
 
 	// 验证配置
-	if err := validateLumberjackConfig(&cfg); err != nil {
+	if err := validatelumberjackConfig(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -243,25 +243,25 @@ func NewLumberjack(filename string, opts ...LumberjackOption) (Rotator, error) {
 	}, nil
 }
 
-// validateLumberjackConfig 验证 lumberjack 配置
-func validateLumberjackConfig(cfg *LumberjackConfig) error {
-	if cfg.MaxSizeMB <= 0 || cfg.MaxSizeMB > sizeMBUpperBound {
-		return fmt.Errorf("%w: got %d, want 1~%d", ErrInvalidMaxSize, cfg.MaxSizeMB, sizeMBUpperBound)
+// validatelumberjackConfig 验证 lumberjack 配置
+func validatelumberjackConfig(cfg *lumberjackConfig) error {
+	if cfg.MaxSizeMB <= 0 || cfg.MaxSizeMB > maxSizeMB {
+		return fmt.Errorf("%w: got %d, want 1~%d", ErrInvalidMaxSize, cfg.MaxSizeMB, maxSizeMB)
 	}
 
-	if cfg.MaxBackups < 0 || cfg.MaxBackups > backupsUpperBound {
-		return fmt.Errorf("%w: got %d, want 0~%d", ErrInvalidMaxBackups, cfg.MaxBackups, backupsUpperBound)
+	if cfg.MaxBackups < 0 || cfg.MaxBackups > maxBackups {
+		return fmt.Errorf("%w: got %d, want 0~%d", ErrInvalidMaxBackups, cfg.MaxBackups, maxBackups)
 	}
 
-	if cfg.MaxAgeDays < 0 || cfg.MaxAgeDays > ageDaysUpperBound {
-		return fmt.Errorf("%w: got %d, want 0~%d", ErrInvalidMaxAge, cfg.MaxAgeDays, ageDaysUpperBound)
+	if cfg.MaxAgeDays < 0 || cfg.MaxAgeDays > maxAgeDays {
+		return fmt.Errorf("%w: got %d, want 0~%d", ErrInvalidMaxAge, cfg.MaxAgeDays, maxAgeDays)
 	}
 
 	return validateLumberjackPolicy(cfg)
 }
 
 // validateLumberjackPolicy 验证清理策略和文件权限
-func validateLumberjackPolicy(cfg *LumberjackConfig) error {
+func validateLumberjackPolicy(cfg *lumberjackConfig) error {
 	if cfg.MaxBackups == 0 && cfg.MaxAgeDays == 0 {
 		return fmt.Errorf("%w: MaxBackups and MaxAgeDays cannot both be 0", ErrNoCleanupPolicy)
 	}

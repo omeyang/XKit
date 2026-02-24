@@ -27,7 +27,9 @@ func TestNew_NilOption(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// When: New is called with nil option — should not panic
@@ -48,7 +50,9 @@ func TestNew_Success(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	// When: New is called with valid client
@@ -68,7 +72,9 @@ func TestNew_WithAllOptions(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 	defer func() {
-		_ = client.Disconnect(context.Background()) //nolint:errcheck // cleanup in test
+		if err := client.Disconnect(context.Background()); err != nil {
+			t.Logf("cleanup disconnect: %v", err)
+		}
 	}()
 
 	var hookCalled bool

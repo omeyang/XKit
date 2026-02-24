@@ -61,9 +61,16 @@ func Ticker(interval time.Duration, immediate bool, fn func(ctx context.Context)
 		if interval <= 0 {
 			return ErrInvalidInterval
 		}
+		if fn == nil {
+			return ErrNilFunc
+		}
 
-		// 立即执行一次
+		// 设计决策: 立即执行前先检查 ctx.Err()，确保已取消的 context
+		// 不会触发业务副作用（如发送消息、写库）。
 		if immediate {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err := fn(ctx); err != nil {
 				return err
 			}
@@ -104,7 +111,14 @@ func Timer(delay time.Duration, fn func(ctx context.Context) error) func(ctx con
 		if delay < 0 {
 			return ErrInvalidDelay
 		}
+		if fn == nil {
+			return ErrNilFunc
+		}
+		// 设计决策: 零延迟执行前先检查 ctx.Err()，与 Ticker immediate 分支对齐。
 		if delay == 0 {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return fn(ctx)
 		}
 		timer := time.NewTimer(delay)

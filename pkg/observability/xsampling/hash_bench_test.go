@@ -90,22 +90,17 @@ func BenchmarkXXHash(b *testing.B) {
 // =============================================================================
 
 func TestHashDistribution(t *testing.T) {
-	const (
-		numKeys = 100000
-		rate    = 0.1
-	)
-
-	// 生成真实场景的 key（模拟 trace_id、tenant_id 等）
-	// 使用伪随机方式生成，模拟真实的 trace_id 分布
-	keys := make([]string, numKeys)
-	for i := range uint64(numKeys) {
-		// 使用 FNV 混合生成伪随机的 hex 字符串，模拟真实 trace_id
-		// 这比纯顺序数字更接近真实场景
-		h := i * 0x9e3779b97f4a7c15
-		keys[i] = fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
+	rates := []struct {
+		rate      float64
+		numKeys   int
+		tolerance float64 // 允许的相对偏差百分比
+	}{
+		{0.1, 100000, 5},
+		{0.01, 1000000, 5},
+		{0.001, 1000000, 10}, // 低采样率容许更大偏差
 	}
 
-	tests := []struct {
+	hashes := []struct {
 		name string
 		hash func(string) uint64
 	}{
@@ -114,28 +109,38 @@ func TestHashDistribution(t *testing.T) {
 		{"xxhash", xxhash.Sum64String},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sampled := 0
-			for _, key := range keys {
-				hashValue := tt.hash(key)
-				normalized := float64(hashValue) / float64(^uint64(0))
-				if normalized < rate {
-					sampled++
+	for _, rc := range rates {
+		// 生成真实场景的 key（模拟 trace_id、tenant_id 等）
+		keys := make([]string, rc.numKeys)
+		for i := range rc.numKeys {
+			u := uint64(i) //nolint:gosec // i is always non-negative (loop index)
+			h := u * 0x9e3779b97f4a7c15
+			keys[i] = fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
+		}
+
+		for _, tt := range hashes {
+			t.Run(fmt.Sprintf("%s/rate=%.4f", tt.name, rc.rate), func(t *testing.T) {
+				sampled := 0
+				for _, key := range keys {
+					hashValue := tt.hash(key)
+					normalized := float64(hashValue) / float64(^uint64(0))
+					if normalized < rc.rate {
+						sampled++
+					}
 				}
-			}
 
-			actualRate := float64(sampled) / float64(numKeys)
-			deviation := (actualRate - rate) / rate * 100
+				actualRate := float64(sampled) / float64(rc.numKeys)
+				deviation := (actualRate - rc.rate) / rc.rate * 100
 
-			t.Logf("%s: sampled %d/%d = %.4f (deviation: %.2f%%)",
-				tt.name, sampled, numKeys, actualRate, deviation)
+				t.Logf("%s rate=%.4f: sampled %d/%d = %.6f (deviation: %.2f%%)",
+					tt.name, rc.rate, sampled, rc.numKeys, actualRate, deviation)
 
-			// 允许 5% 的偏差
-			if deviation < -5 || deviation > 5 {
-				t.Errorf("distribution deviation too large: %.2f%%", deviation)
-			}
-		})
+				if deviation < -rc.tolerance || deviation > rc.tolerance {
+					t.Errorf("distribution deviation too large: %.2f%% (tolerance: %.0f%%)",
+						deviation, rc.tolerance)
+				}
+			})
+		}
 	}
 }
 

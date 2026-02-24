@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -33,8 +32,25 @@ type usageError struct {
 
 func (e *usageError) Error() string { return e.msg }
 
+// isCLIUsageError 检测是否为 CLI 框架产生的参数错误（如未知 flag）。
+// 设计决策: urfave/cli/v3 对参数错误返回的是 plain error（无自定义类型），
+// 只能通过错误消息前缀识别。这些前缀是 urfave/cli 内部常量，变化概率极低。
+func isCLIUsageError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "flag provided but not defined") ||
+		strings.Contains(msg, "flag needs an argument")
+}
+
 // maxCommLen 是 Linux TASK_COMM_LEN (16) 减去 null 终止符后的最大进程名长度。
 const maxCommLen = 15
+
+// validateTimeout 校验超时参数。
+func validateTimeout(timeout time.Duration) error {
+	if timeout <= 0 {
+		return &usageError{msg: fmt.Sprintf("超时时间必须为正数，当前值: %v", timeout)}
+	}
+	return nil
+}
 
 // validateProcessName 校验进程名参数。
 func validateProcessName(name string) error {
@@ -114,6 +130,10 @@ func createToggleCommand() *cli.Command {
 			socketPath := cmd.String("socket")
 			pidFlag := cmd.Int("pid")
 			nameFlag := cmd.String("name")
+			// 用户显式传入 --pid 0 时报错（未传 --pid 时默认值也是 0，需区分）
+			if cmd.IsSet("pid") && pidFlag <= 0 {
+				return &usageError{msg: fmt.Sprintf("无效的 PID: %d（PID 必须为正整数）", pidFlag)}
+			}
 			return cmdToggle(ctx, socketPath, pidFlag, nameFlag)
 		},
 	}
@@ -243,6 +263,9 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 
 // cmdDisable 禁用调试服务。
 func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	resp, err := client.Execute(ctx, "exit", nil)
@@ -251,7 +274,7 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 	}
 
 	if !resp.Success {
-		return errors.New(resp.Error)
+		return fmt.Errorf("禁用失败: %s", resp.Error)
 	}
 
 	fmt.Println(resp.Output)
@@ -260,6 +283,9 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 
 // cmdExec 执行调试命令。
 func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args []string) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return &usageError{msg: "exec 命令需要指定要执行的调试命令"}
 	}
@@ -275,7 +301,7 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 	}
 
 	if !resp.Success {
-		return errors.New(resp.Error)
+		return fmt.Errorf("命令执行失败: %s", resp.Error)
 	}
 
 	if resp.Output != "" {
@@ -293,6 +319,9 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 // 设计决策: 离线时返回非零退出码（通过 exitError），
 // 使脚本和探针能正确检测服务状态。
 func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) error {
+	if err := validateTimeout(timeout); err != nil {
+		return err
+	}
 	client := NewClient(socketPath, timeout)
 
 	err := client.Ping(ctx)
@@ -491,7 +520,7 @@ func isContainerEnvironment() bool {
 	// 检查 /proc/1/cgroup 是否包含容器相关信息（兼容 cgroup v1 和 v2）
 	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		content := string(data)
-		containerMarkers := []string{"docker", "kubepods", "containerd", "crio", "buildkit"}
+		containerMarkers := []string{"docker", "kubepods", "containerd", "crio", "buildkit", "libpod", "lxc"}
 		for _, marker := range containerMarkers {
 			if strings.Contains(content, marker) {
 				return true

@@ -240,9 +240,12 @@ func WithDistributedLockKeyPrefix(prefix string) LoaderOption {
 func WithExternalLock(fn LockFunc) LoaderOption {
 	return func(o *LoaderOptions) {
 		o.ExternalLock = fn
-		// 设置外部锁时自动启用分布式锁
 		if fn != nil {
+			// 设置外部锁时自动启用分布式锁
 			o.EnableDistributedLock = true
+		} else {
+			// 清除外部锁时同步清除分布式锁标志，保持 API 对称
+			o.EnableDistributedLock = false
 		}
 	}
 }
@@ -266,7 +269,12 @@ func WithMaxRetryAttempts(n int) LoaderOption {
 
 // WithTTLJitter 设置缓存 TTL 的随机抖动比例，用于防止缓存雪崩。
 // factor 范围为 [0.0, 1.0]，超出范围会被钳位。
-// 例如 factor=0.1 时，1 小时 TTL 会被随机化到约 57-63 分钟。
+//
+// 实际 TTL 范围为 [ttl * (1 - factor/2), ttl * (1 + factor/2)]：
+//   - factor=0.1 → TTL ±5%（例如 1h → 57~63min）
+//   - factor=0.3 → TTL ±15%（例如 1h → 51~69min）
+//   - factor=1.0 → TTL ±50%（例如 1h → 30~90min，极端值慎用）
+//
 // 默认为 0（不抖动）。
 func WithTTLJitter(factor float64) LoaderOption {
 	return func(o *LoaderOptions) {

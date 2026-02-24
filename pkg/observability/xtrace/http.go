@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-
-	"github.com/omeyang/xkit/pkg/context/xctx"
 )
 
 // =============================================================================
@@ -119,25 +117,22 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 		req.Header = make(http.Header)
 	}
 
-	traceID := xctx.TraceID(ctx)
-	spanID := xctx.SpanID(ctx)
-	requestID := xctx.RequestID(ctx)
-	traceFlags := xctx.TraceFlags(ctx)
+	info := TraceInfoFromContext(ctx)
 
 	// 注入追踪信息
-	if traceID != "" {
-		req.Header.Set(HeaderTraceID, traceID)
+	if info.TraceID != "" {
+		req.Header.Set(HeaderTraceID, info.TraceID)
 	}
-	if spanID != "" {
-		req.Header.Set(HeaderSpanID, spanID)
+	if info.SpanID != "" {
+		req.Header.Set(HeaderSpanID, info.SpanID)
 	}
-	if requestID != "" {
-		req.Header.Set(HeaderRequestID, requestID)
+	if info.RequestID != "" {
+		req.Header.Set(HeaderRequestID, info.RequestID)
 	}
 
 	// 生成 W3C traceparent（仅在 traceID 和 spanID 都有效时）
 	// 使用 context 中的 traceFlags，若无则默认 "00"
-	if traceparent := formatTraceparent(traceID, spanID, traceFlags); traceparent != "" {
+	if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
 		req.Header.Set(HeaderTraceparent, traceparent)
 	}
 }
@@ -154,35 +149,11 @@ func InjectTraceToHeader(h http.Header, info TraceInfo) {
 	if h == nil {
 		return
 	}
-
-	if info.TraceID != "" {
-		h.Set(HeaderTraceID, info.TraceID)
-	}
-	if info.SpanID != "" {
-		h.Set(HeaderSpanID, info.SpanID)
-	}
-	if info.RequestID != "" {
-		h.Set(HeaderRequestID, info.RequestID)
-	}
-
-	// 设计决策: 无论 info.Traceparent 是否包含非 v00 版本，
-	// 始终以 v00 格式重新生成 traceparent。这与 formatTraceparent 的设计决策一致：
-	// 本包作为 v00 实现，按 W3C 规范应以自身支持的版本重新生成。
-	if info.Traceparent != "" {
-		if traceID, spanID, traceFlags, ok := parseTraceparent(info.Traceparent); ok {
-			h.Set(HeaderTraceparent, formatTraceparent(traceID, spanID, traceFlags))
-		}
-		// 无效时静默丢弃，尝试从 TraceID/SpanID 生成
-	}
-
-	// 如果没有设置有效的 Traceparent，尝试从 TraceID/SpanID 生成
-	if h.Get(HeaderTraceparent) == "" {
-		if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
-			h.Set(HeaderTraceparent, traceparent)
-		}
-	}
-
-	if info.Tracestate != "" {
-		h.Set(HeaderTracestate, info.Tracestate)
-	}
+	injectTraceInfoTo(h.Set, info, transportKeys{
+		traceID:     HeaderTraceID,
+		spanID:      HeaderSpanID,
+		requestID:   HeaderRequestID,
+		traceparent: HeaderTraceparent,
+		tracestate:  HeaderTracestate,
+	})
 }

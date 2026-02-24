@@ -8,6 +8,7 @@ import (
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/observability/xtrace"
+	"google.golang.org/grpc/metadata"
 )
 
 // =============================================================================
@@ -888,6 +889,63 @@ func TestInjectTraceToHeader_FormatTraceparentEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// W3C tracestate 防护测试
+// =============================================================================
+
+func TestInjectTraceToHeader_TracestateRequiresTraceparent(t *testing.T) {
+	t.Run("有 traceparent 时写入 tracestate", func(t *testing.T) {
+		h := http.Header{}
+		info := xtrace.TraceInfo{
+			TraceID:    "0af7651916cd43dd8448eb211c80319c",
+			SpanID:     "b7ad6b7169203331",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToHeader(h, info)
+
+		if got := h.Get(xtrace.HeaderTracestate); got != "vendor=opaque" {
+			t.Errorf("tracestate = %q, want %q", got, "vendor=opaque")
+		}
+	})
+
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		h := http.Header{}
+		// TraceID 无效（太短），无法生成 traceparent
+		info := xtrace.TraceInfo{
+			TraceID:    "short",
+			SpanID:     "also-short",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToHeader(h, info)
+
+		if got := h.Get(xtrace.HeaderTraceparent); got != "" {
+			t.Errorf("traceparent should be empty, got %q", got)
+		}
+		if got := h.Get(xtrace.HeaderTracestate); got != "" {
+			t.Errorf("tracestate should be empty when no valid traceparent, got %q", got)
+		}
+	})
+}
+
+func TestInjectTraceToMetadata_TracestateRequiresTraceparent(t *testing.T) {
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		md := metadata.MD{}
+		info := xtrace.TraceInfo{
+			TraceID:    "short",
+			SpanID:     "also-short",
+			Tracestate: "vendor=opaque",
+		}
+		xtrace.InjectTraceToMetadata(md, info)
+
+		if vals := md.Get(xtrace.MetaTraceparent); len(vals) > 0 {
+			t.Errorf("traceparent should be empty, got %v", vals)
+		}
+		if vals := md.Get(xtrace.MetaTracestate); len(vals) > 0 {
+			t.Errorf("tracestate should be empty when no valid traceparent, got %v", vals)
+		}
+	})
 }
 
 // =============================================================================

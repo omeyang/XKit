@@ -59,8 +59,16 @@ import (
 // defaultTimeout 默认超时时间。
 const defaultTimeout = 30 * time.Second
 
-// Version 版本号（可通过 -ldflags "-X main.Version=x.y.z" 注入）。
-var Version = "0.1.0-dev"
+// 版本信息（可通过 -ldflags 注入，例如:
+//
+//	go build -ldflags "-X main.Version=1.0.0 -X main.GitCommit=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// ）。
+var (
+	Version   = "0.1.0-dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
+)
 
 func main() {
 	os.Exit(run())
@@ -125,6 +133,12 @@ func run() int {
 		var usageErr *usageError
 		if errors.As(err, &usageErr) {
 			fmt.Fprintf(os.Stderr, "参数错误: %v\n", usageErr)
+			return 2
+		}
+		// CLI 框架产生的参数错误（如未知 flag）也返回退出码 2，
+		// 与文档契约"参数错误 → 退出码 2"保持一致。
+		if isCLIUsageError(err) {
+			// urfave/cli 已向 stderr 输出错误详情，此处仅设置退出码
 			return 2
 		}
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)

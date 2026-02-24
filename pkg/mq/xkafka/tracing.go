@@ -121,7 +121,7 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 		Component: componentName,
 		Operation: "consume",
 		Kind:      xmetrics.KindConsumer,
-		Attrs:     kafkaMessageAttrs(msg),
+		Attrs:     kafkaConsumerMessageAttrs(msg, w.groupID),
 	})
 	defer func() {
 		span.End(xmetrics.Result{Err: err})
@@ -159,6 +159,9 @@ func (w *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 func (w *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
 	if handler == nil {
 		return ErrNilHandler
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	consume := func(ctx context.Context) error {
 		return w.Consume(ctx, handler)

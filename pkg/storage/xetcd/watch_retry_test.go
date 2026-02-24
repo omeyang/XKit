@@ -54,6 +54,102 @@ func TestWatchWithRetry_EmptyKey(t *testing.T) {
 	}
 }
 
+// TestWatchWithRetry_InvalidBackoffMultiplier 测试 BackoffMultiplier < 1 被修正为 2.0。
+func TestWatchWithRetry_InvalidBackoffMultiplier(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	watchChan := make(chan clientv3.WatchResponse, 1)
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any()).
+		Return(clientv3.WatchChan(watchChan))
+
+	cfg := RetryConfig{
+		InitialBackoff:    10 * time.Millisecond,
+		MaxBackoff:        50 * time.Millisecond,
+		BackoffMultiplier: 0.5, // 无效值，应被修正
+	}
+
+	eventCh, err := c.WatchWithRetry(ctx, "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	go func() {
+		watchChan <- clientv3.WatchResponse{
+			Events: []*clientv3.Event{
+				{Type: mvccpb.PUT, Kv: &mvccpb.KeyValue{Key: []byte("/key"), Value: []byte("v"), ModRevision: 1}},
+			},
+		}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	select {
+	case event := <-eventCh:
+		if event.Key != "/key" {
+			t.Errorf("event.Key = %v, want /key", event.Key)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+
+	<-eventCh // drain close
+}
+
+// TestWatchWithRetry_MaxBackoffLessThanInitial 测试 MaxBackoff < InitialBackoff 被修正。
+func TestWatchWithRetry_MaxBackoffLessThanInitial(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	watchChan := make(chan clientv3.WatchResponse, 1)
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any()).
+		Return(clientv3.WatchChan(watchChan))
+
+	cfg := RetryConfig{
+		InitialBackoff:    100 * time.Millisecond,
+		MaxBackoff:        10 * time.Millisecond, // 倒挂，应被修正为 InitialBackoff
+		BackoffMultiplier: 2.0,
+	}
+
+	eventCh, err := c.WatchWithRetry(ctx, "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	go func() {
+		watchChan <- clientv3.WatchResponse{
+			Events: []*clientv3.Event{
+				{Type: mvccpb.PUT, Kv: &mvccpb.KeyValue{Key: []byte("/key"), Value: []byte("v"), ModRevision: 1}},
+			},
+		}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	select {
+	case event := <-eventCh:
+		if event.Key != "/key" {
+			t.Errorf("event.Key = %v, want /key", event.Key)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+
+	<-eventCh // drain close
+}
+
 // TestWatchWithRetry_DefaultValues 测试零值配置触发默认值补充后正常运行。
 func TestWatchWithRetry_DefaultValues(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -257,6 +353,65 @@ func TestWatchWithRetry_MaxRetries(t *testing.T) {
 	}
 }
 
+// TestWatchWithRetry_WatchReturnsError_MaxRetries 测试 Watch() 方法本身返回错误时
+// 触发重试直到 MaxRetries 耗尽。
+// 覆盖 runWatchWithRetry 中 c.Watch 返回 err != nil → handleWatchRetry →
+// sendMaxRetriesErrorIfNeeded 路径。
+func TestWatchWithRetry_WatchReturnsError_MaxRetries(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	// 第一次 Watch 成功，返回立即关闭的通道触发 disconnect。
+	// 在 handleWatchRetry 退避期间关闭客户端，使后续 Watch 被 checkClosed 拦截。
+	callCount := 0
+	mockClient.EXPECT().
+		Watch(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, k string, opts ...clientv3.OpOption) clientv3.WatchChan {
+			callCount++
+			if callCount == 1 {
+				ch := make(chan clientv3.WatchResponse)
+				close(ch) // 立即关闭触发 disconnect
+				return ch
+			}
+			// 不应到达：后续调用被 checkClosed 拦截
+			ch := make(chan clientv3.WatchResponse)
+			close(ch)
+			return ch
+		}).AnyTimes()
+
+	// 关闭 client 底层 mock（Close 调用）
+	mockClient.EXPECT().Close().Return(nil).AnyTimes()
+
+	cfg := RetryConfig{
+		InitialBackoff:    1 * time.Millisecond,
+		MaxBackoff:        5 * time.Millisecond,
+		BackoffMultiplier: 2.0,
+		MaxRetries:        2,
+	}
+
+	eventCh, err := c.WatchWithRetry(context.Background(), "/key", cfg)
+	if err != nil {
+		t.Fatalf("WatchWithRetry() error = %v", err)
+	}
+
+	// 等待第一次 Watch 完成并进入退避，然后关闭客户端
+	time.Sleep(3 * time.Millisecond)
+	if closeErr := c.Close(); closeErr != nil {
+		t.Fatalf("Close() error = %v", closeErr)
+	}
+
+	// 通道应关闭（客户端关闭导致 shouldStopWatch 返回 true）
+	select {
+	case <-eventCh:
+		// 通道关闭或收到事件，正常
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
+	}
+}
+
 // TestWatchWithRetry_ClientClosed 测试客户端关闭时 WatchWithRetry 退出。
 func TestWatchWithRetry_ClientClosed(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -389,6 +544,8 @@ func TestWatchWithRetry_WatchErrorWithRevision(t *testing.T) {
 }
 
 // TestNextBackoff 测试退避时间计算逻辑。
+// nextBackoff 包含 ±20% jitter，因此结果在 [base*0.8, base*1.2) 范围内。
+// 对于被 MaxBackoff 截断的场景，结果 ≤ MaxBackoff。
 func TestNextBackoff(t *testing.T) {
 	cfg := RetryConfig{
 		MaxBackoff:        30 * time.Second,
@@ -398,23 +555,56 @@ func TestNextBackoff(t *testing.T) {
 	tests := []struct {
 		name    string
 		current time.Duration
-		want    time.Duration
+		wantMin time.Duration // base * 0.8（含 jitter 下界）
+		wantMax time.Duration // min(base * 1.2, MaxBackoff)（含 jitter 上界）
 	}{
-		{"1s to 2s", 1 * time.Second, 2 * time.Second},
-		{"2s to 4s", 2 * time.Second, 4 * time.Second},
-		{"15s to 30s", 15 * time.Second, 30 * time.Second},
-		{"20s capped at 30s", 20 * time.Second, 30 * time.Second},
-		{"30s stays 30s", 30 * time.Second, 30 * time.Second},
+		{"1s to ~2s", 1 * time.Second, 1600 * time.Millisecond, 2400 * time.Millisecond},
+		{"2s to ~4s", 2 * time.Second, 3200 * time.Millisecond, 4800 * time.Millisecond},
+		{"15s capped at 30s", 15 * time.Second, 24 * time.Second, 30 * time.Second},
+		{"20s capped at 30s", 20 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"30s stays 30s", 30 * time.Second, 30 * time.Second, 30 * time.Second},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := nextBackoff(tt.current, cfg)
-			if got != tt.want {
-				t.Errorf("nextBackoff(%v) = %v, want %v", tt.current, got, tt.want)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("nextBackoff(%v) = %v, want in [%v, %v]",
+					tt.current, got, tt.wantMin, tt.wantMax)
 			}
 		})
 	}
+}
+
+// TestAddJitter 测试 addJitter 函数。
+func TestAddJitter(t *testing.T) {
+	t.Run("zero duration", func(t *testing.T) {
+		got := addJitter(0)
+		if got != 0 {
+			t.Errorf("addJitter(0) = %v, want 0", got)
+		}
+	})
+
+	t.Run("negative duration", func(t *testing.T) {
+		got := addJitter(-time.Second)
+		if got != -time.Second {
+			t.Errorf("addJitter(-1s) = %v, want -1s", got)
+		}
+	})
+
+	t.Run("jitter range", func(t *testing.T) {
+		d := 10 * time.Second
+		minExpected := 8 * time.Second  // d * 0.8
+		maxExpected := 12 * time.Second // d * 1.2
+
+		for i := 0; i < 100; i++ {
+			got := addJitter(d)
+			if got < minExpected || got > maxExpected {
+				t.Errorf("addJitter(%v) = %v, want in [%v, %v]",
+					d, got, minExpected, maxExpected)
+			}
+		}
+	})
 }
 
 // TestSleepWithContext_Normal 测试正常睡眠等待定时器触发。

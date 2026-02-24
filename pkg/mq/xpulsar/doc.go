@@ -23,9 +23,26 @@
 //
 // 使用 DLQBuilder 构建死信队列策略，通过 WithMaxDeliveries/WithDeadLetterTopic 等方法配置。
 //
+// # 健康检查
+//
+// Health() 通过创建临时 Reader 验证与 Broker 的连接状态。
+// 默认使用 non-persistent://public/default/__health_check__ 作为探测 Topic。
+// 在启用 ACL 或非 public/default 命名空间的集群中，
+// 使用 WithHealthCheckTopic 配置为客户端有权限访问的 Topic。
+//
+// Stats().Connected 仅表示客户端未调用 Close()，不反映实际网络连接状态。
+// 若需检测连接健康，请使用 Health() 方法。
+//
 // # 配置选项
 //
 // 使用 WithTracer/WithObserver/WithConnectionTimeout 等选项配置客户端行为。
+//
+// # DLQ 与 xkafka 的差异
+//
+// 设计决策: xpulsar 将 DLQ 逻辑委托给 Pulsar 原生支持（DLQPolicy + NackBackoffPolicy），
+// 而 xkafka 提供完整的 ConsumerWithDLQ 实现。原因是 Pulsar 原生 DLQ 比 Kafka 更成熟，
+// 包括自动重试投递、死信 Topic 管理等。如需自定义 DLQ 元数据追踪，
+// 请通过 Client() 获取原生客户端实现。
 //
 // # 与原生 API 的关系
 //

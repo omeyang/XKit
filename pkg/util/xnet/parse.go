@@ -74,7 +74,22 @@ func ParseRange(s string) (netipx.IPRange, error) {
 	if err != nil {
 		return netipx.IPRange{}, fmt.Errorf("%w: %w", ErrInvalidRange, err)
 	}
+	// 归一化 IPv4-mapped IPv6 → 纯 IPv4，与 CIDR/掩码路径行为一致。
+	addr = unmapAddr(addr)
 	return netipx.IPRangeFrom(addr, addr), nil
+}
+
+// unmapAddr 将 IPv4-mapped IPv6 地址归一化为纯 IPv4。
+// 非 IPv4-mapped 地址原样返回。
+//
+// 设计决策: ParseRange 的所有路径（单 IP、CIDR、掩码、显式范围）统一对
+// IPv4-mapped IPv6 地址归一化，确保 "::ffff:192.168.1.1" 和 "192.168.1.1"
+// 生成相同的范围对象，避免规则集合中出现"逻辑重复但不合并"或"查询不命中"。
+func unmapAddr(addr netip.Addr) netip.Addr {
+	if addr.Is4In6() {
+		return addr.Unmap()
+	}
+	return addr
 }
 
 // parseExplicitRange 尝试将 s 按位置 idx 处的 '-' 拆分为起止地址。
@@ -85,6 +100,9 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
 	start, startErr := netip.ParseAddr(startStr)
 	end, endErr := netip.ParseAddr(endStr)
 	if startErr == nil && endErr == nil {
+		// 归一化 IPv4-mapped IPv6 → 纯 IPv4，与 CIDR/掩码/单 IP 路径行为一致。
+		start = unmapAddr(start)
+		end = unmapAddr(end)
 		r := netipx.IPRangeFrom(start, end)
 		if !r.IsValid() {
 			return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s), true

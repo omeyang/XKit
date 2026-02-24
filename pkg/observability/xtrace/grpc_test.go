@@ -384,3 +384,28 @@ func TestContextHelpers(t *testing.T) {
 		t.Errorf("TraceFlags() = %q, want %q", got, "01")
 	}
 }
+
+func TestTraceInfoFromContext(t *testing.T) {
+	t.Run("完整 context", func(t *testing.T) {
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+		ctx, _ = xctx.WithRequestID(ctx, "req-123")
+		ctx, _ = xctx.WithTraceFlags(ctx, "01")
+
+		info := xtrace.TraceInfoFromContext(ctx)
+
+		assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", info.TraceID)
+		assert.Equal(t, "b7ad6b7169203331", info.SpanID)
+		assert.Equal(t, "req-123", info.RequestID)
+		assert.Equal(t, "01", info.TraceFlags)
+		// Traceparent 和 Tracestate 不存储在 context 中
+		assert.Empty(t, info.Traceparent)
+		assert.Empty(t, info.Tracestate)
+	})
+
+	t.Run("空 context", func(t *testing.T) {
+		info := xtrace.TraceInfoFromContext(context.Background())
+		assert.True(t, info.IsEmpty())
+	})
+}

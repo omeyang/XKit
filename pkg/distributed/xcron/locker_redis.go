@@ -2,8 +2,8 @@ package xcron
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,11 +86,11 @@ func WithRedisIdentity(identity string) RedisLockerOption {
 }
 
 // ErrNilRedisClient 表示 Redis 客户端为 nil。
-var ErrNilRedisClient = fmt.Errorf("xcron: redis client cannot be nil")
+var ErrNilRedisClient = errors.New("xcron: redis client cannot be nil")
 
 // ErrInvalidTTL 表示 TTL 无效（必须为正值）。
 // ttl<=0 会导致锁永不过期，形成实质性"死锁"。
-var ErrInvalidTTL = fmt.Errorf("xcron: lock TTL must be positive")
+var ErrInvalidTTL = errors.New("xcron: lock TTL must be positive")
 
 // NewRedisLocker 创建基于 Redis 的分布式锁。
 //
@@ -185,16 +185,6 @@ func (l *RedisLocker) Identity() string {
 // Client 返回底层 Redis 客户端。
 func (l *RedisLocker) Client() redis.UniversalClient {
 	return l.client
-}
-
-// defaultIdentity 生成默认实例标识（hostname:pid）
-func defaultIdentity() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknown"
-	}
-	pid := os.Getpid()
-	return fmt.Sprintf("%s:%d", hostname, pid)
 }
 
 // 确保 RedisLocker 实现了 Locker 接口

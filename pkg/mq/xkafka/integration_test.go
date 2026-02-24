@@ -454,7 +454,9 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 				"bootstrap.servers": brokers,
 			}
 			producer, err := xkafka.NewProducer(config)
-			require.NoError(t, err)
+			if !assert.NoError(t, err, "producer %d: create failed", id) {
+				return
+			}
 			defer producer.Close()
 
 			deliveryChan := make(chan kafka.Event, messagesPerProducer)
@@ -463,7 +465,9 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 					TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 					Value:          []byte("concurrent message"),
 				}, deliveryChan)
-				require.NoError(t, err)
+				if !assert.NoError(t, err, "producer %d: produce failed", id) {
+					return
+				}
 			}
 
 			// 等待送达

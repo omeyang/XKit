@@ -25,6 +25,24 @@ func BenchmarkSubmit(b *testing.B) {
 	}
 }
 
+// BenchmarkSubmit_ZeroReject 测量纯 Submit 热路径性能（无拒绝）。
+// 使用足够大的队列确保零拒绝，与 BenchmarkSubmit 形成对比。
+func BenchmarkSubmit_ZeroReject(b *testing.B) {
+	pool, err := New(4, 1<<20, func(_ int) {})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer pool.Close()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := pool.Submit(0); err != nil {
+			b.Fatalf("unexpected reject: %v", err)
+		}
+	}
+}
+
 func BenchmarkSubmit_Parallel(b *testing.B) {
 	pool, err := New(4, 10000, func(_ int) {})
 	if err != nil {

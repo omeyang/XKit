@@ -21,7 +21,8 @@
 //   - NewCompositeSampler(mode, ...): 组合多个采样器（AND/OR 逻辑，短路求值），非法 mode 或 nil 子采样器返回错误。
 //     短路求值意味着有状态子采样器（如 CountSampler）的内部状态仅在实际被求值时更新，
 //     子采样器的排列顺序可能影响行为
-//   - NewKeyBasedSampler(rate, keyFunc): 基于 key 的一致性采样（使用 xxhash），keyFunc 不能为 nil
+//   - NewKeyBasedSampler(rate, keyFunc, opts...): 基于 key 的一致性采样（使用 xxhash），keyFunc 不能为 nil。
+//     可选 WithOnEmptyKey 回调用于监控空 key 事件
 //
 // # 错误处理
 //
@@ -41,9 +42,11 @@
 //
 // # 零值行为
 //
-// CountSampler 零值（未经构造函数创建）按全采样处理，避免除零 panic。
-// RateSampler 零值等同于 Never()（rate=0），CompositeSampler 零值等同于 All()（空 AND → true）。
-// 所有采样器的结构体字段均未导出，应始终通过构造函数创建。
+// 所有采样器的结构体字段均未导出，应始终通过构造函数创建。零值行为仅作为安全兜底：
+//   - CountSampler 零值：按全采样处理（避免除零 panic）
+//   - RateSampler 零值：等同于 Never()（rate=0，不采样）
+//   - CompositeSampler 零值：mode=ModeAND + 空列表 → 返回 true（AND 恒等元，等同于全采样）
+//   - KeyBasedSampler 零值：rate=0 → 不采样（但 keyFunc 为 nil 会 panic，请勿使用零值）
 //
 // # 与 OTel 的关系
 //
@@ -65,6 +68,7 @@
 //
 // 当 KeyFunc 返回空字符串时（例如 context 中缺少 trace ID），采样器回退到随机采样。
 // 此时仍保持近似的采样率语义，但失去跨进程一致性保证。
+// 空 key 通常意味着上下文传播链路断裂，建议通过 WithOnEmptyKey 注册回调进行监控。
 //
 // 选择 xxhash 的原因：
 //   - 确定性：相同输入总是产生相同输出（跨进程一致）

@@ -537,18 +537,28 @@ func TestNilRetryer(t *testing.T) {
 }
 
 func TestRetryer_NilFn(t *testing.T) {
-	// nil fn 是编程错误，应 panic（Go 标准行为）
 	r := NewRetryer(WithBackoffPolicy(NewNoBackoff()))
 
 	t.Run("Do", func(t *testing.T) {
-		assert.Panics(t, func() {
-			_ = r.Do(context.Background(), nil) //nolint:errcheck // expected to panic
-		})
+		err := r.Do(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
 	})
 
 	t.Run("DoWithResult", func(t *testing.T) {
-		assert.Panics(t, func() {
-			_, _ = DoWithResult[int](context.Background(), r, nil) //nolint:errcheck // expected to panic
-		})
+		result, err := DoWithResult[int](context.Background(), r, nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+		assert.Equal(t, 0, result)
+	})
+}
+
+func TestNilRetryer_Accessors(t *testing.T) {
+	var r *Retryer // nil
+
+	t.Run("RetryPolicy", func(t *testing.T) {
+		assert.Nil(t, r.RetryPolicy(), "nil Retryer should return nil RetryPolicy")
+	})
+
+	t.Run("BackoffPolicy", func(t *testing.T) {
+		assert.Nil(t, r.BackoffPolicy(), "nil Retryer should return nil BackoffPolicy")
 	})
 }

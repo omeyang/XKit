@@ -7,35 +7,35 @@ import (
 )
 
 // =============================================================================
-// DeployType 方法 Benchmark
+// DeploymentType 方法 Benchmark
 // =============================================================================
 
-func BenchmarkDeployType_String(b *testing.B) {
-	dt := xenv.DeployLocal
+func BenchmarkDeploymentType_String(b *testing.B) {
+	dt := xenv.DeploymentLocal
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = dt.String()
 	}
 }
 
-func BenchmarkDeployType_IsLocal(b *testing.B) {
-	dt := xenv.DeployLocal
+func BenchmarkDeploymentType_IsLocal(b *testing.B) {
+	dt := xenv.DeploymentLocal
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = dt.IsLocal()
 	}
 }
 
-func BenchmarkDeployType_IsSaaS(b *testing.B) {
-	dt := xenv.DeploySaaS
+func BenchmarkDeploymentType_IsSaaS(b *testing.B) {
+	dt := xenv.DeploymentSaaS
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = dt.IsSaaS()
 	}
 }
 
-func BenchmarkDeployType_IsValid(b *testing.B) {
-	dt := xenv.DeployLocal
+func BenchmarkDeploymentType_IsValid(b *testing.B) {
+	dt := xenv.DeploymentLocal
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = dt.IsValid()
@@ -76,8 +76,8 @@ func BenchmarkParse_Invalid(b *testing.B) {
 
 func BenchmarkType(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -89,8 +89,8 @@ func BenchmarkType(b *testing.B) {
 
 func BenchmarkIsLocal(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -102,8 +102,8 @@ func BenchmarkIsLocal(b *testing.B) {
 
 func BenchmarkIsSaaS(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeploySaaS); err != nil {
-		b.Fatalf("InitWith(DeploySaaS) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentSaaS); err != nil {
+		b.Fatalf("InitWith(DeploymentSaaS) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -115,8 +115,8 @@ func BenchmarkIsSaaS(b *testing.B) {
 
 func BenchmarkIsInitialized(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -128,8 +128,8 @@ func BenchmarkIsInitialized(b *testing.B) {
 
 func BenchmarkRequireType(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -169,8 +169,8 @@ func BenchmarkParse_Empty(b *testing.B) {
 
 func BenchmarkType_Parallel(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -184,8 +184,8 @@ func BenchmarkType_Parallel(b *testing.B) {
 
 func BenchmarkIsLocal_Parallel(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()
@@ -199,8 +199,8 @@ func BenchmarkIsLocal_Parallel(b *testing.B) {
 
 func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	xenv.Reset()
-	if err := xenv.InitWith(xenv.DeployLocal); err != nil {
-		b.Fatalf("InitWith(DeployLocal) error = %v", err)
+	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+		b.Fatalf("InitWith(DeploymentLocal) error = %v", err)
 	}
 	b.Cleanup(xenv.Reset)
 	b.ResetTimer()

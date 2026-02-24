@@ -2,6 +2,8 @@ package xetcd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -288,7 +290,17 @@ func (c *Client) dispatchEvents(ctx context.Context, events []*clientv3.Event, e
 }
 
 // convertEvent 将 etcd 事件转换为 xetcd 事件。
+// 设计决策: 对 ev.Kv 做 nil 守卫，防止网络异常或 etcd 服务端 bug 导致的
+// nil Kv 引发 goroutine panic（panic 会绕过 defer close(eventCh)，
+// 导致调用方 for range eventCh 永久阻塞）。
 func convertEvent(ev *clientv3.Event) Event {
+	if ev.Kv == nil {
+		return Event{
+			Type:  EventUnknown,
+			Error: errNilKv,
+		}
+	}
+
 	event := Event{
 		Key:      string(ev.Kv.Key),
 		Revision: ev.Kv.ModRevision,
@@ -388,6 +400,8 @@ func DefaultRetryConfig() RetryConfig {
 //   - 返回的通道只有在 context 取消或达到最大重试次数后才会关闭
 //   - 重连期间可能会有短暂的事件延迟
 //   - 如果 etcd 集群长时间不可用，事件可能会堆积在 etcd 端
+//   - 重连时会自动追加 WithRevision 选项从上次成功位置恢复，
+//     调用方传入的 WithRevision 仅在首次连接时生效，不建议同时使用
 func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig, opts ...WatchOption) (<-chan Event, error) {
 	if err := c.checkClosed(); err != nil {
 		return nil, err
@@ -396,15 +410,22 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 		return nil, ErrEmptyKey
 	}
 
-	// 应用默认值
+	// 应用默认值并修正无效配置
 	if cfg.InitialBackoff <= 0 {
 		cfg.InitialBackoff = 1 * time.Second
 	}
 	if cfg.MaxBackoff <= 0 {
 		cfg.MaxBackoff = 30 * time.Second
 	}
-	if cfg.BackoffMultiplier <= 0 {
+	if cfg.BackoffMultiplier < 1 {
+		// 设计决策: BackoffMultiplier < 1 意味着退避时间递减（越重试越快），
+		// 违反退避策略初衷，静默修正为 2.0 而非返回错误（保持 API 宽容性）。
 		cfg.BackoffMultiplier = 2.0
+	}
+	if cfg.MaxBackoff < cfg.InitialBackoff {
+		// 设计决策: MaxBackoff < InitialBackoff 导致首次退避即被截断，
+		// 静默修正为 InitialBackoff，使退避至少从合理值开始。
+		cfg.MaxBackoff = cfg.InitialBackoff
 	}
 
 	// 创建带缓冲的事件通道
@@ -606,7 +627,35 @@ func sleepWithContext(ctx context.Context, d time.Duration) {
 }
 
 // nextBackoff 计算下一次退避时间。
+// 设计决策: 添加 ±20% 随机抖动（jitter）防止惊群效应。
+// 当多个客户端同时丢失连接（如 etcd 集群重启）时，确定性退避会导致
+// 所有客户端在相同时间点重连，对刚恢复的集群造成突发压力。
 func nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
 	next := time.Duration(float64(current) * cfg.BackoffMultiplier)
+	next = addJitter(next)
 	return min(next, cfg.MaxBackoff)
+}
+
+// jitter 随机数常量，与 xretry 保持一致。
+const (
+	jitterFloatBits  = 53
+	jitterFloatScale = 1.0 / (1 << jitterFloatBits)
+)
+
+// addJitter 为退避时间添加 ±20% 的随机抖动。
+// 使用 crypto/rand 确保高质量随机数（与 xretry 保持一致）。
+func addJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	// 生成 [0, 1) 的随机浮点数
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand 失败时返回无抖动（安全默认值）
+		return d
+	}
+	r := float64(binary.LittleEndian.Uint64(buf[:])>>11) * jitterFloatScale
+	// r ∈ [0, 1)，映射到 [-0.2, +0.2) 得到 ±20% 抖动
+	jitter := time.Duration(float64(d) * (r*0.4 - 0.2))
+	return d + jitter
 }

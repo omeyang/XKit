@@ -181,7 +181,7 @@ func WithBufferSize(size int) WatchOption {
 //	    }
 //	}
 func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-chan Event, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err
 	}
 	if key == "" {
@@ -403,29 +403,15 @@ func DefaultRetryConfig() RetryConfig {
 //   - 重连时会自动追加 WithRevision 选项从上次成功位置恢复，
 //     调用方传入的 WithRevision 仅在首次连接时生效，不建议同时使用
 func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig, opts ...WatchOption) (<-chan Event, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err
 	}
 	if key == "" {
 		return nil, ErrEmptyKey
 	}
 
-	// 应用默认值并修正无效配置
-	if cfg.InitialBackoff <= 0 {
-		cfg.InitialBackoff = 1 * time.Second
-	}
-	if cfg.MaxBackoff <= 0 {
-		cfg.MaxBackoff = 30 * time.Second
-	}
-	if cfg.BackoffMultiplier < 1 {
-		// 设计决策: BackoffMultiplier < 1 意味着退避时间递减（越重试越快），
-		// 违反退避策略初衷，静默修正为 2.0 而非返回错误（保持 API 宽容性）。
-		cfg.BackoffMultiplier = 2.0
-	}
-	if cfg.MaxBackoff < cfg.InitialBackoff {
-		// 设计决策: MaxBackoff < InitialBackoff 导致首次退避即被截断，
-		// 静默修正为 InitialBackoff，使退避至少从合理值开始。
-		cfg.MaxBackoff = cfg.InitialBackoff
+	if err := validateRetryConfig(&cfg); err != nil {
+		return nil, err
 	}
 
 	// 创建带缓冲的事件通道
@@ -439,6 +425,41 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	go c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
 
 	return eventCh, nil
+}
+
+// validateRetryConfig 验证并规范化重试配置。
+// 设计决策: 区分零值（使用默认值）和显式负值（配置错误）。
+// 零值在 Go 中是结构体的自然初始状态，静默使用默认值提供宽容的 API；
+// 显式负值表示调用方的配置逻辑有 bug，应立即报错帮助定位问题。
+func validateRetryConfig(cfg *RetryConfig) error {
+	if cfg.InitialBackoff < 0 {
+		return fmt.Errorf("%w: InitialBackoff must not be negative", ErrInvalidRetryConfig)
+	}
+	if cfg.MaxBackoff < 0 {
+		return fmt.Errorf("%w: MaxBackoff must not be negative", ErrInvalidRetryConfig)
+	}
+	if cfg.MaxRetries < 0 {
+		return fmt.Errorf("%w: MaxRetries must not be negative", ErrInvalidRetryConfig)
+	}
+
+	// 应用默认值（零值 → 默认值）
+	if cfg.InitialBackoff == 0 {
+		cfg.InitialBackoff = 1 * time.Second
+	}
+	if cfg.MaxBackoff == 0 {
+		cfg.MaxBackoff = 30 * time.Second
+	}
+	if cfg.BackoffMultiplier < 1 {
+		// 设计决策: BackoffMultiplier < 1 意味着退避时间递减（越重试越快），
+		// 违反退避策略初衷，静默修正为 2.0 而非返回错误（保持 API 宽容性）。
+		cfg.BackoffMultiplier = 2.0
+	}
+	if cfg.MaxBackoff < cfg.InitialBackoff {
+		// 设计决策: MaxBackoff < InitialBackoff 导致首次退避即被截断，
+		// 静默修正为 InitialBackoff，使退避至少从合理值开始。
+		cfg.MaxBackoff = cfg.InitialBackoff
+	}
+	return nil
 }
 
 // runWatchWithRetry 运行带重试的 watch 循环。
@@ -651,7 +672,10 @@ func addJitter(d time.Duration) time.Duration {
 	// 生成 [0, 1) 的随机浮点数
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败时返回无抖动（安全默认值）
+		// 设计决策: crypto/rand 失败时返回无抖动（安全默认值），而非 panic 或降级到 math/rand。
+		// Go 1.22+ 中 crypto/rand.Read 在支持的平台上永不失败（使用 getrandom/getentropy），
+		// 此分支仅为防御极端情况（如 /dev/urandom 不可用的受限环境）。
+		// 与 xretry 包的 randomFloat64 保持一致的 fallback 策略。
 		return d
 	}
 	r := float64(binary.LittleEndian.Uint64(buf[:])>>11) * jitterFloatScale

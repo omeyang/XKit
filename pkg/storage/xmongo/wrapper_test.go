@@ -413,7 +413,8 @@ func TestWrapper_Close_Error(t *testing.T) {
 
 	err := w.Close(context.Background())
 	assert.Error(t, err)
-	assert.Equal(t, errMockDisconnect, err)
+	assert.ErrorIs(t, err, errMockDisconnect)
+	assert.Contains(t, err.Error(), "xmongo close")
 	assert.True(t, mock.disconnected)
 }
 
@@ -1242,4 +1243,162 @@ func TestWrapper_BulkInsert_ValidParams_WithRealCollection(t *testing.T) {
 		assert.Empty(t, result.Errors)
 		assert.Equal(t, int64(1), result.InsertedCount)
 	}
+}
+
+// =============================================================================
+// applyTimeout 测试
+// =============================================================================
+
+func TestApplyTimeout_NoTimeout(t *testing.T) {
+	ctx := context.Background()
+	newCtx, cancel := applyTimeout(ctx, 0)
+	defer cancel()
+
+	// timeout 为 0 时不应添加 deadline
+	_, hasDeadline := newCtx.Deadline()
+	assert.False(t, hasDeadline)
+}
+
+func TestApplyTimeout_WithTimeout_NoDeadline(t *testing.T) {
+	ctx := context.Background()
+	newCtx, cancel := applyTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// 应添加 deadline
+	deadline, hasDeadline := newCtx.Deadline()
+	assert.True(t, hasDeadline)
+	assert.WithinDuration(t, time.Now().Add(5*time.Second), deadline, 1*time.Second)
+}
+
+func TestApplyTimeout_WithTimeout_ExistingDeadline(t *testing.T) {
+	existingDeadline := time.Now().Add(10 * time.Second)
+	ctx, ctxCancel := context.WithDeadline(context.Background(), existingDeadline)
+	defer ctxCancel()
+
+	newCtx, cancel := applyTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// 已有 deadline 时不应覆盖
+	deadline, hasDeadline := newCtx.Deadline()
+	assert.True(t, hasDeadline)
+	assert.WithinDuration(t, existingDeadline, deadline, 1*time.Second)
+}
+
+func TestApplyTimeout_NegativeTimeout(t *testing.T) {
+	ctx := context.Background()
+	newCtx, cancel := applyTimeout(ctx, -1*time.Second)
+	defer cancel()
+
+	// 负值不应添加 deadline
+	_, hasDeadline := newCtx.Deadline()
+	assert.False(t, hasDeadline)
+}
+
+// =============================================================================
+// QueryTimeout / WriteTimeout 选项测试
+// =============================================================================
+
+func TestWithQueryTimeout(t *testing.T) {
+	opts := defaultOptions()
+
+	// 正数生效
+	WithQueryTimeout(30 * time.Second)(opts)
+	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+
+	// 零值被忽略
+	WithQueryTimeout(0)(opts)
+	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+
+	// 负值被忽略
+	WithQueryTimeout(-1 * time.Second)(opts)
+	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+}
+
+func TestWithWriteTimeout(t *testing.T) {
+	opts := defaultOptions()
+
+	// 正数生效
+	WithWriteTimeout(60 * time.Second)(opts)
+	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+
+	// 零值被忽略
+	WithWriteTimeout(0)(opts)
+	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+
+	// 负值被忽略
+	WithWriteTimeout(-1 * time.Second)(opts)
+	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+}
+
+// =============================================================================
+// FindPage 空结果返回空切片测试
+// =============================================================================
+
+func TestWrapper_FindPageInternal_EmptyResult_ReturnsEmptySlice(t *testing.T) {
+	mock := &cursorCollectionOps{
+		docs:     nil, // 无文档
+		count:    0,
+		collName: "test_coll",
+	}
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{Page: 1, PageSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.Data, "空结果应返回空切片而非 nil")
+	assert.Empty(t, result.Data)
+	assert.Equal(t, int64(0), result.Total)
+}
+
+// =============================================================================
+// QueryTimeout 在 findPageInternal 中生效测试
+// =============================================================================
+
+func TestWrapper_FindPageInternal_WithQueryTimeout(t *testing.T) {
+	docs := []any{bson.M{"_id": "1"}}
+	mock := &cursorCollectionOps{
+		docs:     docs,
+		count:    1,
+		collName: "test_coll",
+	}
+
+	opts := defaultOptions()
+	opts.QueryTimeout = 30 * time.Second
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: opts,
+	}
+
+	// 使用无 deadline 的 context，应被 QueryTimeout 兜底
+	result, err := w.findPageInternal(context.Background(), mock, bson.M{}, PageOptions{Page: 1, PageSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Len(t, result.Data, 1)
+}
+
+// =============================================================================
+// WriteTimeout 在 bulkInsertInternal 中生效测试
+// =============================================================================
+
+func TestWrapper_BulkInsertInternal_WithWriteTimeout(t *testing.T) {
+	mock := newMockCollectionOps()
+
+	opts := defaultOptions()
+	opts.WriteTimeout = 60 * time.Second
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: opts,
+	}
+
+	docs := []any{map[string]any{"name": "doc1"}}
+	result, err := w.bulkInsertInternal(context.Background(), mock, docs, BulkOptions{BatchSize: 10})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1), result.InsertedCount)
 }

@@ -80,7 +80,7 @@ func RangeN(start Addr, n int) iter.Seq[Addr] {
 }
 
 // RangeWithIndex 返回带索引的 MAC 地址范围迭代器。
-// 索引从 0 开始。
+// 索引从 0 开始。索引类型为 int，与 [slices.All] 保持一致（参见 doc.go 平台要求）。
 //
 // 示例：
 //
@@ -153,7 +153,7 @@ func CollectN(seq iter.Seq[Addr], maxCount int) []Addr {
 
 // Count 返回迭代器中的地址数量。
 // 注意：这会消耗整个迭代器。
-// 对于大范围，考虑使用 RangeCount 函数直接计算。
+// 对于大范围，考虑使用 [RangeCount] 函数直接计算（返回 uint64，无溢出风险）。
 func Count(seq iter.Seq[Addr]) int {
 	count := 0
 	for range seq {

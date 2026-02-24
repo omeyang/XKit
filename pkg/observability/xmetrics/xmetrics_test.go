@@ -499,6 +499,28 @@ func TestUint64(t *testing.T) {
 	}
 }
 
+func TestFloat32(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		key   string
+		value float32
+	}{
+		{"positive", "ratio", 3.14},
+		{"negative", "offset", -2.5},
+		{"zero", "rate", 0.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attr := xmetrics.Float32(tt.key, tt.value)
+			assert.Equal(t, tt.key, attr.Key)
+			assert.Equal(t, tt.value, attr.Value)
+		})
+	}
+}
+
 func TestFloat64(t *testing.T) {
 	t.Parallel()
 

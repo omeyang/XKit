@@ -10,6 +10,12 @@ var (
 	// ErrNilClient 表示传入的客户端为 nil。
 	ErrNilClient = errors.New("xcache: nil client")
 
+	// ErrNilContext 表示传入的 context 为 nil。
+	// go-redis 内部会直接使用 ctx 而不做 nil 检查，传入 nil 会导致 panic。
+	// 所有接受 context.Context 的公开入口方法（Load, LoadHash, Lock）
+	// 均在入口处进行 fail-fast 检查。
+	ErrNilContext = errors.New("xcache: nil context")
+
 	// ErrClosed 表示缓存实例已关闭。
 	// 在调用 Close() 后继续使用缓存实例会返回此错误。
 	ErrClosed = errors.New("xcache: closed")

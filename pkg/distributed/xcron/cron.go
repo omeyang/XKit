@@ -17,6 +17,11 @@ var ErrNilJob = errors.New("xcron: job cannot be nil")
 // 可能引发重复扣款、重复下发等生产事故。调用方必须显式使用 WithName 或 WithJobLocker(NoopLocker())。
 var ErrMissingName = errors.New("xcron: job with distributed locker must have a name, use WithName() to set one")
 
+// ErrDuplicateJobName 表示任务名已被注册。
+// 同一调度器内任务名必须唯一，因为任务名用作分布式锁 key 和统计维度 key。
+// 重复名称会导致两个逻辑不同的任务共享同一把锁和统计数据，互相干扰。
+var ErrDuplicateJobName = errors.New("xcron: duplicate job name, each job must have a unique name within the same scheduler")
+
 // cronScheduler 基于 robfig/cron/v3 的调度器实现
 type cronScheduler struct {
 	cron   *cron.Cron
@@ -24,6 +29,8 @@ type cronScheduler struct {
 	locker Locker
 	logger Logger
 	stats  *Stats // 执行统计
+
+	jobNames map[string]JobID // 已注册的任务名 → EntryID，用于唯一性校验和 Remove 时释放
 
 	immediateWg     sync.WaitGroup     // 追踪 WithImmediate 启动的立即执行任务
 	immediateCtx    context.Context    // 立即执行任务的可取消上下文
@@ -70,6 +77,7 @@ func New(opts ...SchedulerOption) Scheduler {
 		locker:          options.locker,
 		logger:          options.logger,
 		stats:           newStats(),
+		jobNames:        make(map[string]JobID),
 		immediateCtx:    immediateCtx,
 		immediateCancel: immediateCancel,
 	}
@@ -101,12 +109,9 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 		locker = s.locker
 	}
 
-	// 设计决策: 配置了分布式锁但未设置任务名时 fail-fast 返回错误，
-	// 而非静默降级跳过加锁。静默降级在多副本场景下会导致重复执行。
-	if jobOpts.name == "" {
-		if _, isNoop := locker.(*noopLocker); !isNoop {
-			return 0, ErrMissingName
-		}
+	// 前置校验：任务名 + 唯一性
+	if err := s.validateJobName(jobOpts, locker); err != nil {
+		return 0, err
 	}
 
 	// 创建包装器
@@ -116,6 +121,11 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	id, err := s.cron.AddJob(spec, wrapper)
 	if err != nil {
 		return 0, fmt.Errorf("xcron: failed to add job: %w", err)
+	}
+
+	// 注册任务名
+	if jobOpts.name != "" {
+		s.jobNames[jobOpts.name] = id
 	}
 
 	// 立即执行一次（如果配置了 WithImmediate）
@@ -135,8 +145,32 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	return id, nil
 }
 
+// validateJobName 校验任务名：分布式锁场景必须设置任务名，且名称不可重复。
+func (s *cronScheduler) validateJobName(jobOpts *jobOptions, locker Locker) error {
+	// 设计决策: 配置了分布式锁但未设置任务名时 fail-fast 返回错误，
+	// 而非静默降级跳过加锁。静默降级在多副本场景下会导致重复执行。
+	if jobOpts.name == "" {
+		if _, isNoop := locker.(*noopLocker); !isNoop {
+			return ErrMissingName
+		}
+		return nil
+	}
+	// 任务名唯一性校验：同名任务共享锁 key 和统计维度，会导致互相干扰
+	if _, exists := s.jobNames[jobOpts.name]; exists {
+		return fmt.Errorf("%w: %q", ErrDuplicateJobName, jobOpts.name)
+	}
+	return nil
+}
+
 // Remove 移除任务
 func (s *cronScheduler) Remove(id JobID) {
+	// 释放任务名注册，允许同名任务重新添加
+	for name, registeredID := range s.jobNames {
+		if registeredID == id {
+			delete(s.jobNames, name)
+			break
+		}
+	}
 	s.cron.Remove(id)
 }
 

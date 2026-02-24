@@ -37,18 +37,18 @@ func TestAsContextClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
-		cc := AsContextClient(c)
-		if cc == nil {
+		cc, ok := AsContextClient(c)
+		if !ok || cc == nil {
 			t.Error("real client should implement ContextClient")
 		}
 	})
 
 	t.Run("mock client does not implement ContextClient", func(t *testing.T) {
 		mc := newMockClient()
-		cc := AsContextClient(mc)
-		if cc != nil {
+		cc, ok := AsContextClient(mc)
+		if ok || cc != nil {
 			t.Error("mock client should not implement ContextClient")
 		}
 	})
@@ -74,10 +74,10 @@ func TestClient_GetTokenFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
 	// Cast to ContextClient
-	cc := AsContextClient(c)
+	cc, _ := AsContextClient(c)
 	if cc == nil {
 		t.Fatal("client should implement ContextClient")
 	}
@@ -133,9 +133,9 @@ func TestClient_GetPlatformIDFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
-	cc := AsContextClient(c)
+	cc, _ := AsContextClient(c)
 	if cc == nil {
 		t.Fatal("client should implement ContextClient")
 	}
@@ -187,9 +187,9 @@ func TestClient_HasParentPlatformFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
-	cc := AsContextClient(c)
+	cc, _ := AsContextClient(c)
 	if cc == nil {
 		t.Fatal("client should implement ContextClient")
 	}
@@ -245,9 +245,9 @@ func TestClient_GetUnclassRegionIDFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
-	cc := AsContextClient(c)
+	cc, _ := AsContextClient(c)
 	if cc == nil {
 		t.Fatal("client should implement ContextClient")
 	}

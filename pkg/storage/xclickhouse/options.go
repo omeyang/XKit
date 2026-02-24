@@ -55,7 +55,8 @@ type AsyncSlowQueryHook func(info SlowQueryInfo)
 // Options 包含 ClickHouse 包装器的配置选项。
 type Options struct {
 	// HealthTimeout 是健康检查的超时时间。
-	// 如果为 0，则使用 context 的超时。
+	// 默认 5 秒。通过 WithHealthTimeout 设置，仅接受正值；0 或负值被忽略。
+	// 仅在 context 未设置 deadline 时生效；已有 deadline 时取两者较短值。
 	HealthTimeout time.Duration
 
 	// SlowQueryThreshold 是慢查询阈值。
@@ -110,6 +111,7 @@ func defaultOptions() *Options {
 }
 
 // WithHealthTimeout 设置健康检查超时时间。
+// 仅正值生效；0 或负值被忽略，保持默认值（5 秒）。
 func WithHealthTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
 		if timeout > 0 {

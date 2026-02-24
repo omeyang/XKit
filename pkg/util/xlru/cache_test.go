@@ -38,6 +38,24 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("TTL too small", func(t *testing.T) {
+		_, err := New[string, int](Config{Size: 10, TTL: 1 * time.Nanosecond})
+		if !errors.Is(err, ErrTTLTooSmall) {
+			t.Errorf("expected ErrTTLTooSmall, got %v", err)
+		}
+	})
+
+	t.Run("TTL at minimum boundary", func(t *testing.T) {
+		cache, err := New[string, int](Config{Size: 10, TTL: 100 * time.Nanosecond})
+		if err != nil {
+			t.Fatalf("New with minTTL should succeed: %v", err)
+		}
+		defer cache.Close()
+		if cache == nil {
+			t.Fatal("cache should not be nil")
+		}
+	})
+
 	t.Run("zero TTL (no expiration)", func(t *testing.T) {
 		cache, err := New[string, int](Config{Size: 10, TTL: 0})
 		if err != nil {
@@ -858,10 +876,26 @@ func TestStopCleanupGoroutine_EdgeCases(t *testing.T) {
 		t.Error("struct without done field should return false")
 	}
 
-	// done 字段类型不匹配不应 panic，应返回 false
+	// done 字段类型不匹配（非 nilable 类型）不应 panic，应返回 false
 	type wrongDone struct{ done int }
 	if stopCleanupGoroutine(&wrongDone{done: 1}) {
 		t.Error("struct with wrong done type should return false")
+	}
+
+	// done 字段类型不匹配（nilable 但非 chan struct{}），应经过类型检查返回 false
+	type wrongChanDone struct{ done chan int }
+	if stopCleanupGoroutine(&wrongChanDone{done: make(chan int)}) {
+		t.Error("struct with chan int done should return false")
+	}
+
+	// 二次调用触发 recover（done 通道已关闭）：应返回 false 而非 panic
+	type hasDone struct{ done chan struct{} }
+	s := &hasDone{done: make(chan struct{})}
+	if !stopCleanupGoroutine(s) {
+		t.Error("first call should return true")
+	}
+	if stopCleanupGoroutine(s) {
+		t.Error("second call (double close) should return false via recover")
 	}
 }
 

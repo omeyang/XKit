@@ -1222,6 +1222,56 @@ func TestHTTPServer_NilServer(t *testing.T) {
 	}
 }
 
+func TestGo_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.Go(nil)
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestGoWithName_NilFunc(t *testing.T) {
+	g, _ := NewGroup(context.Background())
+	g.GoWithName("nil-service", nil)
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestRun_NilFunc(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := RunWithOptions(ctx, []Option{WithoutSignalHandler()}, nil)
+	if !errors.Is(err, ErrNilFunc) {
+		t.Errorf("expected ErrNilFunc, got %v", err)
+	}
+}
+
+func TestRunServices_NilService(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := RunServicesWithOptions(ctx, []Option{WithoutSignalHandler()}, nil)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService, got %v", err)
+	}
+}
+
+func TestRunServices_NilServiceDirect(t *testing.T) {
+	sigCh := make(chan os.Signal, 1)
+	ctx := withTestSigChan(context.Background(), sigCh)
+
+	err := RunServices(ctx, nil)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService, got %v", err)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // 已取消 context 下的 immediate/zero-delay 行为
 // ----------------------------------------------------------------------------

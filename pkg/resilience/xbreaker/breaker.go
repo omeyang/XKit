@@ -3,6 +3,7 @@ package xbreaker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/sony/gobreaker/v2"
@@ -216,6 +217,7 @@ func WithMaxRequests(n uint32) BreakerOption {
 //
 // 注意：
 //   - 回调异步执行，不阻塞熔断器状态转换
+//   - 回调中的 panic 会被自动捕获并通过 slog.Error 记录，不会导致进程崩溃
 //   - 多次快速状态变化时，回调执行顺序不保证
 //   - 回调中获取的 State()/Counts() 可能已是更新后的值
 func WithOnStateChange(f func(name string, from, to State)) BreakerOption {
@@ -280,10 +282,19 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 
 	// 设计决策: 回调通过 goroutine 异步执行，避免在 gobreaker 内部 mutex 持有期间
 	// 同步调用回调导致死锁。详见 WithOnStateChange 文档。
+	// goroutine 内使用 recover 隔离用户回调 panic，防止回调故障导致进程崩溃。
 	if b.onStateChange != nil {
 		cb := b.onStateChange
 		st.OnStateChange = func(name string, from, to gobreaker.State) {
-			go cb(name, from, to)
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("xbreaker: OnStateChange callback panicked",
+							"name", name, "from", from.String(), "to", to.String(), "panic", r)
+					}
+				}()
+				cb(name, from, to)
+			}()
 		}
 	}
 

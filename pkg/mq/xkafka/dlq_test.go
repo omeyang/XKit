@@ -12,6 +12,16 @@ import (
 )
 
 // =============================================================================
+// DefaultDLQTopic Tests
+// =============================================================================
+
+func TestDefaultDLQTopic(t *testing.T) {
+	assert.Equal(t, "orders.dlq", DefaultDLQTopic("orders"))
+	assert.Equal(t, "payments.dlq", DefaultDLQTopic("payments"))
+	assert.Equal(t, ".dlq", DefaultDLQTopic(""))
+}
+
+// =============================================================================
 // DLQPolicy Tests
 // =============================================================================
 

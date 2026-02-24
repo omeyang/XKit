@@ -136,35 +136,17 @@ type redisWrapper struct {
 }
 
 func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
-	if w.closed.Load() {
-		return nil, ErrClosed
-	}
-	if key == "" {
-		return nil, ErrEmptyKey
-	}
-	if ttl <= 0 {
-		return nil, ErrInvalidLockTTL
+	if err := w.validateLockParams(ctx, key, ttl); err != nil {
+		return nil, err
 	}
 
 	lockKey := w.options.LockKeyPrefix + key
 	lockValue := generateLockValue()
 
-	// 尝试获取锁
-	acquired, err := w.tryLock(ctx, lockKey, lockValue, ttl)
+	acquired, err := w.acquireLockWithRetry(ctx, lockKey, lockValue, ttl)
 	if err != nil {
 		return nil, err
 	}
-
-	if !acquired {
-		// 如果配置了重试，进行重试
-		if w.options.LockRetryCount > 0 && w.options.LockRetryInterval > 0 {
-			acquired, err = w.lockWithRetry(ctx, lockKey, lockValue, ttl)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	if !acquired {
 		return nil, ErrLockFailed
 	}
@@ -174,6 +156,40 @@ func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) 
 		return w.unlock(ctx, lockKey, lockValue)
 	}
 	return unlocker, nil
+}
+
+// validateLockParams 校验 Lock 入口参数。
+func (w *redisWrapper) validateLockParams(ctx context.Context, key string, ttl time.Duration) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if w.closed.Load() {
+		return ErrClosed
+	}
+	if key == "" {
+		return ErrEmptyKey
+	}
+	if ttl <= 0 {
+		return ErrInvalidLockTTL
+	}
+	return nil
+}
+
+// acquireLockWithRetry 尝试获取锁，失败时按配置进行重试。
+func (w *redisWrapper) acquireLockWithRetry(ctx context.Context, lockKey, lockValue string, ttl time.Duration) (bool, error) {
+	acquired, err := w.tryLock(ctx, lockKey, lockValue, ttl)
+	if err != nil {
+		return false, err
+	}
+	if acquired {
+		return true, nil
+	}
+
+	// 如果配置了重试，进行重试
+	if w.options.LockRetryCount > 0 && w.options.LockRetryInterval > 0 {
+		return w.lockWithRetry(ctx, lockKey, lockValue, ttl)
+	}
+	return false, nil
 }
 
 // tryLock 尝试获取锁（单次）。

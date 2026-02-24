@@ -258,7 +258,7 @@ func TestMockClient(t *testing.T) {
 
 		assert.False(t, mc.closed, "should not be closed initially")
 
-		err := mc.Close()
+		err := mc.Close(context.Background())
 		assert.NoError(t, err, "Close failed")
 		assert.True(t, mc.closed, "should be closed after Close()")
 	})

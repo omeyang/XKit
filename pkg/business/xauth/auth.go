@@ -53,7 +53,9 @@ type Client interface {
 	InvalidatePlatformCache(ctx context.Context, tenantID string) error
 
 	// Close 关闭客户端，释放资源。
-	Close() error
+	// ctx 当前未使用，保留参数是为了与项目统一生命周期接口约定（D-02）一致，
+	// 并为将来带超时的优雅关闭预留扩展空间。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================
@@ -131,6 +133,8 @@ type VerifyResponse struct {
 }
 
 // VerifyData Token 验证详细信息。
+// 设计决策: JSON tag 与认证服务 API 响应字段名对齐（混用 camelCase 和 snake_case），
+// 并非自定义命名，不可随意修改。
 type VerifyData struct {
 	// Active Token 是否有效。
 	Active bool `json:"active"`
@@ -238,25 +242,21 @@ type CacheStore interface {
 	// SetPlatformData 将平台数据写入缓存。
 	SetPlatformData(ctx context.Context, tenantID string, field, value string, ttl time.Duration) error
 
-	// Delete 删除缓存。
+	// DeleteToken 仅删除 Token 缓存。
+	// 用于 Token 失效时不影响平台数据缓存。
+	DeleteToken(ctx context.Context, tenantID string) error
+
+	// DeletePlatformData 仅删除平台数据缓存。
+	// 用于平台信息变更时不影响 Token 缓存。
+	DeletePlatformData(ctx context.Context, tenantID string) error
+
+	// Delete 删除租户的所有缓存（Token + 平台数据）。
 	Delete(ctx context.Context, tenantID string) error
 }
 
 // =============================================================================
-// API 响应类型
+// API 响应类型（内部使用，映射服务端 JSON 响应）
 // =============================================================================
-
-// APIResponse 通用 API 响应。
-type APIResponse[T any] struct {
-	// Code 响应码。
-	Code int `json:"code"`
-
-	// Message 响应消息。
-	Message string `json:"message"`
-
-	// Data 响应数据。
-	Data T `json:"data"`
-}
 
 // APIAccessTokenResponse API Key 获取 Token 的响应。
 type APIAccessTokenResponse struct {

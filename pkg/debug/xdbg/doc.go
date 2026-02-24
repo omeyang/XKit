@@ -28,6 +28,9 @@
 // 安全警告: config 命令会输出 ConfigProvider.Dump() 的返回值。
 // 实现方有责任对敏感字段进行脱敏，框架层不会自动过滤。
 //
+// 注意: 默认 Socket 路径为 /var/run/xdbg.sock，需要 root 权限创建。
+// 在 non-root 容器中，请使用 WithSocketPath 指定可写路径（如 /tmp/xdbg.sock）。
+//
 // # 触发方式
 //
 // 调试服务采用 Toggle 语义：SIGUSR1 信号切换服务状态（启用↔禁用）。
@@ -40,6 +43,13 @@
 //   - SIGUSR1 信号触发的是 toggle 操作，而非单纯的 enable
 //   - Socket 文件发现需要调试服务已启用（Socket 已创建）
 //   - 若服务未启用，需使用 --pid 或 --name 参数指定目标进程
+//
+// # Profile 文件生命周期
+//
+// pprof 命令生成的临时文件（CPU/heap/goroutine profile）由 Cleanup 统一管理。
+// Server.Stop() 时会自动删除所有已创建的 profile 文件。
+// 如需保留分析文件，请在 Stop 之前完成分析或将文件复制到其他位置。
+// 可通过 WithProfileDir 指定输出目录（默认使用 os.TempDir()）。
 //
 // # 自定义命令
 //

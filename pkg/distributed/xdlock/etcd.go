@@ -148,7 +148,7 @@ func (f *etcdFactory) checkSession() error {
 }
 
 // Close 关闭工厂，释放 Session。
-func (f *etcdFactory) Close() error {
+func (f *etcdFactory) Close(_ context.Context) error {
 	if f.closed.Swap(true) {
 		return nil // 已关闭
 	}
@@ -172,7 +172,7 @@ func (f *etcdFactory) Health(ctx context.Context) error {
 	// 使用 Status API 验证连接，不依赖特定 key 的 RBAC 权限
 	for _, ep := range f.client.Endpoints() {
 		if _, err := f.client.Status(ctx, ep); err != nil {
-			return err
+			return fmt.Errorf("xdlock: health check: %w", err)
 		}
 	}
 	return nil
@@ -204,6 +204,16 @@ type etcdLockHandle struct {
 // 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
 // 避免锁残留到 Lease TTL 到期（默认 60s）。
 func (h *etcdLockHandle) Unlock(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
+	// 设计决策: 已解锁的 handle 直接返回 ErrNotLocked，避免向 etcd 发送无效请求。
+	// 与 Extend 的 unlocked 检查保持对称。
+	if h.unlocked.Load() {
+		return ErrNotLocked
+	}
+
 	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc

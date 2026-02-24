@@ -23,6 +23,9 @@ import (
 var (
 	k8sNameReplaceRegex  = regexp.MustCompile(`[^a-z0-9-]`)
 	k8sNameCollapseRegex = regexp.MustCompile(`-+`)
+	// k8sPrefixRegex 校验 Lease 名称前缀：小写字母、数字、'-'，首字符必须为字母或数字。
+	// 允许以 '-' 结尾（作为前缀与 key 的分隔符）。
+	k8sPrefixRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 )
 
 // K8sLocker 基于 K8S Lease 的分布式锁。
@@ -95,10 +98,24 @@ type K8sLockerOptions struct {
 // K8s 官方 leader-election 库使用的默认值也是 2 秒。
 const DefaultClockSkew = 2 * time.Second
 
+// k8sMaxNameLen K8s 资源名最大长度（DNS-1123 label）。
+const k8sMaxNameLen = 63
+
+// k8sMinKeyBudget 前缀校验后为 key 预留的最小长度（"-" + 8位hash）。
+const k8sMinKeyBudget = 10
+
+// ErrInvalidK8sPrefix 表示 K8s Lease 名称前缀不合法。
+// 前缀必须符合 DNS-1123 字符集（小写字母、数字、'-'），首字符为字母或数字，
+// 且长度不超过 k8sMaxNameLen - k8sMinKeyBudget。
+var ErrInvalidK8sPrefix = fmt.Errorf("xcron: invalid K8s Lease prefix")
+
 // NewK8sLocker 创建基于 K8S Lease 的分布式锁。
 //
 // 如果不提供 Client，将使用 InClusterConfig 自动创建，
 // 适用于在 K8S Pod 内运行的场景。
+//
+// Prefix 必须符合 DNS-1123 字符集（小写字母、数字、'-'），
+// 首字符必须为字母或数字，且长度不超过 53（为 key 预留至少 10 个字符）。
 func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 	// 设置默认值
 	if opts.Namespace == "" {
@@ -114,6 +131,11 @@ func NewK8sLocker(opts K8sLockerOptions) (*K8sLocker, error) {
 		opts.ClockSkew = DefaultClockSkew
 	} else if opts.ClockSkew < 0 {
 		opts.ClockSkew = 0 // 用户显式禁用容忍度
+	}
+
+	// Prefix fail-fast 校验：字符集、首字符、长度预算
+	if err := validateK8sPrefix(opts.Prefix); err != nil {
+		return nil, err
 	}
 
 	// 创建 K8S 客户端
@@ -415,6 +437,20 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// validateK8sPrefix 校验 K8s Lease 名称前缀的合法性。
+// DNS-1123 label 要求：小写字母、数字、'-'，首字符为字母或数字。
+// 前缀长度不超过 k8sMaxNameLen - k8sMinKeyBudget，为 key 预留空间。
+func validateK8sPrefix(prefix string) error {
+	maxPrefixLen := k8sMaxNameLen - k8sMinKeyBudget
+	if len(prefix) > maxPrefixLen {
+		return fmt.Errorf("%w: length %d exceeds maximum %d", ErrInvalidK8sPrefix, len(prefix), maxPrefixLen)
+	}
+	if !k8sPrefixRegex.MatchString(prefix) {
+		return fmt.Errorf("%w: %q must match [a-z0-9][a-z0-9-]*", ErrInvalidK8sPrefix, prefix)
+	}
+	return nil
 }
 
 // 确保 K8sLocker 实现了 Locker 接口

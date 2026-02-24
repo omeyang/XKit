@@ -3,6 +3,11 @@
 // 本包是 internal 包，仅供 xkafka 和 xpulsar 包内部使用。
 // 外部用户不应直接导入此包。
 //
+// 依赖策略: 本包作为 MQ 族的共享内核（shared kernel），
+// 依赖低层工具包（pkg/context/xctx、pkg/resilience/xretry）提取公共实现。
+// 依赖链为：高层 pkg（xkafka/xpulsar）→ internal/mqcore → 低层 pkg（xctx/xretry），
+// 逻辑上仍从高到低，不构成循环依赖。
+//
 // 主要功能：
 //   - Tracer 接口：定义链路追踪的注入和提取能力
 //   - OTelTracer：基于 OpenTelemetry 的 Tracer 实现

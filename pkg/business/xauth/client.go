@@ -290,7 +290,7 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 	}
 
 	if req == nil {
-		return fmt.Errorf("xauth: nil request")
+		return ErrNilRequest
 	}
 
 	tenantID := c.resolveTenantID(req.TenantID)
@@ -305,7 +305,12 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 		c.logger.Debug("401 received, clearing token cache and retrying",
 			slog.String("tenant_id", tenantID),
 		)
-		_ = c.tokenCache.Delete(ctx, tenantID) //nolint:errcheck // 缓存删除失败不影响重试逻辑
+		if delErr := c.tokenCache.Delete(ctx, tenantID); delErr != nil {
+			c.logger.Warn("401 retry: token cache delete failed, retrying with potentially stale cache",
+				slog.String("tenant_id", tenantID),
+				slog.String("error", delErr.Error()),
+			)
+		}
 		return c.doAuthRequest(ctx, tenantID, req)
 	}
 
@@ -377,7 +382,9 @@ func (c *client) InvalidatePlatformCache(ctx context.Context, tenantID string) e
 
 // Close 关闭客户端。
 // 这会停止后台刷新任务并清理所有本地缓存。
-func (c *client) Close() error {
+// 设计决策: ctx 参数当前未使用，保留是为了符合项目约定 D-02（统一生命周期接口），
+// 并为将来带超时的优雅关闭预留扩展空间。
+func (c *client) Close(_ context.Context) error {
 	if c.closed.Swap(true) {
 		return nil // 已关闭
 	}

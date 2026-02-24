@@ -301,8 +301,8 @@ func TestValidateSocket(t *testing.T) {
 	if fErr != nil {
 		t.Fatal(fErr)
 	}
-	defer func() { _ = os.Remove(f.Name()) }() //nolint:errcheck // test cleanup
-	_ = f.Close()                              //nolint:errcheck // test cleanup
+	defer func() { _ = os.Remove(f.Name()) }() // test cleanup
+	_ = f.Close()                              // test cleanup
 
 	c2 := NewClient(f.Name(), time.Second)
 	err = c2.validateSocket()
@@ -866,7 +866,7 @@ func TestProcessHasSocket(t *testing.T) {
 
 func TestFindProcessBySocket(t *testing.T) {
 	// 不存在的 socket 路径
-	_, err := findProcessBySocket("/nonexistent/test-xdbg.sock")
+	_, err := findProcessBySocket(context.Background(), "/nonexistent/test-xdbg.sock")
 	if err == nil {
 		t.Fatal("findProcessBySocket with nonexistent socket should return error")
 	}
@@ -988,7 +988,7 @@ func TestFindProcessBySocketRealSocket(t *testing.T) {
 	})
 
 	// findProcessBySocket 应该能找到当前进程
-	pid, findErr := findProcessBySocket(socketPath)
+	pid, findErr := findProcessBySocket(context.Background(), socketPath)
 	if findErr != nil {
 		// 在某些 CI 环境中 /proc 可能不完整，跳过
 		t.Skipf("findProcessBySocket() error (可能 /proc 不完整): %v", findErr)
@@ -1280,5 +1280,127 @@ func TestExecuteAndPrint(t *testing.T) {
 			// executeAndPrint 不返回值，只验证不 panic
 			executeAndPrint(context.Background(), mock, "test", nil)
 		})
+	}
+}
+
+func TestRunUnknownCommand(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	os.Args = []string{"xdbgctl", "nonexistent_cmd_xyz"}
+	code := run()
+	if code != 2 {
+		t.Errorf("run() = %d, want 2 (usage error for unknown command)", code)
+	}
+}
+
+func TestIsCLIUsageErrorUnknownCommand(t *testing.T) {
+	err := fmt.Errorf("No help topic for 'badcmd'")
+	if !isCLIUsageError(err) {
+		t.Error("isCLIUsageError should detect unknown command errors")
+	}
+}
+
+func TestRunREPLContextCancel(t *testing.T) {
+	// 注意: 此测试修改 os.Stdin，不可 t.Parallel()
+	oldStdin := os.Stdin
+	defer func() { os.Stdin = oldStdin }()
+
+	r, _, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }() // test cleanup
+	os.Stdin = r
+
+	mock := &mockExecutor{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// 短暂延迟后取消，触发 ctx.Done() 路径
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	if runErr := runREPL(ctx, mock); runErr != nil {
+		t.Fatalf("runREPL() error: %v", runErr)
+	}
+}
+
+func TestFindProcessByNameCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	_, err := findProcessByName(ctx, "anyproc")
+	if err == nil {
+		t.Fatal("findProcessByName with canceled context should return error")
+	}
+	if !strings.Contains(err.Error(), "已取消") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestFindProcessBySocketCancelled(t *testing.T) {
+	// 创建真实 socket 以便通过 findSocketInode
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "test.sock")
+
+	listener, listenErr := net.Listen("unix", socketPath)
+	if listenErr != nil {
+		t.Fatal(listenErr)
+	}
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Log("close listener:", closeErr)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	_, err := findProcessBySocket(ctx, socketPath)
+	if err == nil {
+		t.Fatal("findProcessBySocket with canceled context should return error")
+	}
+	if !strings.Contains(err.Error(), "已取消") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateApp(t *testing.T) {
+	app := createApp()
+	if app.Name != "xdbgctl" {
+		t.Errorf("app.Name = %q, want %q", app.Name, "xdbgctl")
+	}
+	if !strings.Contains(app.Version, Version) {
+		t.Errorf("app.Version = %q, should contain %q", app.Version, Version)
+	}
+	if !strings.Contains(app.Version, GitCommit) {
+		t.Errorf("app.Version = %q, should contain %q", app.Version, GitCommit)
+	}
+}
+
+func TestSetConnDeadline(t *testing.T) {
+	socketPath := startMockXdbgServer(t, mockResponse{
+		resp: &xdbg.Response{Success: true, Output: "ok"},
+	})
+
+	c := NewClient(socketPath, 0) // timeout=0: 不设置 deadline
+	resp, err := c.Execute(context.Background(), "help", nil)
+	if err != nil {
+		t.Fatalf("Execute with zero timeout error: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success")
+	}
+}
+
+func TestScanProcForSocket(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	_, err := scanProcForSocket(ctx, "socket:[999999999]")
+	if err == nil {
+		t.Fatal("scanProcForSocket with canceled context should return error")
 	}
 }

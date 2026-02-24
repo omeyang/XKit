@@ -33,6 +33,114 @@ func TestDefaultRetryConfig(t *testing.T) {
 	}
 }
 
+// TestWatch_NilContext 测试 Watch 在 ctx 为 nil 时返回 ErrNilContext。
+func TestWatch_NilContext(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	_, err := c.Watch(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+	if err != ErrNilContext {
+		t.Errorf("Watch(nil, key) = %v, want %v", err, ErrNilContext)
+	}
+}
+
+// TestWatchWithRetry_NilContext 测试 WatchWithRetry 在 ctx 为 nil 时返回 ErrNilContext。
+func TestWatchWithRetry_NilContext(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	_, err := c.WatchWithRetry(nil, "key", DefaultRetryConfig()) //nolint:staticcheck // 测试 nil ctx 防御
+	if err != ErrNilContext {
+		t.Errorf("WatchWithRetry(nil, key, cfg) = %v, want %v", err, ErrNilContext)
+	}
+}
+
+// TestValidateRetryConfig 测试 validateRetryConfig 对显式负值返回错误，对零值应用默认值。
+func TestValidateRetryConfig(t *testing.T) {
+	t.Run("negative InitialBackoff", func(t *testing.T) {
+		cfg := RetryConfig{InitialBackoff: -1 * time.Second}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxBackoff", func(t *testing.T) {
+		cfg := RetryConfig{MaxBackoff: -1 * time.Second}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxRetries", func(t *testing.T) {
+		cfg := RetryConfig{MaxRetries: -1}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("zero values apply defaults", func(t *testing.T) {
+		cfg := RetryConfig{}
+		err := validateRetryConfig(&cfg)
+		if err != nil {
+			t.Fatalf("validateRetryConfig() = %v, want nil", err)
+		}
+		if cfg.InitialBackoff != 1*time.Second {
+			t.Errorf("InitialBackoff = %v, want 1s", cfg.InitialBackoff)
+		}
+		if cfg.MaxBackoff != 30*time.Second {
+			t.Errorf("MaxBackoff = %v, want 30s", cfg.MaxBackoff)
+		}
+		if cfg.BackoffMultiplier != 2.0 {
+			t.Errorf("BackoffMultiplier = %v, want 2.0", cfg.BackoffMultiplier)
+		}
+	})
+
+	t.Run("MaxBackoff less than InitialBackoff corrected", func(t *testing.T) {
+		cfg := RetryConfig{
+			InitialBackoff:    5 * time.Second,
+			MaxBackoff:        2 * time.Second,
+			BackoffMultiplier: 2.0,
+		}
+		err := validateRetryConfig(&cfg)
+		if err != nil {
+			t.Fatalf("validateRetryConfig() = %v, want nil", err)
+		}
+		if cfg.MaxBackoff != cfg.InitialBackoff {
+			t.Errorf("MaxBackoff = %v, want %v (corrected to InitialBackoff)", cfg.MaxBackoff, cfg.InitialBackoff)
+		}
+	})
+}
+
+// TestWatchWithRetry_NegativeConfig 测试 WatchWithRetry 对显式负值配置返回错误。
+func TestWatchWithRetry_NegativeConfig(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	t.Run("negative InitialBackoff", func(t *testing.T) {
+		cfg := RetryConfig{InitialBackoff: -1 * time.Second}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxBackoff", func(t *testing.T) {
+		cfg := RetryConfig{MaxBackoff: -1 * time.Second}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative MaxRetries", func(t *testing.T) {
+		cfg := RetryConfig{MaxRetries: -1}
+		_, err := c.WatchWithRetry(context.Background(), "key", cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("WatchWithRetry() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+}
+
 // TestWatchWithRetry_Closed 测试已关闭客户端调用 WatchWithRetry 返回错误。
 func TestWatchWithRetry_Closed(t *testing.T) {
 	c := &Client{}
@@ -399,7 +507,7 @@ func TestWatchWithRetry_WatchReturnsError_MaxRetries(t *testing.T) {
 
 	// 等待第一次 Watch 完成并进入退避，然后关闭客户端
 	time.Sleep(3 * time.Millisecond)
-	if closeErr := c.Close(); closeErr != nil {
+	if closeErr := c.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
 	}
 
@@ -444,7 +552,7 @@ func TestWatchWithRetry_ClientClosed(t *testing.T) {
 
 	// 关闭客户端，应触发 closeCh 信号
 	time.Sleep(10 * time.Millisecond)
-	if closeErr := c.Close(); closeErr != nil {
+	if closeErr := c.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
 	}
 

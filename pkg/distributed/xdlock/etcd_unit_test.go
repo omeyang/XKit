@@ -47,7 +47,7 @@ func TestEtcdFactory_Close_Success(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Close()
+	err := f.Close(t.Context())
 	assert.NoError(t, err)
 	assert.True(t, mock.Closed)
 	assert.True(t, f.closed.Load())
@@ -58,13 +58,13 @@ func TestEtcdFactory_Close_Idempotent(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 
 	// 第一次关闭
-	err := f.Close()
+	err := f.Close(t.Context())
 	assert.NoError(t, err)
 	assert.True(t, mock.Closed)
 
 	// 第二次关闭，不应再调用 session.Close()
 	mock.Closed = false // 重置标记
-	err = f.Close()
+	err = f.Close(t.Context())
 	assert.NoError(t, err)
 	assert.False(t, mock.Closed) // 第二次不应调用
 }
@@ -74,7 +74,7 @@ func TestEtcdFactory_Close_WithError(t *testing.T) {
 	mock.CloseErr = errors.New("close failed")
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Close()
+	err := f.Close(t.Context())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "close failed")
 }
@@ -306,6 +306,28 @@ func TestEtcdLockHandle_Unlock_SessionExpiredError(t *testing.T) {
 	err := h.Unlock(t.Context())
 	assert.ErrorIs(t, err, ErrSessionExpired)
 	assert.False(t, h.unlocked.Load())
+}
+
+func TestEtcdLockHandle_Unlock_NilContext(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+	mockMu := &MockMutex{}
+	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
+
+	err := h.Unlock(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.False(t, h.unlocked.Load())
+}
+
+func TestEtcdLockHandle_Unlock_AlreadyUnlocked(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+	mockMu := &MockMutex{}
+	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
+	h.SetUnlocked(true)
+
+	err := h.Unlock(t.Context())
+	assert.ErrorIs(t, err, ErrNotLocked)
 }
 
 // =============================================================================

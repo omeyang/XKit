@@ -60,8 +60,19 @@ func (c *Client) validateSocket() error {
 	return nil
 }
 
+// setConnDeadline 设置基于 context 或超时的连接 deadline。
+func (c *Client) setConnDeadline(ctx context.Context, conn net.Conn) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		return conn.SetDeadline(deadline)
+	}
+	if c.timeout > 0 {
+		return conn.SetDeadline(time.Now().Add(c.timeout))
+	}
+	return nil
+}
+
 // Execute 执行命令。
-func (c *Client) Execute(ctx context.Context, command string, args []string) (*xdbg.Response, error) {
+func (c *Client) Execute(ctx context.Context, command string, args []string) (_ *xdbg.Response, retErr error) {
 	// 前置校验: 确认目标路径是 Unix Socket 文件
 	if err := c.validateSocket(); err != nil {
 		return nil, err
@@ -73,27 +84,18 @@ func (c *Client) Execute(ctx context.Context, command string, args []string) (*x
 	if err != nil {
 		return nil, fmt.Errorf("连接失败: %w", err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // defer cleanup: Close 错误在连接关闭时无法有效处理
-
-	// 设置基于 context 的 deadline
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err != nil {
-			return nil, fmt.Errorf("设置超时失败: %w", err)
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("关闭连接失败: %w", closeErr)
 		}
-	} else if c.timeout > 0 {
-		if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
-			return nil, fmt.Errorf("设置超时失败: %w", err)
-		}
-	}
+	}()
 
-	// 构建请求
-	req := &xdbg.Request{
-		Command: command,
-		Args:    args,
+	if err := c.setConnDeadline(ctx, conn); err != nil {
+		return nil, fmt.Errorf("设置超时失败: %w", err)
 	}
 
 	// 编码并发送请求
-	data, err := c.codec.EncodeRequest(req)
+	data, err := c.codec.EncodeRequest(&xdbg.Request{Command: command, Args: args})
 	if err != nil {
 		return nil, fmt.Errorf("编码请求失败: %w", err)
 	}

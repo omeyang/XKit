@@ -6,6 +6,105 @@ import (
 	"testing"
 )
 
+func TestAddr_MarshalBinary(t *testing.T) {
+	tests := []struct {
+		name string
+		addr Addr
+		want [6]byte
+	}{
+		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}},
+		{"zero", Addr{}, [6]byte{}},
+		{"broadcast", Broadcast(), [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.addr.MarshalBinary()
+			if err != nil {
+				t.Errorf("MarshalBinary() error = %v", err)
+				return
+			}
+			if len(got) != 6 {
+				t.Errorf("MarshalBinary() length = %d, want 6", len(got))
+				return
+			}
+			var gotArr [6]byte
+			copy(gotArr[:], got)
+			if gotArr != tt.want {
+				t.Errorf("MarshalBinary() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAddr_UnmarshalBinary(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		want    Addr
+		wantErr error
+	}{
+		{"valid", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}, MustParse("aa:bb:cc:dd:ee:ff"), nil},
+		{"zero", []byte{0, 0, 0, 0, 0, 0}, Addr{}, nil},
+		{"too_short", []byte{0xaa, 0xbb}, Addr{}, ErrInvalidLength},
+		{"too_long", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11}, Addr{}, ErrInvalidLength},
+		{"empty", []byte{}, Addr{}, ErrInvalidLength},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var addr Addr
+			err := addr.UnmarshalBinary(tt.input)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("UnmarshalBinary() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("UnmarshalBinary() unexpected error = %v", err)
+				return
+			}
+			if addr != tt.want {
+				t.Errorf("UnmarshalBinary() = %v, want %v", addr, tt.want)
+			}
+		})
+	}
+}
+
+func TestAddr_Binary_RoundTrip(t *testing.T) {
+	addrs := []Addr{
+		MustParse("aa:bb:cc:dd:ee:ff"),
+		{},
+		Broadcast(),
+		MustParse("00:00:00:00:00:01"),
+	}
+
+	for _, original := range addrs {
+		t.Run(original.String(), func(t *testing.T) {
+			data, err := original.MarshalBinary()
+			if err != nil {
+				t.Fatalf("MarshalBinary() error = %v", err)
+			}
+			var decoded Addr
+			if err := decoded.UnmarshalBinary(data); err != nil {
+				t.Fatalf("UnmarshalBinary() error = %v", err)
+			}
+			if decoded != original {
+				t.Errorf("round-trip failed: %v != %v", decoded, original)
+			}
+		})
+	}
+}
+
+func TestAddr_UnmarshalBinary_NilReceiver(t *testing.T) {
+	var p *Addr
+	err := p.UnmarshalBinary([]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff})
+	if !errors.Is(err, ErrNilReceiver) {
+		t.Errorf("UnmarshalBinary(nil) error = %v, want ErrNilReceiver", err)
+	}
+}
+
 func TestAddr_MarshalText(t *testing.T) {
 	tests := []struct {
 		name string
@@ -232,7 +331,7 @@ func TestAddr_Scan(t *testing.T) {
 		{"nil", nil, Addr{}, nil},
 
 		// 不支持的类型
-		{"int", 123, Addr{}, ErrInvalidFormat},
+		{"int", 123, Addr{}, ErrUnsupportedType},
 	}
 
 	for _, tt := range tests {

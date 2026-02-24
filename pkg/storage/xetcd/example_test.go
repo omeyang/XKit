@@ -19,7 +19,7 @@ func ExampleNewClient() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	fmt.Println("Client created successfully")
 	// Output: Client created successfully
@@ -68,7 +68,7 @@ func ExampleClient_Get() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -95,7 +95,7 @@ func ExampleClient_Put() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -118,7 +118,7 @@ func ExampleClient_PutWithTTL() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -141,7 +141,7 @@ func ExampleClient_List() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -166,7 +166,7 @@ func ExampleClient_Watch() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -200,7 +200,7 @@ func ExampleClient_Watch_withReconnect() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -230,6 +230,11 @@ func ExampleClient_Watch_withReconnect() {
 				if event.Error != nil {
 					// Watch 失败，event.Revision 包含最后成功的版本号
 					lastRevision = event.Revision
+					// 处理 compaction：已压缩的版本无法 watch，
+					// 需要从 max(lastRevision+1, compactRevision) 恢复
+					if event.CompactRevision > 0 && event.CompactRevision > lastRevision {
+						lastRevision = event.CompactRevision - 1
+					}
 					log.Printf("watch error: %v (last rev: %d), reconnecting in 1s...",
 						event.Error, lastRevision)
 					time.Sleep(time.Second) // 简单退避
@@ -275,7 +280,7 @@ func ExampleClient_WatchWithRetry() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

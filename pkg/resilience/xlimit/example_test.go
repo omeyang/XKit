@@ -35,7 +35,7 @@ func Example_tenantRateLimit() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 执行限流检查
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func Example_tenantOverride() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 
@@ -128,7 +128,7 @@ func Example_localLimiter() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "local-tenant"}
@@ -214,7 +214,7 @@ func Example_callback() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "callback-tenant"}
@@ -248,7 +248,7 @@ func Example_httpMiddleware() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 创建 HTTP 中间件
 	middleware := xlimit.HTTPMiddleware(limiter)
@@ -297,7 +297,7 @@ func Example_grpcInterceptor() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	// 创建 gRPC 拦截器
 	unaryInterceptor := xlimit.UnaryServerInterceptor(limiter)
@@ -331,7 +331,7 @@ func Example_quotaQuery() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "query-tenant"}
@@ -373,7 +373,7 @@ func Example_dynamicPodCount() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	ctx := context.Background()
 	key := xlimit.Key{Tenant: "pod-count-tenant"}
@@ -416,7 +416,7 @@ func Example_customFallback() {
 		fmt.Println("创建限流器失败:", err)
 		return
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup: Close 错误在清理时无法有效处理
 
 	fmt.Println("自定义降级限流器创建成功")
 

@@ -110,6 +110,11 @@ type options struct {
 	// Transport 自定义传输层（可选）。
 	// 用于测试或自定义传输实现。
 	Transport Transport
+
+	// ProfileDir pprof 文件输出目录（可选）。
+	// 空字符串表示使用 os.TempDir()（默认行为）。
+	// 在 Kubernetes 环境中，可设置为持久卷路径以避免 ephemeral storage 限制。
+	ProfileDir string
 }
 
 // Option 配置选项函数类型。
@@ -295,6 +300,15 @@ func WithConfigProvider(provider ConfigProvider) Option {
 func WithTransport(t Transport) Option {
 	return func(o *options) {
 		o.Transport = t
+	}
+}
+
+// WithProfileDir 设置 pprof 文件输出目录。
+// 空字符串表示使用 os.TempDir()（默认行为）。
+// 在 Kubernetes 环境中，可设置为持久卷路径以避免 ephemeral storage 限制。
+func WithProfileDir(dir string) Option {
+	return func(o *options) {
+		o.ProfileDir = dir
 	}
 }
 

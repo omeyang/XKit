@@ -6,9 +6,15 @@ package xenv
 // 线程安全，可在并发读取时调用。重置后 Type() 返回空字符串，IsInitialized() 返回 false。
 //
 // 设计决策: 先写 initialized=false 再清空 globalType，与 Init 的写入顺序（先写值再写标志）
-// 对称。这确保并发读取者要么看到"未初始化"（initialized=false）并立即返回空值，
-// 要么看到"已初始化"（initialized=true）并读到旧的有效值。
-// 不会出现"已初始化 + 空值"的中间态。
+// 对称。并发读取者在 Reset 执行期间可能短暂观察到以下中间态：
+//   - initialized=true + globalType=旧有效值（Reset 尚未开始）
+//   - initialized=false + globalType=旧有效值（Reset 已清标志，尚未清值）
+//   - initialized=false + globalType=""（Reset 完成）
+//
+// 极低概率下，读取者可能先读到 initialized=true（旧值），再读到 globalType=""（新值），
+// 此时 Type() 返回空字符串、RequireType() 返回 ("", nil)。
+// 这属于最终一致性语义，仅影响测试环境的 Reset 并发窗口，生产路径不受影响
+// （Init/InitWith 只写一次，之后 globalType 不变）。
 func Reset() {
 	globalMu.Lock()
 	initialized.Store(false)

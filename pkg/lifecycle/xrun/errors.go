@@ -22,6 +22,9 @@ var ErrNilFunc = errors.New("xrun: fn must not be nil")
 // ErrNilServer 表示 HTTPServer 的 server 参数为 nil。
 var ErrNilServer = errors.New("xrun: server must not be nil")
 
+// ErrNilService 表示 RunServices/RunServicesWithOptions 的 service 参数为 nil。
+var ErrNilService = errors.New("xrun: service must not be nil")
+
 // SignalError 包含触发终止的具体信号信息。
 //
 // Run/RunServices/RunWithOptions 在收到系统信号时返回此错误。

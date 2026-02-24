@@ -137,8 +137,8 @@ func (c *HTTPClient) request(
 		Operation: MetricsOpHTTPRequest,
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			{Key: "http.method", Value: method},
-			{Key: "http.path", Value: sanitizeURL(url)},
+			{Key: MetricsAttrHTTPMethod, Value: method},
+			{Key: MetricsAttrHTTPPath, Value: sanitizeURL(url)},
 		},
 	})
 	var err error
@@ -217,11 +217,15 @@ func (c *HTTPClient) buildRequestBody(body any) (io.Reader, error) {
 }
 
 // setHeaders 设置请求头。
+// 设计决策: 仅在 headers 中未包含 Content-Type 时才设置默认值，
+// 避免 JSON 默认值覆盖表单编码等其他内容类型。
 func (c *HTTPClient) setHeaders(req *http.Request, headers map[string]string) {
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 }
 

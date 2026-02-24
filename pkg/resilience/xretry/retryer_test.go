@@ -551,6 +551,41 @@ func TestRetryer_NilFn(t *testing.T) {
 	})
 }
 
+func TestNilContext(t *testing.T) {
+	r := NewRetryer(WithBackoffPolicy(NewNoBackoff()))
+
+	t.Run("Retryer_Do", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		err := r.Do(ctx, func(_ context.Context) error {
+			t.Fatal("should not be called")
+			return nil
+		})
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("DoWithResult", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		result, err := DoWithResult(ctx, r, func(_ context.Context) (int, error) {
+			t.Fatal("should not be called")
+			return 0, nil
+		})
+		assert.ErrorIs(t, err, ErrNilContext)
+		assert.Equal(t, 0, result)
+	})
+
+	t.Run("Retrier_NilCtx", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		retrier := r.Retrier(ctx)
+		assert.NotNil(t, retrier, "nil ctx should return usable Retrier with context.Background()")
+	})
+
+	t.Run("RetrierWithData_NilCtx", func(t *testing.T) {
+		var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+		retrier := RetrierWithData[string](ctx, r)
+		assert.NotNil(t, retrier, "nil ctx should return usable RetrierWithData with context.Background()")
+	})
+}
+
 func TestNilRetryer_Accessors(t *testing.T) {
 	var r *Retryer // nil
 

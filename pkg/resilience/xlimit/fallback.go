@@ -122,14 +122,14 @@ func (f *fallbackLimiter) Reset(ctx context.Context, key Key) error {
 }
 
 // Close 关闭限流器
-func (f *fallbackLimiter) Close() error {
+func (f *fallbackLimiter) Close(ctx context.Context) error {
 	var errs []error
 
-	if err := f.distributed.Close(); err != nil {
+	if err := f.distributed.Close(ctx); err != nil {
 		errs = append(errs, err)
 	}
 
-	if err := f.local.Close(); err != nil {
+	if err := f.local.Close(ctx); err != nil {
 		errs = append(errs, err)
 	}
 

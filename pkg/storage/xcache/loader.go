@@ -61,6 +61,11 @@ type Loader interface {
 	//
 	// loader 返回值说明与 Load 相同：nil 值存储为空字符串，等效于空值缓存。
 	//
+	// ttl 说明（与 Load 语义一致）：
+	//   - ttl > 0: 设置指定过期时间。
+	//   - ttl == 0: 不设置过期（Hash key 永不过期）。
+	//   - ttl < 0: 不写入缓存（仅回源，等同于不缓存）。
+	//
 	// 注意：singleflight 去重基于 key+field 组合，不包含 ttl。
 	// 同一 key+field 的并发请求（即使 ttl 不同）只会触发一次回源。
 	LoadHash(ctx context.Context, key, field string, loader LoadFunc, ttl time.Duration) ([]byte, error)
@@ -234,6 +239,10 @@ func WithDistributedLockKeyPrefix(prefix string) LoaderOption {
 // 重要：设置此选项后会自动启用分布式锁（无需额外调用 WithDistributedLock(true)）。
 // 当 ExternalLock 非 nil 时，将优先使用外部锁，忽略内置的 Redis.Lock() 实现。
 //
+// 传入 nil 仅清除外部锁函数，不修改 EnableDistributedLock 标志。
+// 这确保 WithDistributedLock(true) + WithExternalLock(nil) 仍使用内置锁，
+// 而非意外禁用分布式锁。
+//
 // 锁函数签名与 Redis.Lock() 相同，便于适配各种锁实现：
 //
 //	func(ctx context.Context, key string, ttl time.Duration) (Unlocker, error)
@@ -241,11 +250,10 @@ func WithExternalLock(fn LockFunc) LoaderOption {
 	return func(o *LoaderOptions) {
 		o.ExternalLock = fn
 		if fn != nil {
-			// 设置外部锁时自动启用分布式锁
+			// 设计决策: 设置外部锁时自动启用分布式锁，减少配置负担。
+			// 传入 nil 时仅清除外部锁函数，不修改 EnableDistributedLock 标志，
+			// 避免 WithDistributedLock(true) + WithExternalLock(nil) 意外禁用分布式锁。
 			o.EnableDistributedLock = true
-		} else {
-			// 清除外部锁时同步清除分布式锁标志，保持 API 对称
-			o.EnableDistributedLock = false
 		}
 	}
 }

@@ -12,13 +12,15 @@ import (
 
 // 编译期接口实现检查。
 var (
-	_ fmt.Stringer             = Addr{}
-	_ encoding.TextMarshaler   = Addr{}
-	_ encoding.TextUnmarshaler = (*Addr)(nil)
-	_ json.Marshaler           = Addr{}
-	_ json.Unmarshaler         = (*Addr)(nil)
-	_ driver.Valuer            = Addr{}
-	_ sql.Scanner              = (*Addr)(nil)
+	_ fmt.Stringer               = Addr{}
+	_ encoding.TextMarshaler     = Addr{}
+	_ encoding.TextUnmarshaler   = (*Addr)(nil)
+	_ encoding.BinaryMarshaler   = Addr{}
+	_ encoding.BinaryUnmarshaler = (*Addr)(nil)
+	_ json.Marshaler             = Addr{}
+	_ json.Unmarshaler           = (*Addr)(nil)
+	_ driver.Valuer              = Addr{}
+	_ sql.Scanner                = (*Addr)(nil)
 )
 
 func TestAddr_IsValid(t *testing.T) {

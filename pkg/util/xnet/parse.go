@@ -29,7 +29,7 @@ func ParseRange(s string) (netipx.IPRange, error) {
 
 	// 格式 4: 显式范围 "start-end"
 	if idx := strings.Index(s, "-"); idx >= 0 {
-		r, err, handled := parseExplicitRange(s, idx)
+		r, handled, err := parseExplicitRange(s, idx)
 		if handled {
 			return r, err
 		}
@@ -93,8 +93,8 @@ func unmapAddr(addr netip.Addr) netip.Addr {
 }
 
 // parseExplicitRange 尝试将 s 按位置 idx 处的 '-' 拆分为起止地址。
-// 返回 (range, err, handled)：handled=true 时结果已确定，handled=false 时调用方应回退。
-func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
+// 返回 (range, handled, err)：handled=true 时结果已确定，handled=false 时调用方应回退。
+func parseExplicitRange(s string, idx int) (netipx.IPRange, bool, error) {
 	startStr := strings.TrimSpace(s[:idx])
 	endStr := strings.TrimSpace(s[idx+1:])
 	start, startErr := netip.ParseAddr(startStr)
@@ -105,9 +105,9 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
 		end = unmapAddr(end)
 		r := netipx.IPRangeFrom(start, end)
 		if !r.IsValid() {
-			return netipx.IPRange{}, fmt.Errorf("%w: %s", ErrInvalidRange, s), true
+			return netipx.IPRange{}, true, fmt.Errorf("%w: %s", ErrInvalidRange, s)
 		}
-		return r, nil, true
+		return r, true, nil
 	}
 	// 仅一侧解析成功 → 明确是范围格式但另一端无效，返回具体错误
 	if startErr == nil {
@@ -122,15 +122,15 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, error, bool) {
 		// 注意: 当前此分支在 ParseRange 调用路径下不可达，因为入口处已拒绝包含 '%' 的输入。
 		// 保留此逻辑作为 parseExplicitRange 的自完备性保证。
 		if addr, err := netip.ParseAddr(s); err == nil {
-			return netipx.IPRangeFrom(addr, addr), nil, true
+			return netipx.IPRangeFrom(addr, addr), true, nil
 		}
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr), true
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr)
 	}
 	if endErr == nil {
-		return netipx.IPRange{}, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr), true
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr)
 	}
 	// 两侧都无效 → 不处理，让调用方回退
-	return netipx.IPRange{}, nil, false
+	return netipx.IPRange{}, false, nil
 }
 
 // parseRangeWithMask 解析掩码格式的 IP 范围（仅 IPv4），包含掩码连续性校验。

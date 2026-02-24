@@ -99,7 +99,7 @@ func TestNewEtcdFactory_Success(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	assert.NotNil(t, factory.Session())
 }
@@ -110,7 +110,7 @@ func TestEtcdFactory_WithTTL(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client, xdlock.WithEtcdTTL(10))
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	assert.NotNil(t, factory)
 }
@@ -121,7 +121,7 @@ func TestEtcdFactory_Health(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -137,7 +137,7 @@ func TestEtcdFactory_HealthAfterClose(t *testing.T) {
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
 
-	_ = factory.Close()
+	_ = factory.Close(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -154,8 +154,8 @@ func TestEtcdFactory_CloseIdempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	// 多次关闭不应报错
-	assert.NoError(t, factory.Close())
-	assert.NoError(t, factory.Close())
+	assert.NoError(t, factory.Close(context.Background()))
+	assert.NoError(t, factory.Close(context.Background()))
 }
 
 // =============================================================================
@@ -168,7 +168,7 @@ func TestEtcdFactory_LockUnlock(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -189,7 +189,7 @@ func TestEtcdFactory_TryLock_Success(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -241,7 +241,7 @@ func TestEtcdLockHandle_Extend(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -262,7 +262,7 @@ func TestEtcdFactory_WithKeyPrefix(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -329,7 +329,7 @@ func TestEtcdFactory_Lock_Concurrent(t *testing.T) {
 	}
 	defer func() {
 		for _, f := range factories {
-			_ = f.Close()
+			_ = f.Close(context.Background())
 		}
 	}()
 
@@ -376,7 +376,7 @@ func TestEtcdFactory_Lock_MutualExclusion(t *testing.T) {
 	}
 	defer func() {
 		for _, f := range factories {
-			_ = f.Close()
+			_ = f.Close(context.Background())
 		}
 	}()
 
@@ -421,7 +421,7 @@ func TestEtcdFactory_Session(t *testing.T) {
 
 	factory, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	session := factory.Session()
 	assert.NotNil(t, session)

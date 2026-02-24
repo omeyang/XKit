@@ -199,15 +199,15 @@ func (c *TokenCache) setLocal(tenantID string, token *TokenInfo) {
 	c.local.Set(tenantID, token)
 }
 
-// Delete 删除 Token。
+// Delete 删除 Token（仅 Token，不影响平台数据缓存）。
 func (c *TokenCache) Delete(ctx context.Context, tenantID string) error {
 	// L1
 	if c.enableLocal && c.local != nil {
 		c.local.Delete(tenantID)
 	}
 
-	// L2
-	return c.remote.Delete(ctx, tenantID)
+	// L2: 仅删除 Token，不影响平台数据
+	return c.remote.DeleteToken(ctx, tenantID)
 }
 
 // GetOrLoad 获取 Token，未命中时调用 loader 加载。

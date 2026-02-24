@@ -746,6 +746,31 @@ func TestClickHouse_ComplexTypes_Nullable_Integration(t *testing.T) {
 	result, err := wrapper.BatchInsert(ctx, tableName, rows, xclickhouse.BatchOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), result.InsertedCount)
+
+	// 查询侧断言：验证 Nullable 类型的读取和 nil 语义
+	pageResult, err := wrapper.QueryPage(ctx,
+		fmt.Sprintf("SELECT id, name, score FROM %s ORDER BY id", tableName),
+		xclickhouse.PageOptions{Page: 1, PageSize: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), pageResult.Total)
+	require.Len(t, pageResult.Rows, 4)
+
+	// id=1: name="Alice", score=95.5（均非 nil）
+	assert.NotNil(t, pageResult.Rows[0][1], "id=1 name 应为非 nil")
+	assert.NotNil(t, pageResult.Rows[0][2], "id=1 score 应为非 nil")
+
+	// id=2: name=nil, score=95.5
+	assert.Nil(t, pageResult.Rows[1][1], "id=2 name 应为 nil")
+	assert.NotNil(t, pageResult.Rows[1][2], "id=2 score 应为非 nil")
+
+	// id=3: name="Alice", score=nil
+	assert.NotNil(t, pageResult.Rows[2][1], "id=3 name 应为非 nil")
+	assert.Nil(t, pageResult.Rows[2][2], "id=3 score 应为 nil")
+
+	// id=4: name=nil, score=nil
+	assert.Nil(t, pageResult.Rows[3][1], "id=4 name 应为 nil")
+	assert.Nil(t, pageResult.Rows[3][2], "id=4 score 应为 nil")
 }
 
 func TestClickHouse_ComplexTypes_DateTime_Integration(t *testing.T) {
@@ -783,6 +808,26 @@ func TestClickHouse_ComplexTypes_DateTime_Integration(t *testing.T) {
 	result, err := wrapper.BatchInsert(ctx, tableName, rows, xclickhouse.BatchOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), result.InsertedCount)
+
+	// 查询侧断言：验证 DateTime/DateTime64 类型的读取和精度
+	pageResult, err := wrapper.QueryPage(ctx,
+		fmt.Sprintf("SELECT id, created_at, updated_at FROM %s ORDER BY id", tableName),
+		xclickhouse.PageOptions{Page: 1, PageSize: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), pageResult.Total)
+	require.Len(t, pageResult.Rows, 2)
+
+	// 验证返回类型为 time.Time
+	for i, row := range pageResult.Rows {
+		createdAt, ok := row[1].(time.Time)
+		assert.True(t, ok, "id=%d created_at 应为 time.Time 类型", i+1)
+		assert.False(t, createdAt.IsZero(), "id=%d created_at 不应为零值", i+1)
+
+		updatedAt, ok := row[2].(time.Time)
+		assert.True(t, ok, "id=%d updated_at 应为 time.Time 类型", i+1)
+		assert.False(t, updatedAt.IsZero(), "id=%d updated_at 不应为零值", i+1)
+	}
 }
 
 // =============================================================================

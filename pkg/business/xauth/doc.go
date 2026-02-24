@@ -74,5 +74,6 @@
 //
 // # Graceful Shutdown
 //
-// client.Close() 取消后台刷新任务、等待所有刷新 goroutine 完成，然后清理本地缓存。
+// client.Close(ctx) 取消后台刷新任务、等待所有刷新 goroutine 完成，然后清理本地缓存。
+// ctx 参数当前未使用，保留是为了符合项目约定 D-02（统一生命周期接口）。
 package xauth

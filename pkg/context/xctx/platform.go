@@ -143,6 +143,11 @@ func GetPlatform(ctx context.Context) Platform {
 //
 // 注意：HasParent 总是会被注入（即使为 false），UnclassRegionID 仅在非空时注入。
 // 如果 ctx 为 nil，返回 ErrNilContext。
+//
+// 设计决策: 未复用 applyOptionalFields（与 WithIdentity/WithTrace 不同），原因：
+//   - HasParent 是 bool 类型，不适配 contextFieldSetter 的 string 专用机制
+//   - HasParent 总是注入（无论 true/false），而 applyOptionalFields 跳过空值
+//   - 错误分支当前不可达（nil ctx 已在入口拦截），但保留作为防御性编程
 func WithPlatform(ctx context.Context, p Platform) (context.Context, error) {
 	if ctx == nil {
 		return nil, ErrNilContext

@@ -298,7 +298,7 @@ func (c *pprofCommand) cpuStart() (string, error) {
 	}
 
 	// 使用 os.CreateTemp 创建随机文件名，防止 symlink 攻击
-	f, err := os.CreateTemp("", "xdbg_cpu_*.pprof")
+	f, err := os.CreateTemp(c.server.opts.ProfileDir, "xdbg_cpu_*.pprof")
 	if err != nil {
 		return "", fmt.Errorf("创建 CPU profile 文件失败: %w", err)
 	}
@@ -342,6 +342,9 @@ func (c *pprofCommand) cpuStop() (string, error) {
 		c.cpuFile = nil
 	}
 
+	// 记录文件路径，Cleanup 时统一删除（与 heap/goroutine profile 一致）
+	c.profileFiles = append(c.profileFiles, c.cpuFilePath)
+
 	return fmt.Sprintf("CPU profile 已停止，保存到: %s\n使用 'go tool pprof %s' 分析", c.cpuFilePath, c.cpuFilePath), nil
 }
 
@@ -351,7 +354,7 @@ func (c *pprofCommand) heapProfile(ctx context.Context) (string, error) {
 		return "", err
 	}
 	// 使用 os.CreateTemp 创建随机文件名，防止 symlink 攻击
-	f, err := os.CreateTemp("", "xdbg_heap_*.pprof")
+	f, err := os.CreateTemp(c.server.opts.ProfileDir, "xdbg_heap_*.pprof")
 	if err != nil {
 		return "", fmt.Errorf("创建 heap profile 文件失败: %w", err)
 	}
@@ -401,7 +404,7 @@ func (c *pprofCommand) goroutineProfile(ctx context.Context) (string, error) {
 		return "", err
 	}
 	// 使用 os.CreateTemp 创建随机文件名，防止 symlink 攻击
-	f, err := os.CreateTemp("", "xdbg_goroutine_*.pprof")
+	f, err := os.CreateTemp(c.server.opts.ProfileDir, "xdbg_goroutine_*.pprof")
 	if err != nil {
 		return "", fmt.Errorf("创建 goroutine profile 文件失败: %w", err)
 	}
@@ -471,6 +474,11 @@ func (c *pprofCommand) Cleanup() {
 				fmt.Fprintf(os.Stderr, "[XDBG] failed to close CPU profile file: %v\n", err)
 			}
 			c.cpuFile = nil
+		}
+
+		// 将活跃 CPU profile 文件纳入统一清理（与 cpuStop 一致）
+		if c.cpuFilePath != "" {
+			c.profileFiles = append(c.profileFiles, c.cpuFilePath)
 		}
 	}
 

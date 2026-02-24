@@ -608,6 +608,34 @@ func (p *testExcludePolicy) IsExcluded(err error) bool {
 	return false
 }
 
+// TestWithOnStateChange_PanicRecovery 验证 FG-S1 修复：
+// 回调 panic 不应导致进程崩溃，应被捕获并记录
+func TestWithOnStateChange_PanicRecovery(t *testing.T) {
+	recovered := make(chan struct{})
+	b := NewBreaker("test-panic",
+		WithTripPolicy(NewConsecutiveFailures(1)),
+		WithOnStateChange(func(name string, from, to State) {
+			defer func() { close(recovered) }()
+			panic("callback panic for testing")
+		}),
+	)
+
+	ctx := context.Background()
+	// 触发熔断，回调会 panic
+	_ = b.Do(ctx, func() error { return errTest })
+
+	// 等待 goroutine 中的 panic 被 recover
+	select {
+	case <-recovered:
+		// 回调的 panic 被捕获，进程没有崩溃
+	case <-time.After(time.Second):
+		t.Fatal("OnStateChange panic recovery did not complete within timeout")
+	}
+
+	// 验证熔断器状态仍然正确
+	assert.Equal(t, StateOpen, b.State())
+}
+
 func TestWithOnStateChange_NilIgnored(t *testing.T) {
 	called := make(chan struct{})
 	b := NewBreaker("test",

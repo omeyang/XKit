@@ -35,6 +35,12 @@ func defaultLogger() LoggerWithLevel {
 	defer globalMu.Unlock()
 
 	globalOnce.Do(func() {
+		// 设计决策: 在 once.Do 回调内检查 globalLogger，防止与 SetDefault 的逻辑竞态。
+		// 时序：G1 调用 Default() 看到 nil 进入 defaultLogger()，G2 此时完成 SetDefault(custom)，
+		// G1 获取锁后 once.Do 仍会触发——如果不加此检查，会覆盖 G2 设置的 custom logger。
+		if globalLogger.Load() != nil {
+			return
+		}
 		// 默认配置：输出到 stderr，Info 级别，text 格式，启用 enrich
 		logger, _, err := New().Build()
 		if err != nil {

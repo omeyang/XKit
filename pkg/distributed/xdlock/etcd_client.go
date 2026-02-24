@@ -140,8 +140,8 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 //	if err != nil {
 //	    return err
 //	}
-//	defer client.Close()   // 后关闭 client（defer 后进先出）
-//	defer factory.Close()  // 先关闭 factory
+//	defer client.Close()          // 后关闭 client（defer 后进先出）
+//	defer factory.Close(ctx)     // 先关闭 factory
 func NewEtcdFactoryFromConfig(
 	config *EtcdConfig,
 	clientOpts []EtcdClientOption,

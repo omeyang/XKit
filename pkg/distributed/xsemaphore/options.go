@@ -279,6 +279,9 @@ func (o *acquireOptions) validateRetryParams() error {
 	if o.maxRetries <= 0 {
 		return fmt.Errorf("%w: max retries must be positive, got %d", ErrInvalidMaxRetries, o.maxRetries)
 	}
+	if o.maxRetries > MaxMaxRetries {
+		return fmt.Errorf("%w: max retries cannot exceed %d, got %d", ErrInvalidMaxRetries, MaxMaxRetries, o.maxRetries)
+	}
 	if o.retryDelay <= 0 {
 		return fmt.Errorf("%w: retry delay must be positive, got %s", ErrInvalidRetryDelay, o.retryDelay)
 	}
@@ -328,9 +331,10 @@ func WithTTL(ttl time.Duration) AcquireOption {
 
 // WithMaxRetries 设置阻塞获取时的最大尝试次数（包含首次尝试）
 // 例如：WithMaxRetries(10) 表示首次尝试 + 9 次重试 = 共 10 次尝试
-// 默认为 10 次
+// 默认为 10 次，上限为 [MaxMaxRetries]（10000）
 // 仅对 Acquire 方法有效
-// 无效值（<= 0）会在 validate() 中返回错误
+// 无效值（<= 0 或 > MaxMaxRetries）会在 validate() 中返回错误
+// 建议配合 context timeout 使用以确保超时可控
 func WithMaxRetries(n int) AcquireOption {
 	return func(o *acquireOptions) {
 		o.maxRetries = n

@@ -97,7 +97,8 @@ type PageResult struct {
 // BatchOptions 批量操作选项。
 type BatchOptions struct {
 	// BatchSize 是每批大小。
-	// 如果为 0，使用默认值 10000。
+	// 如果为 0 或负值，使用默认值 DefaultBatchSize（10000）。
+	// 不得超过 MaxBatchSize（100000），否则返回 ErrBatchSizeTooLarge。
 	BatchSize int
 }
 

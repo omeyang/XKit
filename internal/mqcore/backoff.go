@@ -72,6 +72,13 @@ func DefaultBackoff() xretry.BackoffPolicy {
 // 返回：
 //   - ctx 取消时返回 ctx.Err()
 func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoopOption) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if consume == nil {
+		return ErrNilHandler
+	}
+
 	// 应用配置
 	options := &ConsumeLoopOptions{
 		Backoff: DefaultBackoff(),
@@ -89,29 +96,34 @@ func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoo
 		default:
 			if err := consume(ctx); err != nil {
 				attempt++
-
-				// 触发错误回调
-				if options.OnError != nil {
-					options.OnError(err)
-				}
-
-				// 应用退避延迟
-				delay := options.Backoff.NextDelay(attempt)
-				timer := time.NewTimer(delay)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return ctx.Err()
-				case <-timer.C:
+				if err := waitBackoff(ctx, options, attempt, err); err != nil {
+					return err
 				}
 			} else {
 				// 成功消费，重置退避
 				attempt = 0
-				// 如果退避策略支持重置，调用 Reset()
 				if resettable, ok := options.Backoff.(xretry.ResettableBackoff); ok {
 					resettable.Reset()
 				}
 			}
 		}
+	}
+}
+
+// waitBackoff 处理消费错误：触发回调并等待退避延迟。
+// 返回非 nil 错误表示 ctx 已取消，调用方应退出循环。
+func waitBackoff(ctx context.Context, options *ConsumeLoopOptions, attempt int, consumeErr error) error {
+	if options.OnError != nil {
+		options.OnError(consumeErr)
+	}
+
+	delay := options.Backoff.NextDelay(attempt)
+	timer := time.NewTimer(delay)
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }

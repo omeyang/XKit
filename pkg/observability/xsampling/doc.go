@@ -46,7 +46,8 @@
 //   - CountSampler 零值：按全采样处理（避免除零 panic）
 //   - RateSampler 零值：等同于 Never()（rate=0，不采样）
 //   - CompositeSampler 零值：mode=ModeAND + 空列表 → 返回 true（AND 恒等元，等同于全采样）
-//   - KeyBasedSampler 零值：rate=0 → 不采样（但 keyFunc 为 nil 会 panic，请勿使用零值）
+//   - KeyBasedSampler 零值：rate=0 → 不采样。注意：若通过其他方式设置 0 < rate < 1
+//     但未设置 keyFunc，调用 ShouldSample 将 panic。请始终使用构造函数创建
 //
 // # 与 OTel 的关系
 //

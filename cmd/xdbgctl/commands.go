@@ -32,13 +32,14 @@ type usageError struct {
 
 func (e *usageError) Error() string { return e.msg }
 
-// isCLIUsageError 检测是否为 CLI 框架产生的参数错误（如未知 flag）。
-// 设计决策: urfave/cli/v3 对参数错误返回的是 plain error（无自定义类型），
+// isCLIUsageError 检测是否为 CLI 框架产生的参数错误（如未知 flag、未知命令）。
+// 设计决策: urfave/cli/v3 对参数错误返回的是 plain error 或 ExitCoder（无统一自定义类型），
 // 只能通过错误消息前缀识别。这些前缀是 urfave/cli 内部常量，变化概率极低。
 func isCLIUsageError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "flag provided but not defined") ||
-		strings.Contains(msg, "flag needs an argument")
+		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "No help topic for")
 }
 
 // maxCommLen 是 Linux TASK_COMM_LEN (16) 减去 null 终止符后的最大进程名长度。
@@ -228,14 +229,14 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 		pid = pidFlag
 	case nameFlag != "":
 		// 优先级 2: 通过进程名查找
-		discoveredPID, err := findProcessByName(nameFlag)
+		discoveredPID, err := findProcessByName(ctx, nameFlag)
 		if err != nil {
 			return fmt.Errorf("通过进程名查找失败: %w", err)
 		}
 		pid = discoveredPID
 	default:
 		// 优先级 3: 尝试通过 Socket 文件发现进程
-		discoveredPID, err := findProcessBySocket(socketPath)
+		discoveredPID, err := findProcessBySocket(ctx, socketPath)
 		if err != nil {
 			// 要求用户明确指定目标进程
 			hint := "请使用 --pid 或 --name 参数指定目标进程"
@@ -340,7 +341,7 @@ func cmdStatus(ctx context.Context, socketPath string, timeout time.Duration) er
 // findProcessByName 通过进程名查找进程 PID。
 // 扫描 /proc/*/comm 文件匹配进程名。
 // 当匹配多个进程时返回错误，要求使用 --pid 明确指定。
-func findProcessByName(name string) (int, error) {
+func findProcessByName(ctx context.Context, name string) (int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return 0, fmt.Errorf("无法读取 /proc: %w", err)
@@ -349,6 +350,9 @@ func findProcessByName(name string) (int, error) {
 	var matches []int
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("进程查找已取消: %w", err)
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -385,7 +389,7 @@ func findProcessByName(name string) (int, error) {
 // 设计决策: 使用 /proc/net/unix 获取 socket inode，而非 os.Stat。
 // 文件系统 inode（os.Stat 返回）和内核 socket inode（/proc/PID/fd 显示）
 // 位于不同的编号空间，直接用 os.Stat inode 匹配永远不会成功。
-func findProcessBySocket(socketPath string) (int, error) {
+func findProcessBySocket(ctx context.Context, socketPath string) (int, error) {
 	absSocketPath, err := absPath(socketPath)
 	if err != nil {
 		return 0, fmt.Errorf("获取绝对路径失败: %w", err)
@@ -397,17 +401,36 @@ func findProcessBySocket(socketPath string) (int, error) {
 		return 0, err
 	}
 
-	// 在 /proc 中查找持有该 socket 的进程
-	entries, err := os.ReadDir("/proc")
+	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
+	matches, err := scanProcForSocket(ctx, expectedLink)
 	if err != nil {
-		return 0, fmt.Errorf("无法读取 /proc: %w", err)
+		return 0, err
 	}
 
-	expectedLink := fmt.Sprintf("socket:[%d]", socketIno)
+	switch len(matches) {
+	case 0:
+		return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, fmt.Errorf("找到多个持有 socket %s 的进程 (PID: %v)，请使用 --pid 指定具体进程",
+			socketPath, matches)
+	}
+}
+
+// scanProcForSocket 在 /proc 中扫描持有指定 socket 的进程。
+func scanProcForSocket(ctx context.Context, expectedLink string) ([]int, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 /proc: %w", err)
+	}
 
 	var matches []int
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("进程查找已取消: %w", err)
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -422,15 +445,7 @@ func findProcessBySocket(socketPath string) (int, error) {
 		}
 	}
 
-	switch len(matches) {
-	case 0:
-		return 0, fmt.Errorf("未找到监听 %s 的进程", socketPath)
-	case 1:
-		return matches[0], nil
-	default:
-		return 0, fmt.Errorf("找到多个持有 socket %s 的进程 (PID: %v)，请使用 --pid 指定具体进程",
-			socketPath, matches)
-	}
+	return matches, nil
 }
 
 // findSocketInode 从 /proc/net/unix 查找 Unix domain socket 的内核 inode。
@@ -490,16 +505,26 @@ func absPath(path string) (string, error) {
 // setupSignalHandler 设置信号处理。
 // 设计决策: 第一次信号优雅取消，第二次信号强制退出（退出码 130 = 128 + SIGINT）。
 // 当命令阻塞时，用户可通过再次 Ctrl+C 强制退出。
-func setupSignalHandler(cancel context.CancelFunc) {
+// goroutine 在 ctx 取消时自动退出，避免测试中多次调用 run() 导致的泄漏。
+func setupSignalHandler(ctx context.Context, cancel context.CancelFunc) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		cancel() // 第一次信号: 优雅取消
-
-		<-sigCh
-		signal.Stop(sigCh) // 回收订阅
-		os.Exit(130)       // 第二次信号: 强制退出
+		select {
+		case <-sigCh:
+			cancel() // 第一次信号: 优雅取消
+		case <-ctx.Done():
+			signal.Stop(sigCh)
+			return
+		}
+		select {
+		case <-sigCh:
+			signal.Stop(sigCh)
+			os.Exit(130) // 第二次信号: 强制退出
+		case <-ctx.Done():
+			signal.Stop(sigCh)
+			return
+		}
 	}()
 }
 

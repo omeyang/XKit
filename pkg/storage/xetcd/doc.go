@@ -7,6 +7,12 @@
 //   - WatchWithRetry 带自动重连和指数退避（含随机抖动）的 Watch
 //   - 与 xdlock 分布式锁的集成
 //
+// # 错误处理
+//
+// 所有接受 context.Context 的公开方法（Get/Put/Delete/Watch 等）在 ctx 为 nil 时
+// 返回 ErrNilContext，避免 nil ctx 传递到 etcd 客户端导致 panic。
+// Close 方法例外：ctx 参数当前仅用于未来扩展（D-02 决策），nil 时不返回错误。
+//
 // # 设计边界
 //
 // 设计决策: xetcd 定位为简化的 KV + Watch 封装，不提供以下高级功能：

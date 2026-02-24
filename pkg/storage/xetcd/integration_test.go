@@ -42,7 +42,7 @@ func createTestClient(t *testing.T) *Client {
 		t.Skipf("Skipping integration test: cannot connect to etcd: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = client.Close()
+		_ = client.Close(context.Background())
 	})
 	return client
 }
@@ -482,7 +482,7 @@ func TestIntegration_ClientClose(t *testing.T) {
 	}
 
 	// 关闭客户端
-	if err := client.Close(); err != nil {
+	if err := client.Close(context.Background()); err != nil {
 		t.Errorf("Close() error = %v", err)
 	}
 

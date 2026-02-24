@@ -198,6 +198,30 @@ func TestCommandFunc(t *testing.T) {
 	}
 }
 
+func TestNewCommandFunc_EmptyName_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("NewCommandFunc with empty name should panic")
+		}
+	}()
+
+	NewCommandFunc("", "help", func(_ context.Context, _ []string) (string, error) {
+		return "", nil
+	})
+}
+
+func TestNewCommandFunc_NilFn_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("NewCommandFunc with nil fn should panic")
+		}
+	}()
+
+	NewCommandFunc("test", "help", nil)
+}
+
 func TestCommandRegistry_EssentialCommandsAlwaysAllowed(t *testing.T) {
 	registry := NewCommandRegistry()
 

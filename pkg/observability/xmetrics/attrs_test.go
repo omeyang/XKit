@@ -130,6 +130,29 @@ func TestUint64(t *testing.T) {
 	}
 }
 
+func TestFloat32(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		key   string
+		value float32
+	}{
+		{"positive", "ratio", 3.14},
+		{"negative", "offset", -2.5},
+		{"zero", "rate", 0.0},
+		{"fraction", "half", 0.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attr := Float32(tt.key, tt.value)
+			assert.Equal(t, tt.key, attr.Key)
+			assert.Equal(t, tt.value, attr.Value)
+		})
+	}
+}
+
 func TestFloat64(t *testing.T) {
 	t.Parallel()
 
@@ -253,6 +276,9 @@ func TestAttrFunctions_ReturnType(t *testing.T) {
 	assert.IsType(t, Attr{}, attr)
 
 	attr = Uint64("k", 1)
+	assert.IsType(t, Attr{}, attr)
+
+	attr = Float32("k", 1.0)
 	assert.IsType(t, Attr{}, attr)
 
 	attr = Float64("k", 1.0)

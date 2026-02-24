@@ -12,6 +12,10 @@ import (
 //	mux := http.NewServeMux()
 //	mux.Handle("/api/", xlimit.HTTPMiddleware(limiter)(apiHandler))
 func HTTPMiddleware(limiter Limiter, opts ...MiddlewareOption) func(http.Handler) http.Handler {
+	// 设计决策: nil limiter 使用 panic 而非返回 error。
+	// (1) 这是不可恢复的编程错误（构造阶段即可发现），不是运行时异常；
+	// (2) 返回 error 会破坏标准 HTTP 中间件签名 func(http.Handler) http.Handler；
+	// (3) 与 Go 中间件生态惯例一致（chi、gin 等框架均在 nil 参数时 panic）。
 	if limiter == nil {
 		panic("xlimit: HTTPMiddleware requires a non-nil Limiter")
 	}

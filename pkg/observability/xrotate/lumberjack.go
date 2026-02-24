@@ -209,7 +209,7 @@ func NewLumberjack(filename string, opts ...Option) (Rotator, error) {
 	}
 
 	// 验证配置
-	if err := validatelumberjackConfig(&cfg); err != nil {
+	if err := validateLumberjackConfig(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -243,8 +243,8 @@ func NewLumberjack(filename string, opts ...Option) (Rotator, error) {
 	}, nil
 }
 
-// validatelumberjackConfig 验证 lumberjack 配置
-func validatelumberjackConfig(cfg *lumberjackConfig) error {
+// validateLumberjackConfig 验证 lumberjack 配置
+func validateLumberjackConfig(cfg *lumberjackConfig) error {
 	if cfg.MaxSizeMB <= 0 || cfg.MaxSizeMB > maxSizeMB {
 		return fmt.Errorf("%w: got %d, want 1~%d", ErrInvalidMaxSize, cfg.MaxSizeMB, maxSizeMB)
 	}
@@ -355,7 +355,7 @@ func (r *lumberjackRotator) ensureFileMode() error {
 // 回调 panic 被 recover 隔离，防止日志错误通知反向中断业务主流程。
 func (r *lumberjackRotator) reportError(err error) {
 	if err != nil && r.onError != nil {
-		defer func() { recover() }() //nolint:errcheck // recover 返回值无需检查
+		defer func() { recover() }() // recover 返回值无需检查（.golangci.yml 排除）
 		r.onError(err)
 	}
 }

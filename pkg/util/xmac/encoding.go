@@ -6,6 +6,28 @@ import (
 	"fmt"
 )
 
+// MarshalBinary 实现 [encoding.BinaryMarshaler]。
+// 返回 6 字节的原始 MAC 地址数据。
+// 无效地址返回 6 字节全零。
+func (a Addr) MarshalBinary() ([]byte, error) {
+	b := a.bytes
+	return b[:], nil
+}
+
+// UnmarshalBinary 实现 [encoding.BinaryUnmarshaler]。
+// 输入必须为 6 字节。
+// 对 nil 接收者返回 [ErrNilReceiver]。
+func (a *Addr) UnmarshalBinary(data []byte) error {
+	if a == nil {
+		return ErrNilReceiver
+	}
+	if len(data) != 6 {
+		return fmt.Errorf("%w: expected 6 bytes, got %d", ErrInvalidLength, len(data))
+	}
+	copy(a.bytes[:], data)
+	return nil
+}
+
 // MarshalText 实现 [encoding.TextMarshaler]。
 // 输出小写冒号格式（aa:bb:cc:dd:ee:ff）。
 // 无效地址输出空字节切片。
@@ -165,6 +187,6 @@ func (a *Addr) Scan(src any) error {
 		*a = parsed
 		return nil
 	default:
-		return fmt.Errorf("%w: unsupported type %T", ErrInvalidFormat, src)
+		return fmt.Errorf("%w: %T", ErrUnsupportedType, src)
 	}
 }

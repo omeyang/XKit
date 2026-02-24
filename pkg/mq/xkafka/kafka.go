@@ -27,6 +27,8 @@ type Producer interface {
 	Health(ctx context.Context) error
 
 	// Stats 返回生产者统计信息。
+	// 注意：MessagesProduced/BytesProduced/Errors 仅在使用 TracingProducer.Produce 时递增。
+	// 通过 Producer() 直接调用原生 API 的操作不计入统计。
 	Stats() ProducerStats
 
 	// Close 优雅关闭生产者。
@@ -64,6 +66,9 @@ type Consumer interface {
 	Health(ctx context.Context) error
 
 	// Stats 返回消费者统计信息。
+	// 注意：MessagesConsumed/BytesConsumed 仅在使用 TracingConsumer 或 ConsumerWithDLQ 时递增。
+	// 通过 Consumer() 直接调用原生 API 的操作不计入统计。
+	// Lag 通过远程 RPC（Committed + QueryWatermarkOffsets）计算，分区多时可能较慢。
 	Stats() ConsumerStats
 
 	// Close 优雅关闭消费者。
@@ -173,6 +178,9 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 		return nil, err
 	}
 
+	// 设计决策: SubscribeTopics 第二参数为 nil，未注册 rebalance 回调。
+	// 分区撤销时 offset 提交依赖 auto-commit 窗口（默认 5s）。
+	// 如需更精确的 rebalance 处理，用户可通过 Consumer() 获取底层 API 自行管理。
 	if err := consumer.SubscribeTopics(topics, nil); err != nil {
 		return nil, errors.Join(err, consumer.Close())
 	}

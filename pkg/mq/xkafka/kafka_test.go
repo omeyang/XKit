@@ -235,3 +235,36 @@ func TestConsumerStats_ZeroValues(t *testing.T) {
 	assert.Zero(t, stats.Errors)
 	assert.Zero(t, stats.Lag)
 }
+
+// =============================================================================
+// extractGroupID Tests
+// =============================================================================
+
+func TestExtractGroupID_WithGroupID(t *testing.T) {
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	groupID := extractGroupID(config)
+
+	assert.Equal(t, "test-group", groupID)
+}
+
+func TestExtractGroupID_NoGroupID(t *testing.T) {
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+	}
+
+	groupID := extractGroupID(config)
+
+	assert.Empty(t, groupID)
+}
+
+func TestExtractGroupID_EmptyConfig(t *testing.T) {
+	config := &kafka.ConfigMap{}
+
+	groupID := extractGroupID(config)
+
+	assert.Empty(t, groupID)
+}

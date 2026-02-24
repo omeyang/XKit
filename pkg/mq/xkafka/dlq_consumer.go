@@ -132,7 +132,7 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 // 设计决策: messagesConsumed/bytesConsumed 在此处递增，而非在 ReadMessage 中，
 // 因为 dlqConsumer 直接调用底层 consumer.ReadMessage（不经过 TracingConsumer.ReadMessage），
 // 避免双重计数。如果未来重构为使用 TracingConsumer，需移除此处的统计递增。
-func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) error {
+func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) (resultErr error) {
 	c.closeMu.RLock()
 	defer c.closeMu.RUnlock()
 	if c.closed.Load() {
@@ -156,10 +156,13 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		Kind:      xmetrics.KindConsumer,
 		Attrs:     kafkaConsumerMessageAttrs(msg, c.groupID),
 	})
+	defer func() {
+		span.End(xmetrics.Result{Err: resultErr})
+	}()
+
 	// 执行处理
-	err := handler(msgCtx, msg)
-	span.End(xmetrics.Result{Err: err})
-	if err == nil {
+	resultErr = handler(msgCtx, msg)
+	if resultErr == nil {
 		// 处理成功，存储 offset
 		if retryCount > 0 {
 			c.stats.incSuccessAfterRetry()
@@ -167,18 +170,21 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		// 设计决策: 使用 StoreMessage 而非 StoreOffsets，StoreMessage 内部执行 offset+1，
 		// 表示"下次从此 offset 之后开始消费"，避免重启后重复消费已处理消息。
 		if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
-			return fmt.Errorf("store offset failed: %w", storeErr)
+			resultErr = fmt.Errorf("store offset failed: %w", storeErr)
+			return resultErr
 		}
 		return nil
 	}
 
 	// 处理失败，检查是否需要重试
-	if !c.policy.RetryPolicy.ShouldRetry(msgCtx, attempt, err) {
+	if !c.policy.RetryPolicy.ShouldRetry(msgCtx, attempt, resultErr) {
 		// 超过重试次数或遇到永久性错误，发送到 DLQ
-		return c.sendToDLQInternal(msgCtx, msg, err, retryCount)
+		resultErr = c.sendToDLQInternal(msgCtx, msg, resultErr, retryCount)
+		return resultErr
 	}
 
-	return c.handleRetry(msgCtx, msg, attempt, err)
+	resultErr = c.handleRetry(msgCtx, msg, attempt, resultErr)
+	return resultErr
 }
 
 // handleRetry 处理消息重试逻辑：触发回调、等待退避延迟、重新投递。
@@ -334,6 +340,7 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 // Close 关闭消费者和 DLQ Producer。
 // 关闭顺序：先获取写锁等待进行中的消息处理完成，再关闭消费者（提交 offset），
 // 最后刷新并关闭 DLQ Producer。
+// 重复调用 Close 安全返回 ErrClosed。
 func (c *dlqConsumer) Close() error {
 	// 获取写锁，等待所有进行中的 processMessage/SendToDLQ 完成
 	c.closeMu.Lock()
@@ -341,6 +348,10 @@ func (c *dlqConsumer) Close() error {
 
 	// 先关闭消费者，确保 offset 被提交
 	consumerErr := c.consumerWrapper.Close()
+	if errors.Is(consumerErr, ErrClosed) {
+		// 已关闭过，跳过 dlqProducer 操作避免对已关闭的 producer 重复调用
+		return ErrClosed
+	}
 
 	// 刷新 DLQ Producer 队列中的消息，避免丢失
 	flushTimeout := c.policy.DLQFlushTimeout

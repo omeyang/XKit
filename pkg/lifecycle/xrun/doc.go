@@ -92,9 +92,11 @@
 //  13. WithSignals 防御性拷贝：WithSignals 在创建时拷贝输入切片，
 //     避免调用方后续修改切片导致配置漂移或并发数据竞争。
 //
-//  14. 公开 API 参数校验：Ticker/Timer 对 fn == nil 返回 ErrNilFunc，
-//     HTTPServer 对 server == nil 返回 ErrNilServer。与 ErrInvalidInterval/
-//     ErrInvalidDelay 保持一致的 fail-fast 模式，防止运行时 panic。
+//  14. 公开 API 参数校验：Go/GoWithName 对 fn == nil 返回 ErrNilFunc，
+//     Ticker/Timer 同样校验 fn == nil，HTTPServer 校验 server == nil 返回
+//     ErrNilServer，RunServices/RunServicesWithOptions 校验 nil Service 返回
+//     ErrNilService。统一的 fail-fast 模式防止 goroutine 内部 nil panic 导致
+//     进程崩溃，与 ErrInvalidInterval/ErrInvalidDelay 保持一致。
 //
 //  15. Ticker/Timer 已取消 context 防护：Ticker 的 immediate 分支和
 //     Timer 的 zero-delay 分支在调用 fn 前先检查 ctx.Err()，
@@ -106,6 +108,16 @@
 //  17. NewGroup nil context 归一化：NewGroup(nil) 将 nil context 归一化为
 //     context.Background()，防止 context.WithCancelCause(nil) panic。
 //     不改变 API 签名（保持与 errgroup.WithContext 对齐），选择静默归一化。
+//
+//  18. Wait() 释放 context 资源：Wait() 通过 defer cancel(nil) 确保
+//     causeCtx 的 context 资源在返回前被释放。CancelCauseFunc 是幂等的，
+//     若已通过 Cancel() 或信号处理调用过则为空操作。
+//
+//  19. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
+//     所有服务通过 context 并发启动和同时取消。有序启动可通过嵌套 Group
+//     或在服务内部使用 ready channel 实现；健康检查建议在 HTTPServer 的
+//     handler 中实现，xrun 不内置此功能。这遵循 YAGNI 原则——编排策略
+//     因业务而异，过早抽象会增加不必要的复杂性。
 //
 // [errgroup]: https://pkg.go.dev/golang.org/x/sync/errgroup
 package xrun

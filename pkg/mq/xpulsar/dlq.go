@@ -152,9 +152,12 @@ func (b *ConsumerOptionsBuilder) WithNackBackoff(policy xretry.BackoffPolicy) *C
 	return b
 }
 
-// WithNackRedeliveryDelay 设置 Nack 重投递延迟
+// WithNackRedeliveryDelay 设置 Nack 重投递延迟。
+// delay 必须大于 0，否则保持默认值（与 WithConnectionTimeout 等 Duration 选项行为一致）。
 func (b *ConsumerOptionsBuilder) WithNackRedeliveryDelay(delay time.Duration) *ConsumerOptionsBuilder {
-	b.opts.NackRedeliveryDelay = delay
+	if delay > 0 {
+		b.opts.NackRedeliveryDelay = delay
+	}
 	return b
 }
 

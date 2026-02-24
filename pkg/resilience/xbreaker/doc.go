@@ -40,6 +40,7 @@
 // WithOnStateChange 注册的回调通过 goroutine 异步执行，
 // 避免与 gobreaker 内部 mutex 产生死锁。回调中可安全调用
 // Breaker 的 State()/Counts()/Do() 等方法。
+// 回调中的 panic 会被自动捕获并通过 slog.Error 记录，不会导致进程崩溃。
 // 注意回调执行顺序不保证，且获取的状态可能已是更新后的值。
 //
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker

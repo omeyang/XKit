@@ -268,6 +268,45 @@ func TestEnsureSpanContext_InvalidSpanIDFormat(t *testing.T) {
 	assert.False(t, sc.IsValid())
 }
 
+func TestEnsureSpanContext_RespectsTraceFlags_NotSampled(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "00")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.False(t, sc.IsSampled(), "TraceFlags 00 should not be sampled")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_Sampled(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "01")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "TraceFlags 01 should be sampled")
+}
+
+func TestEnsureSpanContext_DefaultSampled_NoTraceFlags(t *testing.T) {
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	// 不设置 TraceFlags
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "missing TraceFlags should default to sampled")
+}
+
 // =============================================================================
 // syncTraceToXctx Tests
 // =============================================================================

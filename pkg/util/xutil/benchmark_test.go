@@ -7,7 +7,15 @@ import "testing"
 var (
 	sinkInt    int
 	sinkString string
+	sinkLarge  benchLarge
 )
+
+// benchLarge 是用于基准测试的大型结构体，验证值拷贝开销。
+type benchLarge struct {
+	ID   int
+	Name string
+	Data [64]byte
+}
 
 func BenchmarkIf_True(b *testing.B) {
 	var r int
@@ -42,16 +50,11 @@ func BenchmarkIfString_False(b *testing.B) {
 }
 
 func BenchmarkIfStruct(b *testing.B) {
-	type Large struct {
-		ID   int
-		Name string
-		Data [64]byte
-	}
-	x := Large{ID: 1, Name: "a"}
-	y := Large{ID: 2, Name: "b"}
-	var r Large
+	x := benchLarge{ID: 1, Name: "a"}
+	y := benchLarge{ID: 2, Name: "b"}
+	var r benchLarge
 	for b.Loop() {
 		r = If(true, x, y)
 	}
-	_ = r
+	sinkLarge = r
 }

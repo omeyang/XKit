@@ -43,6 +43,9 @@ type Stats struct {
 }
 
 // JobStats 单个任务的执行统计。
+// 设计决策: 字段与 Stats 高度重复，但不抽取公共基类。
+// 两者职责不同（全局聚合 vs 单任务粒度），且 Stats 使用 sync.Map 管理 JobStats，
+// 抽象反而增加间接层次，降低可读性。
 type JobStats struct {
 	Name            string
 	totalExecutions atomic.Int64

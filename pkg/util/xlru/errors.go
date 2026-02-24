@@ -11,4 +11,7 @@ var (
 
 	// ErrInvalidTTL 表示 TTL 配置无效。
 	ErrInvalidTTL = errors.New("xlru: TTL must not be negative")
+
+	// ErrTTLTooSmall 表示正 TTL 值低于最小阈值 (100ns)。
+	ErrTTLTooSmall = errors.New("xlru: positive TTL must be at least 100ns")
 )

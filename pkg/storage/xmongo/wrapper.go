@@ -69,7 +69,7 @@ func (w *mongoWrapper) Health(ctx context.Context) (err error) {
 		Operation: "health",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 		},
 	})
 	defer func() {
@@ -136,7 +136,10 @@ func (w *mongoWrapper) Close(ctx context.Context) error {
 	if w.clientOps == nil {
 		return nil
 	}
-	return w.clientOps.Disconnect(ctx)
+	if err := w.clientOps.Disconnect(ctx); err != nil {
+		return fmt.Errorf("xmongo close: %w", err)
+	}
+	return nil
 }
 
 // FindPage 分页查询。
@@ -177,6 +180,17 @@ func (w *mongoWrapper) maybeSlowQuery(ctx context.Context, info SlowQueryInfo) b
 // 内部实现
 // =============================================================================
 
+// applyTimeout 当调用方未设置 deadline 且 timeout > 0 时，添加超时兜底。
+// 返回可能带 deadline 的 ctx 和 cancel 函数（调用方需 defer cancel）。
+func applyTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			return context.WithTimeout(ctx, timeout)
+		}
+	}
+	return ctx, func() {}
+}
+
 // findPage 分页查询实现。
 func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error) {
 	if coll == nil {
@@ -212,6 +226,11 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		filter = bson.D{}
 	}
 
+	// 当调用方未设置 deadline 且配置了 QueryTimeout 时，添加超时兜底
+	var cancel context.CancelFunc
+	ctx, cancel = applyTimeout(ctx, w.options.QueryTimeout)
+	defer cancel()
+
 	// 使用 storageopt 验证分页参数并计算 skip，防止溢出
 	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if err != nil {
@@ -226,7 +245,7 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 		Operation: "find_page",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 			xmetrics.String("db.name", info.Database),
 			xmetrics.String("db.collection", info.Collection),
 		},
@@ -266,6 +285,10 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	var data []bson.M
 	if err = cursor.All(ctx, &data); err != nil {
 		return nil, fmt.Errorf("xmongo find_page decode %s.%s: %w", info.Database, info.Collection, err)
+	}
+	// 设计决策: 空结果返回空切片而非 nil，确保 JSON 序列化为 [] 而非 null。
+	if data == nil {
+		data = []bson.M{}
 	}
 
 	return &PageResult{
@@ -307,6 +330,11 @@ func (w *mongoWrapper) bulkInsert(ctx context.Context, coll *mongo.Collection, d
 
 // bulkInsertInternal 批量插入内部实现，使用接口便于测试。
 func (w *mongoWrapper) bulkInsertInternal(ctx context.Context, coll collectionOperations, docs []any, opts BulkOptions) (result *BulkResult, err error) {
+	// 当调用方未设置 deadline 且配置了 WriteTimeout 时，添加超时兜底
+	var cancel context.CancelFunc
+	ctx, cancel = applyTimeout(ctx, w.options.WriteTimeout)
+	defer cancel()
+
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
 		batchSize = defaultBatchSize
@@ -322,7 +350,7 @@ func (w *mongoWrapper) bulkInsertInternal(ctx context.Context, coll collectionOp
 		Operation: "bulk_insert",
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			xmetrics.String("db.system", "mongo"),
+			xmetrics.String("db.system", "mongodb"),
 			xmetrics.String("db.name", info.Database),
 			xmetrics.String("db.collection", info.Collection),
 		},

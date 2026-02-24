@@ -2,6 +2,7 @@ package mqcore
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
@@ -92,6 +93,19 @@ func TestMergeTraceContext_WithAllFields(t *testing.T) {
 	assert.Equal(t, "b7ad6b7169203331", xctx.SpanID(result))
 	assert.Equal(t, "req-12345", xctx.RequestID(result))
 	assert.Equal(t, "01", xctx.TraceFlags(result))
+}
+
+func TestMergeTraceField_SetterError(t *testing.T) {
+	// 测试 setter 返回错误时的优雅降级行为
+	base := context.Background()
+	failingSetter := func(_ context.Context, _ string) (context.Context, error) {
+		return nil, errors.New("setter failed")
+	}
+
+	result := mergeTraceField(base, "some-value", failingSetter)
+
+	// setter 失败时应保留原 context
+	assert.Equal(t, base, result)
 }
 
 func TestMergeTraceContext_EmptyExtracted(t *testing.T) {

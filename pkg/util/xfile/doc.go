@@ -36,8 +36,8 @@
 // 但如果 base 目录内可能存在恶意符号链接，攻击者可能通过符号链接访问
 // base 目录外的文件。
 //
-// 对于高安全场景（如用户上传、沙箱目录），应使用 SafeJoinWithOptions
-// 并启用 ResolveSymlinks 选项：
+// 对于需要提升安全性的场景（如用户上传、沙箱目录），应使用 SafeJoinWithOptions
+// 并启用 ResolveSymlinks 选项（注意：这不提供原子安全访问保证，参见下方 TOCTOU 说明）：
 //
 //	SafeJoinWithOptions(base, path, SafeJoinOptions{ResolveSymlinks: true})
 //

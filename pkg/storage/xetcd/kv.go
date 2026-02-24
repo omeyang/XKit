@@ -34,7 +34,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
 //   - int64: 版本号（ModRevision）
 //   - error: 获取失败时返回错误
 func (c *Client) GetWithRevision(ctx context.Context, key string) ([]byte, int64, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, 0, err
 	}
 	if key == "" {
@@ -56,7 +56,7 @@ func (c *Client) GetWithRevision(ctx context.Context, key string) ([]byte, int64
 
 // Put 写入键值。
 func (c *Client) Put(ctx context.Context, key string, value []byte) error {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return err
 	}
 	if key == "" {
@@ -75,7 +75,7 @@ func (c *Client) Put(ctx context.Context, key string, value []byte) error {
 // 设计决策: TTL 使用向上取整（ceil）转换为秒，确保键不会比调用方预期更早过期。
 // 例如 1.1s 会被转换为 2s，而非向下取整为 1s。
 func (c *Client) PutWithTTL(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return err
 	}
 	if key == "" {
@@ -113,7 +113,7 @@ func (c *Client) PutWithTTL(ctx context.Context, key string, value []byte, ttl t
 
 // Delete 删除键值。键不存在时不返回错误。
 func (c *Client) Delete(ctx context.Context, key string) error {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return err
 	}
 	if key == "" {
@@ -129,7 +129,7 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 
 // DeleteWithPrefix 删除指定前缀的所有键，返回删除的键数量。
 func (c *Client) DeleteWithPrefix(ctx context.Context, prefix string) (int64, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return 0, err
 	}
 	if prefix == "" {
@@ -147,7 +147,7 @@ func (c *Client) DeleteWithPrefix(ctx context.Context, prefix string) (int64, er
 // 注意：此方法一次性加载所有匹配的键值到内存中，
 // 不适用于前缀下有大量 key 的场景（如数万个服务实例）。
 func (c *Client) List(ctx context.Context, prefix string) (map[string][]byte, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err
 	}
 	if prefix == "" {
@@ -168,7 +168,7 @@ func (c *Client) List(ctx context.Context, prefix string) (map[string][]byte, er
 
 // ListKeys 仅列出键名，返回键名列表。
 func (c *Client) ListKeys(ctx context.Context, prefix string) ([]string, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err
 	}
 	if prefix == "" {
@@ -189,7 +189,7 @@ func (c *Client) ListKeys(ctx context.Context, prefix string) ([]string, error) 
 
 // Exists 检查键是否存在。
 func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return false, err
 	}
 	if key == "" {
@@ -205,7 +205,7 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 
 // Count 统计指定前缀的键数量。
 func (c *Client) Count(ctx context.Context, prefix string) (int64, error) {
-	if err := c.checkClosed(); err != nil {
+	if err := c.checkPreconditions(ctx); err != nil {
 		return 0, err
 	}
 	if prefix == "" {

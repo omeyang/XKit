@@ -753,6 +753,45 @@ func TestBatchInsert_AfterClose(t *testing.T) {
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
+func TestBatchInsert_BatchSizeTooLarge(t *testing.T) {
+	conn := newMockConn()
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	rows := []any{struct{ ID int }{ID: 1}}
+
+	result, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{
+		BatchSize: MaxBatchSize + 1,
+	})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrBatchSizeTooLarge)
+}
+
+func TestBatchInsert_BatchSizeAtMax(t *testing.T) {
+	conn := newMockConn()
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &mockBatch{}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	rows := []any{struct{ ID int }{ID: 1}}
+
+	// MaxBatchSize 正好等于限制值时应该通过
+	result, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{
+		BatchSize: MaxBatchSize,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1), result.InsertedCount)
+}
+
 func TestBatchInsert_ContextCanceledDuringAppend(t *testing.T) {
 	// 测试: context 取消后应该 abort 而非 send
 	conn := newMockConn()

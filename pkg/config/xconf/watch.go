@@ -13,8 +13,14 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// WatchCallback 文件变更回调函数
-// 当配置文件发生变更时调用，err 表示重载是否成功
+// WatchCallback 文件变更回调函数。
+// 当配置文件发生变更时调用，err 表示重载是否成功。
+//
+// 错误场景:
+//   - 文件被删除或权限变更导致不可读: err 包含 ErrLoadFailed
+//   - 文件内容格式错误: err 包含 ErrParseFailed（旧配置被保留）
+//   - fsnotify 自身错误: err 包含 "xconf: watch error [path]" 前缀
+//   - err == nil: 重载成功，cfg 已更新为最新配置
 type WatchCallback func(cfg Config, err error)
 
 // Watcher 配置文件监视器
@@ -103,7 +109,7 @@ func WithDebounce(d time.Duration) WatchOption {
 //	    log.Fatal(err)
 //	}
 //	defer w.Stop()
-//	w.Start()
+//	w.Start() // 阻塞当前 goroutine；非阻塞场景请用 w.StartAsync()
 func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, error) {
 	kc, ok := cfg.(*koanfConfig)
 	if !ok {
@@ -125,6 +131,9 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 	// 应用选项
 	options := defaultWatchOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilWatchOption
+		}
 		opt(options)
 	}
 	if err := options.validate(); err != nil {

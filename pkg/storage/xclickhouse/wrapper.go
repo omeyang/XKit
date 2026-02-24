@@ -43,6 +43,11 @@ const (
 	// DefaultBatchSize 默认批量插入每批大小。
 	DefaultBatchSize = 10000
 
+	// MaxBatchSize 批量插入允许的最大每批大小。
+	// 防止极大 BatchSize 导致单次 PrepareBatch + AppendStruct 循环内存不可控。
+	// 如需更大的批次，请分多次调用或使用 Client() 直接操作。
+	MaxBatchSize = 100000
+
 	// MaxPageSize 分页查询允许的最大页大小。
 	// 限制单次查询返回的行数，防止超大 PageSize 导致内存暴涨或 ClickHouse 扫描压力过大。
 	// 如需更大的结果集，请使用 Client() 直接执行查询或分多次请求。
@@ -144,6 +149,10 @@ func (w *clickhouseWrapper) Close() error {
 // =============================================================================
 
 // QueryPage 分页查询。
+//
+// 设计决策: QueryPage 和 BatchInsert 不内置默认超时，超时由调用方通过 ctx 控制。
+// Health 有 HealthTimeout 是因为健康检查预期快速完成；而查询/写入的耗时因场景而异，
+// 内置默认超时可能导致合理的长查询被意外中断。这与 Go 标准库 database/sql 的设计一致。
 func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (result *PageResult, err error) {
 	if w.closed.Load() {
 		return nil, ErrClosed
@@ -328,12 +337,13 @@ func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, 
 	}()
 
 	columns = rows.Columns()
-	data, err = w.scanRows(rows)
+	data, err = w.scanRows(rows, pageSize)
 	return columns, data, err
 }
 
 // scanRows 扫描结果集中的所有行。
-func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
+// pageSize 用于预分配结果切片容量，减少 append 扩容开销。
+func (w *clickhouseWrapper) scanRows(rows driver.Rows, pageSize int64) ([][]any, error) {
 	columnTypes := rows.ColumnTypes()
 
 	// 缓存每列的 ScanType，避免每行重复调用 ScanType()
@@ -342,7 +352,7 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows) ([][]any, error) {
 		scanTypes[i] = ct.ScanType()
 	}
 
-	var data [][]any
+	data := make([][]any, 0, pageSize)
 
 	for rows.Next() {
 		// 为每列创建对应类型的值实例用于接收数据
@@ -417,6 +427,9 @@ func (w *clickhouseWrapper) BatchInsert(ctx context.Context, table string, rows 
 	batchSize := opts.BatchSize
 	if batchSize < 1 {
 		batchSize = DefaultBatchSize
+	}
+	if batchSize > MaxBatchSize {
+		return nil, ErrBatchSizeTooLarge
 	}
 
 	start := time.Now()

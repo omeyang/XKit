@@ -14,7 +14,7 @@ func TestLocalLimiter_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -38,7 +38,7 @@ func TestLocalLimiter_ExhaustQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "exhaust-tenant"}
@@ -74,7 +74,7 @@ func TestLocalLimiter_AllowN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -105,7 +105,7 @@ func TestLocalLimiter_Reset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
@@ -157,7 +157,7 @@ func TestLocalLimiter_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "multi-rule-tenant"}
@@ -178,7 +178,7 @@ func TestLocalLimiter_DifferentTenants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -219,7 +219,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "concurrent-tenant"}
@@ -263,7 +263,7 @@ func TestLocalLimiter_Closed(t *testing.T) {
 	}
 
 	// 关闭限流器
-	err = limiter.Close()
+	err = limiter.Close(context.Background())
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestLocalLimiter_TokenRefill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "refill-tenant"}
@@ -346,7 +346,7 @@ func TestLocalLimiter_Override(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -386,7 +386,7 @@ func TestLocalLimiter_Callback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "callback-tenant"}
@@ -494,7 +494,7 @@ func BenchmarkLocalLimiter_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "bench-tenant"}

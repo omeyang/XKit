@@ -166,6 +166,19 @@ func TestWatch_NilCallback(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilCallback)
 }
 
+func TestWatch_NilWatchOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	_, err = Watch(cfg, func(c Config, err error) {}, nil)
+	assert.ErrorIs(t, err, ErrNilWatchOption)
+}
+
 func TestWatch_InvalidDebounce(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

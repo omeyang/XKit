@@ -941,6 +941,11 @@ func TestBreakerRetryer_DoWithRetry_NilArgs(t *testing.T) {
 		err := combo.DoWithRetry(nilCtx, func(_ context.Context) error { return nil })
 		assert.ErrorIs(t, err, ErrNilContext)
 	})
+
+	t.Run("nil func", func(t *testing.T) {
+		err := combo.DoWithRetry(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNilFunc)
+	})
 }
 
 func TestBreakerRetryer_DoWithRetrySimple_NilArgs(t *testing.T) {
@@ -1059,4 +1064,44 @@ func TestExecuteRetryThenBreak_NilArgs(t *testing.T) {
 		_, err := ExecuteRetryThenBreak[string](context.Background(), rtb, nil)
 		assert.ErrorIs(t, err, ErrNilFunc)
 	})
+}
+
+// TestRetryThenBreak_ToResultError_FailedByPolicy 验证 FG-L3：
+// 当 SuccessPolicy 对 nil error 返回 false 时，toResultError 应返回 errFailedByPolicy
+func TestRetryThenBreak_ToResultError_FailedByPolicy(t *testing.T) {
+	// 自定义 SuccessPolicy：nil error 也返回 false（异常行为）
+	alwaysFailPolicy := &alwaysFailSuccessPolicy{}
+
+	retryer := xretry.NewRetryer(
+		xretry.WithRetryPolicy(xretry.NewFixedRetry(1)),
+		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+	)
+	breaker := NewBreaker("test",
+		WithTripPolicy(NewConsecutiveFailures(5)),
+		WithSuccessPolicy(alwaysFailPolicy),
+	)
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// fn 返回 nil error，但 SuccessPolicy 判定为失败
+	err = rtb.Do(ctx, func(_ context.Context) error {
+		return nil
+	})
+
+	// 应返回 nil（fn 本身没有错误），但熔断器内部记录为失败
+	// 注：retryer.Do 在 fn 返回 nil 时也返回 nil
+	assert.NoError(t, err)
+
+	// 验证熔断器记录了一次失败（因为 toResultError 返回了 errFailedByPolicy）
+	counts := rtb.Counts()
+	assert.Equal(t, uint32(1), counts.TotalFailures, "should count as failure due to SuccessPolicy")
+	assert.Equal(t, uint32(0), counts.TotalSuccesses, "should not count as success")
+}
+
+// alwaysFailSuccessPolicy 无论什么 error 都返回 false（用于测试边界情况）
+type alwaysFailSuccessPolicy struct{}
+
+func (p *alwaysFailSuccessPolicy) IsSuccessful(_ error) bool {
+	return false
 }

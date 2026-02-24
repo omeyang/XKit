@@ -200,6 +200,22 @@ func TestConsumerOptionsBuilder(t *testing.T) {
 		assert.Equal(t, 500*time.Millisecond, opts.NackRedeliveryDelay)
 	})
 
+	t.Run("WithNackRedeliveryDelay_Negative", func(t *testing.T) {
+		opts := NewConsumerOptionsBuilder("my-topic", "my-sub").
+			WithNackRedeliveryDelay(-1 * time.Second).
+			Build()
+
+		assert.Equal(t, time.Duration(0), opts.NackRedeliveryDelay, "负值应被忽略")
+	})
+
+	t.Run("WithNackRedeliveryDelay_Zero", func(t *testing.T) {
+		opts := NewConsumerOptionsBuilder("my-topic", "my-sub").
+			WithNackRedeliveryDelay(0).
+			Build()
+
+		assert.Equal(t, time.Duration(0), opts.NackRedeliveryDelay, "零值应被忽略")
+	})
+
 	t.Run("WithRetryEnable", func(t *testing.T) {
 		opts := NewConsumerOptionsBuilder("my-topic", "my-sub").
 			WithRetryEnable(true).

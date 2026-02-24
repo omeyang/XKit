@@ -69,20 +69,23 @@ func (b *localBackend) Reset(_ context.Context, key string) error {
 }
 
 // Query 查询当前配额状态（不消耗配额）
-func (b *localBackend) Query(ctx context.Context, key string, limit, _ int, window time.Duration) (
+//
+// 设计决策: 已有桶时按经过时间补充令牌后返回（只读，不修改桶状态），
+// 与 take() 的补令牌逻辑一致；无桶时返回 localBurst（桶容量）作为剩余配额，
+// 与新创建桶的初始令牌数（burst）语义对齐。
+func (b *localBackend) Query(ctx context.Context, key string, limit, burst int, window time.Duration) (
 	effectiveLimit, remaining int, resetAt time.Time, err error) {
 	// 获取当前 Pod 数量
 	podCount := b.getPodCount(ctx)
 	localLimit := max(limit/podCount, 1)
+	localBurst := max(burst/podCount, 1)
 
 	resetAt = time.Now().Add(window)
-	remaining = localLimit
+	remaining = localBurst // 无桶时默认为桶容量，与新建桶初始 tokens=burst 一致
 
 	if val, ok := b.buckets.Load(key); ok {
 		if bucket, ok := val.(*tokenBucket); ok {
-			bucket.mu.Lock()
-			remaining = int(bucket.tokens)
-			bucket.mu.Unlock()
+			remaining = bucket.currentTokens(localLimit, localBurst, window)
 		}
 	}
 
@@ -90,7 +93,7 @@ func (b *localBackend) Query(ctx context.Context, key string, limit, _ int, wind
 }
 
 // Close 关闭后端
-func (b *localBackend) Close() error {
+func (b *localBackend) Close(_ context.Context) error {
 	return nil
 }
 
@@ -138,8 +141,8 @@ func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window ti
 type tokenBucket struct {
 	mu         sync.Mutex
 	tokens     float64
-	limit      int           // 补令牌速率基数
-	burst      int           // 桶容量（突发上限）
+	limit      int // 补令牌速率基数
+	burst      int // 桶容量（突发上限）
 	window     time.Duration
 	lastUpdate time.Time
 }
@@ -157,6 +160,22 @@ func (tb *tokenBucket) updateParams(limit, burst int, window time.Duration) {
 	if tb.tokens > float64(burst) {
 		tb.tokens = float64(burst)
 	}
+}
+
+// currentTokens 返回当前令牌数（只读查询，不修改桶状态）
+// 按经过时间补充令牌后返回，与 take() 的补令牌逻辑一致。
+func (tb *tokenBucket) currentTokens(limit, burst int, window time.Duration) int {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	elapsed := time.Since(tb.lastUpdate)
+	rate := float64(limit) / window.Seconds()
+	tokens := tb.tokens + rate*elapsed.Seconds()
+
+	if tokens > float64(burst) {
+		tokens = float64(burst)
+	}
+	return int(tokens)
 }
 
 // take 尝试从令牌桶获取 n 个令牌

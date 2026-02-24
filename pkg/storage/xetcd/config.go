@@ -126,7 +126,11 @@ func (c *Config) Validate() error {
 	}
 
 	// 验证每个 endpoint 的格式
+	// 设计决策: TrimSpace 归一化端点字符串，防止 YAML/JSON 反序列化或手动配置时
+	// 引入的空白导致连接失败。与 xplatform 的 TrimSpace 归一化策略一致。
 	for i, ep := range c.Endpoints {
+		ep = strings.TrimSpace(ep)
+		c.Endpoints[i] = ep
 		if ep == "" {
 			return fmt.Errorf("%w: endpoint[%d] is empty", ErrInvalidEndpoint, i)
 		}

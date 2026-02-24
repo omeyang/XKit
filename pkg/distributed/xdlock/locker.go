@@ -35,6 +35,7 @@ type LockHandle interface {
 	//
 	// 只释放本次获取的锁，不会影响其他 goroutine 或实例持有的锁。
 	// 返回 [ErrNotLocked] 表示锁已过期或被其他获取覆盖。
+	// 传入 nil ctx 返回 [ErrNilContext]。
 	//
 	// 当 ctx 已取消/超时时，Unlock 会自动使用独立清理上下文（5 秒超时），
 	// 确保解锁操作尽力完成，避免锁残留到 TTL/Lease 到期。
@@ -96,7 +97,10 @@ type Factory interface {
 
 	// Close 关闭工厂，释放底层资源。
 	// 关闭后不应再创建新的锁实例。
-	Close() error
+	//
+	// 设计决策: ctx 参数当前未使用，保留以符合项目约定 D-02（Close(ctx) 参数保留策略），
+	// 避免未来需要带超时的优雅关闭时产生破坏性 API 变更。
+	Close(ctx context.Context) error
 
 	// Health 健康检查。
 	// 检查底层连接是否正常。

@@ -19,13 +19,28 @@
 //   - 慢查询检测：支持同步（SlowQueryHook）和异步（AsyncSlowQueryHook）回调
 //
 // Close() 可安全重复调用，首次关闭执行断连，后续调用返回 ErrClosed。
-// 除 Client() 外的所有方法在 Close() 后调用均返回 ErrClosed。并发安全。
+// 除 Client() 和 Stats() 外的所有方法在 Close() 后调用均返回 ErrClosed。并发安全。
+// Stats() 在 Close() 后仍可调用，返回最终统计快照（其返回类型不含 error）。
 //
 // # Close(ctx) 签名说明
 //
 // 设计决策: Close 接受 context.Context 参数，与同模块的 xetcd/xcache（Close() error）签名不同。
 // 原因：mongo.Client.Disconnect 支持 context 超时控制，在网络不可达时允许调用方设置关闭截止时间，
 // 避免无限阻塞。如需统一 Closer 接口，可传入 context.Background()。
+//
+// # 超时兜底
+//
+// FindPage 和 BulkInsert 默认完全依赖调用方传入的 context deadline。
+// 若调用方使用 context.Background() 等无 deadline 的 context，操作可能长时间悬挂。
+//
+// 建议生产环境通过 WithQueryTimeout / WithWriteTimeout 设置兜底超时：
+//
+//	m, _ := xmongo.New(client,
+//	    xmongo.WithQueryTimeout(30*time.Second),  // FindPage 兜底
+//	    xmongo.WithWriteTimeout(60*time.Second),  // BulkInsert 兜底
+//	)
+//
+// 仅当调用方 context 没有 deadline 时，兜底超时才生效；已设置 deadline 的 context 不受影响。
 //
 // # Write Concern / Read Preference
 //

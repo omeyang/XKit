@@ -65,6 +65,26 @@ func BenchmarkSubmit_Parallel(b *testing.B) {
 	}
 }
 
+// BenchmarkSubmit_ZeroReject_Parallel 测量并行 Submit 纯成功路径性能（无拒绝）。
+// 使用足够大的队列确保零拒绝，与 BenchmarkSubmit_Parallel 形成对照。
+func BenchmarkSubmit_ZeroReject_Parallel(b *testing.B) {
+	pool, err := New(4, 1<<20, func(_ int) {})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer pool.Close()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if err := pool.Submit(0); err != nil {
+				b.Fatalf("unexpected reject: %v", err)
+			}
+		}
+	})
+}
+
 func BenchmarkSubmitAndProcess(b *testing.B) {
 	var processed atomic.Int64
 	pool, err := New(4, 1000, func(_ int) {

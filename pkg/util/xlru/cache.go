@@ -13,6 +13,12 @@ import (
 // maxSize 缓存最大条目数上限。
 const maxSize = 1 << 24 // 16,777,216
 
+// minTTL 最小正 TTL 值。
+// 设计决策: 底层 expirable.LRU 使用 time.NewTicker(ttl/100) 清理过期条目，
+// 当 ttl < 100ns 时间隔截断为 0，导致 NewTicker panic。
+// 设置下限为 100ns 以防止进程崩溃，同时对实际使用场景无影响（纳秒级 TTL 无实际意义）。
+const minTTL = 100 * time.Nanosecond
+
 // Config 定义缓存配置。
 type Config struct {
 	// Size 缓存最大条目数。
@@ -20,7 +26,7 @@ type Config struct {
 	Size int
 
 	// TTL 条目过期时间。
-	// 0 表示永不过期，不允许负值。
+	// 0 表示永不过期，不允许负值，正值不得低于 100ns。
 	TTL time.Duration
 }
 
@@ -59,6 +65,7 @@ type Cache[K comparable, V any] struct {
 // 如果 cfg.Size <= 0，返回 ErrInvalidSize。
 // 如果 cfg.Size > maxSize (16,777,216)，返回 ErrSizeExceedsMax。
 // 如果 cfg.TTL < 0，返回 ErrInvalidTTL。
+// 如果 0 < cfg.TTL < 100ns，返回 ErrTTLTooSmall。
 func New[K comparable, V any](cfg Config, opts ...Option[K, V]) (*Cache[K, V], error) {
 	if cfg.Size <= 0 {
 		return nil, ErrInvalidSize
@@ -68,6 +75,9 @@ func New[K comparable, V any](cfg Config, opts ...Option[K, V]) (*Cache[K, V], e
 	}
 	if cfg.TTL < 0 {
 		return nil, ErrInvalidTTL
+	}
+	if cfg.TTL > 0 && cfg.TTL < minTTL {
+		return nil, ErrTTLTooSmall
 	}
 
 	// 应用可选配置

@@ -233,8 +233,15 @@ func FuzzConsumerOptionsBuilder_WithNackRedeliveryDelay(f *testing.F) {
 		}
 
 		opts := builder.Build()
-		if opts.NackRedeliveryDelay != delay {
-			t.Errorf("expected NackRedeliveryDelay=%v, got %v", delay, opts.NackRedeliveryDelay)
+		if delay > 0 {
+			if opts.NackRedeliveryDelay != delay {
+				t.Errorf("expected NackRedeliveryDelay=%v, got %v", delay, opts.NackRedeliveryDelay)
+			}
+		} else {
+			// 非正值应保持默认值（0）
+			if opts.NackRedeliveryDelay != 0 {
+				t.Errorf("non-positive delay should keep default, got %v", opts.NackRedeliveryDelay)
+			}
 		}
 	})
 }

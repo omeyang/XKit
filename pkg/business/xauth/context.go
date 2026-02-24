@@ -60,12 +60,10 @@ type ContextClient interface {
 }
 
 // AsContextClient 将 Client 转换为 ContextClient。
-// 如果 client 已经是 ContextClient，直接返回。
-func AsContextClient(c Client) ContextClient {
-	if cc, ok := c.(ContextClient); ok {
-		return cc
-	}
-	return nil
+// 返回 (ContextClient, true) 如果 client 实现了 ContextClient 接口，否则返回 (nil, false)。
+func AsContextClient(c Client) (ContextClient, bool) {
+	cc, ok := c.(ContextClient)
+	return cc, ok
 }
 
 // =============================================================================
@@ -115,7 +113,9 @@ func WithPlatformInfo(ctx context.Context, c Client, tenantID string) (context.C
 		return ctx, err
 	}
 
-	// 注入租户 ID（使用解析后的真实 tenantID）
+	// 设计决策: 无条件注入解析后的 tenantID，即使 ctx 中已有不同值。
+	// 这确保 ctx 中的 tenantID 与本次获取平台信息使用的 tenantID 一致。
+	// 如果调用方不希望覆盖已有的 tenantID，应在调用前自行检查。
 	ctx, err = xctx.WithTenantID(ctx, tenantID)
 	if err != nil {
 		return ctx, err

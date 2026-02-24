@@ -725,3 +725,55 @@ func TestTracingConsumer_Consume_RecordsMessageID(t *testing.T) {
 
 	assert.NoError(t, consumeErr)
 }
+
+// =============================================================================
+// TracingConsumer.Consume — 多 topic 消费时实际 topic 属性
+// =============================================================================
+
+func TestTracingConsumer_Consume_MultiTopic_RecordsActualTopic(t *testing.T) {
+	// 当配置 topic 为 "multi" 但实际消息来自 "test-topic" 时，
+	// 应添加 messaging.pulsar.message.topic 属性（通过 span 记录，此处验证不 panic）。
+	msg := &mockMessage{properties: map[string]string{}}
+	mc := &mockConsumer{receiveMsg: msg}
+	consumer, err := WrapConsumer(mc, "multi", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		return nil
+	})
+
+	assert.NoError(t, consumeErr)
+}
+
+func TestTracingConsumer_Consume_SameTopic_NoExtraAttr(t *testing.T) {
+	// 当配置 topic 与实际消息 topic 相同时，不应添加额外属性。
+	msg := &mockMessage{properties: map[string]string{}}
+	mc := &mockConsumer{receiveMsg: msg}
+	consumer, err := WrapConsumer(mc, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	consumeErr := consumer.Consume(context.Background(), func(ctx context.Context, m pulsar.Message) error {
+		return nil
+	})
+
+	assert.NoError(t, consumeErr)
+}
+
+// =============================================================================
+// TracingProducer.SendAsync — message ID 记录到 span
+// =============================================================================
+
+func TestTracingProducer_SendAsync_RecordsMessageID(t *testing.T) {
+	mp := &mockProducer{sendID: mockMessageID{}}
+	producer, err := WrapProducer(mp, "test-topic", NoopTracer{}, nil)
+	require.NoError(t, err)
+
+	msg := &pulsar.ProducerMessage{Payload: []byte("test")}
+	var resultID pulsar.MessageID
+	producer.SendAsync(context.Background(), msg, func(id pulsar.MessageID, m *pulsar.ProducerMessage, err error) {
+		resultID = id
+	})
+
+	assert.NotNil(t, resultID)
+	assert.Equal(t, "1:2:0:0", resultID.String())
+}

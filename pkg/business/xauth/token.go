@@ -192,11 +192,14 @@ func (m *TokenManager) obtainAPIKeyToken(ctx context.Context, tenantID string) (
 		return nil, ErrTokenNotFound
 	}
 
+	// 设计决策: API Key Token 响应中不包含 expires_in 字段（APIAccessTokenResponse.Data 仅有 access_token），
+	// 因此使用 DefaultTokenCacheTTL（6 小时）作为默认有效期。如果服务端实际有效期短于此值，
+	// 客户端会在 Token 过期后收到 401 并通过 EnableAutoRetryOn401 机制自动重试。
+	// 如需调整此默认值，可通过 Config.APIKeyTokenTTL 配置（未来扩展）。
 	token := &TokenInfo{
 		AccessToken: resp.Data.AccessToken,
 		ObtainedAt:  time.Now(),
-		// API Key Token 通常有较长的有效期，默认设置为 6 小时
-		ExpiresIn: int64(DefaultTokenCacheTTL.Seconds()),
+		ExpiresIn:   int64(DefaultTokenCacheTTL.Seconds()),
 	}
 	token.ExpiresAt = token.ObtainedAt.Add(DefaultTokenCacheTTL)
 
@@ -259,7 +262,7 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 		token.ExpiresAt = token.ObtainedAt.Add(time.Duration(token.ExpiresIn) * time.Second)
 	}
 
-	m.logger.Info("refreshed token",
+	m.logger.Debug("refreshed token",
 		slog.String("tenant_id", tenantID),
 		slog.Int64("expires_in", token.ExpiresIn),
 	)

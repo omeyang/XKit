@@ -25,6 +25,10 @@ const (
 	metricOperationTotal    = "xkit.operation.total"
 	metricOperationDuration = "xkit.operation.duration"
 
+	// traceFlagsSampled 是 W3C TraceFlags 的 sampled 位（0x01）。
+	// 用作 ensureParentSpan 中 trace_flags 缺失时的默认值。
+	traceFlagsSampled = 0x01
+
 	// AttrKeyComponent 是 metrics/trace 中组件名称的属性键。
 	AttrKeyComponent = "component"
 	// AttrKeyOperation 是 metrics/trace 中操作名称的属性键。
@@ -367,8 +371,12 @@ func ensureParentSpan(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	// 从 xctx 解析 TraceFlags，默认为 0（未采样）
-	var traceFlags trace.TraceFlags
+	// 设计决策: trace_flags 缺失时默认为 sampled（0x01）而非 0x00。
+	// xctx 中 trace_flags 是可选字段（doc.go:21）；若缺失时默认 0x00（unsampled），
+	// 配合 Remote=true 会使 ParentBased 采样器将后续 span 当作"remote unsampled"丢弃，
+	// 导致"有 trace_id 但无导出 span"的观测盲区。
+	// 默认 sampled 确保 trace 链路不会因 flags 缺失而意外中断。
+	traceFlags := trace.TraceFlags(traceFlagsSampled)
 	if flagsStr := xctx.TraceFlags(ctx); flagsStr != "" {
 		if parsed, err := strconv.ParseUint(flagsStr, 16, 8); err == nil {
 			traceFlags = trace.TraceFlags(parsed)

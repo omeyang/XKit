@@ -115,8 +115,9 @@ func (f *fallbackSemaphore) logFallback(ctx context.Context, resource string, er
 	}
 }
 
-// handleRedisError 处理 Redis 错误时的公共逻辑：记录日志、指标、trace 事件和触发回调
-func (f *fallbackSemaphore) handleRedisError(ctx context.Context, resource string, err error) {
+// recordFallbackObservability 记录降级的可观测性信息（日志、指标、trace 事件）
+// 由 handleRedisError 和 queryFallback 共享，确保格式和属性键名一致
+func (f *fallbackSemaphore) recordFallbackObservability(ctx context.Context, resource string, err error) {
 	f.logFallback(ctx, resource, err)
 	if f.opts.metrics != nil {
 		f.opts.metrics.RecordFallback(ctx, f.strategy, resource, ClassifyError(err))
@@ -131,7 +132,11 @@ func (f *fallbackSemaphore) handleRedisError(ctx context.Context, resource strin
 			attribute.String(attrFailReason, ClassifyError(err)),
 		))
 	}
+}
 
+// handleRedisError 处理 Redis 错误时的公共逻辑：记录日志、指标、trace 事件和触发回调
+func (f *fallbackSemaphore) handleRedisError(ctx context.Context, resource string, err error) {
+	f.recordFallbackObservability(ctx, resource, err)
 	f.safeOnFallback(ctx, resource, err)
 }
 
@@ -180,6 +185,8 @@ func (f *fallbackSemaphore) doFallback(ctx context.Context, resource string, opt
 
 	case FallbackOpen:
 		// 创建一个虚拟的许可，不占用资源
+		// 设计决策: opts 已由 distributed 路径（prepareAcquireCommon）校验，此处无需再次 validate。
+		// doFallback 仅在 distributed 路径失败后由 TryAcquire/Acquire 调用，不会被外部直接使用。
 		cfg := defaultAcquireOptions()
 		for _, opt := range opts {
 			if opt != nil {
@@ -229,20 +236,8 @@ func (f *fallbackSemaphore) Query(ctx context.Context, resource string, opts ...
 
 // queryFallback 执行 Query 的降级策略
 func (f *fallbackSemaphore) queryFallback(ctx context.Context, resource string, opts []QueryOption, err error) (*ResourceInfo, error) {
-	// 处理 Redis 错误：记录日志、指标和 trace 事件（Query 无需触发 onFallback 回调）
-	f.logFallback(ctx, resource, err)
-	if f.opts.metrics != nil {
-		f.opts.metrics.RecordFallback(ctx, f.strategy, resource, ClassifyError(err))
-	}
-
-	// 记录 fallback 事件到 trace（与 handleRedisError 保持一致）
-	if span := trace.SpanFromContext(ctx); span.IsRecording() {
-		span.AddEvent("xsemaphore.fallback", trace.WithAttributes(
-			attribute.Bool(attrFallbackUsed, true),
-			attribute.String(attrStrategy, string(f.strategy)),
-			attribute.String(attrFailReason, ClassifyError(err)),
-		))
-	}
+	// 记录降级可观测性信息（Query 无需触发 onFallback 回调，故不调用 handleRedisError）
+	f.recordFallbackObservability(ctx, resource, err)
 
 	// 根据策略返回不同结果
 	switch f.strategy {

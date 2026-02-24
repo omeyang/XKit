@@ -358,5 +358,5 @@ func (m *PlatformManager) InvalidateCache(ctx context.Context, tenantID string) 
 			m.localCache.Delete(localCacheKey(tenantID, field))
 		}
 	}
-	return m.cache.Delete(ctx, tenantID)
+	return m.cache.DeletePlatformData(ctx, tenantID)
 }

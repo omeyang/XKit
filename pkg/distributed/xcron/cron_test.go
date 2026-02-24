@@ -115,6 +115,69 @@ func TestScheduler_AddFunc(t *testing.T) {
 		}, WithName("named-job"))
 		assert.NoError(t, err)
 	})
+
+	t.Run("duplicate name returns ErrDuplicateJobName", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("dup-job"))
+		require.NoError(t, err)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("dup-job"))
+		assert.ErrorIs(t, err, ErrDuplicateJobName)
+	})
+
+	t.Run("different names succeed", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("job-a"))
+		require.NoError(t, err)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("job-b"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("removed name can be reused", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		id, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("reuse-job"))
+		require.NoError(t, err)
+
+		s.Remove(id)
+
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("reuse-job"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("unnamed jobs with noop locker are not checked for duplicates", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		_, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		})
+		require.NoError(t, err)
+
+		// 无名任务不参与唯一性校验
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		})
+		assert.NoError(t, err)
+	})
 }
 
 func TestScheduler_AddJob(t *testing.T) {

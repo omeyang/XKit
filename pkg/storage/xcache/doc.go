@@ -21,6 +21,11 @@
 //
 // 详细使用示例参考 example_test.go。
 //
+// # Context 安全
+//
+// 所有接受 context.Context 的公开入口方法（Load, LoadHash, Lock）
+// 均在入口处检查 nil context，传入 nil 会返回 ErrNilContext 而非 panic。
+//
 // # Loader Context 处理
 //
 // Loader 使用 singleflight 合并并发请求时，内部使用独立 context：

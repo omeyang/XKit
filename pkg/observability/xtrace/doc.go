@@ -39,6 +39,14 @@
 // HTTP 和 gRPC 共用同一套 Option 类型（如 WithAutoGenerate）。
 // 使用 TraceInfoFromContext() 从 context 提取完整追踪信息（与 ExtractFromHTTPHeader 对称）。
 //
+// # 注入 API 命名约定
+//
+// 本包提供两组注入函数，命名约定如下：
+//   - InjectTo*（如 InjectToRequest、InjectToOutgoingContext）：
+//     从 context 隐式获取追踪信息，适用于中间件/拦截器自动传播场景
+//   - InjectTraceTo*（如 InjectTraceToHeader、InjectTraceToMetadata）：
+//     接受显式 TraceInfo 参数，适用于手动构造追踪信息的场景（如测试、网关透传）
+//
 // # W3C Trace Context
 //
 // 本包支持 W3C Trace Context 规范（https://www.w3.org/TR/trace-context/）。

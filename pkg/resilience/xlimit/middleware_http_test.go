@@ -30,7 +30,7 @@ func setupTestLimiter(t *testing.T, limit int) Limiter {
 	}
 
 	t.Cleanup(func() {
-		_ = limiter.Close() //nolint:errcheck // cleanup
+		_ = limiter.Close(context.Background()) //nolint:errcheck // cleanup
 		_ = client.Close()  //nolint:errcheck // cleanup
 		mr.Close()
 	})
@@ -217,7 +217,7 @@ func TestHTTPMiddleware_LocalLimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create local limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter)
 
@@ -383,7 +383,7 @@ func (m *mockFallbackCloseLimiter) AllowN(_ context.Context, _ Key, _ int) (*Res
 	return &Result{Allowed: false, Rule: "fallback-close"}, ErrRedisUnavailable
 }
 
-func (m *mockFallbackCloseLimiter) Close() error { return nil }
+func (m *mockFallbackCloseLimiter) Close(_ context.Context) error { return nil }
 
 // mockNilResultErrorLimiter 模拟普通错误：返回 nil result + error
 type mockNilResultErrorLimiter struct{}
@@ -396,7 +396,7 @@ func (m *mockNilResultErrorLimiter) AllowN(_ context.Context, _ Key, _ int) (*Re
 	return nil, ErrRedisUnavailable
 }
 
-func (m *mockNilResultErrorLimiter) Close() error { return nil }
+func (m *mockNilResultErrorLimiter) Close(_ context.Context) error { return nil }
 
 func TestHTTPMiddleware_NilLimiterPanics(t *testing.T) {
 	defer func() {
@@ -429,7 +429,7 @@ func BenchmarkHTTPMiddleware(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	middleware := HTTPMiddleware(limiter)
 

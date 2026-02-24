@@ -41,4 +41,7 @@ var (
 
 	// ErrInvalidState 表示服务器状态无效，无法执行此操作。
 	ErrInvalidState = errors.New("xdbg: invalid server state for this operation")
+
+	// ErrNilContext 表示传入的 context 为 nil。
+	ErrNilContext = errors.New("xdbg: context must not be nil")
 )

@@ -100,6 +100,9 @@ func (r *Retryer) Do(ctx context.Context, fn func(ctx context.Context) error) er
 	if r == nil {
 		return ErrNilRetryer
 	}
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if fn == nil {
 		return ErrNilFunc
 	}
@@ -121,6 +124,10 @@ func DoWithResult[T any](ctx context.Context, r *Retryer, fn func(ctx context.Co
 		var zero T
 		return zero, ErrNilRetryer
 	}
+	if ctx == nil {
+		var zero T
+		return zero, ErrNilContext
+	}
 	if fn == nil {
 		var zero T
 		return zero, ErrNilFunc
@@ -138,7 +145,7 @@ func DoWithResult[T any](ctx context.Context, r *Retryer, fn func(ctx context.Co
 // 设计决策: 每次 Do 调用重建选项切片（约 440 B/op, 13 allocs/op），对于重试场景完全可接受。
 // 预构建不变选项可减少分配，但增加并发安全复杂度，收益微乎其微。
 func (r *Retryer) buildOptions(ctx context.Context) []Option {
-	opts := make([]Option, 0, 5)
+	opts := make([]Option, 0, 6)
 
 	// 设置上下文
 	opts = append(opts, Context(ctx))
@@ -210,7 +217,13 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 每次需要重试时应重新调用 Retrier() 获取新实例。
 // 未改为返回工厂函数，因为 *retry.Retrier 是 retry-go 的原生类型，
 // 保持类型一致性比防止误用更重要（类比 strings.Builder 不可复用）。
+// 设计决策: nil ctx 归一化为 context.Background() 而非返回错误，
+// 因为此方法不返回 error（保持 API 兼容性），且与 nil 接收者的
+// "提供可用默认值"语义一致。
 func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if r == nil {
 		return retry.New(Context(ctx))
 	}
@@ -222,6 +235,9 @@ func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 // 与 Retrier() 类似，但用于需要返回值的场景。
 // 如果 r 为 nil，使用默认配置创建实例。
 func RetrierWithData[T any](ctx context.Context, r *Retryer) *retry.RetrierWithData[T] {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if r == nil {
 		return retry.NewWithData[T](Context(ctx))
 	}

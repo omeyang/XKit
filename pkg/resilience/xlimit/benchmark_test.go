@@ -19,7 +19,7 @@ func BenchmarkLocal_Allow_Single(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -40,7 +40,7 @@ func BenchmarkLocal_Allow_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -74,7 +74,7 @@ func BenchmarkDistributed_Allow_Single(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -106,7 +106,7 @@ func BenchmarkDistributed_Allow_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -163,7 +163,7 @@ func BenchmarkMultipleRulesCheck(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{
@@ -209,7 +209,7 @@ func BenchmarkWithOverridesConfig(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	keys := []Key{
@@ -247,7 +247,7 @@ func BenchmarkMiddleware_HTTP(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{
@@ -283,7 +283,7 @@ func BenchmarkConcurrentMultiTenant(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -327,7 +327,7 @@ func BenchmarkFallback_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -410,7 +410,7 @@ func BenchmarkAllowN_Batch(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}

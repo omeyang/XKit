@@ -1,6 +1,10 @@
 package xtenant
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/omeyang/xkit/pkg/context/xctx"
+)
 
 // =============================================================================
 // 租户信息相关错误
@@ -10,6 +14,11 @@ import "errors"
 // =============================================================================
 
 var (
+	// ErrNilContext context 参数为 nil
+	//
+	// 由 xctx.ErrNilContext 重新导出，使调用方无需额外导入 xctx。
+	ErrNilContext = xctx.ErrNilContext
+
 	// ErrEmptyTenantID 租户 ID 为空
 	ErrEmptyTenantID = errors.New("xtenant: empty tenant_id")
 

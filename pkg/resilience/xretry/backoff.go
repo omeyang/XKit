@@ -95,6 +95,10 @@ func NewExponentialBackoff(opts ...ExponentialBackoffOption) *ExponentialBackoff
 	for _, opt := range opts {
 		opt(b)
 	}
+	// 与 NewLinearBackoff 保持一致：确保 maxDelay >= initialDelay
+	if b.maxDelay < b.initialDelay {
+		b.maxDelay = b.initialDelay
+	}
 	return b
 }
 

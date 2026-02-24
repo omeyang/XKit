@@ -123,13 +123,11 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 	}
 
 	// 触发异步钩子
-	if d.pool != nil {
-		d.mu.RLock()
-		if !d.closed {
-			d.pool.Submit(info) //nolint:errcheck,gosec // 队列满时丢弃慢查询通知，可接受的降级行为
-		}
-		d.mu.RUnlock()
+	d.mu.RLock()
+	if !d.closed && d.pool != nil {
+		d.pool.Submit(info) //nolint:errcheck,gosec // 队列满时丢弃慢查询通知，可接受的降级行为（见 01-exceptions.md EX-02）
 	}
+	d.mu.RUnlock()
 
 	return true
 }
@@ -151,6 +149,6 @@ func (d *SlowQueryDetector[T]) Close() {
 	d.mu.Unlock()
 
 	if pool != nil {
-		pool.Close() //nolint:errcheck,gosec // 内部清理，忽略重复关闭错误
+		pool.Close() //nolint:errcheck,gosec // 内部清理，忽略重复关闭错误（见 01-exceptions.md EX-02）
 	}
 }

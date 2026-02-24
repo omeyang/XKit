@@ -29,6 +29,14 @@ const (
 	HeaderFailureReason = "x-failure-reason"
 )
 
+// DefaultDLQTopic 返回基于原始 Topic 名称的默认 DLQ Topic 名称。
+// 命名约定为 "{topic}.dlq"，例如 "orders" → "orders.dlq"。
+// 提供此函数是为了统一多服务接入时的 DLQ Topic 命名，
+// 便于监控面板和告警规则的标准化复用。用户也可以自定义 DLQ Topic 名称。
+func DefaultDLQTopic(topic string) string {
+	return topic + ".dlq"
+}
+
 // DLQPolicy Kafka 死信队列策略
 type DLQPolicy struct {
 	// DLQTopic 死信 Topic 名称（必须）

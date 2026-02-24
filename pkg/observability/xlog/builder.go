@@ -47,6 +47,7 @@ type Builder struct {
 	rotator        xrotate.Rotator
 	onError        func(error) // 内部错误回调（Handler.Handle 失败时）
 	err            error
+	built          bool // Build() 已调用，防止重复构建
 }
 
 // New 创建配置构建器
@@ -146,6 +147,13 @@ func (b *Builder) SetEnrich(enable bool) *Builder {
 func (b *Builder) SetRotation(filename string, opts ...xrotate.Option) *Builder {
 	if b.err != nil {
 		return b
+	}
+	// 关闭旧 rotator，避免重复调用 SetRotation 时文件句柄泄漏
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			b.err = fmt.Errorf("xlog: failed to close previous rotator: %w", closeErr)
+			return b
+		}
 	}
 	rotator, err := xrotate.NewLumberjack(filename, opts...)
 	if err != nil {
@@ -282,6 +290,14 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	if b.err != nil {
 		return nil, nil, b.err
 	}
+
+	// 设计决策: 禁止重复调用 Build()。当配置了 SetRotation 时，多次 Build() 返回的
+	// logger 共享同一个 rotator 实例，第一次 cleanup 关闭 rotator 后会导致第二个 logger
+	// 写入失败。使用 built 标志强制一次性使用，避免隐式的资源共享问题。
+	if b.built {
+		return nil, nil, fmt.Errorf("xlog: builder already built, create a new Builder via New()")
+	}
+	b.built = true
 
 	if b.output == nil {
 		return nil, nil, fmt.Errorf("xlog: output writer is nil")

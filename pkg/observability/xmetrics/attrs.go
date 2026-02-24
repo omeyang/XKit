@@ -27,6 +27,12 @@ func Uint64(key string, value uint64) Attr {
 	return Attr{Key: key, Value: value}
 }
 
+// Float32 创建 float32 属性。
+// OTel 转换时会提升为 float64。
+func Float32(key string, value float32) Attr {
+	return Attr{Key: key, Value: value}
+}
+
 // Float64 创建 float64 属性。
 func Float64(key string, value float64) Attr {
 	return Attr{Key: key, Value: value}
@@ -39,8 +45,8 @@ func Duration(key string, value time.Duration) Attr {
 }
 
 // Any 创建任意类型属性。
-// 对于非标准类型（非 string/bool/int/int64/uint64/float64/float32/time.Duration），
-// OTel 转换时会调用 fmt.Sprint 字符串化。推荐优先使用 [String]、[Int] 等类型安全函数。
+// 对于非标准类型（非 string/bool/int/int64/uint64/float32/float64/time.Duration），
+// OTel 转换时会调用 fmt.Sprint 字符串化。推荐优先使用 [String]、[Int]、[Float32] 等类型安全函数。
 func Any(key string, value any) Attr {
 	return Attr{Key: key, Value: value}
 }

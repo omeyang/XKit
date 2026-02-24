@@ -200,6 +200,7 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 	if err != nil {
 		// 记录失败指标（只在最终失败时记录一次）
 		s.recordAcquireMetrics(ctx, resource, false, lastReason, totalDuration)
+		span.SetAttributes(attribute.Int(attrRetryCount, retryCount))
 		setSpanError(span, err)
 		return nil, err
 	}

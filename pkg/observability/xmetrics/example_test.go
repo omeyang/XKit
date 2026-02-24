@@ -14,15 +14,19 @@ func ExampleNewOTelObserver() {
 		panic(err)
 	}
 
+	// 推荐使用闭包 defer 捕获业务错误，确保 span 正确记录错误状态。
+	// 若使用 defer span.End(xmetrics.Result{})，则始终记录 StatusOK。
+	var bizErr error
 	ctx, span := xmetrics.Start(context.Background(), obs, xmetrics.SpanOptions{
 		Component: "myservice",
 		Operation: "do_work",
 		Kind:      xmetrics.KindClient,
 		Attrs:     []xmetrics.Attr{xmetrics.String("db.system", "redis")},
 	})
-	defer span.End(xmetrics.Result{})
+	defer func() { span.End(xmetrics.Result{Err: bizErr}) }()
 
 	_ = ctx
+	_ = bizErr
 	fmt.Println("span created")
 	// Output: span created
 }

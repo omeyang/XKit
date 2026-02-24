@@ -40,6 +40,9 @@ var (
 // =============================================================================
 
 var (
+	// ErrNilRequest 表示传入的请求为 nil。
+	ErrNilRequest = errors.New("xauth: nil request")
+
 	// ErrMissingTenantID 表示租户 ID 未提供。
 	ErrMissingTenantID = errors.New("xauth: missing tenant_id")
 

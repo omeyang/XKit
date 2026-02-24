@@ -345,6 +345,28 @@ func TestWithIdentity(t *testing.T) {
 		assert.Empty(t, got.TenantName, "TenantName should be empty")
 	})
 
+	t.Run("空字段不覆盖已有值", func(t *testing.T) {
+		// 先注入完整身份信息
+		ctx, err := xctx.WithIdentity(context.Background(), xctx.Identity{
+			PlatformID: "original-platform",
+			TenantID:   "original-tenant",
+			TenantName: "OriginalCompany",
+		})
+		require.NoError(t, err, "first WithIdentity()")
+
+		// 再用部分空字段调用 WithIdentity
+		ctx, err = xctx.WithIdentity(ctx, xctx.Identity{
+			PlatformID: "new-platform",
+			// TenantID 和 TenantName 为空 → 应保留原值
+		})
+		require.NoError(t, err, "second WithIdentity()")
+
+		got := xctx.GetIdentity(ctx)
+		assert.Equal(t, "new-platform", got.PlatformID, "PlatformID should be overwritten")
+		assert.Equal(t, "original-tenant", got.TenantID, "TenantID should be preserved")
+		assert.Equal(t, "OriginalCompany", got.TenantName, "TenantName should be preserved")
+	})
+
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
 		var nilCtx context.Context
 		id := xctx.Identity{PlatformID: "p1"}

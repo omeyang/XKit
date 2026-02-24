@@ -618,6 +618,14 @@ func TestRedisWrapper_Lock_WithEmptyKey_ReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEmptyKey)
 }
 
+func TestRedisWrapper_Lock_WithNilContext_ReturnsErrNilContext(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+
+	//nolint:staticcheck // SA1012: 故意传入 nil context 测试 fail-fast 校验
+	_, err := cache.Lock(nil, "key", 10*time.Second)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
 func TestMemoryWrapper_Stats_AfterClose_ReturnsZero(t *testing.T) {
 	cache, err := NewMemory()
 	require.NoError(t, err)

@@ -44,6 +44,9 @@ var (
 	// ErrEmptyRows 表示待插入数据为空。
 	ErrEmptyRows = errors.New("xclickhouse: empty rows")
 
+	// ErrBatchSizeTooLarge 表示批量大小超过允许的最大值。
+	ErrBatchSizeTooLarge = errors.New("xclickhouse: batch size exceeds maximum allowed")
+
 	// ErrQueryContainsFormat 表示查询包含 FORMAT 子句。
 	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
 	//

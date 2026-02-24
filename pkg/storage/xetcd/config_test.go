@@ -109,6 +109,35 @@ func TestConfig_Validate_EndpointFormats(t *testing.T) {
 	}
 }
 
+// TestConfig_Validate_TrimSpaceEndpoints 测试 Validate 对 endpoint 进行 TrimSpace 归一化。
+func TestConfig_Validate_TrimSpaceEndpoints(t *testing.T) {
+	cfg := &Config{
+		Endpoints: []string{"  localhost:2379  ", "\tetcd.example.com:2379\n"},
+	}
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v, want nil", err)
+	}
+	// 验证 TrimSpace 后的值
+	if cfg.Endpoints[0] != "localhost:2379" {
+		t.Errorf("Endpoints[0] = %q, want %q", cfg.Endpoints[0], "localhost:2379")
+	}
+	if cfg.Endpoints[1] != "etcd.example.com:2379" {
+		t.Errorf("Endpoints[1] = %q, want %q", cfg.Endpoints[1], "etcd.example.com:2379")
+	}
+}
+
+// TestConfig_Validate_WhitespaceOnlyEndpoint 测试纯空白 endpoint 在 TrimSpace 后被检测为空。
+func TestConfig_Validate_WhitespaceOnlyEndpoint(t *testing.T) {
+	cfg := &Config{
+		Endpoints: []string{"  \t  "},
+	}
+	err := cfg.Validate()
+	if !errors.Is(err, ErrInvalidEndpoint) {
+		t.Errorf("Validate() error = %v, want ErrInvalidEndpoint", err)
+	}
+}
+
 func TestConfig_Validate_NegativeDuration(t *testing.T) {
 	tests := []struct {
 		name   string

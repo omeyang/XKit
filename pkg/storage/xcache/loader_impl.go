@@ -153,6 +153,9 @@ func newLoader(cache Redis, options *LoaderOptions) *loader {
 
 // Load 从缓存加载数据，未命中时调用 loader 函数回源。
 func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if l.cache == nil {
 		return nil, ErrNilClient
 	}
@@ -187,6 +190,9 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 
 // LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
 func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if l.cache == nil {
 		return nil, ErrNilClient
 	}
@@ -491,6 +497,15 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 		return nil, err
 	}
 
+	cacheTTL := l.applyTTLJitter(ttl)
+
+	// 设计决策: 负 TTL 时跳过写入缓存，与 Load 行为一致。
+	// Load 中 Redis SET 会拒绝负 TTL（返回错误，等同于不缓存），
+	// 但 HSet 不受 TTL 约束，若不显式跳过会写入永不过期的数据。
+	if cacheTTL < 0 {
+		return value, nil
+	}
+
 	// 设计决策: 缓存写入使用脱离取消链的 context + 独立短超时（与 loadAndCache 对称），
 	// 确保回源数据不会因调用方取消而丢失。
 	writeCtx, writeCancel := context.WithTimeout(contextDetached(ctx), defaultOperationTimeout)
@@ -499,37 +514,55 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 	// 写入缓存（best-effort，失败不影响业务返回）
 	// 设计决策: onCacheSetError 回调传递实际 Redis key（而非 hashFieldKey 合成格式），
 	// 与 loadAndCache 行为一致，便于监控系统关联到实际 Redis key。
-	cacheTTL := l.applyTTLJitter(ttl)
+	l.writeHashCache(writeCtx, key, field, value, cacheTTL)
+
+	return value, nil
+}
+
+// writeHashCache 将数据写入 Hash 缓存（best-effort）。
+// cacheTTL 必须 >= 0（负值由调用方提前过滤）。
+func (l *loader) writeHashCache(ctx context.Context, key, field string, value []byte, cacheTTL time.Duration) {
 	if cacheTTL > 0 && l.options.HashTTLRefresh {
 		// 设计决策: 使用 Pipeline 合并 HSet+Expire 为一次 roundtrip，
 		// 减少进程崩溃时 hash key 无 TTL 的风险窗口。
 		pipe := l.cache.Client().Pipeline()
-		pipe.HSet(writeCtx, key, field, value)
-		pipe.Expire(writeCtx, key, cacheTTL)
-		if _, pipeErr := pipe.Exec(writeCtx); pipeErr != nil {
+		pipe.HSet(ctx, key, field, value)
+		pipe.Expire(ctx, key, cacheTTL)
+		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil {
 			l.logWarn("xcache: hash set/expire pipeline failed", "key", key, "field", field, "error", pipeErr)
-			l.onCacheSetError(writeCtx, key, pipeErr)
+			l.onCacheSetError(ctx, key, pipeErr)
 		}
-	} else if setErr := l.cache.Client().HSet(writeCtx, key, field, value).Err(); setErr != nil {
+		return
+	}
+
+	if setErr := l.cache.Client().HSet(ctx, key, field, value).Err(); setErr != nil {
 		l.logWarn("xcache: hash set failed", "key", key, "field", field, "error", setErr)
-		l.onCacheSetError(writeCtx, key, setErr)
-	} else if cacheTTL > 0 {
+		l.onCacheSetError(ctx, key, setErr)
+		return
+	}
+
+	if cacheTTL > 0 {
 		// HashTTLRefresh=false: 仅首次设置 TTL
 		// 设计决策: 此路径使用 HSet → TTL → Expire 三次 roundtrip（非 Pipeline），
 		// 因为需要先检查 TTL 再决定是否 Expire。虽然 HSet 和 Expire 之间存在
 		// TOCTOU 窗口（进程崩溃可能导致 Hash 无 TTL），但该路径仅在 HashTTLRefresh=false
 		// 时使用，且仅影响首次写入，风险极低。优化为 Lua 脚本可消除窗口但增加复杂度。
-		currentTTL, ttlErr := l.cache.Client().TTL(writeCtx, key).Result()
-		if ttlErr != nil {
-			l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
-		} else if currentTTL < 0 {
-			if expireErr := l.cache.Client().Expire(writeCtx, key, cacheTTL).Err(); expireErr != nil {
-				l.logWarn("xcache: hash expire failed", "key", key, "ttl", cacheTTL, "error", expireErr)
-			}
+		l.setHashTTLIfMissing(ctx, key, cacheTTL)
+	}
+}
+
+// setHashTTLIfMissing 仅在 Hash key 无 TTL 时设置过期时间（HashTTLRefresh=false 路径）。
+func (l *loader) setHashTTLIfMissing(ctx context.Context, key string, cacheTTL time.Duration) {
+	currentTTL, ttlErr := l.cache.Client().TTL(ctx, key).Result()
+	if ttlErr != nil {
+		l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
+		return
+	}
+	if currentTTL < 0 {
+		if expireErr := l.cache.Client().Expire(ctx, key, cacheTTL).Err(); expireErr != nil {
+			l.logWarn("xcache: hash expire failed", "key", key, "ttl", cacheTTL, "error", expireErr)
 		}
 	}
-
-	return value, nil
 }
 
 // cacheCheckFunc 从缓存查询并返回结果。

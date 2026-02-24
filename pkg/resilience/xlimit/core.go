@@ -86,7 +86,7 @@ func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, erro
 
 	// 遍历所有规则
 	for _, ruleName := range c.matcher.getAllRules() {
-		rule, found := c.matcher.findRule(key, ruleName)
+		rule, found := c.matcher.findRule(ruleName)
 		if !found {
 			continue
 		}
@@ -142,7 +142,7 @@ func (c *limiterCore) Reset(ctx context.Context, key Key) error {
 	}
 
 	for _, ruleName := range c.matcher.getAllRules() {
-		rule, found := c.matcher.findRule(key, ruleName)
+		rule, found := c.matcher.findRule(ruleName)
 		if !found {
 			continue
 		}
@@ -168,7 +168,7 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 	var mostRestrictive *QuotaInfo
 
 	for _, ruleName := range c.matcher.getAllRules() {
-		rule, found := c.matcher.findRule(key, ruleName)
+		rule, found := c.matcher.findRule(ruleName)
 		if !found {
 			continue
 		}
@@ -203,9 +203,9 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 }
 
 // Close 关闭限流器
-func (c *limiterCore) Close() error {
+func (c *limiterCore) Close(ctx context.Context) error {
 	c.closed.Store(true)
-	return c.backend.Close()
+	return c.backend.Close(ctx)
 }
 
 // callOnAllow 调用允许回调并记录日志

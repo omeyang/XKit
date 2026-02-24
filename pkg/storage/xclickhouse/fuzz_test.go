@@ -330,6 +330,70 @@ func FuzzValidateQuerySyntax(f *testing.F) {
 	})
 }
 
+// FuzzValidateTableName 模糊测试 validateTableName 函数。
+// validateTableName 是 SQL 注入防护的安全边界，需要 Fuzz 覆盖以发现可能的绕过路径。
+func FuzzValidateTableName(f *testing.F) {
+	// 种子语料：正常表名
+	f.Add("users")
+	f.Add("mydb.users")
+	f.Add("_temp_table")
+	f.Add("`my table`")
+	f.Add("`my db`.`my table`")
+	// 种子语料：SQL 注入常见模式
+	f.Add("table; DROP TABLE--")
+	f.Add("table' OR '1'='1")
+	f.Add("table\"; DROP TABLE--")
+	f.Add("table/**/UNION/**/SELECT")
+	f.Add("table\x00name")
+	// 种子语料：控制字符
+	f.Add("`table\nname`")
+	f.Add("`table\rname`")
+	f.Add("`table\tname`")
+	f.Add("`table\x00name`")
+	// 种子语料：Unicode
+	f.Add("表名")
+	f.Add("`数据库`.`表名`")
+	// 种子语料：边界
+	f.Add("")
+	f.Add("123table")
+	f.Add("a")
+	f.Add("_")
+
+	f.Fuzz(func(t *testing.T, table string) {
+		// validateTableName 不应 panic
+		err := validateTableName(table)
+
+		// 如果通过校验，表名必须是非空的
+		if err == nil && table == "" {
+			t.Error("validateTableName should reject empty table name")
+		}
+
+		// 如果有错误，应该是已知的错误类型
+		if err != nil {
+			switch err {
+			case ErrEmptyTable:
+				// 预期：空表名
+			case ErrInvalidTableName:
+				// 预期：非法字符
+			default:
+				t.Errorf("validateTableName(%q) returned unexpected error: %v", table, err)
+			}
+		}
+
+		// 安全不变量：通过校验的表名不应包含 SQL 注入常见字符
+		if err == nil {
+			for _, ch := range table {
+				if ch == ';' || ch == '\'' || ch == '"' || ch == '-' {
+					// 反引号内的字符除外（反引号表名由正则完整验证）
+					if table[0] != '`' {
+						t.Errorf("validateTableName(%q) passed but contains dangerous char %q", table, ch)
+					}
+				}
+			}
+		}
+	})
+}
+
 // FuzzValidatePageOptions 模糊测试 validatePageOptions 函数。
 func FuzzValidatePageOptions(f *testing.F) {
 	// 种子语料

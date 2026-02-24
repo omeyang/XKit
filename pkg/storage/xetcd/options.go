@@ -40,6 +40,10 @@ func WithContext(ctx context.Context) Option {
 // WithHealthCheck 创建后执行健康检查。
 // 设置为 true 时，会在创建客户端后执行一次 Get 操作验证连接。
 // timeout 为健康检查超时时间，默认 10 秒。
+//
+// ⚠️ 注意：健康检查使用 Get 操作（而非 gRPC 健康检查协议），
+// 在启用 RBAC 认证的 etcd 集群中，如果凭证无效会直接导致 NewClient 失败。
+// 这是预期行为——认证失败应在初始化阶段尽早暴露。
 func WithHealthCheck(enabled bool, timeout time.Duration) Option {
 	return func(o *options) {
 		o.healthCheck = enabled

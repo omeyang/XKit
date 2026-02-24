@@ -161,7 +161,11 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 // Renew 续期锁。
 //
 // 使用 Lua 脚本确保只续期自己持有的锁。
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
 func (h *redisLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
+	if ttl <= 0 {
+		return ErrInvalidTTL
+	}
 	result, err := renewScript.Run(ctx, h.locker.client, []string{h.key}, h.token, ttl.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("xcron: redis renew failed: %w", err)

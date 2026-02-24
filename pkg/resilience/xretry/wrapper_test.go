@@ -341,6 +341,38 @@ func TestDoWithData_NilFn(t *testing.T) {
 	assert.Equal(t, 0, result)
 }
 
+func TestDo_NilContext(t *testing.T) {
+	var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+	err := Do(ctx, func() error {
+		t.Fatal("should not be called")
+		return nil
+	}, Attempts(1))
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestDoWithData_NilContext(t *testing.T) {
+	var ctx context.Context //nolint:wastedassign // 显式 nil context 用于测试
+	result, err := DoWithData[int](ctx, nil, Attempts(1))
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Equal(t, 0, result)
+}
+
+// TestContextPriority 验证函数参数 ctx 始终优先于 opts 中的 Context()
+func TestContextPriority(t *testing.T) {
+	shortCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	// 即使 opts 中传了 context.Background()（无超时），
+	// 函数参数 ctx 的 20ms 超时仍应生效
+	err := Do(shortCtx, func() error {
+		return errors.New("always fail")
+	}, UntilSucceeded(), Delay(10*time.Millisecond), Context(context.Background()))
+
+	assert.Error(t, err)
+	// 如果 ctx 参数被 opts 中的 Context 覆盖，会无限重试不超时
+	// 20ms 超时说明 ctx 参数优先
+}
+
 // TestCustomRetryIf 测试自定义 RetryIf 与 Do 函数的集成
 func TestCustomRetryIf(t *testing.T) {
 	t.Run("IntegrationWithDo", func(t *testing.T) {

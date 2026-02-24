@@ -32,7 +32,7 @@ func setupGRPCTestLimiter(t *testing.T, limit int) Limiter {
 	}
 
 	t.Cleanup(func() {
-		_ = limiter.Close() //nolint:errcheck // cleanup
+		_ = limiter.Close(context.Background()) //nolint:errcheck // cleanup
 		_ = client.Close()  //nolint:errcheck // cleanup
 		mr.Close()
 	})
@@ -379,7 +379,7 @@ func BenchmarkUnaryServerInterceptor(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	interceptor := UnaryServerInterceptor(limiter)
 

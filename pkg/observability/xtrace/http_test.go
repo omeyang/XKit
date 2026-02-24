@@ -949,6 +949,76 @@ func TestInjectTraceToMetadata_TracestateRequiresTraceparent(t *testing.T) {
 }
 
 // =============================================================================
+// 已有 traceparent 的覆盖行为测试
+// =============================================================================
+
+func TestInjectToRequest_OverwritesExistingTraceparent(t *testing.T) {
+	t.Run("新 traceparent 覆盖旧值", func(t *testing.T) {
+		// 已有 traceparent 的请求
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set(xtrace.HeaderTraceparent,
+			"00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01")
+
+		// 注入新的追踪信息
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+		xtrace.InjectToRequest(ctx, req)
+
+		// 新 traceparent 应覆盖旧值
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		if got := req.Header.Get(xtrace.HeaderTraceparent); got != want {
+			t.Errorf("traceparent = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("空 context 不清除已有 traceparent", func(t *testing.T) {
+		// 设计决策: InjectToRequest 仅设置非空字段，不清除已有 header。
+		// 空 context 场景下，调用方通常使用新建的 http.Request，不存在旧值覆盖问题。
+		req := httptest.NewRequest("GET", "/test", nil)
+		oldTraceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+		req.Header.Set(xtrace.HeaderTraceparent, oldTraceparent)
+
+		// 空 context，没有追踪信息
+		ctx := context.Background()
+		xtrace.InjectToRequest(ctx, req)
+
+		// 旧 traceparent 保留（InjectToRequest 不清除已有 header）
+		if got := req.Header.Get(xtrace.HeaderTraceparent); got != oldTraceparent {
+			t.Errorf("traceparent = %q, want %q (should preserve old value)", got, oldTraceparent)
+		}
+	})
+}
+
+func TestInjectToOutgoingContext_OverwritesExistingTraceparent(t *testing.T) {
+	t.Run("新 traceparent 覆盖旧值", func(t *testing.T) {
+		ctx := context.Background()
+		ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+		ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+
+		// 预设包含旧 traceparent 的 outgoing metadata
+		oldMD := metadata.Pairs(
+			xtrace.MetaTraceparent, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+		)
+		ctx = metadata.NewOutgoingContext(ctx, oldMD)
+
+		ctx = xtrace.InjectToOutgoingContext(ctx)
+
+		md, ok := metadata.FromOutgoingContext(ctx)
+		if !ok {
+			t.Fatal("metadata not found")
+		}
+
+		// 新 traceparent 应覆盖旧值
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		vals := md.Get(xtrace.MetaTraceparent)
+		if len(vals) != 1 || vals[0] != want {
+			t.Errorf("traceparent = %v, want [%q]", vals, want)
+		}
+	})
+}
+
+// =============================================================================
 // Header 常量测试
 // =============================================================================
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
@@ -59,6 +60,12 @@ func (w *TracingProducer) Produce(ctx context.Context, msg *kafka.Message, deliv
 // TracingConsumer 是带追踪提取能力的 Consumer。
 type TracingConsumer struct {
 	*consumerWrapper
+
+	// closeMu 保护 Consume 与 Close 的并发。
+	// Consume 持有读锁，Close 持有写锁。
+	// 确保 Close 等待进行中的 Consume（含 StoreMessage）完成后再关闭资源，
+	// 避免消息已处理但 offset 未提交的竞态条件。
+	closeMu sync.RWMutex
 }
 
 // NewTracingConsumer 创建带追踪提取能力的 Consumer。
@@ -104,6 +111,8 @@ func (w *TracingConsumer) ReadMessage(ctx context.Context) (context.Context, *ka
 }
 
 // Consume 消费一条消息并执行处理函数。
+// closeMu 读锁保护 handler 执行和 StoreMessage 的原子性，
+// 确保 Close 等待进行中的消费完成后再关闭资源。
 func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (err error) {
 	if handler == nil {
 		return ErrNilHandler
@@ -115,6 +124,12 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	}
 	if msg == nil {
 		return nil
+	}
+
+	w.closeMu.RLock()
+	defer w.closeMu.RUnlock()
+	if w.closed.Load() {
+		return ErrClosed
 	}
 
 	msgCtx, span := xmetrics.Start(msgCtx, w.options.Observer, xmetrics.SpanOptions{
@@ -141,6 +156,16 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	}
 
 	return nil
+}
+
+// Close 优雅关闭消费者。
+// 获取写锁等待进行中的 Consume 完成后再关闭底层消费者，
+// 避免消息已处理但 offset 未提交的竞态条件。
+// 重复调用 Close 安全返回 ErrClosed。
+func (w *TracingConsumer) Close() error {
+	w.closeMu.Lock()
+	defer w.closeMu.Unlock()
+	return w.consumerWrapper.Close()
 }
 
 // ConsumeLoop 循环消费消息直到 ctx 取消。

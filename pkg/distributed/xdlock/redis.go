@@ -147,7 +147,7 @@ func (f *redisFactory) createMutex(key string, opts ...MutexOption) (*redsync.Mu
 
 // Close 关闭工厂。
 // 注意：此方法不会关闭传入的 Redis 客户端，客户端的生命周期由调用者管理。
-func (f *redisFactory) Close() error {
+func (f *redisFactory) Close(_ context.Context) error {
 	if f.closed.Swap(true) {
 		return nil // 已关闭
 	}
@@ -166,7 +166,7 @@ func (f *redisFactory) Health(ctx context.Context) error {
 	// 检查所有节点
 	for _, client := range f.clients {
 		if err := client.Ping(ctx).Err(); err != nil {
-			return err
+			return fmt.Errorf("xdlock: health check: %w", err)
 		}
 	}
 
@@ -198,6 +198,10 @@ type redisLockHandle struct {
 // 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
 // 避免锁残留到 TTL 到期（默认 8s）。
 func (h *redisLockHandle) Unlock(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
 	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
@@ -208,10 +212,10 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 	ok, err := h.mutex.UnlockContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 设计决策: ErrLockExpired 和 ErrLockHeld 统一转为 ErrNotLocked，
+		// 设计决策: errLockExpired 和 ErrLockHeld 统一转为 ErrNotLocked，
 		// 对 handle 而言两者含义相同——"你已不再持有该锁"。保持与接口契约和
 		// etcd 后端行为一致，调用方只需检查 ErrNotLocked 即可处理所有权丢失。
-		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
 			return ErrNotLocked
 		}
 		return wrappedErr
@@ -227,14 +231,14 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 // 设计决策: 允许在 factory 关闭后续期，与 Unlock 保持一致。
 // factory.Close() 不影响已持有锁的操作，仅阻止创建新锁。
 //
-// 设计决策: ErrLockExpired/ErrLockHeld 转为 ErrNotLocked（所有权已丢失），
+// 设计决策: errLockExpired/ErrLockHeld 转为 ErrNotLocked（所有权已丢失），
 // ErrExtendFailed 保持原语义（续期操作失败，锁可能仍在），使调用方可区分两种情况。
 func (h *redisLockHandle) Extend(ctx context.Context) error {
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
 		// 锁已过期/被抢走 → 所有权已丢失
-		if errors.Is(wrappedErr, ErrLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
 			return ErrNotLocked
 		}
 		return wrappedErr
@@ -279,7 +283,7 @@ func wrapRedisError(err error) error {
 		return fmt.Errorf("%w: %w", ErrExtendFailed, err)
 	}
 	if errors.Is(err, redsync.ErrLockAlreadyExpired) {
-		return fmt.Errorf("%w: %w", ErrLockExpired, err)
+		return fmt.Errorf("%w: %w", errLockExpired, err)
 	}
 
 	return err

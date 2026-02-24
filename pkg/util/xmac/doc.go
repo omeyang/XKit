@@ -5,7 +5,7 @@
 //   - 多格式解析（冒号、短线、点、无分隔符）
 //   - 多格式输出（FormatColon, FormatDash, FormatDot, FormatBare 及对应 Upper 变体）
 //   - 地址属性判断（单播/多播、本地/全局管理）
-//   - JSON/Text/SQL 序列化支持
+//   - JSON/Text/Binary/SQL 序列化支持
 //   - 地址运算（Next/Prev）
 //
 // # 快速示例
@@ -92,8 +92,13 @@
 //	    // 格式错误
 //	}
 //
-// # Go 版本要求
+// # 平台要求
 //
-// xmac 使用 Go 1.23+ 的 [iter.Seq] 迭代器特性。
-// 最低要求 Go 1.23，推荐 Go 1.25+。
+// xmac 使用 Go 1.25+ 的 [iter.Seq] 迭代器特性。
+// 最低要求 Go 1.25（与项目 go.mod 一致）。
+//
+// 设计决策: 迭代器索引（[RangeWithIndex]、[RangeReverseWithIndex]）和 [Count] 使用 int 类型，
+// 与 Go 标准库 [slices.All] 保持一致。在 64 位架构上 int 为 64 位，可覆盖完整的 48 位
+// MAC 地址空间。32 位架构上超过 math.MaxInt32 的范围会溢出——如需处理超大范围，
+// 请使用 [RangeCount]（返回 uint64）。
 package xmac

@@ -79,6 +79,10 @@ func New(opts ...Option) (*Server, error) {
 // Start 启动服务器。
 // 服务器会在后台等待触发事件，收到触发后开始监听连接。
 func (s *Server) Start(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
 	if !s.state.CompareAndSwap(int32(ServerStateCreated), int32(ServerStateStarted)) {
 		return ErrAlreadyRunning
 	}

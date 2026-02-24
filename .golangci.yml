@@ -251,6 +251,11 @@ linters:
         linters:
           - gosec
         source: "return uint16\\(h\\.Sum32\\(\\)\\)"
+      # xrotate: recover() return value is intentionally unused (panic isolation in reportError)
+      - path: xrotate/lumberjack\.go
+        linters:
+          - errcheck
+        source: "recover\\(\\)"
       # xrotate: chmod errors are non-critical for log rotation (write succeeded, permission is best-effort)
       - path: xrotate/lumberjack\.go
         linters:

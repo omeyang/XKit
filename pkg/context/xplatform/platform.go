@@ -64,7 +64,7 @@ type Config struct {
 	// UnclassRegionID 未分类区域 ID（可选）
 	//
 	// 校验规则（仅非空时校验）：
-	//   - 纯空白字符串视为未设置（跳过校验）
+	//   - 纯空白字符串归一化为空字符串（视为未设置，跳过校验）
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
@@ -160,6 +160,11 @@ func Init(cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+
+	// 设计决策: TrimSpace 归一化使 Validate 的"纯空白视为未设置"语义在存储层真正生效。
+	// 否则调用方传入 "   " 时，Validate 通过（视为空），但存储了原始空白字符串，
+	// 下游 xtenant 的 regionID != "" 判断会将空白字符串注入 HTTP Header / gRPC Metadata。
+	cfg.UnclassRegionID = strings.TrimSpace(cfg.UnclassRegionID)
 
 	globalConfig.Store(&cfg)
 

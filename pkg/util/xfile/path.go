@@ -265,6 +265,7 @@ func validatePath(path string) (string, error) {
 
 // filepathRelFn 用于 joinAndVerify 中的路径关系计算。
 // 默认为 filepath.Rel，测试中可注入模拟实现以覆盖防御性错误分支。
+// 测试注入点：非并发安全，同包测试中修改此变量的用例不应使用 t.Parallel()。
 var filepathRelFn = filepath.Rel
 
 // joinAndVerify 拼接路径并验证结果仍在 base 内
@@ -310,7 +311,13 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 const maxSymlinkDepth = 255
 
 // evalSymlinksPartial 尽可能解析符号链接
-// 对于不存在的文件，解析其存在的父目录部分
+// 对于不存在的文件，解析其存在的父目录部分。
+//
+// 符号链接循环行为：当路径中存在符号链接循环时，filepath.EvalSymlinks 对包含循环的
+// 路径段会返回 ELOOP 错误。本函数会跳过该层继续向上查找可解析祖先，最终返回的路径
+// 可能仍包含未解析的循环符号链接段。此行为在实际中风险极低：(1) 符号链接循环在生产
+// 环境中罕见；(2) 打开文件时 OS 会返回 ELOOP 错误；(3) 调用方（resolveAndVerifySymlinks）
+// 仍会对返回路径执行包含性检查。
 func evalSymlinksPartial(path string) (string, error) {
 	// 快速路径：直接解析
 	resolved, err := filepath.EvalSymlinks(path)

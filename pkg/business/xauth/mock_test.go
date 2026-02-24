@@ -94,11 +94,30 @@ func (m *mockCacheStore) SetPlatformData(_ context.Context, tenantID string, fie
 	return nil
 }
 
+func (m *mockCacheStore) DeleteToken(_ context.Context, tenantID string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.tokens, tenantID)
+	return nil
+}
+
+func (m *mockCacheStore) DeletePlatformData(_ context.Context, tenantID string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.platformData, tenantID)
+	return nil
+}
+
 func (m *mockCacheStore) Delete(_ context.Context, tenantID string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.tokens, tenantID)
@@ -215,7 +234,7 @@ func (m *mockClient) InvalidatePlatformCache(_ context.Context, _ string) error 
 	return nil
 }
 
-func (m *mockClient) Close() error {
+func (m *mockClient) Close(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true

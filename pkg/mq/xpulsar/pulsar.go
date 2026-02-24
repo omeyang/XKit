@@ -76,18 +76,10 @@ func NewClient(url string, opts ...Option) (Client, error) {
 		MaxConnectionsPerBroker: options.MaxConnectionsPerBroker,
 	}
 
-	// 可选认证配置
-	if options.Authentication != nil {
-		clientOptions.Authentication = options.Authentication
-	}
-
-	// 可选 TLS 配置
-	if options.TLSTrustCertsFilePath != "" {
-		clientOptions.TLSTrustCertsFilePath = options.TLSTrustCertsFilePath
-	}
-	if options.TLSAllowInsecureConnection {
-		clientOptions.TLSAllowInsecureConnection = true
-	}
+	// 认证与 TLS 配置（零值与 pulsar.ClientOptions 默认值一致，直接赋值即可）
+	clientOptions.Authentication = options.Authentication
+	clientOptions.TLSTrustCertsFilePath = options.TLSTrustCertsFilePath
+	clientOptions.TLSAllowInsecureConnection = options.TLSAllowInsecureConnection
 
 	client, err := pulsar.NewClient(clientOptions)
 	if err != nil {

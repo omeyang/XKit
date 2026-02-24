@@ -91,7 +91,7 @@ func TestDistributed_BasicRateLimiting_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:basic:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "test-tenant"}
 
@@ -118,7 +118,7 @@ func TestDistributed_BasicRateLimiting_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:allowN:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "batch-tenant"}
 
@@ -146,7 +146,7 @@ func TestDistributed_BasicRateLimiting_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:reset:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "reset-tenant"}
 
@@ -195,7 +195,7 @@ func TestDistributed_MultipleRules_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:multilayer:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{
 			Tenant: "test-tenant",
@@ -223,7 +223,7 @@ func TestDistributed_MultipleRules_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:apiindep:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		// API 1
 		key1 := Key{Tenant: "tenant1", Method: "POST", Path: "/v1/orders"}
@@ -254,7 +254,7 @@ func TestDistributed_MultipleRules_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:caller:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "tenant", Caller: "order-service"}
 
@@ -294,7 +294,7 @@ func TestDistributed_Overrides_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:override:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		// 普通租户
 		normalKey := Key{Tenant: "normal-corp"}
@@ -329,7 +329,7 @@ func TestDistributed_Overrides_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:multioverride:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		// Premium 租户应该有 50 的配额
 		premiumKey := Key{Tenant: "premium-gold"}
@@ -363,7 +363,7 @@ func TestDistributed_Concurrent_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:concurrent:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "concurrent-tenant"}
 
@@ -399,7 +399,7 @@ func TestDistributed_Concurrent_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:multitenant:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		const tenants = 5
 		const requestsPerTenant = 15 // 超过限制
@@ -449,7 +449,7 @@ func TestDistributed_Fallback_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:fallback:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "fallback-tenant"}
 
@@ -468,7 +468,7 @@ func TestDistributed_Fallback_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:podcount:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		// 获取内部状态验证配置
 		// 这里我们只验证限流器正常工作
@@ -503,7 +503,7 @@ func TestDistributed_Callbacks_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:callbacks:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "callback-tenant"}
 
@@ -537,7 +537,7 @@ func TestDistributed_Headers_Integration(t *testing.T) {
 		WithKeyPrefix(uniquePrefix("test:headers:")),
 	)
 	require.NoError(t, err)
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	key := Key{Tenant: "header-tenant"}
 
@@ -570,7 +570,7 @@ func TestDistributed_SlidingWindow_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:sliding:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "sliding-tenant"}
 
@@ -618,7 +618,7 @@ func TestDistributed_Burst_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:burst:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		key := Key{Tenant: "burst-tenant"}
 
@@ -647,7 +647,7 @@ func TestDistributed_ErrorHandling_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:cancel:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel() // 立即取消
@@ -663,7 +663,7 @@ func TestDistributed_ErrorHandling_Integration(t *testing.T) {
 			WithKeyPrefix(uniquePrefix("test:timeout:")),
 		)
 		require.NoError(t, err)
-		defer limiter.Close()
+		defer limiter.Close(context.Background())
 
 		// 极短的超时
 		timeoutCtx, cancel := context.WithTimeout(ctx, time.Nanosecond)
@@ -701,7 +701,7 @@ func BenchmarkDistributed_Integration(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	key := Key{Tenant: "benchmark-tenant"}
 
@@ -734,7 +734,7 @@ func BenchmarkDistributed_Parallel_Integration(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	key := Key{Tenant: "benchmark-parallel-tenant"}
 

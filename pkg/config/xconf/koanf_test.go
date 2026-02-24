@@ -178,6 +178,20 @@ func TestNewFromBytes_EmptyTag(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidTag)
 }
 
+func TestNew_NilOption(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewFromBytes_NilOption(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
 func TestNew_RelativePathAbsolutized(t *testing.T) {
 	// 验证相对路径被转换为绝对路径
 	tmpDir := t.TempDir()
@@ -487,6 +501,26 @@ func TestReload_InvalidContent(t *testing.T) {
 
 	// 旧配置仍可访问
 	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+}
+
+func TestReload_EmptyFile(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+
+	// 文件被清空（模拟截断场景）
+	err = os.WriteFile(path, []byte{}, 0600)
+	require.NoError(t, err)
+
+	// Reload 应成功，配置变为空（与 New 对空文件的行为一致）
+	err = cfg.Reload()
+	require.NoError(t, err)
+
+	// 配置现在为空
+	assert.Empty(t, cfg.Client().String("app.name"))
 }
 
 func TestReload_FileDeleted(t *testing.T) {

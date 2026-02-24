@@ -364,7 +364,7 @@ func TestGlobal_SetAddSource_Accuracy(t *testing.T) {
 func TestBuilder_FirstErrorWins(t *testing.T) {
 	// 第一个错误应该被保留，后续 Set 应被跳过
 	_, _, err := xlog.New().
-		SetLevelString("invalid_first").    // 第一个错误
+		SetLevelString("invalid_first").     // 第一个错误
 		SetFormat("also_invalid").           // 应被跳过
 		SetDeploymentType("NOT_VALID_TYPE"). // 应被跳过
 		Build()
@@ -374,6 +374,45 @@ func TestBuilder_FirstErrorWins(t *testing.T) {
 	// 验证保留的是第一个错误
 	if !strings.Contains(err.Error(), "invalid_first") {
 		t.Errorf("Build() should return first error, got: %v", err)
+	}
+}
+
+func TestBuilder_FirstErrorWins_AllSetMethods(t *testing.T) {
+	// 表驱动测试：验证每个 Set 方法在 b.err != nil 时跳过执行
+	tests := []struct {
+		name  string
+		apply func(*xlog.Builder) *xlog.Builder
+	}{
+		{"SetOutput", func(b *xlog.Builder) *xlog.Builder { return b.SetOutput(&bytes.Buffer{}) }},
+		{"SetLevel", func(b *xlog.Builder) *xlog.Builder { return b.SetLevel(xlog.LevelDebug) }},
+		{"SetLevelString", func(b *xlog.Builder) *xlog.Builder { return b.SetLevelString("debug") }},
+		{"SetFormat", func(b *xlog.Builder) *xlog.Builder { return b.SetFormat("json") }},
+		{"SetAddSource", func(b *xlog.Builder) *xlog.Builder { return b.SetAddSource(true) }},
+		{"SetEnrich", func(b *xlog.Builder) *xlog.Builder { return b.SetEnrich(false) }},
+		{"SetOnError", func(b *xlog.Builder) *xlog.Builder { return b.SetOnError(func(error) {}) }},
+		{"SetReplaceAttr", func(b *xlog.Builder) *xlog.Builder {
+			return b.SetReplaceAttr(func(_ []string, a slog.Attr) slog.Attr { return a })
+		}},
+		{"SetDeploymentType", func(b *xlog.Builder) *xlog.Builder {
+			return b.SetDeploymentType(xctx.DeploymentSaaS)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 先注入错误，然后调用 Set 方法
+			builder := xlog.New().SetLevelString("INVALID_SEED_ERROR")
+			builder = tt.apply(builder)
+
+			_, _, err := builder.Build()
+			if err == nil {
+				t.Fatal("Build() should return error")
+			}
+			// 验证保留的是种子错误，而非 Set 方法的结果
+			if !strings.Contains(err.Error(), "INVALID_SEED_ERROR") {
+				t.Errorf("error should be seed error, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -639,6 +678,26 @@ func TestBuilder_SetRotation_Error(t *testing.T) {
 		Build()
 	if err == nil {
 		t.Error("SetRotation with empty filename should return error")
+	}
+}
+
+func TestBuilder_Build_AlreadyBuilt(t *testing.T) {
+	builder := xlog.New()
+
+	// 第一次 Build 应该成功
+	_, cleanup, err := builder.Build()
+	if err != nil {
+		t.Fatalf("first Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	// 第二次 Build 应该返回错误
+	_, _, err = builder.Build()
+	if err == nil {
+		t.Fatal("second Build() should return error")
+	}
+	if !strings.Contains(err.Error(), "already built") {
+		t.Errorf("error should mention 'already built', got: %v", err)
 	}
 }
 

@@ -357,6 +357,15 @@ func TestAcquireOptionFunctions(t *testing.T) {
 		WithMaxRetries(-1)(opts)
 		assert.Equal(t, -1, opts.maxRetries)
 		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
+
+		// 超过上界
+		WithMaxRetries(MaxMaxRetries + 1)(opts)
+		assert.Equal(t, MaxMaxRetries+1, opts.maxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
+
+		// 恰好等于上界
+		WithMaxRetries(MaxMaxRetries)(opts)
+		assert.NoError(t, opts.validateRetryParams())
 	})
 
 	t.Run("WithRetryDelay", func(t *testing.T) {
@@ -410,6 +419,17 @@ func TestAcquireOptions_ValidateRetryParams(t *testing.T) {
 			modify:    func(o *acquireOptions) { o.retryDelay = -1 },
 			wantError: true,
 			wantErr:   ErrInvalidRetryDelay,
+		},
+		{
+			name:      "max retries exceeds upper bound",
+			modify:    func(o *acquireOptions) { o.maxRetries = MaxMaxRetries + 1 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "max retries at upper bound",
+			modify:    func(o *acquireOptions) { o.maxRetries = MaxMaxRetries },
+			wantError: false,
 		},
 	}
 

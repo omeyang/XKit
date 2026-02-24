@@ -700,6 +700,27 @@ func TestServer_AuditLogging(t *testing.T) {
 	}
 }
 
+func TestServer_StartNilContext(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	//nolint:staticcheck // 测试 nil context 防护
+	err = srv.Start(nil)
+	if err != ErrNilContext {
+		t.Errorf("Start(nil) error = %v, want ErrNilContext", err)
+	}
+
+	// 确认服务器状态未变更（仍为 Created）
+	if srv.State() != ServerStateCreated {
+		t.Errorf("State() = %v, want %v after Start(nil)", srv.State(), ServerStateCreated)
+	}
+}
+
 func TestServer_StopWithoutStart(t *testing.T) {
 	srv, err := New(
 		WithBackgroundMode(true),

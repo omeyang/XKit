@@ -50,7 +50,9 @@ func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 	if containsNullByte(filename) {
 		return fmt.Errorf("filename contains null byte: %w", ErrNullByte)
 	}
-	// 目录必须包含所有者执行位（0100），否则无法进入和遍历
+	// 设计决策: 仅校验所有者执行位（0100），不限制 world-writable 等权限位。
+	// 权限策略属于调用方职责：EnsureDir() 提供安全默认值（0750），
+	// EnsureDirWithPerm 为需要自定义权限的场景（如共享目录、临时目录）保留灵活性。
 	if perm&0100 == 0 {
 		return fmt.Errorf("directory permission %04o missing owner execute bit: %w", perm, ErrInvalidPerm)
 	}

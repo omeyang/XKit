@@ -27,8 +27,10 @@ func FuzzPretty(f *testing.F) {
 	})
 }
 
-// FuzzPrettyE 验证 PrettyE 的错误契约：成功时返回合法 JSON，
-// 失败时 error 必须满足 errors.Is(err, ErrMarshal)。
+// FuzzPrettyE 验证 PrettyE 的成功路径不变量：对 string 输入，
+// json.MarshalIndent 始终成功，结果必须是合法 JSON。
+// 错误分支为防御性检查（string 输入不会触发），错误契约
+// 由表驱动测试 TestPrettyE 的 error_NaN/error_channel 用例覆盖。
 func FuzzPrettyE(f *testing.F) {
 	f.Add("hello")
 	f.Add("")

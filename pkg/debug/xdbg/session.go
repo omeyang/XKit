@@ -164,7 +164,10 @@ func (s *Session) handleRequest(req *Request) {
 	}
 	defer s.server.releaseCommandSlot()
 
-	// 创建命令上下文（带超时）
+	// 设计决策: CommandTimeout 通过 context.WithTimeout 实现，依赖命令协作式检查 ctx.Done()。
+	// Go 无法强制终止 goroutine，若命令忽略 ctx 则会持续占用命令槽直到自然返回。
+	// 这是 Go 并发模型的固有约束，与 http.Server、database/sql 等标准库一致。
+	// 非协作命令的防护由 MaxConcurrentCommands 槽位限制和 SessionReadTimeout 提供。
 	cmdCtx, cancel := context.WithTimeout(s.ctx, s.server.opts.CommandTimeout)
 	defer cancel()
 

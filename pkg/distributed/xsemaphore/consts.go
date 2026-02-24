@@ -19,6 +19,11 @@ const (
 	// DefaultMaxRetries Acquire 默认最大尝试次数（首次尝试 + 重试）
 	DefaultMaxRetries = 10
 
+	// MaxMaxRetries Acquire 最大尝试次数的上限
+	// 防御性上界，避免因传入极大值导致 goroutine 准无限阻塞。
+	// 建议配合 context timeout 使用以确保超时可控。
+	MaxMaxRetries = 10000
+
 	// DefaultRetryDelay Acquire 默认重试间隔
 	DefaultRetryDelay = 100 * time.Millisecond
 

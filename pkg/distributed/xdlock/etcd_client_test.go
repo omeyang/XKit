@@ -504,7 +504,7 @@ func TestWrapRedisError(t *testing.T) {
 		{"ErrTaken", &redsync.ErrTaken{}, ErrLockHeld, nil, false},
 		{"ErrFailed", redsync.ErrFailed, ErrLockFailed, redsync.ErrFailed, false},
 		{"ErrExtendFailed", redsync.ErrExtendFailed, ErrExtendFailed, redsync.ErrExtendFailed, false},
-		{"ErrLockAlreadyExpired", redsync.ErrLockAlreadyExpired, ErrLockExpired, redsync.ErrLockAlreadyExpired, false},
+		{"ErrLockAlreadyExpired", redsync.ErrLockAlreadyExpired, errLockExpired, redsync.ErrLockAlreadyExpired, false},
 		{"other error", errors.New("other"), nil, nil, false},
 	}
 
@@ -669,7 +669,7 @@ func TestNewEtcdFactoryFromConfig_Integration(t *testing.T) {
 		WithEtcdTTL(30),
 	)
 	require.NoError(t, err)
-	defer factory.Close()
+	defer factory.Close(t.Context())
 	defer client.Close()
 
 	// 测试锁操作

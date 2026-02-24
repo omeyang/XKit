@@ -42,10 +42,10 @@
 //
 // # Factory 关闭行为
 //
-// Redis: Factory.Close() 仅阻止创建新锁，已持有的 LockHandle 仍可执行 Unlock/Extend。
+// Redis: Factory.Close(ctx) 仅阻止创建新锁，已持有的 LockHandle 仍可执行 Unlock/Extend。
 // 这避免了关闭流程先于业务 Unlock 发生时锁悬挂等待 TTL 过期的问题。
 //
-// etcd: Factory.Close() 会关闭底层 Session 并撤销 Lease，所有基于该 Session 的锁
+// etcd: Factory.Close(ctx) 会关闭底层 Session 并撤销 Lease，所有基于该 Session 的锁
 // 会立即失效。已持有的 LockHandle 在 Close 后 Extend 会返回 ErrSessionExpired，
 // Unlock 可能返回错误但锁已自动释放，不会悬挂。
 //

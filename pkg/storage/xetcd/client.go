@@ -120,7 +120,12 @@ func (c *Client) RawClient() *clientv3.Client {
 // Close 关闭客户端连接并通知所有 Watch goroutine 退出。
 // 关闭后客户端不可再使用。
 // Client 必须通过 NewClient 创建，零值 Client 的行为未定义。
-func (c *Client) Close() error {
+//
+// 设计决策: ctx 参数当前未使用，保留是为了与 D-02 决策保持一致
+// （统一生命周期接口保留 ctx 参数以保持扩展性），
+// 未来可用于控制关闭超时（如等待 Watch goroutine 退出）。
+// nil ctx 不会导致错误，内部会替换为 context.Background()。
+func (c *Client) Close(_ context.Context) error {
 	if c.closed.Swap(true) {
 		return nil // 已经关闭
 	}
@@ -144,4 +149,14 @@ func (c *Client) checkClosed() error {
 		return ErrClientClosed
 	}
 	return nil
+}
+
+// checkPreconditions 检查公开方法的前置条件：nil ctx 和 closed 状态。
+// 所有接受 context.Context 的公开方法应在入口处调用此方法，
+// 避免 nil ctx 传递到 etcd 客户端导致 panic。
+func (c *Client) checkPreconditions(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	return c.checkClosed()
 }

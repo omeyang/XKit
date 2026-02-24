@@ -379,7 +379,10 @@ func BenchmarkComparison(b *testing.B) {
 	})
 
 	b.Run("sonyflake/NextID", func(b *testing.B) {
-		sf, _ := sonyflake.New(sonyflake.Settings{}) // benchmark init
+		sf, err := sonyflake.New(sonyflake.Settings{})
+		if err != nil {
+			b.Fatal(err)
+		}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			_, _ = sf.NextID() // benchmark

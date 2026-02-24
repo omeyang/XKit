@@ -57,6 +57,9 @@ func New(path string, opts ...Option) (Config, error) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(options)
 	}
 	if err := options.validate(); err != nil {
@@ -96,6 +99,9 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(options)
 	}
 	if err := options.validate(); err != nil {
@@ -168,8 +174,12 @@ func (c *koanfConfig) Reload() error {
 	}
 
 	newK := koanf.New(c.opts.delim)
-	if err := loadData(newK, data, c.format); err != nil {
-		return err
+
+	// 空数据时创建空配置，与 New/NewFromBytes 行为一致
+	if len(data) > 0 {
+		if err := loadData(newK, data, c.format); err != nil {
+			return err
+		}
 	}
 
 	c.k.Store(newK)

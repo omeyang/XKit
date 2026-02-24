@@ -215,6 +215,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 
 	for attempt := range cfg.maxRetries {
 		if err := ctx.Err(); err != nil {
+			span.SetAttributes(attribute.Int(attrRetryCount, max(0, attempt-1)))
 			setSpanError(span, err)
 			return nil, err
 		}
@@ -222,6 +223,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		permit, reason, err := s.tryAcquireOnce(ctx, resource, tenantID, localCapacity, localTenantQuota, cfg.ttl, cfg.metadata)
 		if err != nil {
 			s.recordAcquireMetrics(ctx, resource, false, ReasonUnknown, time.Since(start))
+			span.SetAttributes(attribute.Int(attrRetryCount, attempt))
 			setSpanError(span, err)
 			return nil, err
 		}

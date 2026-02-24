@@ -23,8 +23,18 @@ var (
 	// ErrEmptyKey 键名为空。
 	ErrEmptyKey = errors.New("xetcd: key is empty")
 
+	// ErrNilContext context 参数为空。
+	// 所有接受 context.Context 的公开方法在 ctx 为 nil 时返回此错误，
+	// 避免 nil ctx 传递到 etcd 客户端导致 panic。
+	// Close 方法例外：ctx 当前仅用于未来扩展，nil 时使用 context.Background()。
+	ErrNilContext = errors.New("xetcd: context must not be nil")
+
 	// ErrInvalidConfig 配置值无效。
 	ErrInvalidConfig = errors.New("xetcd: invalid config")
+
+	// ErrInvalidRetryConfig 重试配置无效。
+	// 零值字段会使用合理默认值，但显式负值表示配置错误。
+	ErrInvalidRetryConfig = errors.New("xetcd: invalid retry config")
 
 	// ErrWatchDisconnected Watch 通道意外关闭。
 	// 用于 WatchWithRetry 内部标识需要重连的断开事件。

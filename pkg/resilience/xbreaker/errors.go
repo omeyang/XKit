@@ -171,7 +171,7 @@ func IsBreakerError(err error) bool {
 // 两者不矛盾：熔断器拒绝的请求不应立即重试（Retryable=false），
 // 但业务层可通过 IsRecoverable 判断是否需要降级或延迟重试。
 //
-// Deprecated: 推荐使用 IsBreakerError 代替，语义更清晰。
+// Deprecated: 推荐使用 IsBreakerError 代替，语义更清晰。计划在 v2.0 移除。
 func IsRecoverable(err error) bool {
 	return IsBreakerError(err)
 }

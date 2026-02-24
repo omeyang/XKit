@@ -1,4 +1,4 @@
-// Package xid 提供分布式唯一 ID 生成能力，基于 Sony Sonyflake 算法实现。
+// Package xid 提供分布式唯一 ID 生成能力，基于 Sonyflake 算法实现。
 //
 // # 设计理念
 //

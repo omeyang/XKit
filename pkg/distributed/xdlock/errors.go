@@ -20,10 +20,6 @@ var (
 	// 重试耗尽或其他获取锁失败的情况返回此错误。
 	ErrLockFailed = errors.New("xdlock: failed to acquire lock")
 
-	// ErrLockExpired 锁已过期或被其他持有者抢走。
-	// 解锁时发现锁已不属于当前持有者返回此错误。
-	ErrLockExpired = errors.New("xdlock: lock expired or stolen")
-
 	// ErrExtendFailed 续期失败。
 	// Redis 锁续期失败时返回此错误。
 	ErrExtendFailed = errors.New("xdlock: failed to extend lock")
@@ -31,6 +27,10 @@ var (
 	// ErrNilClient 客户端为空。
 	// 传入 nil 客户端时返回此错误。
 	ErrNilClient = errors.New("xdlock: client is nil")
+
+	// ErrNilContext 上下文为空。
+	// 传入 nil context 时返回此错误。
+	ErrNilContext = errors.New("xdlock: context must not be nil")
 
 	// ErrSessionExpired etcd Session 已过期。
 	// Session 失效时返回此错误，需要重新创建 Factory。
@@ -60,3 +60,10 @@ var (
 	// etcd 配置中未提供 endpoints 时返回此错误。
 	ErrNoEndpoints = errors.New("xdlock: no endpoints configured")
 )
+
+// 内部错误（不导出）。
+//
+// 设计决策: errLockExpired 仅在 wrapRedisError 中作为中间转换态使用，
+// Unlock/Extend 会将其统一转为 ErrNotLocked 返回给调用方。
+// 用户永远不会直接收到此错误，因此不导出，避免误导 API 消费者。
+var errLockExpired = errors.New("xdlock: lock expired or stolen")

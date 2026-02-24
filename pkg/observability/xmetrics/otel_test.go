@@ -882,6 +882,8 @@ func TestEnsureParentSpan_WithXctxTraceInfo(t *testing.T) {
 	assert.True(t, sc.IsRemote())
 	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", sc.TraceID().String())
 	assert.Equal(t, "b7ad6b7169203331", sc.SpanID().String())
+	// trace_flags 缺失时默认为 sampled（0x01），避免 ParentBased 采样器丢弃 trace
+	assert.Equal(t, trace.TraceFlags(1), sc.TraceFlags())
 }
 
 func TestEnsureParentSpan_WithXctxTraceFlags(t *testing.T) {
@@ -917,7 +919,27 @@ func TestEnsureParentSpan_WithInvalidTraceFlags(t *testing.T) {
 	sc := trace.SpanContextFromContext(result)
 
 	assert.True(t, sc.IsValid())
-	assert.Equal(t, trace.TraceFlags(0), sc.TraceFlags()) // 应回退为默认值 0
+	// 无效 trace_flags 解析失败，回退为默认值 sampled（0x01）
+	assert.Equal(t, trace.TraceFlags(1), sc.TraceFlags())
+}
+
+func TestEnsureParentSpan_WithExplicitUnsampled(t *testing.T) {
+	// 显式设置 trace_flags="00"（unsampled）时应尊重调用方决策
+	ctx := context.Background()
+	var err error
+
+	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	require.NoError(t, err)
+	ctx, err = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	require.NoError(t, err)
+	ctx, err = xctx.WithTraceFlags(ctx, "00")
+	require.NoError(t, err)
+
+	result := ensureParentSpan(ctx)
+	sc := trace.SpanContextFromContext(result)
+
+	assert.True(t, sc.IsValid())
+	assert.Equal(t, trace.TraceFlags(0), sc.TraceFlags()) // 显式 unsampled 应被保留
 }
 
 func TestEnsureParentSpan_NoTraceInfo(t *testing.T) {

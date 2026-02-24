@@ -91,6 +91,9 @@ func (p *TracingProducer) Send(ctx context.Context, msg *pulsar.ProducerMessage)
 }
 
 // SendAsync 异步发送消息并注入追踪信息。
+//
+// 设计决策: span 在异步回调中结束，其生命周期受 Pulsar SDK 的 SendTimeout 约束
+// （默认 30s）。如需控制 span 最大存活时间，请配置 ProducerOptions.SendTimeout。
 func (p *TracingProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMessage, callback func(pulsar.MessageID, *pulsar.ProducerMessage, error)) {
 	if msg == nil {
 		if callback != nil {
@@ -112,7 +115,13 @@ func (p *TracingProducer) SendAsync(ctx context.Context, msg *pulsar.ProducerMes
 	})
 
 	wrappedCallback := func(id pulsar.MessageID, m *pulsar.ProducerMessage, err error) {
-		span.End(xmetrics.Result{Err: err})
+		result := xmetrics.Result{Err: err}
+		if id != nil {
+			result.Attrs = []xmetrics.Attr{
+				xmetrics.String("messaging.message.id", id.String()),
+			}
+		}
+		span.End(result)
 		if callback != nil {
 			callback(id, m, err)
 		}
@@ -202,6 +211,11 @@ func (c *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	}
 
 	attrs := pulsarAttrs(c.topic)
+	// 多 topic / pattern 消费时，补充实际消息来源 topic 以支持精确定位。
+	// c.topic 记录配置维度（如 "multi"/"pattern"），msg.Topic() 记录消息维度。
+	if actualTopic := msg.Topic(); actualTopic != "" && actualTopic != c.topic {
+		attrs = append(attrs, xmetrics.String("messaging.pulsar.message.topic", actualTopic))
+	}
 	if sub := c.Subscription(); sub != "" {
 		attrs = append(attrs, xmetrics.String("messaging.consumer.group.name", sub))
 	}
@@ -257,6 +271,9 @@ func (c *TracingConsumer) ConsumeLoop(ctx context.Context, handler MessageHandle
 func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler MessageHandler, backoff BackoffPolicy) error {
 	if handler == nil {
 		return ErrNilHandler
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	consume := func(ctx context.Context) error {

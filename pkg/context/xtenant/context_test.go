@@ -180,8 +180,8 @@ func TestWithTenantID(t *testing.T) {
 	t.Run("nil context 返回错误", func(t *testing.T) {
 		var nilCtx context.Context
 		_, err := xtenant.WithTenantID(nilCtx, "t1")
-		if err == nil {
-			t.Error("WithTenantID(nil) should return error")
+		if !errors.Is(err, xtenant.ErrNilContext) {
+			t.Errorf("WithTenantID(nil) error = %v, want ErrNilContext", err)
 		}
 	})
 }
@@ -201,8 +201,8 @@ func TestWithTenantName(t *testing.T) {
 	t.Run("nil context 返回错误", func(t *testing.T) {
 		var nilCtx context.Context
 		_, err := xtenant.WithTenantName(nilCtx, "n1")
-		if err == nil {
-			t.Error("WithTenantName(nil) should return error")
+		if !errors.Is(err, xtenant.ErrNilContext) {
+			t.Errorf("WithTenantName(nil) error = %v, want ErrNilContext", err)
 		}
 	})
 }
@@ -250,8 +250,8 @@ func TestWithTenantInfo(t *testing.T) {
 	t.Run("nil context 返回错误", func(t *testing.T) {
 		var nilCtx context.Context
 		_, err := xtenant.WithTenantInfo(nilCtx, xtenant.TenantInfo{TenantID: "t1"})
-		if err == nil {
-			t.Error("WithTenantInfo(nil) should return error")
+		if !errors.Is(err, xtenant.ErrNilContext) {
+			t.Errorf("WithTenantInfo(nil) error = %v, want ErrNilContext", err)
 		}
 	})
 

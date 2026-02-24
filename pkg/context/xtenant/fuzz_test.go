@@ -165,12 +165,14 @@ func FuzzExtractFromHTTPHeader(f *testing.F) {
 
 		info := xtenant.ExtractFromHTTPHeader(h)
 
-		// 验证提取结果正确（会自动 trim 空白）
-		if tenantID != "" && info.TenantID == "" {
-			// 只有完全空白的才会变成空
+		// 验证 TrimSpace 正确性（与 FuzzWithTenantID/FuzzWithTenantName 验证风格一致）
+		wantID := strings.TrimSpace(tenantID)
+		if info.TenantID != wantID {
+			t.Errorf("TenantID = %q, want %q (trimmed from %q)", info.TenantID, wantID, tenantID)
 		}
-		if tenantName != "" && info.TenantName == "" {
-			// 只有完全空白的才会变成空
+		wantName := strings.TrimSpace(tenantName)
+		if info.TenantName != wantName {
+			t.Errorf("TenantName = %q, want %q (trimmed from %q)", info.TenantName, wantName, tenantName)
 		}
 	})
 }

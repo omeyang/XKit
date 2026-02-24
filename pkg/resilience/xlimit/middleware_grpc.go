@@ -151,6 +151,7 @@ func WithGRPCStreamSkipFunc(skipFunc func(ctx context.Context, info *grpc.Stream
 //	    grpc.UnaryInterceptor(xlimit.UnaryServerInterceptor(limiter)),
 //	)
 func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
+	// 设计决策: nil limiter 使用 panic（同 HTTPMiddleware，见 middleware_http.go 注释）。
 	if limiter == nil {
 		panic("xlimit: UnaryServerInterceptor requires a non-nil Limiter")
 	}
@@ -202,6 +203,7 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 //	    grpc.StreamInterceptor(xlimit.StreamServerInterceptor(limiter)),
 //	)
 func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
+	// 设计决策: nil limiter 使用 panic（同 HTTPMiddleware，见 middleware_http.go 注释）。
 	if limiter == nil {
 		panic("xlimit: StreamServerInterceptor requires a non-nil Limiter")
 	}

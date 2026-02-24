@@ -1,6 +1,7 @@
 package xetcd
 
 import (
+	"context"
 	"testing"
 )
 
@@ -30,7 +31,7 @@ func TestNewClient_InvalidEndpoint(t *testing.T) {
 	client, err := NewClient(config)
 	if err == nil && client != nil {
 		// 如果创建成功，确保能正确关闭
-		_ = client.Close()
+		_ = client.Close(context.Background())
 	}
 	// 不检查具体错误，因为行为取决于 etcd 客户端实现
 }
@@ -44,7 +45,7 @@ func TestClient_Close_Idempotent(t *testing.T) {
 	c.closed.Store(true)
 
 	// 第二次关闭应该直接返回 nil
-	err := c.Close()
+	err := c.Close(context.Background())
 	if err != nil {
 		t.Errorf("Close() on already closed client should return nil, got %v", err)
 	}
@@ -53,7 +54,7 @@ func TestClient_Close_Idempotent(t *testing.T) {
 func TestClient_Close_ZeroValue(t *testing.T) {
 	// 零值 Client（未通过 NewClient 创建）调用 Close 不应 panic
 	c := &Client{}
-	err := c.Close()
+	err := c.Close(context.Background())
 	if err != nil {
 		t.Errorf("Close() on zero-value client should return nil, got %v", err)
 	}
@@ -71,6 +72,26 @@ func TestClient_checkClosed(t *testing.T) {
 	c.closed.Store(true)
 	if err := c.checkClosed(); err != ErrClientClosed {
 		t.Errorf("checkClosed() on closed client = %v, want %v", err, ErrClientClosed)
+	}
+}
+
+func TestClient_checkPreconditions(t *testing.T) {
+	c := &Client{}
+
+	// nil context
+	if err := c.checkPreconditions(nil); err != ErrNilContext { //nolint:staticcheck // 测试 nil ctx 防御
+		t.Errorf("checkPreconditions(nil) = %v, want %v", err, ErrNilContext)
+	}
+
+	// valid context, open client
+	if err := c.checkPreconditions(context.Background()); err != nil {
+		t.Errorf("checkPreconditions(ctx) on open client = %v, want nil", err)
+	}
+
+	// valid context, closed client
+	c.closed.Store(true)
+	if err := c.checkPreconditions(context.Background()); err != ErrClientClosed {
+		t.Errorf("checkPreconditions(ctx) on closed client = %v, want %v", err, ErrClientClosed)
 	}
 }
 

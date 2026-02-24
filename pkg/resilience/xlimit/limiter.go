@@ -25,7 +25,8 @@ type Limiter interface {
 	AllowN(ctx context.Context, key Key, n int) (*Result, error)
 
 	// Close 关闭限流器，释放资源
-	Close() error
+	// 设计决策: 保留 ctx 参数（D-02），当前未使用但预留用于未来超时控制。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================
@@ -167,8 +168,11 @@ func NewLocal(opts ...Option) (Limiter, error) {
 //
 // 当 Redis 不可用时自动降级到本地限流。
 // 这是推荐的生产环境使用方式。
+//
+// 设计决策: 默认降级策略 prepend 到用户选项之前，确保用户通过 opts 传入的
+// WithFallback 优先级更高（后执行的 Option 覆盖先执行的）。
 func NewWithFallback(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
-	// 确保启用降级
-	opts = append(opts, WithFallback(FallbackLocal))
+	// 将默认降级策略放在前面，用户选项后执行可覆盖
+	opts = append([]Option{WithFallback(FallbackLocal)}, opts...)
 	return New(rdb, opts...)
 }

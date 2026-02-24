@@ -53,7 +53,8 @@
 //   - Retryer: 通过 RetryPolicy/BackoffPolicy 接口抽象，支持自定义策略和 mock
 //   - Do/DoWithData: 直接暴露 retry-go 选项，API 更简洁，适合一次性使用
 //   - 两者均默认 LastErrorOnly(true)，只返回最后一个错误
-//   - 两者均对 nil 回调函数返回 ErrNilFunc（不 panic）
+//   - 两者均对 nil context 返回 ErrNilContext、nil 回调函数返回 ErrNilFunc（不 panic）
+//   - Do/DoWithData 的 ctx 参数优先于 opts 中的 Context()（不可被覆盖）
 //
 // # 错误分类
 //
@@ -62,12 +63,26 @@
 //   - Unrecoverable(err)：retry-go 风格的不可恢复错误
 //   - context.Canceled / context.DeadlineExceeded：默认不可重试（fail-fast）
 //
+// PermanentError 与 Unrecoverable 的区别：
+//   - PermanentError：xretry 自有类型，通过 RetryableError 接口和 IsRetryable() 检查。
+//     在 Retryer 路径下由 ShouldRetry 中的 IsRetryable 拦截；在 Do 路径下由默认 RetryIf 拦截。
+//   - Unrecoverable：retry-go 原生类型，通过 IsRecoverable() 检查。
+//     在两种路径下都由 RetryIf 中的 IsRecoverable 前置检查拦截。
+//   - 推荐：统一使用 NewPermanentError（xretry 原生），仅在与 retry-go 互操作时使用 Unrecoverable。
+//
 // 错误检查函数：
 //   - IsRetryable(err)：是否可重试（context 取消返回 false）
 //   - IsPermanent(err)：是否为显式标记的永久性错误（仅 PermanentError 或
 //     Retryable()==false 的自定义类型；context 取消返回 false）
 //
 // 详细用法参见各函数文档和 example_test.go。
+//
+// # 抖动（Jitter）
+//
+// ExponentialBackoff 默认 jitter=0.1（±10% 乘性抖动）。
+// 对于大规模分布式系统，建议使用 WithJitter(0.3) 或更高值以增强惊群缓解效果。
+// 如需完全随机的退避（AWS "full jitter" 风格），
+// 可直接使用 retry-go 的 FullJitterBackoffDelay 延迟类型。
 //
 // # 性能
 //

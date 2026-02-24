@@ -434,6 +434,79 @@ func TestRotateBySize(t *testing.T) {
 	assert.GreaterOrEqual(t, len(backups), 1, "应该有备份文件")
 }
 
+// TestRotateBySizeBoundary 测试恰好达到 MaxSize 阈值的边界行为
+//
+// 验证 lumberjack 在 MaxSize-1、==MaxSize、MaxSize+1 三个边界点的行为：
+//   - MaxSize-1：不触发轮转
+//   - ==MaxSize：不触发轮转（lumberjack 使用 > 比较，恰好等于不轮转）
+//   - MaxSize+1：触发轮转
+func TestRotateBySizeBoundary(t *testing.T) {
+	tests := []struct {
+		name        string
+		writeBytes  int  // 写入的总字节数
+		wantRotated bool // 是否期望触发轮转
+	}{
+		{
+			name:        "MaxSize-1 字节不触发轮转",
+			writeBytes:  1*1024*1024 - 1, // 1MB - 1
+			wantRotated: false,
+		},
+		{
+			name:        "恰好 MaxSize 字节不触发轮转",
+			writeBytes:  1 * 1024 * 1024, // 1MB（lumberjack 使用 > 比较）
+			wantRotated: false,
+		},
+		{
+			name:        "MaxSize+1 字节触发轮转",
+			writeBytes:  1*1024*1024 + 1, // 1MB + 1
+			wantRotated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			filename := filepath.Join(tmpDir, "boundary.log")
+
+			r, err := NewLumberjack(filename,
+				WithMaxSize(1), // 1MB
+				WithMaxBackups(3),
+				WithMaxAge(30),
+				WithCompress(false),
+				WithLocalTime(true),
+			)
+			require.NoError(t, err)
+			defer r.Close()
+
+			// 分批写入，避免单次写入超过 MaxSize
+			chunkSize := 64 * 1024 // 64KB
+			remaining := tt.writeBytes
+			for remaining > 0 {
+				size := chunkSize
+				if size > remaining {
+					size = remaining
+				}
+				payload := bytes.Repeat([]byte("x"), size)
+				_, err := r.Write(payload)
+				require.NoError(t, err)
+				remaining -= size
+			}
+
+			// 检查是否产生了备份文件
+			backups, err := findBackups(filename)
+			require.NoError(t, err)
+
+			if tt.wantRotated {
+				assert.GreaterOrEqual(t, len(backups), 1,
+					"写入 %d 字节应触发轮转", tt.writeBytes)
+			} else {
+				assert.Equal(t, 0, len(backups),
+					"写入 %d 字节不应触发轮转", tt.writeBytes)
+			}
+		})
+	}
+}
+
 // TestMaxBackups 测试最大备份数量限制
 func TestMaxBackups(t *testing.T) {
 	tmpDir := t.TempDir()

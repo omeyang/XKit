@@ -166,6 +166,47 @@ func TestWithOnError_NilIgnored(t *testing.T) {
 	}
 }
 
+func TestRunConsumeLoop_NilConsume(t *testing.T) {
+	err := RunConsumeLoop(context.Background(), nil)
+	if !errors.Is(err, ErrNilHandler) {
+		t.Errorf("expected ErrNilHandler, got %v", err)
+	}
+}
+
+func TestRunConsumeLoop_NilContext(t *testing.T) {
+	// nil ctx 应归一化为 context.Background()，不 panic。
+	var ctxWasNil atomic.Bool
+	var count atomic.Int32
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		//nolint:staticcheck // SA1012: 此测试专门验证 nil ctx 归一化行为
+		RunConsumeLoop(nil, func(innerCtx context.Context) error { //nolint:errcheck // 测试 goroutine 中无法传递错误
+			if innerCtx == nil {
+				ctxWasNil.Store(true)
+			}
+			count.Add(1)
+			return nil
+		})
+	}()
+
+	// 等待至少执行 3 次 consume，证明 nil ctx 已归一化且循环正常运行
+	deadline := time.After(2 * time.Second)
+	for count.Load() < 3 {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for consume calls")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	if ctxWasNil.Load() {
+		t.Error("ctx inside consume should not be nil after normalization")
+	}
+}
+
 // mockResettableBackoff 实现 ResettableBackoff 接口用于测试
 type mockResettableBackoff struct {
 	delay      time.Duration

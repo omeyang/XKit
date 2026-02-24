@@ -71,6 +71,7 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 }
 
 // WithLockRetry 设置锁重试策略。
+// 非正值的 interval 或 count 将被忽略（保持当前值不变）。
 //
 // 重试行为说明：
 //   - Lock() 首先会立即尝试获取锁（无等待）

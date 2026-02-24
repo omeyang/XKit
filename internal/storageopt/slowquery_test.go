@@ -262,6 +262,40 @@ func TestSlowQueryDetector_NoHooks(t *testing.T) {
 	assert.True(t, triggered)
 }
 
+func TestSlowQueryDetector_ConcurrentCloseAndQuery(t *testing.T) {
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+		Threshold:           1 * time.Nanosecond,
+		AsyncHook:           func(info testSlowQueryInfo) {},
+		AsyncWorkerPoolSize: 2,
+		AsyncQueueSize:      100,
+	})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// 多个 goroutine 并发调用 MaybeSlowQuery
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				detector.MaybeSlowQuery(context.Background(),
+					testSlowQueryInfo{Duration: time.Hour}, time.Hour)
+			}
+		}()
+	}
+
+	// 另一个 goroutine 并发调用 Close
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(time.Millisecond)
+		detector.Close()
+	}()
+
+	wg.Wait()
+}
+
 func TestNewSlowQueryDetector_InvalidPoolParams(t *testing.T) {
 	// 超大 worker pool 应该返回错误
 	_, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{

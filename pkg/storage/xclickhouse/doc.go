@@ -16,7 +16,7 @@
 //   - Health()：健康检查（关闭后返回 ErrClosed）
 //   - Stats()：统计信息
 //   - QueryPage()：分页查询（关闭后返回 ErrClosed，统计为 2 次查询，PageSize 上限 MaxPageSize）
-//   - BatchInsert()：批量插入（关闭后返回 ErrClosed，context 取消时中止当前批次，不发送部分数据）
+//   - BatchInsert()：批量插入（关闭后返回 ErrClosed，context 取消时中止当前批次，不发送部分数据，BatchSize 上限 MaxBatchSize）
 //   - Close()：幂等关闭（多次调用安全，第二次起返回 ErrClosed）
 //
 // # 已知限制
@@ -38,6 +38,17 @@
 //   - 遇到误判时，请使用 Client() 直接执行查询
 //
 // 相关错误：ErrQueryContainsFormat, ErrQueryContainsSettings, ErrQueryContainsLimitOffset
+//
+// ## 批量插入限制
+//
+// BatchSize 受 MaxBatchSize（默认 100000）限制，超过时返回 ErrBatchSizeTooLarge。
+// 如需更大的批次，请分多次调用或使用 Client() 直接操作。
+//
+// ## 超时策略
+//
+// 设计决策: QueryPage 和 BatchInsert 不内置默认超时，超时由调用方通过 context 控制。
+// 仅 Health 提供 HealthTimeout（默认 5 秒），因为健康检查预期快速完成。
+// 查询和写入的耗时因场景而异，内置默认超时可能导致合理的长查询被意外中断。
 //
 // ## 接口命名
 //

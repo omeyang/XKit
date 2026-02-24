@@ -481,6 +481,45 @@ func TestK8sLocker_canAcquire(t *testing.T) {
 	})
 }
 
+func TestValidateK8sPrefix(t *testing.T) {
+	t.Run("valid prefix", func(t *testing.T) {
+		assert.NoError(t, validateK8sPrefix("xcron-"))
+		assert.NoError(t, validateK8sPrefix("a"))
+		assert.NoError(t, validateK8sPrefix("my-app-lock-"))
+	})
+
+	t.Run("invalid characters", func(t *testing.T) {
+		err := validateK8sPrefix("UPPER-")
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+
+	t.Run("starts with dash", func(t *testing.T) {
+		err := validateK8sPrefix("-xcron-")
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+
+	t.Run("too long", func(t *testing.T) {
+		long := strings.Repeat("a", k8sMaxNameLen-k8sMinKeyBudget+1)
+		err := validateK8sPrefix(long)
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+		assert.Contains(t, err.Error(), "exceeds maximum")
+	})
+
+	t.Run("max allowed length", func(t *testing.T) {
+		maxLen := strings.Repeat("a", k8sMaxNameLen-k8sMinKeyBudget)
+		assert.NoError(t, validateK8sPrefix(maxLen))
+	})
+
+	t.Run("NewK8sLocker rejects invalid prefix", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		_, err := NewK8sLocker(K8sLockerOptions{
+			Client: fakeClient,
+			Prefix: "INVALID!",
+		})
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+}
+
 func TestK8sLocker_leaseName(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	locker, _ := NewK8sLocker(K8sLockerOptions{

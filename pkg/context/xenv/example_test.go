@@ -14,6 +14,7 @@ import (
 func Example_quickStart() {
 	// 清理之前的状态（测试用）
 	xenv.Reset()
+	defer xenv.Reset()
 
 	// 设置环境变量（实际场景由 K8s ConfigMap 注入）
 	if err := os.Setenv(xenv.EnvDeploymentType, "SAAS"); err != nil {
@@ -49,6 +50,7 @@ func Example_quickStart() {
 func Example_initWith() {
 	// 清理之前的状态
 	xenv.Reset()
+	defer xenv.Reset()
 
 	// 测试场景：直接指定部署类型
 	if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {

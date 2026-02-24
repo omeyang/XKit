@@ -1274,7 +1274,7 @@ func TestWithExternalLock_SetsOption(t *testing.T) {
 	assert.True(t, opts.EnableDistributedLock)
 }
 
-func TestWithExternalLock_Nil_ClearsDistributedLock(t *testing.T) {
+func TestWithExternalLock_Nil_OnlyClearsFunction(t *testing.T) {
 	opts := defaultLoaderOptions()
 
 	// 先设置外部锁
@@ -1284,10 +1284,11 @@ func TestWithExternalLock_Nil_ClearsDistributedLock(t *testing.T) {
 	WithExternalLock(fn)(opts)
 	assert.True(t, opts.EnableDistributedLock)
 
-	// 传入 nil 应同步清除分布式锁标志
+	// 设计决策: 传入 nil 仅清除外部锁函数，不修改 EnableDistributedLock 标志，
+	// 避免 WithDistributedLock(true) + WithExternalLock(nil) 意外禁用分布式锁。
 	WithExternalLock(nil)(opts)
 	assert.Nil(t, opts.ExternalLock)
-	assert.False(t, opts.EnableDistributedLock)
+	assert.True(t, opts.EnableDistributedLock) // 分布式锁标志不受影响
 }
 
 func TestLoader_Load_WithExternalLock_UsesExternalLock(t *testing.T) {

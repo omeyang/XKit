@@ -1,6 +1,7 @@
 package xlimit
 
 import (
+	"strings"
 	"time"
 )
 
@@ -54,7 +55,12 @@ func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 			continue
 		}
 
-		// 如果规则的 KeyTemplate 可以被 Key 渲染（即 Key 包含必要的字段），则返回该规则
+		// 静态模板（无变量占位符）始终匹配——如 GlobalRule("global")
+		if !strings.Contains(rule.KeyTemplate, "${") {
+			return rule, true
+		}
+
+		// 动态模板：检查 Key 是否能渲染模板（即包含必要的字段）
 		rendered := key.Render(rule.KeyTemplate)
 		if rendered != "" && rendered != rule.KeyTemplate {
 			return rule, true
@@ -65,7 +71,7 @@ func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 }
 
 // findRule 根据规则名称查找规则（内部使用）
-func (rm *ruleMatcher) findRule(_ Key, ruleName string) (Rule, bool) {
+func (rm *ruleMatcher) findRule(ruleName string) (Rule, bool) {
 	rule, ok := rm.rules[ruleName]
 	if !ok {
 		return Rule{}, false

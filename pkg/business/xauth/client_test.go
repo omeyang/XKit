@@ -33,7 +33,7 @@ func TestNewClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		if c == nil {
 			t.Error("client should not be nil")
@@ -55,7 +55,7 @@ func TestNewClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 	})
 
 	t.Run("with custom HTTP client", func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestNewClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 	})
 
 	t.Run("with TLS config", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestNewClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 	})
 }
 
@@ -104,7 +104,7 @@ func TestClient_GetToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		token, err := c.GetToken(ctx, "tenant-1")
 		if err != nil {
@@ -123,7 +123,7 @@ func TestClient_GetToken(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		c.Close()
+		c.Close(context.Background())
 
 		_, err = c.GetToken(ctx, "tenant-1")
 		if err != ErrClientClosed {
@@ -138,7 +138,7 @@ func TestClient_GetToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		_, err = c.GetToken(ctx, "")
 		if err != ErrMissingTenantID {
@@ -171,7 +171,7 @@ func TestClient_VerifyToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		info, err := c.VerifyToken(ctx, "test-token")
 		if err != nil {
@@ -189,7 +189,7 @@ func TestClient_VerifyToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		c.Close()
+		c.Close(context.Background())
 
 		_, err = c.VerifyToken(ctx, "test-token")
 		if err != ErrClientClosed {
@@ -230,7 +230,7 @@ func TestClient_GetPlatformID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		id, err := c.GetPlatformID(ctx, "tenant-1")
 		if err != nil {
@@ -248,7 +248,7 @@ func TestClient_GetPlatformID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		c.Close()
+		c.Close(context.Background())
 
 		_, err = c.GetPlatformID(ctx, "tenant-1")
 		if err != ErrClientClosed {
@@ -263,7 +263,7 @@ func TestClient_GetPlatformID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		_, err = c.GetPlatformID(ctx, "")
 		if err != ErrMissingTenantID {
@@ -300,7 +300,7 @@ func TestClient_HasParentPlatform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		hasParent, err := c.HasParentPlatform(ctx, "tenant-1")
 		if err != nil {
@@ -318,7 +318,7 @@ func TestClient_HasParentPlatform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		c.Close()
+		c.Close(context.Background())
 
 		_, err = c.HasParentPlatform(ctx, "tenant-1")
 		if err != ErrClientClosed {
@@ -333,7 +333,7 @@ func TestClient_HasParentPlatform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		_, err = c.HasParentPlatform(ctx, "")
 		if err != ErrMissingTenantID {
@@ -374,7 +374,7 @@ func TestClient_GetUnclassRegionID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		id, err := c.GetUnclassRegionID(ctx, "tenant-1")
 		if err != nil {
@@ -392,7 +392,7 @@ func TestClient_GetUnclassRegionID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		c.Close()
+		c.Close(context.Background())
 
 		_, err = c.GetUnclassRegionID(ctx, "tenant-1")
 		if err != ErrClientClosed {
@@ -407,7 +407,7 @@ func TestClient_GetUnclassRegionID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient failed: %v", err)
 		}
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		_, err = c.GetUnclassRegionID(ctx, "")
 		if err != ErrMissingTenantID {
@@ -460,7 +460,7 @@ func TestClient_Request(t *testing.T) {
 
 		c, err := NewClient(cfg)
 		require.NoError(t, err, "NewClient failed")
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.Request(ctx, nil)
 		assert.Error(t, err, "expected error for nil request")
@@ -471,7 +471,7 @@ func TestClient_Request(t *testing.T) {
 
 		c, err := NewClient(cfg)
 		require.NoError(t, err, "NewClient failed")
-		c.Close()
+		c.Close(context.Background())
 
 		err = c.Request(ctx, &AuthRequest{URL: "/test"})
 		assert.Equal(t, ErrClientClosed, err)
@@ -486,7 +486,7 @@ func TestClient_Request(t *testing.T) {
 
 		c, err := NewClient(cfg, WithLocalCache(true))
 		require.NoError(t, err, "NewClient failed")
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		var result map[string]string
 		err = c.Request(ctx, &AuthRequest{
@@ -508,7 +508,7 @@ func TestClient_Close(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		err = c.Close()
+		err = c.Close(context.Background())
 		if err != nil {
 			t.Errorf("Close failed: %v", err)
 		}
@@ -522,8 +522,8 @@ func TestClient_Close(t *testing.T) {
 			t.Fatalf("NewClient failed: %v", err)
 		}
 
-		_ = c.Close()
-		err = c.Close() // Should not error on second close
+		_ = c.Close(context.Background())
+		err = c.Close(context.Background()) // Should not error on second close
 		if err != nil {
 			t.Errorf("Second Close should not error: %v", err)
 		}
@@ -537,7 +537,7 @@ func TestClient_InvalidateToken(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg, WithLocalCache(true))
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.InvalidateToken(ctx, "tenant-1")
 		assert.NoError(t, err)
@@ -547,7 +547,7 @@ func TestClient_InvalidateToken(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		c.Close()
+		c.Close(context.Background())
 
 		err = c.InvalidateToken(ctx, "tenant-1")
 		assert.Equal(t, ErrClientClosed, err)
@@ -557,7 +557,7 @@ func TestClient_InvalidateToken(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.InvalidateToken(ctx, "")
 		assert.Equal(t, ErrMissingTenantID, err)
@@ -582,7 +582,7 @@ func TestClient_Request_GetTokenError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
 	err = c.Request(ctx, &AuthRequest{
 		TenantID: "tenant-1",
@@ -623,7 +623,7 @@ func TestClient_Request_HTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
 	err = c.Request(ctx, &AuthRequest{
 		TenantID: "tenant-1",
@@ -677,7 +677,7 @@ func TestClient_Request_NilHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
 	// Request with nil Headers - should create headers map
 	err = c.Request(ctx, &AuthRequest{
@@ -715,7 +715,7 @@ func TestClient_Request_HeadersNotMutated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
-	defer c.Close()
+	defer c.Close(context.Background())
 
 	// 创建带自定义 Headers 的请求
 	headers := map[string]string{"X-Custom": "value"}
@@ -812,7 +812,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithAutoRetryOn401(true), // Enable auto-retry
 		)
 		require.NoError(t, err, "NewClient failed")
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		var result map[string]string
 		err = c.Request(ctx, &AuthRequest{
@@ -844,7 +844,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithAutoRetryOn401(false), // Disable auto-retry (default)
 		)
 		require.NoError(t, err, "NewClient failed")
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.Request(ctx, &AuthRequest{
 			TenantID: "tenant-1",
@@ -871,7 +871,7 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 			WithAutoRetryOn401(true), // Enable auto-retry
 		)
 		require.NoError(t, err, "NewClient failed")
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.Request(ctx, &AuthRequest{
 			TenantID: "tenant-1",
@@ -900,7 +900,7 @@ func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {
 		// flip AllowInsecure to false to test request-level URL validation.
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		// Override AllowInsecure on the internal client to false after creation
 		internal := c.(*client)
@@ -920,7 +920,7 @@ func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {
 
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		// The request will fail because the URL points to a non-existent host,
 		// but it should NOT be blocked by the insecure URL check.
@@ -938,7 +938,7 @@ func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {
 		cfg.AllowInsecure = true
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		internal := c.(*client)
 		internal.config.AllowInsecure = false
@@ -960,7 +960,7 @@ func TestClient_InvalidatePlatformCache(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg, WithLocalCache(true))
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.InvalidatePlatformCache(ctx, "tenant-1")
 		assert.NoError(t, err)
@@ -970,7 +970,7 @@ func TestClient_InvalidatePlatformCache(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		c.Close()
+		c.Close(context.Background())
 
 		err = c.InvalidatePlatformCache(ctx, "tenant-1")
 		assert.Equal(t, ErrClientClosed, err)
@@ -980,7 +980,7 @@ func TestClient_InvalidatePlatformCache(t *testing.T) {
 		cfg := testConfig()
 		c, err := NewClient(cfg)
 		require.NoError(t, err)
-		defer c.Close()
+		defer c.Close(context.Background())
 
 		err = c.InvalidatePlatformCache(ctx, "")
 		assert.Equal(t, ErrMissingTenantID, err)

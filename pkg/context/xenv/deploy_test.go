@@ -243,8 +243,16 @@ func TestMustInit(t *testing.T) {
 		withEnvScope(t, "", false)
 
 		defer func() {
-			if r := recover(); r == nil {
-				t.Error("MustInit() did not panic")
+			r := recover()
+			if r == nil {
+				t.Fatal("MustInit() did not panic")
+			}
+			err, ok := r.(error)
+			if !ok {
+				t.Fatalf("MustInit() panic value is not error: %v (%T)", r, r)
+			}
+			if !errors.Is(err, xenv.ErrMissingEnv) {
+				t.Errorf("MustInit() panic error = %v, want ErrMissingEnv", err)
 			}
 		}()
 		xenv.MustInit()

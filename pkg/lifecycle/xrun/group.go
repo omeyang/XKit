@@ -16,6 +16,9 @@ import (
 //
 // 当任一服务返回错误或 context 被取消时，所有服务都会收到取消信号。
 //
+// Go、GoWithName、Cancel 可安全地从多个 goroutine 并发调用。
+// Wait 应仅调用一次。
+//
 // 使用方式：
 //
 //	g, ctx := xrun.NewGroup(ctx)
@@ -90,6 +93,9 @@ func NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context) {
 // 当 fn 返回非 nil 错误时，会触发所有其他 goroutine 的取消。
 func (g *Group) Go(fn func(ctx context.Context) error) {
 	g.eg.Go(func() error {
+		if fn == nil {
+			return ErrNilFunc
+		}
 		return fn(g.ctx)
 	})
 }
@@ -97,6 +103,9 @@ func (g *Group) Go(fn func(ctx context.Context) error) {
 // GoWithName 与 Go 相同，但会在日志中记录名称。
 func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 	g.eg.Go(func() error {
+		if fn == nil {
+			return ErrNilFunc
+		}
 		g.opts.logger.Debug("service starting",
 			slog.String("group", g.opts.name),
 			slog.String("service", name),
@@ -128,6 +137,11 @@ func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 // 即使所有服务返回 nil，Cancel(cause) 设置的退出原因仍然会被返回。
 // 这确保调用方始终能基于退出原因做分类决策。
 func (g *Group) Wait() error {
+	// 设计决策: 释放 causeCtx 的 context 资源。CancelCauseFunc 是幂等的——
+	// 若已通过 Cancel() 或信号处理调用过则为空操作。defer 确保在所有
+	// cause 检查完成后才执行，不影响返回值语义。
+	defer g.cancel(nil)
+
 	g.opts.logger.Debug("waiting for services",
 		slog.String("group", g.opts.name),
 	)
@@ -307,6 +321,10 @@ func (f ServiceFunc) Run(ctx context.Context) error {
 func RunServices(ctx context.Context, services ...Service) error {
 	return runGroup(ctx, nil, func(g *Group) {
 		for _, svc := range services {
+			if svc == nil {
+				g.Go(func(ctx context.Context) error { return ErrNilService })
+				continue
+			}
 			g.Go(svc.Run)
 		}
 	})
@@ -323,6 +341,10 @@ func RunServices(ctx context.Context, services ...Service) error {
 func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Service) error {
 	return runGroup(ctx, opts, func(g *Group) {
 		for _, svc := range services {
+			if svc == nil {
+				g.Go(func(ctx context.Context) error { return ErrNilService })
+				continue
+			}
 			g.Go(svc.Run)
 		}
 	})

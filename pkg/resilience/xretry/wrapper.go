@@ -150,6 +150,9 @@ var (
 //	    return !errors.Is(err, ErrFatal)
 //	}))
 func Do(ctx context.Context, fn func() error, opts ...Option) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if fn == nil {
 		return ErrNilFunc
 	}
@@ -170,6 +173,10 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 // 此时 PermanentError/TemporaryError/Unrecoverable 将不会自动生效，
 // 调用方需要在自定义的 RetryIf 中处理这些情况。详见 Do 函数的文档说明。
 func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option) (T, error) {
+	if ctx == nil {
+		var zero T
+		return zero, ErrNilContext
+	}
 	if fn == nil {
 		var zero T
 		return zero, ErrNilFunc
@@ -181,9 +188,12 @@ func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option
 // 默认的 RetryIf 检查 IsRecoverable（Unrecoverable 错误）和 IsRetryable（PermanentError/TemporaryError）。
 // 默认 LastErrorOnly(true) 与 Retryer.Do 保持一致，简化调用方的错误处理。
 // 用户传入的 opts 追加在后，如果包含 RetryIf 或 LastErrorOnly 则会覆盖默认行为。
+//
+// 设计决策: Context(ctx) 在用户 opts 之后追加，确保函数参数 ctx 始终优先。
+// 即使用户 opts 中包含 Context(otherCtx)，函数签名中的 ctx 也会覆盖它。
+// 这保证了 Do(ctx, fn, opts...) 中 ctx 参数的取消/超时契约不被意外绕过。
 func defaultOpts(ctx context.Context, opts []Option) []Option {
 	allOpts := make([]Option, 0, len(opts)+3)
-	allOpts = append(allOpts, Context(ctx))
 	allOpts = append(allOpts, RetryIf(func(err error) bool {
 		if !IsRecoverable(err) {
 			return false
@@ -193,7 +203,10 @@ func defaultOpts(ctx context.Context, opts []Option) []Option {
 	// 设计决策: 默认只返回最后一个错误，与 Retryer.Do 保持一致。
 	// 调用方可通过 LastErrorOnly(false) 覆盖以获取聚合错误。
 	allOpts = append(allOpts, LastErrorOnly(true))
-	return append(allOpts, opts...)
+	allOpts = append(allOpts, opts...)
+	// ctx 最后追加，确保函数参数优先于 opts 中的 Context()
+	allOpts = append(allOpts, Context(ctx))
+	return allOpts
 }
 
 // NewRetrier 创建一个底层的 retry.Retrier

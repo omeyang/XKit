@@ -173,12 +173,24 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // gRPC Metadata 注入（跨服务传播）
 // =============================================================================
 
+// grpcTransportKeys gRPC 传输层使用的 key 名称。
+//
+// 设计决策: 提取为包级变量，供 InjectToOutgoingContext 和 InjectTraceToMetadata 共享，
+// 确保两条注入路径使用相同的 traceparent 生成逻辑（resolveTraceparent）。
+var grpcTransportKeys = transportKeys{
+	traceID:     MetaTraceID,
+	spanID:      MetaSpanID,
+	requestID:   MetaRequestID,
+	traceparent: MetaTraceparent,
+	tracestate:  MetaTracestate,
+}
+
 // InjectToOutgoingContext 将追踪信息注入 outgoing context。
 // 从 context 提取追踪信息并设置到 outgoing metadata，用于跨服务调用时传播。
 // 会正确传递上游的 trace-flags（采样决策）。
 //
-// 注意：本函数不传播 tracestate。如需传播 tracestate，
-// 请使用 InjectTraceToMetadata 手动设置，或使用 OpenTelemetry SDK。
+// 注意：本函数不传播 tracestate（因为 context 中不存储 tracestate）。
+// 如需传播 tracestate，请使用 InjectTraceToMetadata 手动设置，或使用 OpenTelemetry SDK。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
 	info := TraceInfoFromContext(ctx)
 
@@ -195,22 +207,7 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 		md = metadata.New(nil)
 	}
 
-	// 使用 Set 覆盖（而非追加），避免多次调用产生重复值
-	if info.TraceID != "" {
-		md.Set(MetaTraceID, info.TraceID)
-	}
-	if info.SpanID != "" {
-		md.Set(MetaSpanID, info.SpanID)
-	}
-	if info.RequestID != "" {
-		md.Set(MetaRequestID, info.RequestID)
-	}
-
-	// 生成 W3C traceparent（仅在 traceID 和 spanID 都有效时）
-	// 使用 context 中的 traceFlags，若无则默认 "00"
-	if traceparent := formatTraceparent(info.TraceID, info.SpanID, info.TraceFlags); traceparent != "" {
-		md.Set(MetaTraceparent, traceparent)
-	}
+	injectTraceInfoTo(func(k, v string) { md.Set(k, v) }, info, grpcTransportKeys)
 
 	return metadata.NewOutgoingContext(ctx, md)
 }
@@ -226,15 +223,7 @@ func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {
 	if md == nil {
 		return
 	}
-	injectTraceInfoTo(
-		func(key, value string) { md.Set(key, value) },
-		info, transportKeys{
-			traceID:     MetaTraceID,
-			spanID:      MetaSpanID,
-			requestID:   MetaRequestID,
-			traceparent: MetaTraceparent,
-			tracestate:  MetaTracestate,
-		})
+	injectTraceInfoTo(func(k, v string) { md.Set(k, v) }, info, grpcTransportKeys)
 }
 
 // =============================================================================

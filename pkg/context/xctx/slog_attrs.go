@@ -156,7 +156,7 @@ func PlatformAttrs(ctx context.Context) []slog.Attr {
 //
 // deployment_type 为必填字段，缺失或无效时返回错误。
 // 错误时仍返回已收集的部分属性（identity/trace/platform），调用方可自行决定是否使用。
-// 如果 context 中完全没有任何字段，返回 (nil, err) 避免不必要的分配。
+// 如果没有收集到任何部分属性，返回 (nil, err)。
 func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -170,6 +170,9 @@ func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 		partial = AppendIdentityAttrs(partial, ctx)
 		partial = AppendTraceAttrs(partial, ctx)
 		partial = AppendPlatformAttrs(partial, ctx)
+		if len(partial) == 0 {
+			return nil, err
+		}
 		return partial, err
 	}
 

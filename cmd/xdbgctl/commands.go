@@ -16,6 +16,10 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// errServerRejected 表示服务端拒绝执行命令。
+// 用于 errors.Is 判断，使脚本可区分服务端拒绝与网络/协议错误。
+var errServerRejected = fmt.Errorf("服务端拒绝执行")
+
 // exitError 表示需要非零退出码但已完成输出的场景。
 // 命令内部已完成所有输出，main 只需设置退出码。
 type exitError struct {
@@ -39,6 +43,7 @@ func isCLIUsageError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "flag provided but not defined") ||
 		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "invalid value") ||
 		strings.Contains(msg, "No help topic for")
 }
 
@@ -55,6 +60,9 @@ func validateTimeout(timeout time.Duration) error {
 
 // validateProcessName 校验进程名参数。
 func validateProcessName(name string) error {
+	if name == "" {
+		return &usageError{msg: "进程名不能为空"}
+	}
 	if len(name) > maxCommLen {
 		return &usageError{msg: fmt.Sprintf(
 			"进程名 %q 超过 Linux 最大长度 %d 字符", name, maxCommLen)}
@@ -209,6 +217,36 @@ func validateToggleArgs(pidFlag int, nameFlag string) error {
 	return nil
 }
 
+// postSignalCheckDelay 发送信号后等待一段时间再检查进程状态。
+// 设计决策: 50ms 足够内核完成同步信号投递与默认处理（终止），
+// 同时不会对 CLI 交互产生可感知的延迟。
+var postSignalCheckDelay = 50 * time.Millisecond
+
+// discoverTargetPID 按优先级发现目标进程 PID。
+// 优先级：pidFlag > nameFlag > socket 文件发现。
+func discoverTargetPID(ctx context.Context, socketPath string, pidFlag int, nameFlag string) (int, error) {
+	switch {
+	case pidFlag > 0:
+		return pidFlag, nil
+	case nameFlag != "":
+		pid, err := findProcessByName(ctx, nameFlag)
+		if err != nil {
+			return 0, fmt.Errorf("通过进程名查找失败: %w", err)
+		}
+		return pid, nil
+	default:
+		pid, err := findProcessBySocket(ctx, socketPath)
+		if err != nil {
+			hint := "请使用 --pid 或 --name 参数指定目标进程"
+			if isContainerEnvironment() {
+				hint = "在容器环境中，请使用 --pid 1（如主进程是目标）、--name <进程名> 或指定具体 PID"
+			}
+			return 0, fmt.Errorf("无法自动发现进程: %w\n%s", err, hint)
+		}
+		return pid, nil
+	}
+}
+
 // cmdToggle 切换调试服务状态（发送 SIGUSR1 信号触发 toggle）。
 // 进程发现优先级：--pid > --name > socket 发现
 func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag string) error {
@@ -220,32 +258,9 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 		return err
 	}
 
-	var pid int
-
-	// 进程发现逻辑，按优先级选择策略
-	switch {
-	case pidFlag > 0:
-		// 优先级 1: 使用用户指定的 PID
-		pid = pidFlag
-	case nameFlag != "":
-		// 优先级 2: 通过进程名查找
-		discoveredPID, err := findProcessByName(ctx, nameFlag)
-		if err != nil {
-			return fmt.Errorf("通过进程名查找失败: %w", err)
-		}
-		pid = discoveredPID
-	default:
-		// 优先级 3: 尝试通过 Socket 文件发现进程
-		discoveredPID, err := findProcessBySocket(ctx, socketPath)
-		if err != nil {
-			// 要求用户明确指定目标进程
-			hint := "请使用 --pid 或 --name 参数指定目标进程"
-			if isContainerEnvironment() {
-				hint = "在容器环境中，请使用 --pid 1（如主进程是目标）、--name <进程名> 或指定具体 PID"
-			}
-			return fmt.Errorf("无法自动发现进程: %w\n%s", err, hint)
-		}
-		pid = discoveredPID
+	pid, err := discoverTargetPID(ctx, socketPath, pidFlag, nameFlag)
+	if err != nil {
+		return err
 	}
 
 	// 验证进程存在
@@ -256,6 +271,14 @@ func cmdToggle(ctx context.Context, socketPath string, pidFlag int, nameFlag str
 	// 发送 SIGUSR1 信号
 	if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil {
 		return fmt.Errorf("发送信号失败: %w", err)
+	}
+
+	// 安全检查: 等待短暂时间后验证目标进程仍然存活。
+	// 设计决策: 若目标进程未注册 SIGUSR1 处理器，SIGUSR1 的默认行为（Linux）
+	// 是终止进程。此检查可检测误杀，避免静默返回成功。
+	time.Sleep(postSignalCheckDelay)
+	if err := syscall.Kill(pid, 0); err != nil {
+		return fmt.Errorf("警告: 进程 %d 在收到 SIGUSR1 后已退出（可能不是 xdbg 服务进程）", pid)
 	}
 
 	fmt.Printf("已向进程 %d 发送 SIGUSR1 信号（切换调试服务状态）\n", pid)
@@ -275,7 +298,7 @@ func cmdDisable(ctx context.Context, socketPath string, timeout time.Duration) e
 	}
 
 	if !resp.Success {
-		return fmt.Errorf("禁用失败: %s", resp.Error)
+		return fmt.Errorf("%w: %s", errServerRejected, resp.Error)
 	}
 
 	fmt.Println(resp.Output)
@@ -302,7 +325,7 @@ func cmdExec(ctx context.Context, socketPath string, timeout time.Duration, args
 	}
 
 	if !resp.Success {
-		return fmt.Errorf("命令执行失败: %s", resp.Error)
+		return fmt.Errorf("%w: %s", errServerRejected, resp.Error)
 	}
 
 	if resp.Output != "" {

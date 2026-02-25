@@ -32,7 +32,7 @@ func FuzzRedis_SetGet(f *testing.F) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(f, err)
-	f.Cleanup(func() { _ = cache.Close() })
+	f.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	f.Fuzz(func(t *testing.T, key string, value []byte) {
 		if key == "" {
@@ -80,7 +80,7 @@ func FuzzRedis_HSetHGet(f *testing.F) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(f, err)
-	f.Cleanup(func() { _ = cache.Close() })
+	f.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	f.Fuzz(func(t *testing.T, key, field string, value []byte) {
 		if key == "" || field == "" {
@@ -127,7 +127,7 @@ func FuzzMemory_SetGet(f *testing.F) {
 
 	cache, err := NewMemory(WithMemoryMaxCost(1 << 20))
 	require.NoError(f, err)
-	f.Cleanup(func() { cache.Close() })
+	f.Cleanup(func() { cache.Close(context.Background()) })
 
 	f.Fuzz(func(t *testing.T, key string, value []byte) {
 		if key == "" {
@@ -170,7 +170,7 @@ func FuzzLoader_Load(f *testing.F) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(f, err)
-	f.Cleanup(func() { _ = cache.Close() })
+	f.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	loader, err := NewLoader(cache, WithSingleflight(true))
 	require.NoError(f, err)
@@ -216,7 +216,7 @@ func FuzzLoader_LoadHash(f *testing.F) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(f, err)
-	f.Cleanup(func() { _ = cache.Close() })
+	f.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	loader, err := NewLoader(cache, WithSingleflight(true))
 	require.NoError(f, err)

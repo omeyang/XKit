@@ -557,6 +557,27 @@ func TestInjectTraceToHeader(t *testing.T) {
 // HTTP 中间件 — 内部分支覆盖测试
 // =============================================================================
 
+func TestHTTPMiddleware_NilOptionIgnored(t *testing.T) {
+	// 覆盖 applyOptions: nil Option 被安全忽略，不 panic
+	var capturedTraceID string
+
+	handler := xtrace.HTTPMiddleware(nil, xtrace.WithAutoGenerate(false), nil)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedTraceID = xtrace.TraceID(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// nil 选项被忽略，WithAutoGenerate(false) 应生效
+	if capturedTraceID != "" {
+		t.Errorf("TraceID should be empty when auto-generate is disabled, got %q", capturedTraceID)
+	}
+}
+
 func TestHTTPMiddleware_InvalidTraceIDAutoGenerate(t *testing.T) {
 	// 覆盖 injectID: invalid format + autoGenerate=true → discard + ensure
 	var capturedTraceID string

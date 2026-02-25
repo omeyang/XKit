@@ -56,7 +56,7 @@ func ExampleDLQPolicy_Validate_invalid() {
 	if err != nil {
 		fmt.Println("验证错误:", err)
 	}
-	// Output: 验证错误: mq: DLQ topic is required
+	// Output: 验证错误: xkafka: DLQ topic is required
 }
 
 // ExampleDLQStats_Clone 演示统计信息的克隆
@@ -194,9 +194,9 @@ func Example_errors() {
 	fmt.Println("空消息错误:", xkafka.ErrNilMessage)
 	fmt.Println("空处理器错误:", xkafka.ErrNilHandler)
 	// Output:
-	// DLQ 策略必需: mq: DLQ policy is required
-	// DLQ Topic 必需: mq: DLQ topic is required
-	// 重试策略必需: mq: retry policy is required
+	// DLQ 策略必需: xkafka: DLQ policy is required
+	// DLQ Topic 必需: xkafka: DLQ topic is required
+	// 重试策略必需: xkafka: retry policy is required
 	// 空消息错误: mq: nil message
 	// 空处理器错误: mq: nil handler
 }

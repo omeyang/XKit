@@ -172,6 +172,7 @@ func IsBreakerError(err error) bool {
 // 但业务层可通过 IsRecoverable 判断是否需要降级或延迟重试。
 //
 // Deprecated: 推荐使用 IsBreakerError 代替，语义更清晰。计划在 v2.0 移除。
+// TODO(v2.0): 移除 IsRecoverable，统一使用 IsBreakerError
 func IsRecoverable(err error) bool {
 	return IsBreakerError(err)
 }

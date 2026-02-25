@@ -36,7 +36,9 @@ func applyOptions(opts []Option) *config {
 		autoGenerate: true, // 默认自动生成
 	}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 	return cfg
 }
@@ -50,6 +52,9 @@ func applyOptions(opts []Option) *config {
 // 包含两层信息：
 //   - 解析后的字段（TraceID、SpanID、TraceFlags）：用于业务逻辑和 context 注入
 //   - 原始传输层字段（Traceparent、Tracestate）：用于透传和手动注入
+//
+// 注意：如果手动修改了 TraceID/SpanID 后调用 InjectTraceToHeader，
+// 应同步清空 Traceparent 字段，否则 resolveTraceparent 会优先使用原始 Traceparent。
 //
 // 设计决策: 当 traceparent 解析成功时，TraceID/SpanID/TraceFlags 来自 traceparent 解析结果，
 // Traceparent 保留原始字符串用于透传场景（如 InjectTraceToHeader）。

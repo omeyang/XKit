@@ -3,6 +3,7 @@ package xauth
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -244,6 +245,16 @@ func (m *mockClient) Close(_ context.Context) error {
 // =============================================================================
 // Test Helpers
 // =============================================================================
+
+// mustNewTokenManager 创建 TokenManager，失败时终止测试。
+func mustNewTokenManager(t *testing.T, cfg TokenManagerConfig) *TokenManager {
+	t.Helper()
+	mgr, err := NewTokenManager(cfg)
+	if err != nil {
+		t.Fatalf("NewTokenManager failed: %v", err)
+	}
+	return mgr
+}
 
 // testToken 创建测试用的 TokenInfo。
 func testToken(accessToken string, expiresIn int64) *TokenInfo {

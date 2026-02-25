@@ -1340,6 +1340,19 @@ func TestNewGroup_NilContext(t *testing.T) {
 	}
 }
 
+func TestNewGroup_NilOption(t *testing.T) {
+	// nil Option 应被静默跳过，不 panic
+	g, _ := NewGroup(context.Background(), nil, WithName("test"), nil)
+
+	g.Go(func(ctx context.Context) error {
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // WithoutSignalHandler 与 WithSignals 优先级
 // ----------------------------------------------------------------------------

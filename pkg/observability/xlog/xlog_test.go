@@ -681,6 +681,38 @@ func TestBuilder_SetRotation_Error(t *testing.T) {
 	}
 }
 
+func TestBuilder_SetRotation_DoubleCalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	file1 := tmpDir + "/first.log"
+	file2 := tmpDir + "/second.log"
+
+	// 连续调用两次 SetRotation，第一个 rotator 应被正确关闭
+	logger, cleanup, err := xlog.New().
+		SetRotation(file1).
+		SetRotation(file2). // 应关闭 file1 的 rotator
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+
+	// 写入日志
+	logger.Info(context.Background(), "second rotator message")
+
+	// 关闭
+	if err := cleanup(); err != nil {
+		t.Errorf("cleanup() error: %v", err)
+	}
+
+	// 验证第二个文件包含日志
+	data, readErr := os.ReadFile(file2)
+	if readErr != nil {
+		t.Fatalf("ReadFile(%s) error: %v", file2, readErr)
+	}
+	if !strings.Contains(string(data), "second rotator message") {
+		t.Errorf("second log file missing message\ncontent: %s", string(data))
+	}
+}
+
 func TestBuilder_Build_AlreadyBuilt(t *testing.T) {
 	builder := xlog.New()
 

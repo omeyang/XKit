@@ -123,6 +123,9 @@ func SanitizePath(filename string) (string, error) {
 	}
 
 	// 获取文件名部分，确保不为空
+	// 设计决策: base == filepath.Separator 是防御性检查。当前触发此条件的输入（如 "/"）
+	// 都会先被第 109 行的尾部斜杠检查拦截，但保留此分支以防未来标准库行为变更
+	// 引入安全漏洞。测试覆盖通过 filepathRelFn 类似的注入模式可实现。
 	base := filepath.Base(cleaned)
 	if base == "." || base == string(filepath.Separator) {
 		return "", fmt.Errorf("no file name specified: %w", ErrInvalidPath)
@@ -281,7 +284,7 @@ func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	// 使用 hasDotDotSegment 精确检测路径穿越
 	// 避免误判以 ".." 开头的合法文件名（如 "..config"）
 	if hasDotDotSegment(rel) {
-		return "", ErrPathEscaped
+		return "", fmt.Errorf("path escapes base directory: %w", ErrPathEscaped)
 	}
 	return joined, nil
 }
@@ -299,8 +302,13 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 	}
 
 	rel, err := filepath.Rel(realBase, realJoined)
+	// 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处拆分处理
+	// 是防御性设计，确保排障时能区分"路径计算异常"与"实际路径逃逸"两种场景。
+	if err != nil {
+		return "", fmt.Errorf("failed to compute resolved relative path (%v): %w", err, ErrPathEscaped)
+	}
 	// 使用 hasDotDotSegment 精确检测路径穿越
-	if err != nil || hasDotDotSegment(rel) {
+	if hasDotDotSegment(rel) {
 		return "", fmt.Errorf("resolved path escapes base directory: %w", ErrPathEscaped)
 	}
 

@@ -42,10 +42,10 @@ type Loader interface {
 	//   - (data, nil): 正常写入缓存。
 	//   - (_, err): 不写入缓存，直接返回错误。
 	//
-	// ttl 说明：
+	// ttl 说明（与 LoadHash 语义一致）：
 	//   - ttl > 0: 设置指定过期时间。
 	//   - ttl == 0: 不设置过期（key 永不过期）。
-	//   - ttl < 0: Redis 会拒绝设置，行为等同于不缓存。
+	//   - ttl < 0: 不写入缓存（仅回源，等同于不缓存）。
 	//
 	// 注意：singleflight 去重仅基于 key，不包含 ttl。
 	// 同一 key 的并发请求（即使 ttl 不同）只会触发一次回源，
@@ -265,11 +265,19 @@ func WithLoadTimeout(timeout time.Duration) LoaderOption {
 	}
 }
 
+// MaxMaxRetryAttempts 是 MaxRetryAttempts 的上界，防止误配导致密集重试。
+// 实际等待时间还受 DistributedLockTTL 约束，此上界仅作额外防御。
+const MaxMaxRetryAttempts = 1000
+
 // WithMaxRetryAttempts 设置等待锁释放时的最大重试次数。
 // 超过此次数后直接回源，避免无限等待。
+// n 会被钳位到 [1, MaxMaxRetryAttempts] 范围内；非正值被忽略（保持默认值）。
 func WithMaxRetryAttempts(n int) LoaderOption {
 	return func(o *LoaderOptions) {
 		if n > 0 {
+			if n > MaxMaxRetryAttempts {
+				n = MaxMaxRetryAttempts
+			}
 			o.MaxRetryAttempts = n
 		}
 	}

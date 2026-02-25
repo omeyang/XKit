@@ -636,6 +636,41 @@ func TestWithOnStateChange_PanicRecovery(t *testing.T) {
 	assert.Equal(t, StateOpen, b.State())
 }
 
+// === FG-S1/L2/L3 修复验证：nil ctx / nil fn 直接测试 ===
+
+func TestBreaker_Do_NilContext(t *testing.T) {
+	b := NewBreaker("test")
+	err := b.Do(nil, func() error { return nil }) //nolint:staticcheck // 测试 nil context 入口
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestBreaker_Do_NilFunc(t *testing.T) {
+	b := NewBreaker("test")
+	err := b.Do(context.Background(), nil)
+	assert.ErrorIs(t, err, ErrNilFunc)
+}
+
+func TestExecute_NilContext(t *testing.T) {
+	b := NewBreaker("test")
+	_, err := Execute(nil, b, func() (string, error) { return "", nil }) //nolint:staticcheck // 测试 nil context 入口
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestExecute_NilFunc(t *testing.T) {
+	b := NewBreaker("test")
+	_, err := Execute[string](context.Background(), b, nil)
+	assert.ErrorIs(t, err, ErrNilFunc)
+}
+
+func TestManagedBreaker_Execute_NilFunc(t *testing.T) {
+	b := NewBreaker("test")
+	m, err := NewManagedBreaker[string](b)
+	require.NoError(t, err)
+
+	_, err = m.Execute(nil)
+	assert.ErrorIs(t, err, ErrNilFunc)
+}
+
 func TestWithOnStateChange_NilIgnored(t *testing.T) {
 	called := make(chan struct{})
 	b := NewBreaker("test",

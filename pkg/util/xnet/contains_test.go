@@ -1,6 +1,7 @@
 package xnet
 
 import (
+	"math/big"
 	"net/netip"
 	"testing"
 
@@ -259,6 +260,49 @@ func TestRangeSize_IPv6(t *testing.T) {
 	size := RangeSize(r)
 	require.NotNil(t, size)
 	assert.Equal(t, int64(255), size.Int64())
+}
+
+func TestRangeSize_IPv6_LargeRange(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		to       string
+		wantBits uint // 期望结果 = 2^wantBits
+	}{
+		{
+			name:     "/64 subnet (2^64 addresses)",
+			from:     "2001:db8::",
+			to:       "2001:db8::ffff:ffff:ffff:ffff",
+			wantBits: 64,
+		},
+		{
+			name:     "/0 full IPv6 (2^128 addresses)",
+			from:     "::",
+			to:       "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+			wantBits: 128,
+		},
+		{
+			name:     "/96 subnet (2^32 addresses)",
+			from:     "2001:db8::0.0.0.0",
+			to:       "2001:db8::255.255.255.255",
+			wantBits: 32,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := netipx.IPRangeFrom(
+				netip.MustParseAddr(tt.from),
+				netip.MustParseAddr(tt.to),
+			)
+			size := RangeSize(r)
+			require.NotNil(t, size)
+
+			expected := new(big.Int).Lsh(big.NewInt(1), tt.wantBits)
+			assert.Equal(t, 0, size.Cmp(expected),
+				"RangeSize=%s, expected 2^%d=%s", size, tt.wantBits, expected)
+		})
+	}
 }
 
 func TestRangeSize_Invalid(t *testing.T) {

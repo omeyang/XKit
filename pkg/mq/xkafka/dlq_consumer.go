@@ -281,19 +281,28 @@ func (c *dlqConsumer) DLQStats() DLQStats {
 	return c.stats.get()
 }
 
+// formatFailureReason 使用策略配置的格式化函数将错误转换为失败原因字符串。
+// 如果未配置 FailureReasonFormatter，使用默认的截断格式化。
+func (c *dlqConsumer) formatFailureReason(err error) string {
+	if c.policy.FailureReasonFormatter != nil {
+		return c.policy.FailureReasonFormatter(err)
+	}
+	return defaultFailureReasonFormatter(err)
+}
+
 // incrementRetryCount 增加重试次数并更新相关 Header
 func (c *dlqConsumer) incrementRetryCount(msg *kafka.Message, err error) {
-	updateRetryHeaders(msg, err)
+	updateRetryHeaders(msg, c.formatFailureReason(err))
 }
 
 // buildDLQMessage 构建 DLQ 消息
 func (c *dlqConsumer) buildDLQMessage(original *kafka.Message, reason error, retryCount int) *kafka.Message {
-	return buildDLQMessageFromPolicy(original, c.policy.DLQTopic, reason, retryCount)
+	return buildDLQMessageFromPolicy(original, c.policy.DLQTopic, c.formatFailureReason(reason), retryCount)
 }
 
 // buildDLQMetadata 构建 DLQ 元数据
 func (c *dlqConsumer) buildDLQMetadata(msg *kafka.Message, reason error, retryCount int) DLQMetadata {
-	return buildDLQMetadataFromMessage(msg, reason, retryCount)
+	return buildDLQMetadataFromMessage(msg, c.formatFailureReason(reason), retryCount)
 }
 
 // redeliverMessage 重新投递消息

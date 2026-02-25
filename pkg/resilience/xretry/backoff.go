@@ -220,7 +220,7 @@ const (
 func randomFloat64() float64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败时返回 0，这意味着无抖动（安全默认值）
+		// crypto/rand 失败时返回 0（安全默认值），抖动公式中将产生最小抖动系数 1-jitter
 		return 0
 	}
 	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale

@@ -12,7 +12,7 @@
 //   - Tracer 接口：定义链路追踪的注入和提取能力
 //   - OTelTracer：基于 OpenTelemetry 的 Tracer 实现
 //   - NoopTracer：空实现，用于不需要追踪的场景
-//   - 共享错误定义
-//   - Context 追踪信息合并
+//   - 共享错误定义（仅含 xkafka/xpulsar 共用的 4 个错误，各自专用错误定义在各包内）
+//   - Context 追踪信息合并（xctx 字段 + OTel SpanContext 双层保留）
 //   - RunConsumeLoop：基于 xretry.BackoffPolicy 的消费循环工具
 package mqcore

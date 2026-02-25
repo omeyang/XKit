@@ -27,7 +27,7 @@
 //   - [SetDefault]: 替换全局 Logger（nil 会被忽略）
 //   - [ResetDefault]: 重置为未初始化状态（仅用于测试）
 //   - [Debug]、[Info]、[Warn]、[Error]: 全局便利函数，签名为 (ctx, msg, ...slog.Attr)
-//   - [Stack]: 全局便利函数，记录带堆栈的错误日志
+//   - [Stack]: 全局便利函数，记录带堆栈的错误日志（也是 [Logger] 接口方法的全局版本）
 //
 // # 日志级别
 //

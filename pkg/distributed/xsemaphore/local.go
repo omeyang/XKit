@@ -215,6 +215,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 
 	for attempt := range cfg.maxRetries {
 		if err := ctx.Err(); err != nil {
+			s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
 			span.SetAttributes(attribute.Int(attrRetryCount, max(0, attempt-1)))
 			setSpanError(span, err)
 			return nil, err
@@ -244,6 +245,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		// 最后一次重试不等待
 		if attempt < cfg.maxRetries-1 {
 			if err := waitForRetry(ctx, cfg.retryDelay); err != nil {
+				s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
 				setSpanError(span, err)
 				return nil, err
 			}

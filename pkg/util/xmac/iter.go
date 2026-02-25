@@ -32,10 +32,11 @@ func Range(from, to Addr) iter.Seq[Addr] {
 			if current == to {
 				return
 			}
-			// 获取下一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Next() 不会返回 ErrOverflow，
+			// 因为 from<=to 且 current==to 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入溢出风险。
 			next, err := current.Next()
 			if err != nil {
-				// 溢出，终止迭代
 				return
 			}
 			current = next
@@ -106,10 +107,11 @@ func RangeWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 			if current == to {
 				return
 			}
-			// 获取下一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Next() 不会返回 ErrOverflow，
+			// 因为 from<=to 且 current==to 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入溢出风险。
 			next, err := current.Next()
 			if err != nil {
-				// 溢出，终止迭代
 				return
 			}
 			current = next
@@ -216,10 +218,11 @@ func RangeReverse(from, to Addr) iter.Seq[Addr] {
 			if current == from {
 				return
 			}
-			// 获取前一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Prev() 不会返回 ErrUnderflow，
+			// 因为 from<=to 且 current==from 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入下溢风险。
 			prev, err := current.Prev()
 			if err != nil {
-				// 下溢，终止迭代
 				return
 			}
 			current = prev
@@ -254,10 +257,11 @@ func RangeReverseWithIndex(from, to Addr) iter.Seq2[int, Addr] {
 			if current == from {
 				return
 			}
-			// 获取前一个地址
+			// 设计决策: 防御性分支——在当前逻辑下 Prev() 不会返回 ErrUnderflow，
+			// 因为 from<=to 且 current==from 时已提前返回。保留此分支以防止
+			// 未来修改 Compare 或终止条件时引入下溢风险。
 			prev, err := current.Prev()
 			if err != nil {
-				// 下溢，终止迭代
 				return
 			}
 			current = prev

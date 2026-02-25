@@ -21,6 +21,7 @@ func BenchmarkTenantID(b *testing.B) {
 	ctx := context.Background()
 	ctx = mustCtxTenantID(b, ctx, "benchmark-tenant-id")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.TenantID(ctx)
@@ -31,6 +32,7 @@ func BenchmarkTenantName(b *testing.B) {
 	ctx := context.Background()
 	ctx = mustCtxTenantName(b, ctx, "benchmark-tenant-name")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.TenantName(ctx)
@@ -40,6 +42,7 @@ func BenchmarkTenantName(b *testing.B) {
 func BenchmarkWithTenantID(b *testing.B) {
 	ctx := context.Background()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := xtenant.WithTenantID(ctx, "benchmark-tenant"); err != nil {
@@ -55,6 +58,7 @@ func BenchmarkWithTenantInfo(b *testing.B) {
 		TenantName: "bench-name",
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := xtenant.WithTenantInfo(ctx, info); err != nil {
@@ -68,6 +72,7 @@ func BenchmarkGetTenantInfo(b *testing.B) {
 	ctx = mustCtxTenantID(b, ctx, "bench-id")
 	ctx = mustCtxTenantName(b, ctx, "bench-name")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.GetTenantInfo(ctx)
@@ -116,6 +121,7 @@ func BenchmarkExtractFromHTTPHeader(b *testing.B) {
 	h.Set(xtenant.HeaderTenantID, "tenant-123")
 	h.Set(xtenant.HeaderTenantName, "TestTenant")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.ExtractFromHTTPHeader(h)
@@ -128,6 +134,7 @@ func BenchmarkInjectToRequest(b *testing.B) {
 	ctx = mustCtxTenantName(b, ctx, "TestTenant")
 	req := httptest.NewRequest("GET", "/test", nil)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		xtenant.InjectToRequest(ctx, req)
@@ -143,6 +150,7 @@ func BenchmarkHTTPMiddleware(b *testing.B) {
 	req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
 	w := httptest.NewRecorder()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		handler.ServeHTTP(w, req)
@@ -154,6 +162,7 @@ func BenchmarkHTTPMiddleware_Parallel(b *testing.B) {
 		_ = xtenant.TenantID(r.Context())
 	}))
 
+	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
@@ -175,6 +184,7 @@ func BenchmarkExtractFromMetadata(b *testing.B) {
 		xtenant.MetaTenantName, "TestTenant",
 	)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.ExtractFromMetadata(md)
@@ -186,6 +196,7 @@ func BenchmarkInjectToOutgoingContext(b *testing.B) {
 	ctx = mustCtxTenantID(b, ctx, "tenant-123")
 	ctx = mustCtxTenantName(b, ctx, "TestTenant")
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = xtenant.InjectToOutgoingContext(ctx)
@@ -205,6 +216,7 @@ func BenchmarkGRPCUnaryServerInterceptor(b *testing.B) {
 		return nil, nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, handler); err != nil {
@@ -223,6 +235,7 @@ func BenchmarkGRPCUnaryClientInterceptor(b *testing.B) {
 		return nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := interceptor(ctx, "/test.Service/Method", nil, nil, nil, invoker); err != nil {
@@ -237,6 +250,7 @@ func BenchmarkInjectTenantToMetadata(b *testing.B) {
 		TenantName: "TestTenant",
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		md := metadata.MD{}

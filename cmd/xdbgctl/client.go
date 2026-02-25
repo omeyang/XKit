@@ -72,6 +72,9 @@ func (c *Client) setConnDeadline(ctx context.Context, conn net.Conn) error {
 }
 
 // Execute 执行命令。
+// 设计决策: 每次调用建立新连接（无连接复用）。
+// 对 CLI 工具而言，无状态连接更简单且容错——目标进程可能随时重启或关闭 socket，
+// 长连接反而需要断线重连逻辑。REPL 模式下的额外系统调用开销对交互式场景可忽略。
 func (c *Client) Execute(ctx context.Context, command string, args []string) (_ *xdbg.Response, retErr error) {
 	// 前置校验: 确认目标路径是 Unix Socket 文件
 	if err := c.validateSocket(); err != nil {
@@ -114,6 +117,9 @@ func (c *Client) Execute(ctx context.Context, command string, args []string) (_ 
 }
 
 // Ping 测试连接。
+// 设计决策: 通过发送 help 命令测试连通性。
+// help 在 xdbg 服务端属于 essentialCommands，不受 WithCommandWhitelist 过滤，
+// 因此始终可用（见 xdbg/command_registry.go:essentialCommands）。
 func (c *Client) Ping(ctx context.Context) error {
 	resp, err := c.Execute(ctx, "help", nil)
 	if err != nil {

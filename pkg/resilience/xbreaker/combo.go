@@ -69,6 +69,9 @@ func NewBreakerRetryer(breaker *Breaker, retryer *xretry.Retryer) (*BreakerRetry
 //  5. 每次尝试的结果都被熔断器记录
 //  6. 如果在重试过程中触发熔断，后续重试将被阻断
 func (br *BreakerRetryer) DoWithRetry(ctx context.Context, fn func(ctx context.Context) error) error {
+	if br == nil {
+		return ErrNilBreakerRetryer
+	}
 	if ctx == nil {
 		return ErrNilContext
 	}
@@ -132,6 +135,9 @@ func ExecuteWithRetry[T any](ctx context.Context, br *BreakerRetryer, fn func() 
 // 与 DoWithRetry 不同，操作函数不接收 context。
 // 每次重试尝试都会经过熔断器检查和记录。
 func (br *BreakerRetryer) DoWithRetrySimple(ctx context.Context, fn func() error) error {
+	if br == nil {
+		return ErrNilBreakerRetryer
+	}
 	if ctx == nil {
 		return ErrNilContext
 	}
@@ -239,6 +245,9 @@ func NewRetryThenBreakWithConfig(name string, retryer *xretry.Retryer, opts ...B
 //
 // 注意：即使发生 panic，也会通过 defer 确保熔断器计数被正确更新（记为失败）。
 func (rtb *RetryThenBreak) Do(ctx context.Context, fn func(ctx context.Context) error) error {
+	if rtb == nil {
+		return ErrNilRetryThenBreak
+	}
 	if ctx == nil {
 		return ErrNilContext
 	}

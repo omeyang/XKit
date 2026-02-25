@@ -60,6 +60,11 @@ func NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		// 设计决策: 静默跳过 nil Option，与 WithLogger(nil)/WithName("") 的防御性
+		// 行为一致。不返回错误以保持与 errgroup.WithContext 对齐的 API 签名。
+		if opt == nil {
+			continue
+		}
 		opt(options)
 	}
 
@@ -101,6 +106,7 @@ func (g *Group) Go(fn func(ctx context.Context) error) {
 }
 
 // GoWithName 与 Go 相同，但会在日志中记录名称。
+// name 为空字符串时仍有效，但日志中会显示 service=""，建议传入有意义的名称。
 func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 	g.eg.Go(func() error {
 		if fn == nil {
@@ -320,13 +326,7 @@ func (f ServiceFunc) Run(ctx context.Context) error {
 //	)
 func RunServices(ctx context.Context, services ...Service) error {
 	return runGroup(ctx, nil, func(g *Group) {
-		for _, svc := range services {
-			if svc == nil {
-				g.Go(func(ctx context.Context) error { return ErrNilService })
-				continue
-			}
-			g.Go(svc.Run)
-		}
+		addServices(g, services)
 	})
 }
 
@@ -340,14 +340,19 @@ func RunServices(ctx context.Context, services ...Service) error {
 //	}, httpServer, grpcServer)
 func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Service) error {
 	return runGroup(ctx, opts, func(g *Group) {
-		for _, svc := range services {
-			if svc == nil {
-				g.Go(func(ctx context.Context) error { return ErrNilService })
-				continue
-			}
-			g.Go(svc.Run)
-		}
+		addServices(g, services)
 	})
+}
+
+// addServices 将服务列表注册到 Group，nil service 返回 ErrNilService。
+func addServices(g *Group, services []Service) {
+	for _, svc := range services {
+		if svc == nil {
+			g.Go(func(ctx context.Context) error { return ErrNilService })
+			continue
+		}
+		g.Go(svc.Run)
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -415,6 +420,9 @@ func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(
 }
 
 // HTTPServerInterface 定义 HTTP 服务器接口。
+//
+// 设计决策: 接口名使用 Interface 后缀是因为 HTTPServer 已被同名便捷函数占用。
+// 重命名函数为 ServeHTTP 会与 http.Handler.ServeHTTP 混淆，权衡后保持现状。
 //
 // *http.Server 天然满足此接口。导出此接口以支持自定义服务器实现和测试 mock。
 type HTTPServerInterface interface {

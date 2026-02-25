@@ -113,7 +113,15 @@
 //     causeCtx 的 context 资源在返回前被释放。CancelCauseFunc 是幂等的，
 //     若已通过 Cancel() 或信号处理调用过则为空操作。
 //
-//  19. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
+//  19. nil Option 静默跳过：NewGroup 遍历 opts 时跳过 nil Option，
+//     与 WithLogger(nil)/WithName("") 的防御性行为一致。不返回错误
+//     以保持与 errgroup.WithContext 对齐的 (*Group, context.Context) 签名。
+//
+//  20. HTTPServerInterface 命名：接口名使用 Interface 后缀是因为
+//     HTTPServer 已被同名便捷函数占用，重命名函数为 ServeHTTP 会与
+//     http.Handler.ServeHTTP 混淆，权衡后保持现状。
+//
+//  21. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
 //     所有服务通过 context 并发启动和同时取消。有序启动可通过嵌套 Group
 //     或在服务内部使用 ready channel 实现；健康检查建议在 HTTPServer 的
 //     handler 中实现，xrun 不内置此功能。这遵循 YAGNI 原则——编排策略

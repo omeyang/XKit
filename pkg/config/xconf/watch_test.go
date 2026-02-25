@@ -567,3 +567,59 @@ func TestWatcher_HandleErrorNilCallback(t *testing.T) {
 		w.handleError(fmt.Errorf("test error"))
 	})
 }
+
+// TestWatcher_StopFromCallback 验证在回调内调用 Stop() 不会死锁
+// 修复问题 FG-S1：防抖回调 goroutine 先 callbackWg.Add(1)，若用户在回调中
+// 调用 Stop()，Stop() 会 callbackWg.Wait() 等待当前回调结束，形成自锁死锁。
+func TestWatcher_StopFromCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	stopDone := make(chan error, 1)
+
+	w, err := Watch(cfg, func(c Config, cbErr error) {
+		// 在回调中调用 Stop() — 修复前会死锁
+		// 这里使用闭包引用外层 w，因为回调在 Watch 返回后才会执行
+	}, WithDebounce(20*time.Millisecond))
+	require.NoError(t, err)
+
+	// 重新设置回调（需要引用 w）
+	w.callback = func(c Config, cbErr error) {
+		stopDone <- w.Stop()
+	}
+
+	w.StartAsync()
+	time.Sleep(30 * time.Millisecond)
+
+	// 触发文件变更
+	err = os.WriteFile(configPath, []byte("app:\n  name: updated\n"), 0600)
+	require.NoError(t, err)
+
+	// 等待 Stop 完成（设超时防止死锁导致测试挂起）
+	select {
+	case stopErr := <-stopDone:
+		assert.NoError(t, stopErr, "Stop() 在回调内调用不应返回错误")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop() 在回调内调用导致死锁（超时 3 秒）")
+	}
+}
+
+// TestGoid 验证 goid() 返回有效的 goroutine ID
+func TestGoid(t *testing.T) {
+	id := goid()
+	assert.Greater(t, id, int64(0), "goid() 应返回正整数")
+
+	// 不同 goroutine 应有不同 ID
+	ch := make(chan int64, 1)
+	go func() {
+		ch <- goid()
+	}()
+	otherId := <-ch
+	assert.Greater(t, otherId, int64(0))
+	assert.NotEqual(t, id, otherId, "不同 goroutine 应有不同 ID")
+}

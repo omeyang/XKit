@@ -106,7 +106,7 @@ func NewMemoryFromClient(client *ristretto.Cache[string, []byte]) (Memory, error
 //	loader, _ := xcache.NewLoader(cache, xcache.WithDistributedLock(true))
 //	// 使用 loader...
 //	// 无需关闭 loader，只需在适当时机关闭 cache
-//	cache.Close()
+//	cache.Close(ctx)
 func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
 	if cache == nil {
 		return nil, ErrNilClient
@@ -253,7 +253,7 @@ func (w *redisWrapper) Client() redis.UniversalClient {
 	return w.client
 }
 
-func (w *redisWrapper) Close() error {
+func (w *redisWrapper) Close(_ context.Context) error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}
@@ -308,7 +308,7 @@ func (w *memoryWrapper) Wait() {
 	w.cache.Wait()
 }
 
-func (w *memoryWrapper) Close() error {
+func (w *memoryWrapper) Close(_ context.Context) error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}

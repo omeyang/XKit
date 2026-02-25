@@ -32,6 +32,7 @@
 //   - ErrInvalidCount: count n < 1
 //   - ErrInvalidMode: CompositeMode 不是 ModeAND 或 ModeOR
 //   - ErrNilSampler: CompositeSampler 的子采样器为 nil
+//   - ErrNilOption: functional option 为 nil
 //
 // # 不可变性与状态
 //

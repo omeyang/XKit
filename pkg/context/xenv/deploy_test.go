@@ -339,6 +339,69 @@ func TestInitAlreadyInitialized(t *testing.T) {
 	})
 }
 
+// TestInitAlreadyInitialized_ErrorPriority 验证错误优先级：
+// 已初始化 + 非法/缺失输入 → 始终返回 ErrAlreadyInitialized（而非输入校验错误）。
+func TestInitAlreadyInitialized_ErrorPriority(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(t *testing.T) // 初始化后的环境设置
+		initFn  func() error       // 第二次初始化调用
+	}{
+		{
+			name: "Init_已初始化+环境缺失",
+			setupFn: func(t *testing.T) {
+				t.Helper()
+				unsetEnv(t)
+			},
+			initFn: xenv.Init,
+		},
+		{
+			name: "Init_已初始化+环境为空",
+			setupFn: func(t *testing.T) {
+				t.Helper()
+				setEnv(t, "")
+			},
+			initFn: xenv.Init,
+		},
+		{
+			name: "Init_已初始化+环境非法",
+			setupFn: func(t *testing.T) {
+				t.Helper()
+				setEnv(t, "INVALID")
+			},
+			initFn: xenv.Init,
+		},
+		{
+			name:    "InitWith_已初始化+参数非法",
+			setupFn: func(_ *testing.T) {},
+			initFn: func() error {
+				return xenv.InitWith(xenv.DeploymentType("INVALID"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			xenv.Reset()
+			t.Cleanup(xenv.Reset)
+
+			// 先完成首次初始化
+			if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+				t.Fatalf("first InitWith() error = %v", err)
+			}
+
+			// 修改环境使第二次调用的输入校验会失败
+			tt.setupFn(t)
+
+			// 验证：无论输入是否合法，已初始化后始终返回 ErrAlreadyInitialized
+			err := tt.initFn()
+			if !errors.Is(err, xenv.ErrAlreadyInitialized) {
+				t.Errorf("error = %v, want %v (ErrAlreadyInitialized should take priority over input validation errors)", err, xenv.ErrAlreadyInitialized)
+			}
+		})
+	}
+}
+
 func TestConcurrentInit(t *testing.T) {
 	xenv.Reset()
 	t.Cleanup(xenv.Reset)
@@ -562,6 +625,37 @@ func TestConstants(t *testing.T) {
 	if string(xenv.DeploymentSaaS) != "SAAS" {
 		t.Errorf("DeploymentSaaS = %q, want %q", xenv.DeploymentSaaS, "SAAS")
 	}
+}
+
+// =============================================================================
+// Fuzz 测试
+// =============================================================================
+
+// FuzzParse 模糊测试验证 Parse 对任意输入不 panic、错误语义一致。
+//
+// 与 xctx.FuzzParseDeploymentType 互补：xctx 测试 deploy.Parse 本身，
+// 本测试验证 xenv.Parse 的错误包装逻辑（ErrInvalidDeploymentType 哨兵）。
+func FuzzParse(f *testing.F) {
+	f.Add("LOCAL")
+	f.Add("SAAS")
+	f.Add("local")
+	f.Add("saas")
+	f.Add("")
+	f.Add("   ")
+	f.Add("invalid")
+
+	f.Fuzz(func(t *testing.T, input string) {
+		dt, err := xenv.Parse(input)
+		if err != nil {
+			if !errors.Is(err, xenv.ErrInvalidDeploymentType) {
+				t.Errorf("Parse(%q) error = %v, want ErrInvalidDeploymentType", input, err)
+			}
+			return
+		}
+		if !dt.IsValid() {
+			t.Errorf("Parse(%q) returned invalid type %q without error", input, dt)
+		}
+	})
 }
 
 // 设计决策: 示例测试集中在 example_test.go 中维护，避免分散在多个文件中

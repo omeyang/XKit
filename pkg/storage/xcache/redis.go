@@ -29,7 +29,8 @@ type Redis interface {
 	Client() redis.UniversalClient
 
 	// Close 关闭缓存连接。
-	Close() error
+	// 设计决策: ctx 参数当前未使用，保留以保证接口统一性和未来扩展性（D-02）。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================
@@ -71,7 +72,10 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 }
 
 // WithLockRetry 设置锁重试策略。
-// 非正值的 interval 或 count 将被忽略（保持当前值不变）。
+//
+// 注意：非正值的 interval 或 count 将被静默忽略（保持当前值不变）。
+// 例如 WithLockRetry(0, 5) 不会启用重试，因为 interval <= 0 被忽略。
+// 需要同时传入正值的 interval 和 count 才能启用重试。
 //
 // 重试行为说明：
 //   - Lock() 首先会立即尝试获取锁（无等待）

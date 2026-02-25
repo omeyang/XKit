@@ -71,6 +71,7 @@ func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, erro
 	var err error
 
 	defer func() {
+		duration := time.Since(start)
 		result := xmetrics.Result{Err: err}
 		if lastResult != nil {
 			result.Attrs = []xmetrics.Attr{
@@ -78,28 +79,25 @@ func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, erro
 				xmetrics.String("rule", lastResult.Rule),
 				xmetrics.Int("remaining", lastResult.Remaining),
 			}
-			// 记录指标
-			c.opts.metrics.RecordAllow(ctx, limiterType, lastResult.Rule, lastResult.Allowed, time.Since(start))
+			c.opts.metrics.RecordAllow(ctx, limiterType, lastResult.Rule, lastResult.Allowed, duration)
+		} else if err != nil {
+			// 设计决策: 错误路径也记录检查时延，确保监控面板能完整观测限流器内部错误率。
+			// 使用 rule="error" 标签区分正常路径和错误路径。
+			c.opts.metrics.RecordAllow(ctx, limiterType, "error", false, duration)
 		}
 		span.End(result)
 	}()
 
-	// 遍历所有规则
-	for _, ruleName := range c.matcher.getAllRules() {
-		rule, found := c.matcher.findRule(ruleName)
-		if !found {
-			continue
-		}
-
-		lastResult, err = c.checkRule(ctx, key, rule, n)
-		if err != nil {
-			return nil, err
-		}
-
-		if !lastResult.Allowed {
-			c.callOnDeny(ctx, key, lastResult)
-			return lastResult, nil
-		}
+	// 设计决策: 遍历所有规则，跟踪 Remaining 最小的结果（mostRestrictive）返回给调用方。
+	// 与 Query 方法返回"最受限规则"的语义保持一致，确保 HTTP 头 X-RateLimit-Remaining
+	// 反映真实的最小剩余配额，避免误导客户端。
+	lastResult, err = c.evaluateRules(ctx, key, n)
+	if err != nil {
+		return nil, err
+	}
+	if lastResult != nil && !lastResult.Allowed {
+		c.callOnDeny(ctx, key, lastResult)
+		return lastResult, nil
 	}
 
 	// 设计决策: 无匹配规则时默认放行（fail-open）。
@@ -113,13 +111,47 @@ func (c *limiterCore) AllowN(ctx context.Context, key Key, n int) (*Result, erro
 	return lastResult, nil
 }
 
-// checkRule 检查单个规则
-func (c *limiterCore) checkRule(ctx context.Context, key Key, rule Rule, n int) (*Result, error) {
-	limit, window := c.matcher.getEffectiveLimit(rule, key)
-	burst := c.matcher.getEffectiveBurst(rule, key)
-	renderedKey := c.matcher.renderKey(rule, key, c.opts.config.KeyPrefix)
+// evaluateRules 遍历所有规则并返回最受限的允许结果。
+// 若某条规则拒绝请求，立即返回该拒绝结果；
+// 若所有规则通过，返回 Remaining 最小的结果；
+// 若无匹配规则，返回 (nil, nil)。
+func (c *limiterCore) evaluateRules(ctx context.Context, key Key, n int) (*Result, error) {
+	var mostRestrictive *Result
 
-	res, err := c.backend.CheckRule(ctx, renderedKey, limit, burst, window, n)
+	for _, ruleName := range c.matcher.getAllRules() {
+		rule, found := c.matcher.findRule(ruleName)
+		if !found {
+			continue
+		}
+
+		result, err := c.checkRule(ctx, key, rule, n)
+		if err != nil {
+			return nil, err
+		}
+
+		if !result.Allowed {
+			return result, nil
+		}
+
+		if mostRestrictive == nil || result.Remaining < mostRestrictive.Remaining {
+			mostRestrictive = result
+		}
+	}
+
+	return mostRestrictive, nil
+}
+
+// checkRule 检查单个规则
+//
+// 设计决策: 在入口处调用一次 key.Render，将结果传递给 getEffectiveLimit、
+// getEffectiveBurst 和 renderKey，避免热路径上 3 次重复的模板解析和字符串分配。
+func (c *limiterCore) checkRule(ctx context.Context, key Key, rule Rule, n int) (*Result, error) {
+	rendered := key.Render(rule.KeyTemplate)
+	limit, window := c.matcher.getEffectiveLimit(rule, rendered)
+	burst := c.matcher.getEffectiveBurst(rule, rendered)
+	fullKey := c.matcher.renderKey(rendered, c.opts.config.KeyPrefix)
+
+	res, err := c.backend.CheckRule(ctx, fullKey, limit, burst, window, n)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +163,7 @@ func (c *limiterCore) checkRule(ctx context.Context, key Key, rule Rule, n int) 
 		ResetAt:    res.ResetAt,
 		RetryAfter: res.RetryAfter,
 		Rule:       rule.Name,
-		Key:        key.Render(rule.KeyTemplate),
+		Key:        rendered,
 	}, nil
 }
 
@@ -147,8 +179,9 @@ func (c *limiterCore) Reset(ctx context.Context, key Key) error {
 			continue
 		}
 
-		renderedKey := c.matcher.renderKey(rule, key, c.opts.config.KeyPrefix)
-		if err := c.backend.Reset(ctx, renderedKey); err != nil {
+		rendered := key.Render(rule.KeyTemplate)
+		fullKey := c.matcher.renderKey(rendered, c.opts.config.KeyPrefix)
+		if err := c.backend.Reset(ctx, fullKey); err != nil {
 			return err
 		}
 	}
@@ -173,11 +206,12 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 			continue
 		}
 
-		limit, window := c.matcher.getEffectiveLimit(rule, key)
-		burst := c.matcher.getEffectiveBurst(rule, key)
-		renderedKey := c.matcher.renderKey(rule, key, c.opts.config.KeyPrefix)
+		rendered := key.Render(rule.KeyTemplate)
+		limit, window := c.matcher.getEffectiveLimit(rule, rendered)
+		burst := c.matcher.getEffectiveBurst(rule, rendered)
+		fullKey := c.matcher.renderKey(rendered, c.opts.config.KeyPrefix)
 
-		effectiveLimit, remaining, resetAt, err := c.backend.Query(ctx, renderedKey, limit, burst, window)
+		effectiveLimit, remaining, resetAt, err := c.backend.Query(ctx, fullKey, limit, burst, window)
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +221,7 @@ func (c *limiterCore) Query(ctx context.Context, key Key) (*QuotaInfo, error) {
 			Remaining: remaining,
 			ResetAt:   resetAt,
 			Rule:      rule.Name,
-			Key:       key.Render(rule.KeyTemplate),
+			Key:       rendered,
 		}
 
 		if mostRestrictive == nil || remaining < mostRestrictive.Remaining {

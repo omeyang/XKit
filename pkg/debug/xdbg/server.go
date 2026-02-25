@@ -78,6 +78,11 @@ func New(opts ...Option) (*Server, error) {
 
 // Start 启动服务器。
 // 服务器会在后台等待触发事件，收到触发后开始监听连接。
+//
+// 设计决策: ctx 取消时，服务器的所有后台 goroutine（watchTrigger、acceptLoop、
+// session 等）会通过 context.WithCancel 派生的子上下文收到通知并退出。
+// 调用者仍应显式调用 Stop() 完成资源清理（关闭 transport、删除 profile 文件等），
+// ctx 取消仅作为信号传播机制，不替代 Stop() 的清理职责。
 func (s *Server) Start(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilContext

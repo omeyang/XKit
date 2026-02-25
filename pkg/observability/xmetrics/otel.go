@@ -30,8 +30,12 @@ const (
 	traceFlagsSampled = 0x01
 
 	// AttrKeyComponent 是 metrics/trace 中组件名称的属性键。
+	// 设计决策: 与 xlog.KeyComponent 值相同（"component"），但不共享常量引用。
+	// 两个包各自定义是为了避免 xmetrics ↔ xlog 包间循环依赖，
+	// 且这些值遵循 OTel 语义约定，实际漂移风险极低。
 	AttrKeyComponent = "component"
 	// AttrKeyOperation 是 metrics/trace 中操作名称的属性键。
+	// 设计决策: 与 xlog.KeyOperation 值相同（"operation"），理由同 AttrKeyComponent。
 	AttrKeyOperation = "operation"
 	// AttrKeyStatus 是 metrics 中操作状态的属性键。
 	AttrKeyStatus = "status"
@@ -100,6 +104,9 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 		histogramBuckets:    defaultDurationBuckets,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(cfg)
 	}
 

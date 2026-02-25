@@ -109,7 +109,8 @@ func TestConfig_Validate_EndpointFormats(t *testing.T) {
 	}
 }
 
-// TestConfig_Validate_TrimSpaceEndpoints 测试 Validate 对 endpoint 进行 TrimSpace 归一化。
+// TestConfig_Validate_TrimSpaceEndpoints 测试 Validate 接受带空白的 endpoint（内部 TrimSpace 后校验），
+// 但不修改原始 Config（TrimSpace 归一化在 applyDefaults 中执行）。
 func TestConfig_Validate_TrimSpaceEndpoints(t *testing.T) {
 	cfg := &Config{
 		Endpoints: []string{"  localhost:2379  ", "\tetcd.example.com:2379\n"},
@@ -118,12 +119,22 @@ func TestConfig_Validate_TrimSpaceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate() error = %v, want nil", err)
 	}
-	// 验证 TrimSpace 后的值
-	if cfg.Endpoints[0] != "localhost:2379" {
-		t.Errorf("Endpoints[0] = %q, want %q", cfg.Endpoints[0], "localhost:2379")
+	// Validate 不应修改原始 Config
+	if cfg.Endpoints[0] != "  localhost:2379  " {
+		t.Errorf("Validate() should not modify original: Endpoints[0] = %q", cfg.Endpoints[0])
 	}
-	if cfg.Endpoints[1] != "etcd.example.com:2379" {
-		t.Errorf("Endpoints[1] = %q, want %q", cfg.Endpoints[1], "etcd.example.com:2379")
+
+	// TrimSpace 归一化在 applyDefaults 中执行
+	applied := cfg.applyDefaults()
+	if applied.Endpoints[0] != "localhost:2379" {
+		t.Errorf("applyDefaults() Endpoints[0] = %q, want %q", applied.Endpoints[0], "localhost:2379")
+	}
+	if applied.Endpoints[1] != "etcd.example.com:2379" {
+		t.Errorf("applyDefaults() Endpoints[1] = %q, want %q", applied.Endpoints[1], "etcd.example.com:2379")
+	}
+	// 确认 applyDefaults 不修改原始 Config
+	if cfg.Endpoints[0] != "  localhost:2379  " {
+		t.Errorf("applyDefaults() should not modify original: Endpoints[0] = %q", cfg.Endpoints[0])
 	}
 }
 

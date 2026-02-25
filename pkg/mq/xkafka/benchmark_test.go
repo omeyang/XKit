@@ -282,7 +282,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err, 3)
+			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 3)
 		}
 	})
 
@@ -308,7 +308,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err, 3)
+			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 3)
 		}
 	})
 
@@ -334,7 +334,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err, 5)
+			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 5)
 		}
 	})
 
@@ -351,7 +351,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", nil, 0)
+			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", "", 0)
 		}
 	})
 }
@@ -375,7 +375,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMetadataFromMessage(msg, err, 3)
+			_ = buildDLQMetadataFromMessage(msg, err.Error(), 3)
 		}
 	})
 
@@ -397,7 +397,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMetadataFromMessage(msg, err, 2)
+			_ = buildDLQMetadataFromMessage(msg, err.Error(), 2)
 		}
 	})
 
@@ -412,7 +412,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			_ = buildDLQMetadataFromMessage(msg, nil, 0)
+			_ = buildDLQMetadataFromMessage(msg, "", 0)
 		}
 	})
 }
@@ -434,7 +434,7 @@ func BenchmarkUpdateRetryHeaders(b *testing.B) {
 					Offset:    100,
 				},
 			}
-			updateRetryHeaders(msg, err)
+			updateRetryHeaders(msg, err.Error())
 		}
 	})
 
@@ -458,7 +458,7 @@ func BenchmarkUpdateRetryHeaders(b *testing.B) {
 					{Key: HeaderFirstFailTime, Value: []byte("2024-01-01T00:00:00Z")},
 				},
 			}
-			updateRetryHeaders(msg, err)
+			updateRetryHeaders(msg, err.Error())
 		}
 	})
 }

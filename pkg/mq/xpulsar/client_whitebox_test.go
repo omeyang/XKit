@@ -10,6 +10,7 @@ import (
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // =============================================================================
@@ -577,4 +578,33 @@ func TestConsumeLoopWithPolicy_WithBackoff(t *testing.T) {
 	}, backoff)
 
 	assert.ErrorIs(t, loopErr, context.Canceled)
+}
+
+// =============================================================================
+// Health 超时 → Close 不泄漏 goroutine（goleak 验证）
+// =============================================================================
+
+func TestClientWrapper_Health_Timeout_Close_NoLeak(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	mc := &mockPulsarClient{
+		createReaderFn: func(pulsar.ReaderOptions) (pulsar.Reader, error) {
+			// 模拟 broker 慢响应
+			time.Sleep(300 * time.Millisecond)
+			return &mockReader{}, nil
+		},
+	}
+	opts := defaultOptions()
+	opts.HealthTimeout = 50 * time.Millisecond
+	w := &clientWrapper{
+		client:  mc,
+		options: opts,
+	}
+
+	// Health 超时
+	err := w.Health(context.Background())
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+	// Close 应等待后台清理 goroutine 完成
+	require.NoError(t, w.Close())
 }

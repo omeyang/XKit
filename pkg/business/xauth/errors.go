@@ -33,6 +33,12 @@ var (
 
 	// ErrNilRedisClient 表示 Redis 客户端为 nil。
 	ErrNilRedisClient = errors.New("xauth: nil redis client")
+
+	// ErrNilHTTPClient 表示 HTTP 客户端为 nil。
+	ErrNilHTTPClient = errors.New("xauth: nil http client")
+
+	// ErrNilCache 表示缓存为 nil。
+	ErrNilCache = errors.New("xauth: nil cache")
 )
 
 // =============================================================================

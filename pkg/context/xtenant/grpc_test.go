@@ -86,6 +86,25 @@ func TestExtractFromMetadata(t *testing.T) {
 	}
 }
 
+// TestExtractFromMetadata_MultiValue 验证多值 Metadata 取首值的契约（FG-L1 回归测试）。
+//
+// doc.go:31 和 grpc.go:396-397 定义了"单值语义，多值取第一个"的行为。
+func TestExtractFromMetadata_MultiValue(t *testing.T) {
+	// metadata.Pairs 中同一 key 出现多次即构成多值
+	md := metadata.Join(
+		metadata.Pairs(xtenant.MetaTenantID, "first-tenant"),
+		metadata.Pairs(xtenant.MetaTenantID, "second-tenant"),
+		metadata.Pairs(xtenant.MetaTenantName, "first-name"),
+		metadata.Pairs(xtenant.MetaTenantName, "second-name"),
+	)
+
+	info := xtenant.ExtractFromMetadata(md)
+
+	// 应取第一个值
+	assert.Equal(t, "first-tenant", info.TenantID, "should take first value for TenantID")
+	assert.Equal(t, "first-name", info.TenantName, "should take first value for TenantName")
+}
+
 func TestExtractFromIncomingContext(t *testing.T) {
 	t.Run("无 Metadata", func(t *testing.T) {
 		ctx := context.Background()

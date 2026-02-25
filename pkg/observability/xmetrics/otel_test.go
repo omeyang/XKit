@@ -1103,6 +1103,26 @@ func (failingHistogramMeterProvider) Meter(string, ...metric.MeterOption) metric
 	return &failingHistogramMeter{}
 }
 
+func TestNewOTelObserver_NilOption(t *testing.T) {
+	t.Parallel()
+
+	obs, err := NewOTelObserver(nil)
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewOTelObserver_NilOptionAmongValid(t *testing.T) {
+	t.Parallel()
+
+	obs, err := NewOTelObserver(
+		WithInstrumentationName("test"),
+		nil,
+		WithHistogramBuckets([]float64{0.1, 1, 10}),
+	)
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
 func TestNewOTelObserver_CounterCreationFails(t *testing.T) {
 	obs, err := NewOTelObserver(WithMeterProvider(failingMeterProvider{}))
 	assert.Nil(t, obs)

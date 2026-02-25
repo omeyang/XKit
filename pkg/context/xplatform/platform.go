@@ -237,6 +237,7 @@ func IsInitialized() bool {
 
 // RequirePlatformID 返回平台 ID，未初始化时返回错误
 //
+// 与 PlatformID() 的区别在于未初始化时返回 ErrNotInitialized 而非空字符串。
 // 适用于必须明确知道平台 ID 的业务场景。
 func RequirePlatformID() (string, error) {
 	cfg := globalConfig.Load()

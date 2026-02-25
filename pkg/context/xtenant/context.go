@@ -94,6 +94,11 @@ func RequireTenantName(ctx context.Context) (string, error) {
 // 设计决策: 对 tenantID 做 TrimSpace 后再注入，与 WithTenantInfo 和
 // Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
 // 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantID。
+//
+// 注意与 WithTenantInfo 的差异: WithTenantID 始终写入 context（包括空字符串），
+// 而 WithTenantInfo 只写入 TrimSpace 后非空的字段。例如传入纯空白值时，
+// WithTenantID 会存储空字符串，WithTenantInfo 则保留 context 中的原有值。
+// 这是因为 WithTenantID 是直接赋值语义，WithTenantInfo 是选择性批量注入语义。
 func WithTenantID(ctx context.Context, tenantID string) (context.Context, error) {
 	return xctx.WithTenantID(ctx, strings.TrimSpace(tenantID))
 }
@@ -106,6 +111,7 @@ func WithTenantID(ctx context.Context, tenantID string) (context.Context, error)
 // 设计决策: 对 tenantName 做 TrimSpace 后再注入，与 WithTenantInfo 和
 // Extract 函数的空白处理语义保持一致。纯空白值等价于空字符串（仍会被注入，
 // 但存储空字符串）。若需要保留原始空白，请直接使用 xctx.WithTenantName。
+// 参见 WithTenantID 注释了解与 WithTenantInfo 的差异。
 func WithTenantName(ctx context.Context, tenantName string) (context.Context, error) {
 	return xctx.WithTenantName(ctx, strings.TrimSpace(tenantName))
 }

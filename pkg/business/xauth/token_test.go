@@ -12,12 +12,42 @@ import (
 )
 
 func TestNewTokenManager(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		_, err := NewTokenManager(TokenManagerConfig{
+			HTTP:  NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"}),
+			Cache: NewTokenCache(TokenCacheConfig{}),
+		})
+		if err != ErrNilConfig {
+			t.Errorf("expected ErrNilConfig, got %v", err)
+		}
+	})
+
+	t.Run("nil http", func(t *testing.T) {
+		_, err := NewTokenManager(TokenManagerConfig{
+			Config: testConfig(),
+			Cache:  NewTokenCache(TokenCacheConfig{}),
+		})
+		if err != ErrNilHTTPClient {
+			t.Errorf("expected ErrNilHTTPClient, got %v", err)
+		}
+	})
+
+	t.Run("nil cache", func(t *testing.T) {
+		_, err := NewTokenManager(TokenManagerConfig{
+			Config: testConfig(),
+			HTTP:   NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"}),
+		})
+		if err != ErrNilCache {
+			t.Errorf("expected ErrNilCache, got %v", err)
+		}
+	})
+
 	t.Run("default values", func(t *testing.T) {
 		cfg := testConfig()
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -41,7 +71,7 @@ func TestNewTokenManager(t *testing.T) {
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
 		customThreshold := 10 * time.Minute
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config:           cfg,
 			HTTP:             httpClient,
 			Cache:            cache,
@@ -59,7 +89,7 @@ func TestNewTokenManager(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config:           cfg,
 			HTTP:             httpClient,
 			Cache:            cache,
@@ -84,7 +114,7 @@ func TestTokenManager_GetToken(t *testing.T) {
 		expectedToken := testToken("cached-token", 3600)
 		_ = cache.Set(ctx, "tenant-1", expectedToken, time.Hour)
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -117,7 +147,7 @@ func TestTokenManager_GetToken(t *testing.T) {
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true, EnableSingleflight: true})
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -161,7 +191,7 @@ func TestTokenManager_ObtainClientToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -197,7 +227,7 @@ func TestTokenManager_ObtainClientToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -219,7 +249,7 @@ func TestTokenManager_ObtainAPIKeyToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -251,7 +281,7 @@ func TestTokenManager_ObtainAPIKeyToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -275,7 +305,7 @@ func TestTokenManager_VerifyToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -292,8 +322,13 @@ func TestTokenManager_VerifyToken(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			resp := VerifyResponse{
 				Data: VerifyData{
-					Active: true,
-					Exp:    expTime,
+					Active:       true,
+					Exp:          expTime,
+					TenantID:     "tenant-abc",
+					UserID:       "user-123",
+					Authorities:  []string{"ROLE_ADMIN"},
+					Scope:        []string{"read", "write"},
+					IdentityType: "user",
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -306,7 +341,7 @@ func TestTokenManager_VerifyToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -318,6 +353,19 @@ func TestTokenManager_VerifyToken(t *testing.T) {
 		}
 		if token.AccessToken != "test-token" {
 			t.Errorf("AccessToken = %q, expected 'test-token'", token.AccessToken)
+		}
+		// 验证 Claims 已填充
+		if token.Claims == nil {
+			t.Fatal("Claims should not be nil after VerifyToken")
+		}
+		if token.Claims.TenantID != "tenant-abc" {
+			t.Errorf("Claims.TenantID = %q, expected 'tenant-abc'", token.Claims.TenantID)
+		}
+		if token.Claims.UserID != "user-123" {
+			t.Errorf("Claims.UserID = %q, expected 'user-123'", token.Claims.UserID)
+		}
+		if len(token.Claims.Authorities) != 1 || token.Claims.Authorities[0] != "ROLE_ADMIN" {
+			t.Errorf("Claims.Authorities = %v, expected [ROLE_ADMIN]", token.Claims.Authorities)
 		}
 	})
 
@@ -338,7 +386,7 @@ func TestTokenManager_VerifyToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -364,7 +412,7 @@ func TestTokenManager_VerifyToken_HTTPError(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -400,7 +448,7 @@ func TestTokenManager_RefreshToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -432,7 +480,7 @@ func TestTokenManager_RefreshToken(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-		mgr := NewTokenManager(TokenManagerConfig{
+		mgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  cache,
@@ -462,7 +510,7 @@ func TestTokenManager_InvalidateToken(t *testing.T) {
 	// Pre-populate cache
 	_ = cache.Set(ctx, "tenant-1", testToken("test-token", 3600), time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -485,7 +533,7 @@ func TestTokenManager_CalculateTokenTTL(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:           cfg,
 		HTTP:             httpClient,
 		Cache:            cache,
@@ -554,7 +602,7 @@ func TestTokenManager_ObtainToken_APIKeyFallback(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -576,7 +624,7 @@ func TestTokenManager_RefreshWithRefreshToken_NilToken(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -595,7 +643,7 @@ func TestTokenManager_RefreshWithRefreshToken_EmptyRefreshToken(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -624,7 +672,7 @@ func TestTokenManager_RefreshWithRefreshToken_HTTPError(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -657,7 +705,7 @@ func TestTokenManager_RefreshWithRefreshToken_EmptyTokenResponse(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -699,7 +747,7 @@ func TestTokenManager_RefreshToken_RefreshFails_FallsBackToObtain(t *testing.T) 
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  cache,
@@ -747,7 +795,7 @@ func TestTokenManager_GetToken_WithBackgroundRefresh(t *testing.T) {
 	}
 	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -799,7 +847,7 @@ func TestTokenManager_BackgroundRefresh_Canceled(t *testing.T) {
 	}
 	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -853,7 +901,7 @@ func TestTokenManager_BackgroundRefresh_CacheGetFails(t *testing.T) {
 	}
 	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -883,7 +931,7 @@ func TestTokenManager_BackgroundRefresh_CancelBeforeStart(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: cfg.Host})
 	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -925,7 +973,7 @@ func TestTokenManager_BackgroundRefresh_RefreshError(t *testing.T) {
 	}
 	_ = cache.Set(ctx, "tenant-err", expiringToken, time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -978,7 +1026,7 @@ func TestTokenManager_BackgroundRefresh_CacheSetError(t *testing.T) {
 	}
 	cache.setLocal("tenant-cache-err", expiringToken)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -1039,7 +1087,7 @@ func TestTokenManager_Stop_WaitsForGoroutines(t *testing.T) {
 	}
 	_ = cache.Set(ctx, "tenant-1", expiringToken, time.Hour)
 
-	mgr := NewTokenManager(TokenManagerConfig{
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   cache,
@@ -1057,4 +1105,95 @@ func TestTokenManager_Stop_WaitsForGoroutines(t *testing.T) {
 
 	// Stop 应等待后台 goroutine 完成而不 panic
 	mgr.Stop()
+}
+
+func TestVerifyTokenForTenant(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("matching tenant", func(t *testing.T) {
+		mc := newMockClient()
+		mc.verifyData["good-token"] = &TokenInfo{
+			AccessToken: "good-token",
+			ExpiresAt:   time.Now().Add(time.Hour),
+			Claims: &VerifyData{
+				Active:   true,
+				TenantID: "tenant-abc",
+			},
+		}
+
+		info, err := VerifyTokenForTenant(ctx, mc, "good-token", "tenant-abc")
+		if err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if info.AccessToken != "good-token" {
+			t.Errorf("AccessToken = %q, expected 'good-token'", info.AccessToken)
+		}
+	})
+
+	t.Run("mismatched tenant", func(t *testing.T) {
+		mc := newMockClient()
+		mc.verifyData["bad-token"] = &TokenInfo{
+			AccessToken: "bad-token",
+			ExpiresAt:   time.Now().Add(time.Hour),
+			Claims: &VerifyData{
+				Active:   true,
+				TenantID: "tenant-other",
+			},
+		}
+
+		_, err := VerifyTokenForTenant(ctx, mc, "bad-token", "tenant-abc")
+		if err == nil {
+			t.Fatal("expected error for mismatched tenant")
+		}
+		if !errors.Is(err, ErrTokenInvalid) {
+			t.Errorf("expected ErrTokenInvalid, got %v", err)
+		}
+	})
+
+	t.Run("empty claims tenant allows any", func(t *testing.T) {
+		mc := newMockClient()
+		mc.verifyData["no-tenant-token"] = &TokenInfo{
+			AccessToken: "no-tenant-token",
+			ExpiresAt:   time.Now().Add(time.Hour),
+			Claims: &VerifyData{
+				Active:   true,
+				TenantID: "", // 服务端未返回 tenant_id
+			},
+		}
+
+		info, err := VerifyTokenForTenant(ctx, mc, "no-tenant-token", "tenant-abc")
+		if err != nil {
+			t.Fatalf("expected nil error for empty claims tenant, got %v", err)
+		}
+		if info.AccessToken != "no-tenant-token" {
+			t.Errorf("AccessToken = %q", info.AccessToken)
+		}
+	})
+
+	t.Run("nil claims allows any", func(t *testing.T) {
+		mc := newMockClient()
+		mc.verifyData["nil-claims-token"] = &TokenInfo{
+			AccessToken: "nil-claims-token",
+			ExpiresAt:   time.Now().Add(time.Hour),
+			// Claims is nil
+		}
+
+		info, err := VerifyTokenForTenant(ctx, mc, "nil-claims-token", "tenant-abc")
+		if err != nil {
+			t.Fatalf("expected nil error for nil claims, got %v", err)
+		}
+		if info.AccessToken != "nil-claims-token" {
+			t.Errorf("AccessToken = %q", info.AccessToken)
+		}
+	})
+
+	t.Run("verify error propagated", func(t *testing.T) {
+		mc := newMockClient()
+		mc.verifyTokenErr = ErrTokenInvalid
+
+		_, err := VerifyTokenForTenant(ctx, mc, "any-token", "tenant-abc")
+		if !errors.Is(err, ErrTokenInvalid) {
+			t.Errorf("expected ErrTokenInvalid, got %v", err)
+		}
+	})
 }

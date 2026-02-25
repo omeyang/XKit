@@ -43,5 +43,10 @@
 // 回调中的 panic 会被自动捕获并通过 slog.Error 记录，不会导致进程崩溃。
 // 注意回调执行顺序不保证，且获取的状态可能已是更新后的值。
 //
+// 设计决策: 回调必须为轻量级操作（建议 <1ms），不应在回调中执行 I/O 操作
+// （如数据库写入、HTTP 请求）。每次状态变化会启动一个新 goroutine 执行回调，
+// 不设背压机制。若回调执行缓慢且状态快速振荡，goroutine 可能累积。
+// 需要在回调中执行 I/O 的场景，请自行实现有界队列+消费者模式。
+//
 // [sony/gobreaker/v2]: https://github.com/sony/gobreaker
 package xbreaker

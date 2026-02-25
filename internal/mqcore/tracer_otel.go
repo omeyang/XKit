@@ -2,6 +2,7 @@ package mqcore
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 
@@ -86,11 +87,14 @@ func ensureSpanContext(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	// 设计决策: 优先读取 xctx.TraceFlags 映射上游采样决策；
-	// 仅在缺失/非法时默认 FlagsSampled（显式注入意味着调用方期望链路被采样）。
+	// 设计决策: 按 W3C Trace Context 规范，trace-flags 是 1 字节位域（bit 0 = sampled）。
+	// 使用 ParseUint + 类型转换保留完整位域语义，兼容未来扩展的高位标志。
+	// 缺失或非法值时默认 FlagsSampled（显式注入意味着调用方期望链路被采样）。
 	flags := trace.FlagsSampled
-	if tf := xctx.TraceFlags(ctx); tf == "00" {
-		flags = 0
+	if tf := xctx.TraceFlags(ctx); tf != "" {
+		if b, err := strconv.ParseUint(tf, 16, 8); err == nil {
+			flags = trace.TraceFlags(b)
+		}
 	}
 
 	parent := trace.NewSpanContext(trace.SpanContextConfig{

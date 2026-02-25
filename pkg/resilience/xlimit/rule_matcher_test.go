@@ -75,7 +75,8 @@ func TestRuleMatcher_GetLimit(t *testing.T) {
 			if !found {
 				t.Fatal("rule not found")
 			}
-			limit, _ := matcher.getEffectiveLimit(rule, tt.key)
+			rendered := tt.key.Render(rule.KeyTemplate)
+			limit, _ := matcher.getEffectiveLimit(rule, rendered)
 			if limit != tt.wantLimit {
 				t.Errorf("GetLimit() = %d, want %d", limit, tt.wantLimit)
 			}
@@ -159,7 +160,8 @@ func TestRuleMatcher_OverridePriority(t *testing.T) {
 			if !found {
 				t.Fatal("rule not found")
 			}
-			limit, _ := matcher.getEffectiveLimit(rule, tt.key)
+			rendered := tt.key.Render(rule.KeyTemplate)
+			limit, _ := matcher.getEffectiveLimit(rule, rendered)
 			if limit != tt.wantLimit {
 				t.Errorf("GetLimit() = %d, want %d", limit, tt.wantLimit)
 			}
@@ -210,10 +212,11 @@ func TestRuleMatcher_RenderKey(t *testing.T) {
 		t.Fatal("rule not found")
 	}
 
-	renderedKey := matcher.renderKey(rule, key, "ratelimit:")
+	rendered := key.Render(rule.KeyTemplate)
+	fullKey := matcher.renderKey(rendered, "ratelimit:")
 	expected := "ratelimit:tenant:abc123"
-	if renderedKey != expected {
-		t.Errorf("RenderKey() = %q, want %q", renderedKey, expected)
+	if fullKey != expected {
+		t.Errorf("RenderKey() = %q, want %q", fullKey, expected)
 	}
 }
 
@@ -334,7 +337,8 @@ func TestRuleMatcher_GetEffectiveBurst(t *testing.T) {
 			if !found {
 				t.Fatal("rule not found")
 			}
-			burst := matcher.getEffectiveBurst(rule, tt.key)
+			rendered := tt.key.Render(rule.KeyTemplate)
+			burst := matcher.getEffectiveBurst(rule, rendered)
 			if burst != tt.wantBurst {
 				t.Errorf("GetEffectiveBurst() = %d, want %d", burst, tt.wantBurst)
 			}
@@ -364,7 +368,8 @@ func TestRuleMatcher_GetEffectiveLimit_WithOverrideWindow(t *testing.T) {
 		if !found {
 			t.Fatal("rule not found")
 		}
-		_, window := matcher.getEffectiveLimit(rule, key)
+		rendered := key.Render(rule.KeyTemplate)
+		_, window := matcher.getEffectiveLimit(rule, rendered)
 		if window != 30*time.Second {
 			t.Errorf("GetEffectiveLimit() window = %v, want %v", window, 30*time.Second)
 		}
@@ -376,7 +381,8 @@ func TestRuleMatcher_GetEffectiveLimit_WithOverrideWindow(t *testing.T) {
 		if !found {
 			t.Fatal("rule not found")
 		}
-		_, window := matcher.getEffectiveLimit(rule, key)
+		rendered := key.Render(rule.KeyTemplate)
+		_, window := matcher.getEffectiveLimit(rule, rendered)
 		if window != time.Minute {
 			t.Errorf("GetEffectiveLimit() window = %v, want %v", window, time.Minute)
 		}
@@ -419,11 +425,12 @@ func BenchmarkRuleMatcher_GetEffectiveLimit(b *testing.B) {
 	matcher := newRuleMatcher(rules)
 	key := Key{Tenant: "vip-enterprise"}
 	rule, _ := matcher.findRule("tenant-limit")
+	rendered := key.Render(rule.KeyTemplate)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = matcher.getEffectiveLimit(rule, key)
+		_, _ = matcher.getEffectiveLimit(rule, rendered)
 	}
 }

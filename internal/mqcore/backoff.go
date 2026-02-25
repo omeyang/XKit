@@ -2,6 +2,7 @@ package mqcore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
@@ -95,6 +96,12 @@ func RunConsumeLoop(ctx context.Context, consume ConsumeFunc, opts ...ConsumeLoo
 			return ctx.Err()
 		default:
 			if err := consume(ctx); err != nil {
+				// ErrClosed 是终态错误，客户端已关闭，无需退避重试。
+				// 如果不检查此错误，Close() 后 ConsumeLoop 会持续退避重试 ErrClosed，
+				// 直到外部 ctx 被取消，导致关闭流程不完整。
+				if errors.Is(err, ErrClosed) {
+					return err
+				}
 				attempt++
 				if err := waitBackoff(ctx, options, attempt, err); err != nil {
 					return err

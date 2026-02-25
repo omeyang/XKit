@@ -30,6 +30,7 @@ type cronScheduler struct {
 	logger Logger
 	stats  *Stats // 执行统计
 
+	mu       sync.Mutex       // 保护 jobNames 的并发读写
 	jobNames map[string]JobID // 已注册的任务名 → EntryID，用于唯一性校验和 Remove 时释放
 
 	immediateWg     sync.WaitGroup     // 追踪 WithImmediate 启动的立即执行任务
@@ -109,8 +110,13 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 		locker = s.locker
 	}
 
+	// 持有 mu 保护 validateJobName → cron.AddJob → jobNames 写入的完整序列，
+	// 防止并发 AddJob/Remove 导致 map 竞态（fatal: concurrent map writes）。
+	s.mu.Lock()
+
 	// 前置校验：任务名 + 唯一性
 	if err := s.validateJobName(jobOpts, locker); err != nil {
+		s.mu.Unlock()
 		return 0, err
 	}
 
@@ -120,6 +126,7 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	// 添加到底层 cron
 	id, err := s.cron.AddJob(spec, wrapper)
 	if err != nil {
+		s.mu.Unlock()
 		return 0, fmt.Errorf("xcron: failed to add job: %w", err)
 	}
 
@@ -127,6 +134,8 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	if jobOpts.name != "" {
 		s.jobNames[jobOpts.name] = id
 	}
+
+	s.mu.Unlock()
 
 	// 立即执行一次（如果配置了 WithImmediate）
 	// 使用 WaitGroup 追踪，确保 Stop() 时能等待完成
@@ -150,7 +159,7 @@ func (s *cronScheduler) validateJobName(jobOpts *jobOptions, locker Locker) erro
 	// 设计决策: 配置了分布式锁但未设置任务名时 fail-fast 返回错误，
 	// 而非静默降级跳过加锁。静默降级在多副本场景下会导致重复执行。
 	if jobOpts.name == "" {
-		if _, isNoop := locker.(*noopLocker); !isNoop {
+		if _, isNoop := locker.(noopIndicator); !isNoop {
 			return ErrMissingName
 		}
 		return nil
@@ -164,6 +173,7 @@ func (s *cronScheduler) validateJobName(jobOpts *jobOptions, locker Locker) erro
 
 // Remove 移除任务
 func (s *cronScheduler) Remove(id JobID) {
+	s.mu.Lock()
 	// 释放任务名注册，允许同名任务重新添加
 	for name, registeredID := range s.jobNames {
 		if registeredID == id {
@@ -171,6 +181,7 @@ func (s *cronScheduler) Remove(id JobID) {
 			break
 		}
 	}
+	s.mu.Unlock()
 	s.cron.Remove(id)
 }
 

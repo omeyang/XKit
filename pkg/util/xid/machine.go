@@ -9,6 +9,13 @@ import (
 	"strconv"
 )
 
+// 测试注入点：允许测试替换系统调用以覆盖所有错误分支。
+// 参照 xproc 包的 osExecutable 模式（FG-M2）。
+var (
+	osHostname        = os.Hostname        // machineIDFromOSHostname
+	netInterfaceAddrs = net.InterfaceAddrs // privateIPv4
+)
+
 // =============================================================================
 // 环境变量
 // =============================================================================
@@ -78,7 +85,11 @@ func DefaultMachineID() (uint16, error) {
 	// 设计决策: 策略 2-4 使用 (id, bool) 而非 (id, error)，
 	// 因为失败原因总是"环境变量未设置"或"主机名为空"，不需要聚合中间错误。
 	// 只有策略 5 可能产生有意义的系统级错误（如 net.InterfaceAddrs 失败）。
-	return machineIDFromPrivateIP()
+	id, err := machineIDFromPrivateIP()
+	if err != nil {
+		return 0, fmt.Errorf("xid: all machine ID strategies exhausted (env/pod/hostname/os-hostname all unavailable): %w", err)
+	}
+	return id, nil
 }
 
 // machineIDFromPodName 从 POD_NAME 环境变量的哈希值获取机器 ID
@@ -110,7 +121,7 @@ func machineIDFromHostnameEnv() (uint16, bool) {
 
 // machineIDFromOSHostname 从 os.Hostname() 的哈希值获取机器 ID
 func machineIDFromOSHostname() (uint16, bool) {
-	hostname, err := os.Hostname()
+	hostname, err := osHostname()
 	if err != nil || hostname == "" {
 		return 0, false
 	}
@@ -152,7 +163,7 @@ func hashToMachineID(s string) uint16 {
 
 // privateIPv4 获取私有 IPv4 地址。
 func privateIPv4() (netip.Addr, error) {
-	addrs, err := net.InterfaceAddrs()
+	addrs, err := netInterfaceAddrs()
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -182,6 +193,9 @@ func privateIPv4() (netip.Addr, error) {
 
 // isPrivateIPv4 判断是否为私有 IPv4 地址
 // 包括 RFC1918 私有地址和 RFC3927 链路本地地址
+//
+// 设计决策: Unmap() 是为独立调用场景的防御性处理——当调用方已调用过 Unmap
+// 时（如 privateIPv4），此处的 Unmap 是幂等无开销的冗余调用（FG-L1）。
 func isPrivateIPv4(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	if !ip.Is4() {

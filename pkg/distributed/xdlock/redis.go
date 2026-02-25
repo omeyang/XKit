@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/go-redsync/redsync/v4"
@@ -39,7 +38,7 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 
 	for i, client := range clients {
 		if client == nil {
-			return nil, errors.Join(ErrNilClient, errors.New("client at index "+strconv.Itoa(i)+" is nil"))
+			return nil, errors.Join(ErrNilClient, fmt.Errorf("client at index %d is nil", i))
 		}
 	}
 
@@ -60,6 +59,9 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 
 // TryLock 非阻塞式获取锁，返回 LockHandle。
 func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
 	}
@@ -86,6 +88,9 @@ func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOpt
 
 // Lock 阻塞式获取锁，返回 LockHandle。
 func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if f.closed.Load() {
 		return nil, ErrFactoryClosed
 	}
@@ -115,7 +120,9 @@ func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption
 func (f *redisFactory) createMutex(key string, opts ...MutexOption) (*redsync.Mutex, string) {
 	options := defaultMutexOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	fullKey := options.KeyPrefix + key
@@ -185,9 +192,10 @@ func (f *redisFactory) Redsync() Redsync {
 // redisLockHandle 实现 LockHandle 接口。
 // 每次成功获取锁时创建，封装了唯一的锁标识。
 type redisLockHandle struct {
-	factory *redisFactory
-	mutex   *redsync.Mutex
-	key     string
+	factory  *redisFactory
+	mutex    *redsync.Mutex
+	key      string
+	unlocked atomic.Bool // 标记锁是否已被显式释放，与 etcd 后端对称
 }
 
 // Unlock 释放锁。
@@ -200,6 +208,12 @@ type redisLockHandle struct {
 func (h *redisLockHandle) Unlock(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilContext
+	}
+
+	// 设计决策: 已解锁的 handle 直接返回 ErrNotLocked，避免向 Redis 发送无效请求。
+	// 与 etcd 后端和 Extend 的 unlocked 检查保持对称。
+	if h.unlocked.Load() {
+		return ErrNotLocked
 	}
 
 	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
@@ -223,6 +237,10 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 	if !ok {
 		return ErrNotLocked
 	}
+	// 设计决策: unlocked 标记放在成功解锁之后，与 etcd 后端保持一致。
+	// 网络抖动时 Unlock 可能失败但锁仍由 TTL 保护，
+	// 此时 Extend 应继续报告锁状态正常，而非错误返回 ErrNotLocked。
+	h.unlocked.Store(true)
 	return nil
 }
 
@@ -234,6 +252,13 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 // 设计决策: errLockExpired/ErrLockHeld 转为 ErrNotLocked（所有权已丢失），
 // ErrExtendFailed 保持原语义（续期操作失败，锁可能仍在），使调用方可区分两种情况。
 func (h *redisLockHandle) Extend(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	// 设计决策: 已解锁的 handle 直接返回 ErrNotLocked，与 etcd 后端对称。
+	if h.unlocked.Load() {
+		return ErrNotLocked
+	}
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)

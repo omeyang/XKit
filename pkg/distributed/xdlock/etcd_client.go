@@ -101,7 +101,9 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 
 	options := defaultEtcdClientOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	// 构建 xetcd 选项

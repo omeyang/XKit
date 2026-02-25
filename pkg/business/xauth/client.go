@@ -55,7 +55,7 @@ func NewClient(cfg *Config, opts ...Option) (Client, error) {
 	}
 
 	// 构建并返回客户端
-	return buildClient(cfg, options, httpClient), nil
+	return buildClient(cfg, options, httpClient)
 }
 
 // prepareConfig 验证并准备配置。
@@ -155,7 +155,7 @@ func resolveDefaults(cfg *Config, options *Options) resolvedDefaults {
 }
 
 // buildClient 构建完整的客户端实例。
-func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client {
+func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) (*client, error) {
 	d := resolveDefaults(cfg, options)
 
 	// 设计决策: ClientSecret == ClientID 是认证服务的内部约定（见 Config.ApplyDefaults），
@@ -172,7 +172,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		EnableSingleflight: options.EnableSingleflight,
 	})
 
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr, err := NewTokenManager(TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   tokenCache,
@@ -181,6 +181,9 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		RefreshThreshold:        d.refreshThreshold,
 		EnableBackgroundRefresh: options.EnableBackgroundRefresh,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("xauth: create token manager: %w", err)
+	}
 
 	enableLocal := options.EnableLocalCache
 	platformMgr := NewPlatformManager(PlatformManagerConfig{
@@ -204,7 +207,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		tokenCache:  tokenCache,
 		logger:      d.logger,
 		observer:    d.observer,
-	}
+	}, nil
 }
 
 // defaultTLSConfig 返回默认 TLS 配置。

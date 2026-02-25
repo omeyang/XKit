@@ -100,13 +100,16 @@
 //
 // # gRPC-Gateway 集成
 //
-// 使用 gRPC-Gateway 时，需配置自定义 HeaderMatcher 以转发租户相关的 X-* 头：
+// 使用 gRPC-Gateway 时，需配置自定义 HeaderMatcher 以转发租户相关的 X-* 头。
+// 注意：key 参数是 HTTP 规范化后的形式（http.CanonicalHeaderKey），
+// 例如 "X-Request-ID" 会被规范化为 "X-Request-Id"，
+// 因此精确比较必须使用 strings.EqualFold 而非 ==。
 //
 //	gwmux := runtime.NewServeMux(
 //	    runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
 //	        if strings.HasPrefix(key, "X-Tenant-") || strings.HasPrefix(key, "X-Trace-") ||
-//	            strings.HasPrefix(key, "X-Platform-") || key == "X-Has-Parent" ||
-//	            key == "X-Unclass-Region-ID" || key == "X-Request-ID" {
+//	            strings.HasPrefix(key, "X-Platform-") || strings.EqualFold(key, "X-Has-Parent") ||
+//	            strings.EqualFold(key, "X-Unclass-Region-ID") || strings.EqualFold(key, "X-Request-ID") {
 //	            return key, true
 //	        }
 //	        return runtime.DefaultHeaderMatcher(key)

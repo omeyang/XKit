@@ -50,23 +50,18 @@ func New(path string, opts ...Option) (Config, error) {
 		return nil, err
 	}
 
+	// 先校验选项，再执行文件 I/O（fail-fast：参数错误优先于 I/O 错误）
+	o, err := applyOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrLoadFailed, err)
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		if opt == nil {
-			return nil, ErrNilOption
-		}
-		opt(options)
-	}
-	if err := options.validate(); err != nil {
-		return nil, err
-	}
-
-	k := koanf.New(options.delim)
+	k := koanf.New(o.delim)
 
 	// 空数据时创建空配置，与 NewFromBytes 行为一致
 	if len(data) > 0 {
@@ -78,7 +73,7 @@ func New(path string, opts ...Option) (Config, error) {
 	cfg := &koanfConfig{
 		path:    path,
 		format:  format,
-		opts:    options,
+		opts:    o,
 		isBytes: false,
 	}
 	cfg.k.Store(k)
@@ -97,18 +92,12 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 		return nil, ErrUnsupportedFormat
 	}
 
-	options := defaultOptions()
-	for _, opt := range opts {
-		if opt == nil {
-			return nil, ErrNilOption
-		}
-		opt(options)
-	}
-	if err := options.validate(); err != nil {
+	o, err := applyOptions(opts)
+	if err != nil {
 		return nil, err
 	}
 
-	k := koanf.New(options.delim)
+	k := koanf.New(o.delim)
 
 	// 空数据时创建空配置，与 New 行为一致
 	if len(data) > 0 {
@@ -120,7 +109,7 @@ func NewFromBytes(data []byte, format Format, opts ...Option) (Config, error) {
 	cfg := &koanfConfig{
 		path:    "",
 		format:  format,
-		opts:    options,
+		opts:    o,
 		isBytes: true,
 	}
 	cfg.k.Store(k)
@@ -211,6 +200,21 @@ func MustUnmarshal(cfg Config, path string, target any) {
 // =============================================================================
 // 内部辅助函数
 // =============================================================================
+
+// applyOptions 应用并校验配置选项，消除 New/NewFromBytes 中的重复逻辑。
+func applyOptions(opts []Option) (*options, error) {
+	o := defaultOptions()
+	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
+		opt(o)
+	}
+	if err := o.validate(); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
 
 // detectFormat 根据文件扩展名检测配置格式。
 func detectFormat(path string) (Format, error) {

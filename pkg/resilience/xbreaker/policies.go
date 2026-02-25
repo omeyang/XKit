@@ -182,6 +182,7 @@ func (p *CompositePolicy) ReadyToTrip(counts Counts) bool {
 // Policies 返回所有子策略的副本
 //
 // 返回副本以防止外部修改内部状态。
+// 无子策略时返回 nil（Go 惯用法，与空 slice 在 range/len 等场景等价）。
 func (p *CompositePolicy) Policies() []TripPolicy {
 	if len(p.policies) == 0 {
 		return nil

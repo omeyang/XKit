@@ -560,7 +560,7 @@ func TestSession_CommandTimeout(t *testing.T) {
 	}
 
 	// Register a slow command
-	srv.RegisterCommand(NewCommandFunc("slow", "slow cmd", func(ctx context.Context, _ []string) (string, error) {
+	srv.RegisterCommand(mustNewCommandFunc(t, "slow", "slow cmd", func(ctx context.Context, _ []string) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -609,7 +609,7 @@ func TestSession_TooManyCommands(t *testing.T) {
 
 	// Register a blocking command
 	blockCh := make(chan struct{})
-	srv.RegisterCommand(NewCommandFunc("block", "blocking cmd", func(ctx context.Context, _ []string) (string, error) {
+	srv.RegisterCommand(mustNewCommandFunc(t, "block", "blocking cmd", func(ctx context.Context, _ []string) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -805,7 +805,7 @@ func TestSession_PanicCommand(t *testing.T) {
 	}
 
 	// 注册一个会 panic 的命令
-	srv.RegisterCommand(NewCommandFunc("boom", "panics", func(_ context.Context, _ []string) (string, error) {
+	srv.RegisterCommand(mustNewCommandFunc(t, "boom", "panics", func(_ context.Context, _ []string) (string, error) {
 		panic("test panic from command")
 	}))
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,4 +117,54 @@ func TestMergeTraceContext_EmptyExtracted(t *testing.T) {
 
 	// base 的值应保留
 	assert.Equal(t, "original-trace-id", xctx.TraceID(result))
+}
+
+// =============================================================================
+// OTel SpanContext Preservation Tests
+// =============================================================================
+
+func TestMergeTraceContext_PreservesOTelSpanContext(t *testing.T) {
+	// 模拟 OTelTracer.Extract 返回的 context：包含有效 OTel SpanContext + xctx 字段
+	traceID, _ := trace.TraceIDFromHex("0af7651916cd43dd8448eb211c80319c")
+	spanID, _ := trace.SpanIDFromHex("b7ad6b7169203331")
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	extracted := trace.ContextWithSpanContext(context.Background(), sc)
+	extracted, _ = xctx.WithTraceID(extracted, traceID.String())
+	extracted, _ = xctx.WithSpanID(extracted, spanID.String())
+
+	// base 是消费者的 context（如带有 deadline 的 ctx）
+	base := context.Background()
+
+	result := MergeTraceContext(base, extracted)
+
+	// 验证 xctx 字段已合并
+	assert.Equal(t, traceID.String(), xctx.TraceID(result))
+	assert.Equal(t, spanID.String(), xctx.SpanID(result))
+
+	// 验证 OTel SpanContext 已保留（这是 FG-M1 修复的核心断言）
+	resultSC := trace.SpanContextFromContext(result)
+	assert.True(t, resultSC.IsValid(), "OTel SpanContext should be preserved after merge")
+	assert.Equal(t, traceID, resultSC.TraceID())
+	assert.Equal(t, spanID, resultSC.SpanID())
+	assert.True(t, resultSC.IsSampled())
+}
+
+func TestMergeTraceContext_NoOTelSpanContext(t *testing.T) {
+	// extracted 没有 OTel SpanContext（仅有 xctx 字段）
+	extracted, _ := xctx.WithTraceID(context.Background(), "0af7651916cd43dd8448eb211c80319c")
+	base := context.Background()
+
+	result := MergeTraceContext(base, extracted)
+
+	// xctx 字段应合并
+	assert.Equal(t, "0af7651916cd43dd8448eb211c80319c", xctx.TraceID(result))
+
+	// 没有 OTel SpanContext，不应注入无效的
+	resultSC := trace.SpanContextFromContext(result)
+	assert.False(t, resultSC.IsValid())
 }

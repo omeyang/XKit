@@ -54,6 +54,10 @@ func (s *SlowQueryCounter) Count() int64 {
 
 // QueryCounter 查询计数器。
 // 提供原子计数器用于追踪查询状态。
+//
+// 设计决策: 当前仅被 xclickhouse 使用，保留在 storageopt 而非移入 xclickhouse，
+// 与 HealthCounter/SlowQueryCounter 保持类型族一致性。xmongo 未使用是因为
+// MongoDB driver 的操作粒度不同（FindOne/InsertMany 等），统一 Query 维度无意义。
 type QueryCounter struct {
 	queryCount  atomic.Int64
 	queryErrors atomic.Int64

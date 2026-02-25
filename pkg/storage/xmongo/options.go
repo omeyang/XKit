@@ -91,20 +91,22 @@ type Options struct {
 	// 默认为 1000。当队列满时，新任务将被静默丢弃（不记录日志），属于可接受的降级行为。
 	AsyncSlowQueryQueueSize int
 
-	// QueryTimeout 查询操作默认超时时间。
+	// QueryTimeout 查询操作兜底超时时间。
 	// 当调用方传入的 context 没有 deadline 时，FindPage 会使用此超时作为兜底。
-	// 默认为 0（不设置超时，完全依赖调用方 context）。
-	//
-	// 建议在生产环境中设置合理值（如 30s），防止无 deadline 的 context
+	// 默认为 DefaultQueryTimeout（30 秒），防止无 deadline 的 context
 	// 导致查询长时间悬挂，进而引发连接池耗尽。
+	//
+	// 通过 WithQueryTimeout(0) 可显式禁用兜底超时（完全依赖调用方 context）。
+	// 已有 deadline 的 context 不受此设置影响。
 	QueryTimeout time.Duration
 
-	// WriteTimeout 写入操作默认超时时间。
+	// WriteTimeout 写入操作兜底超时时间。
 	// 当调用方传入的 context 没有 deadline 时，BulkInsert 会使用此超时作为兜底。
-	// 默认为 0（不设置超时，完全依赖调用方 context）。
-	//
-	// 建议在生产环境中设置合理值（如 60s），防止无 deadline 的 context
+	// 默认为 DefaultWriteTimeout（60 秒），防止无 deadline 的 context
 	// 导致写入长时间悬挂，进而引发连接池耗尽。
+	//
+	// 通过 WithWriteTimeout(0) 可显式禁用兜底超时（完全依赖调用方 context）。
+	// 已有 deadline 的 context 不受此设置影响。
 	WriteTimeout time.Duration
 
 	// Observer 是统一观测接口（metrics/tracing）。
@@ -121,6 +123,16 @@ const (
 
 	// DefaultAsyncSlowQueryQueueSize 默认异步慢查询队列大小。
 	DefaultAsyncSlowQueryQueueSize = storageopt.DefaultAsyncQueueSize
+
+	// DefaultQueryTimeout 查询操作默认兜底超时时间。
+	// 当调用方 context 没有 deadline 时，FindPage 使用此超时防止无限阻塞。
+	// 可通过 WithQueryTimeout(0) 显式禁用。
+	DefaultQueryTimeout = 30 * time.Second
+
+	// DefaultWriteTimeout 写入操作默认兜底超时时间。
+	// 当调用方 context 没有 deadline 时，BulkInsert 使用此超时防止无限阻塞。
+	// 可通过 WithWriteTimeout(0) 显式禁用。
+	DefaultWriteTimeout = 60 * time.Second
 )
 
 // defaultOptions 返回默认配置。
@@ -132,6 +144,8 @@ func defaultOptions() *Options {
 		AsyncSlowQueryHook:      nil,
 		AsyncSlowQueryWorkers:   DefaultAsyncSlowQueryWorkers,
 		AsyncSlowQueryQueueSize: DefaultAsyncSlowQueryQueueSize,
+		QueryTimeout:            DefaultQueryTimeout,
+		WriteTimeout:            DefaultWriteTimeout,
 		Observer:                xmetrics.NoopObserver{},
 	}
 }
@@ -192,23 +206,25 @@ func WithAsyncSlowQueryQueueSize(n int) Option {
 	}
 }
 
-// WithQueryTimeout 设置查询操作默认超时时间。
+// WithQueryTimeout 设置查询操作兜底超时时间。
 // 仅在调用方 context 没有 deadline 时生效。
-// 非正值被忽略（保持默认值）。
+// 传入 0 可显式禁用兜底超时（完全依赖调用方 context）。
+// 负值被忽略（保持默认值）。
 func WithQueryTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		if timeout > 0 {
+		if timeout >= 0 {
 			o.QueryTimeout = timeout
 		}
 	}
 }
 
-// WithWriteTimeout 设置写入操作默认超时时间。
+// WithWriteTimeout 设置写入操作兜底超时时间。
 // 仅在调用方 context 没有 deadline 时生效。
-// 非正值被忽略（保持默认值）。
+// 传入 0 可显式禁用兜底超时（完全依赖调用方 context）。
+// 负值被忽略（保持默认值）。
 func WithWriteTimeout(timeout time.Duration) Option {
 	return func(o *Options) {
-		if timeout > 0 {
+		if timeout >= 0 {
 			o.WriteTimeout = timeout
 		}
 	}

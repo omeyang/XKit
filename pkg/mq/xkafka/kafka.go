@@ -33,6 +33,10 @@ type Producer interface {
 
 	// Close 优雅关闭生产者。
 	// 会等待所有消息发送完成（受 FlushTimeout 限制）。
+	//
+	// 设计决策: Close() 不接受 context.Context 参数，偏离项目 L-02 规则（Close(ctx) 签名）。
+	// 原因：底层 confluent-kafka-go Producer.Flush 仅支持毫秒级超时参数，不支持 context。
+	// 关闭超时通过 WithProducerFlushTimeout 配置，默认 10s。
 	Close() error
 }
 
@@ -73,6 +77,10 @@ type Consumer interface {
 
 	// Close 优雅关闭消费者。
 	// 会提交当前偏移量并取消订阅。
+	//
+	// 设计决策: Close() 不接受 context.Context 参数，偏离项目 L-02 规则（Close(ctx) 签名）。
+	// 原因：底层 confluent-kafka-go Consumer.Close 不支持 context；
+	// Commit + Close 是原子操作序列，不适合在中间取消。
 	Close() error
 }
 

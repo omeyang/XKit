@@ -24,6 +24,10 @@ type keyLockImpl struct {
 	// testHookAfterTryAcquireSend 在 TryAcquire 的 channel 发送成功后、closed 检查前调用。
 	// 仅供测试使用，生产环境为 nil（零开销）。实例级字段避免并行测试的数据竞争。
 	testHookAfterTryAcquireSend func()
+
+	// testHookAfterDefaultReleaseRef 在 TryAcquire default 分支 releaseRef 后、closed 检查前调用。
+	// 仅供测试使用，与 testHookAfterTryAcquireSend 配合完整覆盖 TryAcquire 的两条竞态分支。
+	testHookAfterDefaultReleaseRef func()
 }
 
 // cacheLineSize 是目标架构的缓存行大小（字节）。
@@ -192,6 +196,9 @@ func (kl *keyLockImpl) TryAcquire(key string) (Handle, error) {
 		return &handle{kl: kl, key: key, entry: entry}, nil
 	default: // 锁被占用
 		kl.releaseRef(key, entry)
+		if kl.testHookAfterDefaultReleaseRef != nil {
+			kl.testHookAfterDefaultReleaseRef()
+		}
 		// 二次检查：封住 getOrCreate→select 之间的 Close 竞态窗口。
 		// 避免将"已关闭"误报为"锁被占用"。
 		if kl.closed.Load() {

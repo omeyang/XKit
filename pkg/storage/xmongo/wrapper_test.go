@@ -1300,34 +1300,36 @@ func TestApplyTimeout_NegativeTimeout(t *testing.T) {
 
 func TestWithQueryTimeout(t *testing.T) {
 	opts := defaultOptions()
+	assert.Equal(t, DefaultQueryTimeout, opts.QueryTimeout, "默认值应为 DefaultQueryTimeout")
 
-	// 正数生效
-	WithQueryTimeout(30 * time.Second)(opts)
-	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+	// 正数覆盖默认值
+	WithQueryTimeout(10 * time.Second)(opts)
+	assert.Equal(t, 10*time.Second, opts.QueryTimeout)
 
-	// 零值被忽略
+	// 零值显式禁用兜底超时
 	WithQueryTimeout(0)(opts)
-	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+	assert.Equal(t, time.Duration(0), opts.QueryTimeout)
 
-	// 负值被忽略
+	// 负值被忽略（保持当前值）
 	WithQueryTimeout(-1 * time.Second)(opts)
-	assert.Equal(t, 30*time.Second, opts.QueryTimeout)
+	assert.Equal(t, time.Duration(0), opts.QueryTimeout)
 }
 
 func TestWithWriteTimeout(t *testing.T) {
 	opts := defaultOptions()
+	assert.Equal(t, DefaultWriteTimeout, opts.WriteTimeout, "默认值应为 DefaultWriteTimeout")
 
-	// 正数生效
-	WithWriteTimeout(60 * time.Second)(opts)
-	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+	// 正数覆盖默认值
+	WithWriteTimeout(120 * time.Second)(opts)
+	assert.Equal(t, 120*time.Second, opts.WriteTimeout)
 
-	// 零值被忽略
+	// 零值显式禁用兜底超时
 	WithWriteTimeout(0)(opts)
-	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+	assert.Equal(t, time.Duration(0), opts.WriteTimeout)
 
-	// 负值被忽略
+	// 负值被忽略（保持当前值）
 	WithWriteTimeout(-1 * time.Second)(opts)
-	assert.Equal(t, 60*time.Second, opts.WriteTimeout)
+	assert.Equal(t, time.Duration(0), opts.WriteTimeout)
 }
 
 // =============================================================================
@@ -1401,4 +1403,57 @@ func TestWrapper_BulkInsertInternal_WithWriteTimeout(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(1), result.InsertedCount)
+}
+
+// =============================================================================
+// Nil context 测试
+// =============================================================================
+
+func TestWrapper_Health_NilContext(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	err := w.Health(nil) //nolint:staticcheck // 测试 nil ctx 防御
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Equal(t, 0, mock.pingCount, "nil ctx 应在 Ping 之前返回")
+}
+
+func TestWrapper_FindPage_NilContext(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.FindPage(nil, nil, nil, PageOptions{Page: 1, PageSize: 10}) //nolint:staticcheck // 测试 nil ctx 防御
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_BulkInsert_NilContext(t *testing.T) {
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.BulkInsert(nil, nil, []any{1}, BulkOptions{}) //nolint:staticcheck // 测试 nil ctx 防御
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_Close_NilContext(t *testing.T) {
+	mock := newMockClientOps()
+	w := &mongoWrapper{
+		client:    nil,
+		clientOps: mock,
+		options:   defaultOptions(),
+	}
+
+	// Close 对 nil ctx 使用 context.Background() 替代，不返回错误
+	err := w.Close(nil) //nolint:staticcheck // 测试 nil ctx 防御
+	assert.NoError(t, err)
+	assert.True(t, mock.disconnected, "Close 应使用 context.Background() 替代 nil ctx")
 }

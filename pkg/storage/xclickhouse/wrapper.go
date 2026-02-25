@@ -343,6 +343,11 @@ func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, 
 
 // scanRows 扫描结果集中的所有行。
 // pageSize 用于预分配结果切片容量，减少 append 扩容开销。
+//
+// 优化机会: 当前每行分配 scanDest（N 次 reflect.New）+ row 切片，共 2N+2 次分配/行。
+// 可将 scanDest 提到循环外复用，每行仅分配 row 切片（N+1 次/行），降低约 50% 分配量。
+// 前提是 clickhouse-go 的 Scan 支持 dest 复用（大多数 SQL 驱动支持）。
+// 对于典型 PageSize（10-100），当前实现性能足够，大结果集场景可考虑此优化。
 func (w *clickhouseWrapper) scanRows(rows driver.Rows, pageSize int64) ([][]any, error) {
 	columnTypes := rows.ColumnTypes()
 

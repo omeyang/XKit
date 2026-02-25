@@ -1099,6 +1099,30 @@ func TestRetryThenBreak_ToResultError_FailedByPolicy(t *testing.T) {
 	assert.Equal(t, uint32(0), counts.TotalSuccesses, "should not count as success")
 }
 
+// === FG-S1 修复验证：nil 接收者防护 ===
+
+func TestBreakerRetryer_NilReceiver(t *testing.T) {
+	t.Run("DoWithRetry on nil receiver", func(t *testing.T) {
+		var br *BreakerRetryer
+		err := br.DoWithRetry(context.Background(), func(_ context.Context) error { return nil })
+		assert.ErrorIs(t, err, ErrNilBreakerRetryer)
+	})
+
+	t.Run("DoWithRetrySimple on nil receiver", func(t *testing.T) {
+		var br *BreakerRetryer
+		err := br.DoWithRetrySimple(context.Background(), func() error { return nil })
+		assert.ErrorIs(t, err, ErrNilBreakerRetryer)
+	})
+}
+
+func TestRetryThenBreak_NilReceiver(t *testing.T) {
+	t.Run("Do on nil receiver", func(t *testing.T) {
+		var rtb *RetryThenBreak
+		err := rtb.Do(context.Background(), func(_ context.Context) error { return nil })
+		assert.ErrorIs(t, err, ErrNilRetryThenBreak)
+	})
+}
+
 // alwaysFailSuccessPolicy 无论什么 error 都返回 false（用于测试边界情况）
 type alwaysFailSuccessPolicy struct{}
 

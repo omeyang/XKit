@@ -194,8 +194,8 @@ var grpcTransportKeys = transportKeys{
 func InjectToOutgoingContext(ctx context.Context) context.Context {
 	info := TraceInfoFromContext(ctx)
 
-	// 如果没有任何信息，直接返回
-	if info.TraceID == "" && info.SpanID == "" && info.RequestID == "" {
+	// 如果没有任何追踪信息，直接返回
+	if info.IsEmpty() {
 		return ctx
 	}
 

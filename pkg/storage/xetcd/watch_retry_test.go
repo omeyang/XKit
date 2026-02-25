@@ -715,20 +715,22 @@ func TestAddJitter(t *testing.T) {
 	})
 }
 
-// TestSleepWithContext_Normal 测试正常睡眠等待定时器触发。
-func TestSleepWithContext_Normal(t *testing.T) {
+// TestSleepWithCancel_Normal 测试正常睡眠等待定时器触发。
+func TestSleepWithCancel_Normal(t *testing.T) {
+	done := make(chan struct{})
 	start := time.Now()
-	sleepWithContext(context.Background(), 10*time.Millisecond)
+	sleepWithCancel(context.Background(), 10*time.Millisecond, done)
 	elapsed := time.Since(start)
 
 	if elapsed < 5*time.Millisecond {
-		t.Errorf("sleepWithContext() returned too quickly: %v", elapsed)
+		t.Errorf("sleepWithCancel() returned too quickly: %v", elapsed)
 	}
 }
 
-// TestSleepWithContext_ContextCancel 测试 context 取消时立即返回。
-func TestSleepWithContext_ContextCancel(t *testing.T) {
+// TestSleepWithCancel_ContextCancel 测试 context 取消时立即返回。
+func TestSleepWithCancel_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -736,11 +738,29 @@ func TestSleepWithContext_ContextCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	sleepWithContext(ctx, 10*time.Second)
+	sleepWithCancel(ctx, 10*time.Second, done)
 	elapsed := time.Since(start)
 
 	if elapsed > time.Second {
-		t.Errorf("sleepWithContext() should return quickly on cancel, took %v", elapsed)
+		t.Errorf("sleepWithCancel() should return quickly on cancel, took %v", elapsed)
+	}
+}
+
+// TestSleepWithCancel_DoneClosed 测试 done 通道关闭时立即返回。
+func TestSleepWithCancel_DoneClosed(t *testing.T) {
+	done := make(chan struct{})
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(done)
+	}()
+
+	start := time.Now()
+	sleepWithCancel(context.Background(), 10*time.Second, done)
+	elapsed := time.Since(start)
+
+	if elapsed > time.Second {
+		t.Errorf("sleepWithCancel() should return quickly on done close, took %v", elapsed)
 	}
 }
 

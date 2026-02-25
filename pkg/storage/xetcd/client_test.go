@@ -36,6 +36,14 @@ func TestNewClient_InvalidEndpoint(t *testing.T) {
 	// 不检查具体错误，因为行为取决于 etcd 客户端实现
 }
 
+func TestNewClient_NilOption(t *testing.T) {
+	config := &Config{Endpoints: []string{"localhost:2379"}}
+	_, err := NewClient(config, nil)
+	if err != ErrNilOption {
+		t.Errorf("NewClient with nil option error = %v, want %v", err, ErrNilOption)
+	}
+}
+
 func TestClient_Close_Idempotent(t *testing.T) {
 	// 创建一个模拟场景：验证 Close 的幂等性
 	// 由于需要真实 etcd，这里只验证逻辑

@@ -126,11 +126,10 @@ func (c *Config) Validate() error {
 	}
 
 	// 验证每个 endpoint 的格式
-	// 设计决策: TrimSpace 归一化端点字符串，防止 YAML/JSON 反序列化或手动配置时
-	// 引入的空白导致连接失败。与 xplatform 的 TrimSpace 归一化策略一致。
+	// 设计决策: Validate 仅校验，不修改原始 Config（符合最小惊讶原则）。
+	// TrimSpace 归一化在 applyDefaults 中执行（该方法已复制 Config，不影响原始对象）。
 	for i, ep := range c.Endpoints {
 		ep = strings.TrimSpace(ep)
-		c.Endpoints[i] = ep
 		if ep == "" {
 			return fmt.Errorf("%w: endpoint[%d] is empty", ErrInvalidEndpoint, i)
 		}
@@ -209,8 +208,15 @@ func isValidPort(s string) bool {
 }
 
 // applyDefaults 应用默认值，返回新的配置（不修改原配置）。
+// 设计决策: TrimSpace 归一化在此处执行而非 Validate 中，
+// 确保 Validate 是纯校验无副作用，符合最小惊讶原则。
 func (c *Config) applyDefaults() *Config {
 	cfg := *c // 复制，避免修改原配置
+	// 深拷贝 Endpoints 切片后归一化，确保不修改原始 Config
+	cfg.Endpoints = make([]string, len(c.Endpoints))
+	for i, ep := range c.Endpoints {
+		cfg.Endpoints[i] = strings.TrimSpace(ep)
+	}
 	if cfg.DialTimeout == 0 {
 		cfg.DialTimeout = defaultDialTimeout
 	}

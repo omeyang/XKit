@@ -2,6 +2,7 @@ package xpulsar
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -37,7 +38,10 @@ type Client interface {
 	Stats() Stats
 
 	// Close 优雅关闭客户端。
-	// 会关闭所有生产者和消费者。
+	// 会关闭所有生产者和消费者，并等待 Health() 超时后的后台清理 goroutine 完成。
+	//
+	// 设计决策: 保留 error 返回值以与项目接口惯例一致（参见 D-02），
+	// 当前实现始终返回 nil（Pulsar SDK 的 Client.Close() 无返回值）。
 	Close() error
 }
 
@@ -83,7 +87,7 @@ func NewClient(url string, opts ...Option) (Client, error) {
 
 	client, err := pulsar.NewClient(clientOptions)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: create client: %w", err)
 	}
 
 	return &clientWrapper{

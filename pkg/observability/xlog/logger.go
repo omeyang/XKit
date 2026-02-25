@@ -157,7 +157,8 @@ func (l *xlogger) stackWithSkip(ctx context.Context, msg string, attrs []slog.At
 	// 从池中获取初始缓冲区
 	bufp, ok := stackPool.Get().(*[]byte)
 	if !ok {
-		// 类型断言失败，创建新缓冲区（不应发生）
+		// 设计决策: 防御性分支——sync.Pool.New 固定返回 *[]byte，此分支正常不可达。
+		// 保留此分支是为了遵循 Go 最佳实践（不信任 interface{} 类型断言的隐含假设）。
 		buf := make([]byte, initialStackSize)
 		bufp = &buf
 	}

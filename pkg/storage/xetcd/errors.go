@@ -44,6 +44,11 @@ var (
 	// WatchWithRetry 在耗尽重试次数后，通过错误事件发送此错误。
 	ErrMaxRetriesExceeded = errors.New("xetcd: max retries exceeded")
 
+	// ErrNilOption 选项函数为空。
+	// 传入 nil 的 Option 或 WatchOption 会导致 nil function call panic，
+	// 此错误用于防御性校验。与 xconf.ErrNilOption 保持一致。
+	ErrNilOption = errors.New("xetcd: option must not be nil")
+
 	// errNilKv 内部错误：收到 Kv 为 nil 的 etcd 事件。
 	// 正常协议中不应出现，但防御性处理以避免 goroutine panic。
 	errNilKv = errors.New("xetcd: received event with nil Kv")

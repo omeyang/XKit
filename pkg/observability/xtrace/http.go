@@ -130,6 +130,12 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 	}
 
 	info := TraceInfoFromContext(ctx)
+
+	// 如果没有任何追踪信息，直接返回（与 InjectToOutgoingContext 对齐）
+	if info.IsEmpty() {
+		return
+	}
+
 	injectTraceInfoTo(req.Header.Set, info, httpTransportKeys)
 }
 

@@ -48,16 +48,25 @@ type TokenManagerConfig struct {
 }
 
 // NewTokenManager 创建 TokenManager。
-// 设计决策: 通过 NewClient 创建时，所有依赖已经过验证；
-// 直接使用时，nil Config/HTTP/Cache 会在此处 panic，属于编程错误（同 sync.Mutex 使用前不初始化）。
-func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
+// Config、HTTP 和 Cache 为必填依赖，缺失时返回错误。
+func NewTokenManager(cfg TokenManagerConfig) (*TokenManager, error) {
+	if cfg.Config == nil {
+		return nil, ErrNilConfig
+	}
+	if cfg.HTTP == nil {
+		return nil, ErrNilHTTPClient
+	}
+	if cfg.Cache == nil {
+		return nil, ErrNilCache
+	}
+
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 	if cfg.Observer == nil {
 		cfg.Observer = xmetrics.NoopObserver{}
 	}
-	if cfg.RefreshThreshold <= 0 && cfg.Config != nil {
+	if cfg.RefreshThreshold <= 0 {
 		cfg.RefreshThreshold = cfg.Config.TokenRefreshThreshold
 	}
 	if cfg.RefreshThreshold <= 0 {
@@ -76,7 +85,7 @@ func NewTokenManager(cfg TokenManagerConfig) *TokenManager {
 		enableBackgroundRefresh: cfg.EnableBackgroundRefresh,
 		ctx:                     ctx,
 		cancel:                  cancel,
-	}
+	}, nil
 }
 
 // GetToken 获取指定租户的 Token。
@@ -309,10 +318,12 @@ func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInf
 		return nil, verifyErr
 	}
 
-	// 构建 TokenInfo
+	// 构建 TokenInfo，保留服务端返回的完整声明供调用方授权决策
+	claims := resp.Data
 	tokenInfo := &TokenInfo{
 		AccessToken: token,
 		ExpiresAt:   time.Unix(resp.Data.Exp, 0),
+		Claims:      &claims,
 	}
 
 	return tokenInfo, nil
@@ -405,4 +416,19 @@ func (m *TokenManager) calculateTokenTTL(token *TokenInfo) time.Duration {
 // InvalidateToken 使 Token 失效（从缓存删除）。
 func (m *TokenManager) InvalidateToken(ctx context.Context, tenantID string) error {
 	return m.cache.Delete(ctx, tenantID)
+}
+
+// VerifyTokenForTenant 验证 Token 有效性并校验租户一致性。
+// 如果 Token 有效但其声明中的 TenantID 与期望的 tenantID 不匹配，返回错误。
+// 这是一个便捷方法，等价于 VerifyToken + 手动校验 Claims.TenantID。
+func VerifyTokenForTenant(ctx context.Context, c Client, token, tenantID string) (*TokenInfo, error) {
+	info, err := c.VerifyToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if info.Claims != nil && info.Claims.TenantID != "" && info.Claims.TenantID != tenantID {
+		return nil, fmt.Errorf("%w: token tenant_id %q does not match expected %q",
+			ErrTokenInvalid, info.Claims.TenantID, tenantID)
+	}
+	return info, nil
 }

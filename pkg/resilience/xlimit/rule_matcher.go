@@ -80,9 +80,10 @@ func (rm *ruleMatcher) findRule(ruleName string) (Rule, bool) {
 }
 
 // getEffectiveLimit 获取适用于给定键的有效限流配置
-func (rm *ruleMatcher) getEffectiveLimit(rule Rule, key Key) (int, time.Duration) {
-	renderedKey := key.Render(rule.KeyTemplate)
-
+//
+// 设计决策: renderedKey 由调用方预先计算并传入，避免在热路径上重复调用 key.Render。
+// checkRule 内 getEffectiveLimit、getEffectiveBurst、renderKey 共享同一个 renderedKey。
+func (rm *ruleMatcher) getEffectiveLimit(rule Rule, renderedKey string) (int, time.Duration) {
 	if patterns, ok := rm.matchers[rule.Name]; ok {
 		idx := matchFirst(patterns, renderedKey)
 		if idx >= 0 && idx < len(rule.Overrides) {
@@ -99,9 +100,7 @@ func (rm *ruleMatcher) getEffectiveLimit(rule Rule, key Key) (int, time.Duration
 }
 
 // getEffectiveBurst 获取适用于给定键的有效突发容量
-func (rm *ruleMatcher) getEffectiveBurst(rule Rule, key Key) int {
-	renderedKey := key.Render(rule.KeyTemplate)
-
+func (rm *ruleMatcher) getEffectiveBurst(rule Rule, renderedKey string) int {
 	if patterns, ok := rm.matchers[rule.Name]; ok {
 		idx := matchFirst(patterns, renderedKey)
 		if idx >= 0 && idx < len(rule.Overrides) {
@@ -116,9 +115,9 @@ func (rm *ruleMatcher) getEffectiveBurst(rule Rule, key Key) int {
 	return rule.EffectiveBurst()
 }
 
-// renderKey 渲染完整的 Redis 键
-func (rm *ruleMatcher) renderKey(rule Rule, key Key, prefix string) string {
-	return prefix + key.Render(rule.KeyTemplate)
+// renderKey 拼接前缀和已渲染的键
+func (rm *ruleMatcher) renderKey(renderedKey string, prefix string) string {
+	return prefix + renderedKey
 }
 
 // getAllRules 返回所有启用的规则名称

@@ -37,7 +37,10 @@ type Permit interface {
 	// Release 释放许可。
 	//
 	// 只释放本次获取的许可，不会影响其他 goroutine 或实例持有的许可。
-	// 返回 [ErrPermitNotHeld] 表示许可已过期或被其他获取覆盖。
+	// Release 是幂等的：重复调用或对已过期许可调用均返回 nil。
+	// 当后端检测到许可已过期或被覆盖时（ErrPermitNotHeld），
+	// Release 会静默标记为已释放并返回 nil，同时记录 warn 级别日志和 trace span，
+	// 确保 defer permit.Release(ctx) 模式始终安全。
 	Release(ctx context.Context) error
 
 	// Extend 续期许可。

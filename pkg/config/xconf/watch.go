@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +44,11 @@ type Watcher struct {
 	// callbackWg 跟踪 debounce AfterFunc 中的 in-flight 回调。
 	runWg      sync.WaitGroup // run goroutine 生命周期
 	callbackWg sync.WaitGroup // in-flight 防抖回调
+
+	// 设计决策: callbackGID 记录当前回调 goroutine 的 ID，用于检测 Stop() 重入。
+	// 若用户在回调中调用 Stop()，Stop() 会跳过 callbackWg.Wait()，避免自锁死锁。
+	// 安全性保证：callbackGID 读写都在 mu 保护下，Stop() 在 mu 内读取后才释放锁。
+	callbackGID int64 // 当前回调 goroutine ID，0 表示无回调在执行
 }
 
 // WatchOption 监视器配置选项
@@ -65,9 +72,9 @@ func (o *watchOptions) validate() error {
 	return nil
 }
 
-// WithDebounce 设置防抖时间
-// 在指定时间内的多次变更只触发一次重载
-// 默认值为 100ms，适合大多数场景
+// WithDebounce 设置防抖时间。
+// 在指定时间内的多次变更只触发一次重载。
+// 默认值为 100ms，适合大多数场景。推荐范围 50ms ~ 5s。
 func WithDebounce(d time.Duration) WatchOption {
 	return func(o *watchOptions) {
 		o.debounce = d
@@ -89,6 +96,7 @@ func WithDebounce(d time.Duration) WatchOption {
 //   - 从 bytes 创建的 Config 不支持监视
 //   - 返回的 Watcher 需要调用 Start() 开始监视，Stop() 停止监视
 //   - Stop() 保证返回后不再有回调执行
+//   - 在回调中调用 Stop() 是安全的，不会死锁
 //
 // 设计决策: cfg 参数类型为 Config 接口，但内部需要类型断言为 *koanfConfig。
 // 这是因为 Watch 需要访问内部字段（path、isBytes），而这些不属于 Config 接口。
@@ -205,11 +213,16 @@ func (w *Watcher) StartAsync() {
 }
 
 // Stop 停止监视并释放 fsnotify 资源。
-// Stop 返回后保证不再有回调执行。
+// Stop 返回后保证不再有回调执行（在回调中调用 Stop 时，当前回调是最后一次执行）。
+// 在回调中调用 Stop() 是安全的，不会死锁。
 //
 // 设计决策: Stop() 无论是否调用过 Start()，都会释放 fsnotify.Watcher。
 // Watch() 创建 fsnotify.Watcher 时已占用文件描述符，不释放会导致 fd 泄漏。
 // stopped 标志确保 Stop() 幂等，多次调用不会重复关闭。
+//
+// 设计决策: 通过 callbackGID 检测回调内调用 Stop() 的场景。
+// 若 Stop() 由回调 goroutine 调用，跳过 callbackWg.Wait() 避免自锁死锁。
+// 此时当前回调是最后一次执行：running=false 阻止新回调，context 已取消。
 func (w *Watcher) Stop() error {
 	w.mu.Lock()
 
@@ -231,13 +244,20 @@ func (w *Watcher) Stop() error {
 		w.timer = nil
 	}
 
+	// 检测是否在回调中调用 Stop()（callbackGID 在 mu 保护下读取）
+	calledFromCallback := w.callbackGID != 0 && w.callbackGID == goid()
+
 	w.cancel()
 	w.running = false
 	w.mu.Unlock()
 
-	// 等待 run() goroutine 退出和 in-flight 防抖回调完成
+	// 等待 run() goroutine 退出
 	w.runWg.Wait()
-	w.callbackWg.Wait()
+
+	// 等待 in-flight 防抖回调完成（回调内调用 Stop 时跳过，避免自锁）
+	if !calledFromCallback {
+		w.callbackWg.Wait()
+	}
 
 	return w.watcher.Close()
 }
@@ -299,8 +319,15 @@ func (w *Watcher) handleEvent(event fsnotify.Event, filename string) {
 			return
 		}
 		w.callbackWg.Add(1)
+		w.callbackGID = goid()
 		w.mu.Unlock()
-		defer w.callbackWg.Done()
+
+		defer func() {
+			w.mu.Lock()
+			w.callbackGID = 0
+			w.mu.Unlock()
+			w.callbackWg.Done()
+		}()
 
 		err := w.cfg.Reload()
 		w.safeCallback(err)
@@ -330,6 +357,26 @@ func (w *Watcher) safeCallback(err error) {
 		}
 	}()
 	w.callback(w.cfg, err)
+}
+
+// goid 返回当前 goroutine 的 ID。
+// 仅用于检测 Stop() 在回调内调用时避免自锁死锁，非热路径（仅回调时调用）。
+func goid() int64 {
+	var buf [32]byte
+	n := runtime.Stack(buf[:], false)
+	// format: "goroutine 123 [running]:\n..."
+	s := string(buf[:n])
+	const prefix = "goroutine "
+	s = s[len(prefix):]
+	spaceIdx := 0
+	for spaceIdx < len(s) && s[spaceIdx] != ' ' {
+		spaceIdx++
+	}
+	id, err := strconv.ParseInt(s[:spaceIdx], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 // WatchConfig 配置监视的便捷接口。

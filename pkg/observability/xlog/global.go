@@ -120,7 +120,9 @@ func globalLog(l LoggerWithLevel, ctx context.Context, level slog.Level, msg str
 		return
 	}
 	// fallback：非 xlogger 实现（如用户自定义），按级别范围分发
-	// 与 slog 的级别语义对齐：自定义级别（如 INFO+2）路由到对应的标准级别
+	// 设计决策: 仅支持标准四级分发（Debug/Info/Warn/Error）。自定义级别（如 slog.LevelError+4）
+	// 会路由到对应范围的标准级别（≥Error 统一调用 Error）。这是 Logger 接口仅定义四个
+	// 级别方法的固有限制，在当前标准级别语义下行为正确。
 	switch {
 	case level < slog.LevelInfo:
 		l.Debug(ctx, msg, attrs...)

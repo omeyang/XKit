@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -199,7 +200,7 @@ func BenchmarkEnrichHandler(b *testing.B) {
 
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
-			base := slog.NewJSONHandler(&bytes.Buffer{}, nil)
+			base := slog.NewJSONHandler(io.Discard, nil)
 			handler, err := xlog.NewEnrichHandler(base)
 			if err != nil {
 				b.Fatalf("NewEnrichHandler() error: %v", err)

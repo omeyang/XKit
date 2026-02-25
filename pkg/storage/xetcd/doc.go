@@ -22,6 +22,17 @@
 // 这些功能的使用场景（服务注册、分布式选主等）需要更复杂的生命周期管理，
 // 由调用方根据具体需求直接操作 RawClient() 更为灵活。
 //
+// 设计决策: xetcd 不内建连接重试和周期性健康探测。
+// 初始化重试和持续健康检查属于上层框架的职责（如服务启动编排、健康检查端点），
+// xetcd 作为基础客户端封装不应假设调用方的重试策略。
+// WithHealthCheck 提供一次性创建阶段检查，满足 fail-fast 需求。
+//
+// 设计决策: xetcd 不内建可观测性（Trace/Metrics）。
+// etcd 官方客户端已通过 gRPC interceptor 提供基础的 RPC 级别追踪和指标，
+// 调用方可通过 gRPC DialOption 注入自定义 interceptor。
+// 若未来需要统一可观测性，可通过 WithTracer/WithMeter Option 扩展，
+// 当前阶段避免引入 xmetrics 依赖以保持包的轻量性。
+//
 // # 与 xdlock 集成
 //
 // xetcd 提供的 Config 类型与 xdlock.EtcdConfig 兼容，可以复用配置。

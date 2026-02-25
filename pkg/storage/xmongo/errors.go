@@ -15,6 +15,11 @@ var (
 	// ErrNilClient 表示传入的客户端为 nil。
 	ErrNilClient = errors.New("xmongo: nil client")
 
+	// ErrNilContext 表示传入的 context 为 nil。
+	// 所有接受 context 的公开方法（Health、FindPage、BulkInsert）在入口处检查此条件。
+	// Close 是例外：nil context 会被替换为 context.Background()，因为关闭操作不应因 nil ctx 而失败。
+	ErrNilContext = errors.New("xmongo: context must not be nil")
+
 	// ErrClosed 表示客户端已关闭。
 	ErrClosed = errors.New("xmongo: client closed")
 )

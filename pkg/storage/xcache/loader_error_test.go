@@ -32,7 +32,7 @@ func newTestRedisForError(t *testing.T, opts ...RedisOption) (Redis, *miniredis.
 	cache, err := NewRedis(client, opts...)
 	require.NoError(t, err)
 
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	return cache, mr
 }

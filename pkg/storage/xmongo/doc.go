@@ -24,23 +24,28 @@
 //
 // # Close(ctx) 签名说明
 //
-// 设计决策: Close 接受 context.Context 参数，与同模块的 xetcd/xcache（Close() error）签名不同。
+// 设计决策: Close 接受 context.Context 参数，与同模块的 xetcd 保持一致。
 // 原因：mongo.Client.Disconnect 支持 context 超时控制，在网络不可达时允许调用方设置关闭截止时间，
 // 避免无限阻塞。如需统一 Closer 接口，可传入 context.Background()。
 //
 // # 超时兜底
 //
-// FindPage 和 BulkInsert 默认完全依赖调用方传入的 context deadline。
-// 若调用方使用 context.Background() 等无 deadline 的 context，操作可能长时间悬挂。
+// FindPage 和 BulkInsert 默认自带兜底超时（查询 30 秒，写入 60 秒），
+// 仅当调用方 context 没有 deadline 时生效；已设置 deadline 的 context 不受影响。
 //
-// 建议生产环境通过 WithQueryTimeout / WithWriteTimeout 设置兜底超时：
+// 可通过 WithQueryTimeout / WithWriteTimeout 调整兜底超时：
 //
 //	m, _ := xmongo.New(client,
-//	    xmongo.WithQueryTimeout(30*time.Second),  // FindPage 兜底
-//	    xmongo.WithWriteTimeout(60*time.Second),  // BulkInsert 兜底
+//	    xmongo.WithQueryTimeout(10*time.Second),  // 缩短 FindPage 兜底至 10s
+//	    xmongo.WithWriteTimeout(120*time.Second), // 延长 BulkInsert 兜底至 120s
 //	)
 //
-// 仅当调用方 context 没有 deadline 时，兜底超时才生效；已设置 deadline 的 context 不受影响。
+// 传入 0 可显式禁用兜底超时（完全依赖调用方 context）：
+//
+//	m, _ := xmongo.New(client,
+//	    xmongo.WithQueryTimeout(0),  // 禁用 FindPage 兜底超时
+//	    xmongo.WithWriteTimeout(0),  // 禁用 BulkInsert 兜底超时
+//	)
 //
 // # Write Concern / Read Preference
 //

@@ -29,7 +29,7 @@
 //	WithXxx(ctx, value)    - 注入：将 value 写入 context
 //	Xxx(ctx)               - 读取：从 context 读取值，缺失时返回零值
 //	RequireXxx(ctx)        - 强制读取：值必须存在，缺失时返回错误
-//	MustXxx(ctx)           - 简化读取：值缺失时返回零值（不返回 ok/error）
+//	MustXxx(ctx)           - 简化读取：值缺失时返回零值（不返回 ok/error，注意：与 Go 标准库 Must=panic 惯例不同）
 //	EnsureXxx(ctx)         - 确保存在：若已存在则返回，否则自动生成
 //	GetXxx(ctx)            - 批量读取：返回结构体
 //

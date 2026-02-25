@@ -320,7 +320,7 @@ func TestSession_ExecuteCommand_PanicRecovery(t *testing.T) {
 		identity: &IdentityInfo{},
 	}
 
-	panicCmd := NewCommandFunc("panic", "panics", func(_ context.Context, _ []string) (string, error) {
+	panicCmd := mustNewCommandFunc(t, "panic", "panics", func(_ context.Context, _ []string) (string, error) {
 		panic("test panic")
 	})
 
@@ -352,7 +352,7 @@ func TestSession_ExecuteCommand_Normal(t *testing.T) {
 		identity: &IdentityInfo{},
 	}
 
-	normalCmd := NewCommandFunc("normal", "works", func(_ context.Context, _ []string) (string, error) {
+	normalCmd := mustNewCommandFunc(t, "normal", "works", func(_ context.Context, _ []string) (string, error) {
 		return "ok", nil
 	})
 
@@ -362,6 +362,56 @@ func TestSession_ExecuteCommand_Normal(t *testing.T) {
 	}
 	if output != "ok" {
 		t.Errorf("output should be 'ok', got %q", output)
+	}
+}
+
+// FG-M6: 验证 handleAcceptError 非 Listening 状态返回 true。
+func TestServer_HandleAcceptError_NotListening(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+	}
+	srv.state.Store(int32(ServerStateStarted))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if !result {
+		t.Error("handleAcceptError should return true when state is not Listening")
+	}
+}
+
+// FG-M6: 验证 handleAcceptError ctx 取消返回 true。
+func TestServer_HandleAcceptError_CtxDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+		ctx:  ctx,
+	}
+	srv.state.Store(int32(ServerStateListening))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if !result {
+		t.Error("handleAcceptError should return true when ctx is canceled")
+	}
+}
+
+// FG-M6: 验证 handleAcceptError 正常退避返回 false。
+func TestServer_HandleAcceptError_Backoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv := &Server{
+		opts: &options{AuditLogger: NewNoopAuditLogger()},
+		ctx:  ctx,
+	}
+	srv.state.Store(int32(ServerStateListening))
+
+	backoff := newAcceptBackoff()
+	result := srv.handleAcceptError(errors.New("test error"), backoff)
+	if result {
+		t.Error("handleAcceptError should return false during normal backoff")
 	}
 }
 

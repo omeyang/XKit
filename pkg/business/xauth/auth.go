@@ -89,6 +89,12 @@ type TokenInfo struct {
 	// 因为 ObtainedAt 有 json:"-" 标签，反序列化后会丢失，
 	// 此字段用于在 Redis 中保存并恢复真实的获取时间。
 	ObtainedAtUnix int64 `json:"obtained_at_unix,omitempty"`
+
+	// Claims 服务端返回的完整验证声明。
+	// 仅在 VerifyToken 调用成功时填充，包含租户、用户、权限等信息，
+	// 用于调用方执行租户一致性校验和授权决策。
+	// 通过 GetToken 获取的 Token 此字段为 nil。
+	Claims *VerifyData `json:"claims,omitempty"`
 }
 
 // IsExpired 判断 Token 是否已过期。

@@ -33,6 +33,10 @@ type ClickHouse interface {
 	Close() error
 
 	// QueryPage 分页查询。
+	// 设计决策: 方法名 QueryPage（而非 FindPage）遵循 SQL 领域惯用语。
+	// xmongo 使用 FindPage 是 MongoDB 惯用语（find）。各存储包遵循自身领域命名，
+	// 而非强制统一，以降低领域切换的认知负担。BatchInsert 同理（ClickHouse 使用 Batch 概念）。
+	//
 	// query 是 SQL 查询语句（不含 LIMIT/OFFSET），opts 指定分页参数。
 	//
 	// 注意事项：
@@ -137,7 +141,8 @@ type BatchResult struct {
 // =============================================================================
 
 // New 创建 ClickHouse 包装器。
-// conn 是已创建的 ClickHouse 连接，opts 是可选配置。
+// client 是已创建的 ClickHouse 连接，opts 是可选配置。
+// 参数名 client 而非 conn，与 Client() 方法及 ErrNilClient 命名保持一致。
 //
 // 示例：
 //
@@ -153,8 +158,8 @@ type BatchResult struct {
 //	    log.Fatal(err)
 //	}
 //	defer ch.Close()
-func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
-	if conn == nil {
+func New(client driver.Conn, opts ...Option) (ClickHouse, error) {
+	if client == nil {
 		return nil, ErrNilClient
 	}
 
@@ -170,7 +175,7 @@ func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 	}
 
 	return &clickhouseWrapper{
-		conn:              conn,
+		conn:              client,
 		options:           options,
 		slowQueryDetector: detector,
 	}, nil

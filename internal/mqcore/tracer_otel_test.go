@@ -294,6 +294,49 @@ func TestEnsureSpanContext_RespectsTraceFlags_Sampled(t *testing.T) {
 	assert.True(t, sc.IsSampled(), "TraceFlags 01 should be sampled")
 }
 
+func TestEnsureSpanContext_RespectsTraceFlags_HighBitOnly(t *testing.T) {
+	// W3C trace-flags "02" = bit 1 set, bit 0 (sampled) unset
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "02")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.False(t, sc.IsSampled(), "TraceFlags 02 (bit 0 unset) should not be sampled")
+	assert.Equal(t, trace.TraceFlags(0x02), sc.TraceFlags(), "should preserve full bit field")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_AllBitsSet(t *testing.T) {
+	// W3C trace-flags "ff" = all bits set, including bit 0 (sampled)
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "ff")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "TraceFlags ff should be sampled (bit 0 set)")
+}
+
+func TestEnsureSpanContext_RespectsTraceFlags_InvalidHex(t *testing.T) {
+	// 非法 hex 值应 fallback 到默认 FlagsSampled
+	ctx := context.Background()
+	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
+	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
+	ctx, _ = xctx.WithTraceFlags(ctx, "zz")
+
+	result := ensureSpanContext(ctx)
+
+	sc := trace.SpanContextFromContext(result)
+	assert.True(t, sc.IsValid())
+	assert.True(t, sc.IsSampled(), "invalid hex should default to sampled")
+}
+
 func TestEnsureSpanContext_DefaultSampled_NoTraceFlags(t *testing.T) {
 	ctx := context.Background()
 	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")

@@ -80,7 +80,7 @@ func TestRedis_BasicOperations_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -253,7 +253,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -286,7 +286,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 		// 创建第二个 cache 实例尝试获取同一个锁
 		cache2, err := NewRedis(client)
 		require.NoError(t, err)
-		defer cache2.Close()
+		defer cache2.Close(context.Background())
 
 		// 第二个锁应该失败
 		_, err = cache2.Lock(ctx, "test:lock:mutex", 10*time.Second)
@@ -299,7 +299,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 			WithLockRetry(50*time.Millisecond, 3),
 		)
 		require.NoError(t, err)
-		defer cacheWithRetry.Close()
+		defer cacheWithRetry.Close(context.Background())
 
 		// 先获取锁
 		unlock1, err := cache.Lock(ctx, "test:lock:retry", 200*time.Millisecond)
@@ -345,7 +345,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 			WithLockKeyPrefix("myapp:lock:"),
 		)
 		require.NoError(t, err)
-		defer cacheWithPrefix.Close()
+		defer cacheWithPrefix.Close(context.Background())
 
 		unlock, err := cacheWithPrefix.Lock(ctx, "test", 10*time.Second)
 		require.NoError(t, err)
@@ -368,7 +368,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				c, _ := NewRedis(client)
-				defer c.Close()
+				defer c.Close(context.Background())
 
 				unlock, err := c.Lock(ctx, "test:lock:concurrent", 5*time.Second)
 				if err == nil {
@@ -395,7 +395,7 @@ func TestLoader_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -581,7 +581,7 @@ func TestRedis_LargeData_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -654,7 +654,7 @@ func TestRedis_ErrorHandling_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 

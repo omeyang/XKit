@@ -117,9 +117,10 @@ func FuzzRuleMatcher(f *testing.F) {
 		for _, ruleName := range []string{"tenant", "global", "tenant-api", "caller", "nonexistent"} {
 			rule, found := matcher.findRule(ruleName)
 			if found {
-				_, _ = matcher.getEffectiveLimit(rule, key)
-				_ = matcher.getEffectiveBurst(rule, key)
-				_ = matcher.renderKey(rule, key, "prefix:")
+				rendered := key.Render(rule.KeyTemplate)
+				_, _ = matcher.getEffectiveLimit(rule, rendered)
+				_ = matcher.getEffectiveBurst(rule, rendered)
+				_ = matcher.renderKey(rendered, "prefix:")
 			}
 		}
 

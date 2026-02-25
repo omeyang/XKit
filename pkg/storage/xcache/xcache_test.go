@@ -29,7 +29,7 @@ func TestNewRedis_WithValidClient_Succeeds(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	assert.NotNil(t, cache)
 }
@@ -37,7 +37,7 @@ func TestNewRedis_WithValidClient_Succeeds(t *testing.T) {
 func TestNewMemory_WithDefaults_Succeeds(t *testing.T) {
 	cache, err := NewMemory()
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	assert.NotNil(t, cache)
 }
@@ -104,7 +104,7 @@ func newTestRedisCache(t *testing.T) (Redis, *miniredis.Miniredis) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		_ = cache.Close()
+		_ = cache.Close(context.Background())
 		mr.Close()
 	})
 
@@ -192,7 +192,7 @@ func TestRedisWrapper_Lock_WithRetry_Success(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(50*time.Millisecond, 5))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -220,7 +220,7 @@ func TestRedisWrapper_Lock_WithRetry_ContextCancelled(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(100*time.Millisecond, 10))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -245,7 +245,7 @@ func TestRedisWrapper_Lock_WithRetry_AllRetriesFail(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	cache, err := NewRedis(client, WithLockRetry(10*time.Millisecond, 2))
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -326,7 +326,7 @@ func newTestMemoryCache(t *testing.T) Memory {
 	t.Helper()
 	cache, err := NewMemory(WithMemoryMaxCost(1 << 20))
 	require.NoError(t, err)
-	t.Cleanup(func() { cache.Close() })
+	t.Cleanup(func() { cache.Close(context.Background()) })
 	return cache
 }
 
@@ -491,7 +491,7 @@ func TestNewMemory_WithInvalidConfig_UsesDefaults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, cache)
 	if cache != nil {
-		cache.Close()
+		cache.Close(context.Background())
 	}
 }
 
@@ -587,11 +587,11 @@ func TestRedisWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
 	require.NoError(t, err)
 
 	// 第一次关闭应成功
-	err = cache.Close()
+	err = cache.Close(context.Background())
 	assert.NoError(t, err)
 
 	// 第二次关闭应返回 ErrClosed
-	err = cache.Close()
+	err = cache.Close(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
@@ -604,7 +604,7 @@ func TestRedisWrapper_LockAfterClose_ReturnsErrClosed(t *testing.T) {
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
 
-	_ = cache.Close()
+	_ = cache.Close(context.Background())
 
 	_, err = cache.Lock(context.Background(), "test-key", 10*time.Second)
 	assert.ErrorIs(t, err, ErrClosed)
@@ -630,7 +630,7 @@ func TestMemoryWrapper_Stats_AfterClose_ReturnsZero(t *testing.T) {
 	cache, err := NewMemory()
 	require.NoError(t, err)
 
-	_ = cache.Close()
+	_ = cache.Close(context.Background())
 
 	// Stats() 应该返回零值而非 panic
 	stats := cache.Stats()
@@ -642,10 +642,10 @@ func TestMemoryWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
 	require.NoError(t, err)
 
 	// 第一次关闭应成功
-	err = cache.Close()
+	err = cache.Close(context.Background())
 	assert.NoError(t, err)
 
 	// 第二次关闭应返回 ErrClosed
-	err = cache.Close()
+	err = cache.Close(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
 }

@@ -203,7 +203,9 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-
 	eventCh := make(chan Event, o.bufferSize)
 
 	// 启动 watch goroutine
-	go c.runWatchLoop(ctx, key, etcdOpts, eventCh)
+	c.watchWg.Go(func() {
+		c.runWatchLoop(ctx, key, etcdOpts, eventCh)
+	})
 
 	return eventCh, nil
 }
@@ -422,7 +424,9 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	eventCh := make(chan Event, o.bufferSize)
 
 	// 启动带重试的 watch goroutine
-	go c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
+	c.watchWg.Go(func() {
+		c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
+	})
 
 	return eventCh, nil
 }
@@ -585,7 +589,7 @@ func (c *Client) handleWatchRetry(ctx context.Context, cfg RetryConfig, state *w
 	if cfg.OnRetry != nil {
 		cfg.OnRetry(state.retryCount, err, state.backoff, state.lastRevision)
 	}
-	sleepWithContext(ctx, state.backoff)
+	sleepWithCancel(ctx, state.backoff, c.closeCh)
 	state.backoff = nextBackoff(state.backoff, cfg)
 	return false
 }
@@ -637,12 +641,15 @@ func (c *Client) forwardEvent(ctx context.Context, eventCh chan<- Event, event E
 	}
 }
 
-// sleepWithContext 带 context 的 sleep。
-func sleepWithContext(ctx context.Context, d time.Duration) {
+// sleepWithCancel 带 context 和关闭信号的 sleep。
+// 当 ctx 取消、done 通道关闭或定时器到期时返回，
+// 确保 Close() 期间退避睡眠能被及时中断。
+func sleepWithCancel(ctx context.Context, d time.Duration, done <-chan struct{}) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
+	case <-done:
 	case <-timer.C:
 	}
 }
@@ -658,6 +665,11 @@ func nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
 }
 
 // jitter 随机数常量，与 xretry 保持一致。
+// 设计决策: 此处与 pkg/resilience/xretry/backoff.go 中的 randomFloat64 实现相同算法。
+// 有意保持 copy-paste 而非提取到 internal/ 共享包，原因：
+//   - xetcd 与 xretry 属于不同领域模块，避免引入跨域依赖
+//   - 算法稳定（crypto/rand + bit-shift 生成 [0,1) 浮点数），变更概率极低
+//   - 若需修改，两处代码均有注释指向对方，便于同步
 const (
 	jitterFloatBits  = 53
 	jitterFloatScale = 1.0 / (1 << jitterFloatBits)

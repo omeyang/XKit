@@ -36,10 +36,11 @@ type BackoffPolicy interface {
 // ResettableBackoff 可重置的退避策略接口。
 // 实现此接口的 BackoffPolicy 可通过 Reset() 重置内部状态。
 //
-// 设计决策: Retryer 当前不自动调用 Reset()，因为唯一的实现
+// 消费方: internal/mqcore 在消费成功后通过类型断言调用 Reset() 重置退避状态。
+//
+// 设计决策: Retryer 当前不自动调用 Reset()，因为内置实现
 // ExponentialBackoff.Reset() 是空操作（crypto/rand 无状态）。
-// 此接口保留为扩展点，供有状态的自定义 BackoffPolicy 使用。
-// 如需在成功后重置状态，调用方应手动执行类型断言调用 Reset()。
+// 此接口供有状态的自定义 BackoffPolicy 实现，用于在成功后重置内部状态。
 type ResettableBackoff interface {
 	BackoffPolicy
 	Reset()

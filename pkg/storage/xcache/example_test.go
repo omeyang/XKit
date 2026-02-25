@@ -30,7 +30,7 @@ func ExampleNewRedis() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -57,7 +57,7 @@ func ExampleNewMemory() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	// 基础操作：直接使用底层客户端
 	cache.Client().SetWithTTL("key1", []byte("value1"), 6, time.Minute)
@@ -91,7 +91,7 @@ func ExampleNewLoader() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	// 创建 Loader - 这是 xcache 的核心增值功能
 	loader, err := xcache.NewLoader(cache,
@@ -132,7 +132,7 @@ func Example_distributedLock() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -171,7 +171,7 @@ func Example_hashOperations() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -216,7 +216,7 @@ func Example_loaderWithTTLJitter() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	// 创建带 TTL 抖动的 Loader，防止缓存雪崩
 	loader, err := xcache.NewLoader(cache,
@@ -255,7 +255,7 @@ func Example_loaderWithDistributedLock() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 

@@ -254,7 +254,7 @@ func TestServer_RegisterCommand(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	cmd := NewCommandFunc("test", "test command", func(_ context.Context, _ []string) (string, error) {
+	cmd := mustNewCommandFunc(t, "test", "test command", func(_ context.Context, _ []string) (string, error) {
 		return "test output", nil
 	})
 

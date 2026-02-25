@@ -48,7 +48,9 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 
 	options := defaultEtcdFactoryOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	// 创建 Session
@@ -74,6 +76,9 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 // 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项（Expiry、Tries 等）
 // 被忽略，因为 etcd 的锁生命周期由 Session TTL 控制。
 func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if err := f.checkSession(); err != nil {
 		return nil, err
 	}
@@ -83,7 +88,9 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 
 	options := defaultMutexOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	fullKey := options.KeyPrefix + key
@@ -108,6 +115,9 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 //
 // 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项被忽略。
 func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if err := f.checkSession(); err != nil {
 		return nil, err
 	}
@@ -117,7 +127,9 @@ func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption)
 
 	options := defaultMutexOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 
 	fullKey := options.KeyPrefix + key
@@ -172,7 +184,7 @@ func (f *etcdFactory) Health(ctx context.Context) error {
 	// 使用 Status API 验证连接，不依赖特定 key 的 RBAC 权限
 	for _, ep := range f.client.Endpoints() {
 		if _, err := f.client.Status(ctx, ep); err != nil {
-			return fmt.Errorf("xdlock: health check: %w", err)
+			return fmt.Errorf("xdlock: health check endpoint %s: %w", ep, err)
 		}
 	}
 	return nil
@@ -244,7 +256,10 @@ func (h *etcdLockHandle) Unlock(ctx context.Context) error {
 //
 // 与 Redis 后端不同，etcd 的续期完全自动，调用此方法不会延长锁的有效期，
 // 而是检查锁状态是否健康。推荐在长时间运行的任务中定期调用以检测锁状态。
-func (h *etcdLockHandle) Extend(_ context.Context) error {
+func (h *etcdLockHandle) Extend(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	// 检查锁是否已被显式释放
 	if h.unlocked.Load() {
 		return ErrNotLocked

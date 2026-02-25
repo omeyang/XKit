@@ -50,9 +50,22 @@
 // 仅 Health 提供 HealthTimeout（默认 5 秒），因为健康检查预期快速完成。
 // 查询和写入的耗时因场景而异，内置默认超时可能导致合理的长查询被意外中断。
 //
+// ## Close() 不带 context
+//
+// 设计决策: Close() error 不接受 context 参数，因为底层 clickhouse-go
+// driver.Conn.Close() 不接受 context。与 xmongo.Close(ctx) 签名不同（xmongo 底层
+// mongo.Client.Disconnect 支持 ctx）。若 clickhouse-go 未来支持 Close(ctx)，
+// 将同步更新接口签名。极端场景下（如网络分区），Close() 可能阻塞直到 TCP 超时。
+//
 // ## 接口命名
 //
 // 设计决策: 接口名为 ClickHouse 与 xmongo.Mongo 保持同一模式（使用技术名称），
 // 虽然 xclickhouse.ClickHouse 存在命名重复（stuttering），但与同级包一致。
 // 方法名 Client() 和错误名 ErrNilClient 已与 xmongo、xcache 统一。
+//
+// ## 方法命名
+//
+// 设计决策: QueryPage/BatchInsert 遵循 SQL 领域惯用语（query、batch），
+// 而非与 xmongo 的 FindPage/BulkInsert 强制统一。各存储包遵循自身领域命名
+// 以降低领域切换的认知负担：ClickHouse 使用 Query/Batch 概念，MongoDB 使用 Find/Bulk 概念。
 package xclickhouse

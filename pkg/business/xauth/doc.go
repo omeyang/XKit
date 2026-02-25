@@ -41,6 +41,10 @@
 //
 // VerifyToken 完全委托认证服务端校验 Token 有效性（包括过期、受众等）。
 // 客户端不做本地 exp/issuer/audience 校验，避免与服务端规则不一致。
+// 验证成功后，返回的 TokenInfo.Claims 字段包含服务端返回的完整声明
+// （租户 ID、用户 ID、权限等），可用于调用方执行租户一致性校验和授权决策。
+//
+// VerifyTokenForTenant 是便捷函数，在 VerifyToken 基础上增加租户 ID 一致性检查。
 //
 // # URL 处理
 //

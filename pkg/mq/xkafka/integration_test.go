@@ -4,6 +4,7 @@ package xkafka_test
 
 import (
 	"context"
+	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -20,9 +21,24 @@ import (
 // 测试辅助函数
 // =============================================================================
 
+// skipIfNoDocker 检查 Docker 可用性，不可用时跳过测试。
+// 防止 testcontainers 在 Docker 不可用时 panic 导致整个测试进程崩溃。
+func skipIfNoDocker(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not found, skipping integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available, skipping integration test")
+	}
+}
+
 // setupKafka 启动 Kafka 容器并返回 bootstrap servers。
 func setupKafka(t *testing.T) (string, func()) {
 	t.Helper()
+	skipIfNoDocker(t)
 	ctx := context.Background()
 
 	container, err := kafkaContainer.Run(ctx,

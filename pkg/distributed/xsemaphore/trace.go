@@ -107,6 +107,10 @@ func acquireSpanAttributes(semType, resource, tenantID string, capacity, tenantQ
 }
 
 // releaseSpanAttributes 构建 release 操作的 span 属性
+//
+// 设计决策: releaseSpanAttributes 和 extendSpanAttributes 当前实现相同，
+// 但保留为两个独立函数。Release 和 Extend 是不同的语义操作，
+// 未来 Extend 可能需要额外属性（如 newTTL），分开有利于独立演进。
 func releaseSpanAttributes(semType, resource, tenantID, permitID string) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String(attrSemType, semType),

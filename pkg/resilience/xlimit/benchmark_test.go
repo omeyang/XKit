@@ -367,10 +367,11 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 
 	b.Run("getEffectiveLimit", func(b *testing.B) {
 		rule, _ := matcher.FindRule(key)
+		rendered := key.Render(rule.KeyTemplate)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_, _ = matcher.getEffectiveLimit(rule, key)
+			_, _ = matcher.getEffectiveLimit(rule, rendered)
 		}
 	})
 

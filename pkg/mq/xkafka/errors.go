@@ -6,11 +6,8 @@ import (
 	"github.com/omeyang/xkit/internal/mqcore"
 )
 
-// 重导出共享错误
+// 重导出共享错误（xkafka 和 xpulsar 共同使用）
 var (
-	// ErrNilConfig 表示传入的配置为空。
-	ErrNilConfig = mqcore.ErrNilConfig
-
 	// ErrNilClient 表示传入的客户端为空。
 	ErrNilClient = mqcore.ErrNilClient
 
@@ -22,22 +19,25 @@ var (
 
 	// ErrClosed 表示客户端已关闭。
 	ErrClosed = mqcore.ErrClosed
-
-	// ErrHealthCheckFailed 表示健康检查失败。
-	ErrHealthCheckFailed = mqcore.ErrHealthCheckFailed
-
-	// ErrDLQPolicyRequired 表示 DLQ 策略不能为空。
-	ErrDLQPolicyRequired = mqcore.ErrDLQPolicyRequired
-
-	// ErrDLQTopicRequired 表示 DLQ Topic 不能为空。
-	ErrDLQTopicRequired = mqcore.ErrDLQTopicRequired
-
-	// ErrRetryPolicyRequired 表示重试策略不能为空。
-	ErrRetryPolicyRequired = mqcore.ErrRetryPolicyRequired
 )
 
 // Kafka 特有错误
 var (
+	// ErrNilConfig 表示传入的配置为空。
+	ErrNilConfig = errors.New("xkafka: nil config")
+
+	// ErrHealthCheckFailed 表示健康检查失败。
+	ErrHealthCheckFailed = errors.New("xkafka: health check failed")
+
+	// ErrDLQPolicyRequired 表示 DLQ 策略不能为空。
+	ErrDLQPolicyRequired = errors.New("xkafka: DLQ policy is required")
+
+	// ErrDLQTopicRequired 表示 DLQ Topic 不能为空。
+	ErrDLQTopicRequired = errors.New("xkafka: DLQ topic is required")
+
+	// ErrRetryPolicyRequired 表示重试策略不能为空。
+	ErrRetryPolicyRequired = errors.New("xkafka: retry policy is required")
+
 	// ErrFlushTimeout 表示消息刷新超时。
 	ErrFlushTimeout = errors.New("xkafka: flush timeout")
 

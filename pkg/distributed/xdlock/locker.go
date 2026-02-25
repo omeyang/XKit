@@ -45,9 +45,11 @@ type LockHandle interface {
 	//
 	// Redis 后端：延长锁的 TTL，续期时间使用创建锁时配置的 Expiry。
 	// etcd 后端：检查 Session 健康状态和本地解锁标记（etcd 使用 Session 自动续期）。
+	// 传入 nil ctx 返回 [ErrNilContext]（etcd 后端忽略 ctx 参数，但仍校验非 nil）。
 	//
 	// 返回值：
 	//   - nil: 锁状态正常
+	//   - [ErrNilContext]: ctx 为 nil
 	//   - [ErrNotLocked]: 锁已过期、被释放或被其他获取覆盖（所有权已丢失）
 	//   - [ErrExtendFailed]: 续期操作失败（锁可能仍在，可重试）
 	//   - [ErrSessionExpired]: etcd Session 已过期
@@ -66,9 +68,10 @@ type Factory interface {
 	//
 	// 每次调用生成唯一标识，确保不同获取之间不会互相干扰。
 	// 成功时返回 LockHandle，锁被占用时返回 (nil, nil)。
+	// 传入 nil ctx 返回 [ErrNilContext]。
 	//
 	// 参数：
-	//   - ctx: 上下文，用于超时控制
+	//   - ctx: 上下文，用于超时控制，不能为 nil
 	//   - key: 锁标识，建议使用业务语义明确的名称
 	//   - opts: 锁配置选项（如 WithExpiry 设置 TTL）
 	//
@@ -81,18 +84,21 @@ type Factory interface {
 
 	// Lock 阻塞式获取锁。
 	//
-	// 会根据配置的重试策略进行重试，直到获取到锁或 context 取消/超时。
+	// 会根据配置的重试策略（Tries、RetryDelay）进行重试，
+	// 直到获取到锁、重试耗尽或 context 取消/超时。
 	// 成功时返回 LockHandle。
+	// 传入 nil ctx 返回 [ErrNilContext]。
 	//
 	// 参数：
-	//   - ctx: 上下文，用于超时控制
+	//   - ctx: 上下文，用于超时控制，不能为 nil
 	//   - key: 锁标识
 	//   - opts: 锁配置选项
 	//
 	// 错误：
+	//   - [ErrNilContext]: ctx 为 nil
 	//   - context.Canceled: context 被取消
 	//   - context.DeadlineExceeded: context 超时
-	//   - ErrLockFailed: 重试耗尽仍未获取到锁
+	//   - [ErrLockFailed]: 重试耗尽仍未获取到锁（Redis 后端）
 	Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error)
 
 	// Close 关闭工厂，释放底层资源。

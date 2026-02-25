@@ -135,6 +135,9 @@ func (w *consumerWrapper) calculateLag() int64 {
 		return 0
 	}
 
+	// 设计决策: 复用 HealthTimeout 作为 Committed/QueryWatermarkOffsets 的 RPC 超时。
+	// 避免增加独立的 LagTimeout 选项（增加配置复杂度），且两者的超时语义相近。
+	// 注意：设置较短的 HealthTimeout（如 1s）可能导致分区多时 lag 计算因 RPC 超时返回 0。
 	timeoutMs := int(w.options.HealthTimeout.Milliseconds())
 
 	var totalLag int64

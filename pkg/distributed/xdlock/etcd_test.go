@@ -214,11 +214,11 @@ func TestEtcdFactory_TryLock_LockHeld(t *testing.T) {
 	// 创建两个工厂（两个不同的 Session）来测试真正的锁竞争
 	factory1, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory1.Close() }()
+	defer func() { _ = factory1.Close(context.Background()) }()
 
 	factory2, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory2.Close() }()
+	defer func() { _ = factory2.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -283,11 +283,11 @@ func TestEtcdFactory_Lock_ContextCanceled(t *testing.T) {
 	// 创建两个工厂（两个不同的 Session）来测试真正的锁竞争
 	factory1, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory1.Close() }()
+	defer func() { _ = factory1.Close(context.Background()) }()
 
 	factory2, err := xdlock.NewEtcdFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory2.Close() }()
+	defer func() { _ = factory2.Close(context.Background()) }()
 
 	// 第一个工厂持有锁
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)

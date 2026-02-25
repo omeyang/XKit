@@ -376,7 +376,7 @@ func EnsureTrace(ctx context.Context) (context.Context, error) {
 
 	// 设计决策: 构建仅含缺失字段的 Trace 后调用 WithTrace 批量注入。
 	// WithTrace 内部通过 applyOptionalFields 跳过空值字段，不会覆盖已存在的值。
-	// 相比逐个调用 EnsureXxx，减少了 context 嵌套层数。
+	// 相比逐个调用 EnsureXxx，减少了重复的 nil/存在性检查和函数调用开销。
 	var trace Trace
 	if !hasTraceID {
 		trace.TraceID = GenerateTraceID()
@@ -420,6 +420,9 @@ func GetTrace(ctx context.Context) Trace {
 }
 
 // Validate 校验 Trace 必填字段是否完整，缺失时返回对应的哨兵错误。
+//
+// 采用 fail-fast 策略：仅返回第一个缺失字段的错误（按 TraceID → SpanID → RequestID 顺序）。
+// 如需一次性获取所有缺失字段，请逐字段调用 RequireXxx 或自行遍历检查。
 //
 // 与 IsComplete() 检查相同条件，区别在于返回类型：
 //   - Validate() 返回 error，适用于中间件/业务层的错误处理链

@@ -230,7 +230,9 @@ func WithOnStateChange(f func(name string, from, to State)) BreakerOption {
 
 // NewBreaker 创建熔断器执行器
 //
-// name 是熔断器的名称，用于日志和监控标识。
+// name 是熔断器的名称，用于日志和监控标识，建议传入非空字符串。
+// 空名称不会报错，但会影响日志可读性和监控标签有效性。
+//
 // 默认配置：
 //   - 熔断策略：连续失败 5 次触发熔断
 //   - 超时时间：60 秒

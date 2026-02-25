@@ -212,11 +212,14 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 使用 retry-go 的完整功能。
 // 如果接收者为 nil，使用默认配置创建实例。
 //
-// 设计决策: 返回的实例为一次性使用。内部 RetryIf 闭包维护了 attemptCount 状态，
-// 对同一实例多次调用 Do 会导致计数累积，产生非预期的重试行为。
+// 重要: 返回的实例为一次性使用（类比 strings.Builder）。
+// 内部 RetryIf 闭包维护了 attemptCount 状态，对同一实例多次调用 Do()
+// 会导致计数累积，产生非预期的重试行为（重试次数异常减少）。
 // 每次需要重试时应重新调用 Retrier() 获取新实例。
-// 未改为返回工厂函数，因为 *retry.Retrier 是 retry-go 的原生类型，
-// 保持类型一致性比防止误用更重要（类比 strings.Builder 不可复用）。
+// 并发调用同一实例的 Do() 同样不安全（attemptCount 无同步保护）。
+//
+// 设计决策: 未改为返回工厂函数，因为 *retry.Retrier 是 retry-go 的原生类型，
+// 保持类型一致性比防止误用更重要。
 // 设计决策: nil ctx 归一化为 context.Background() 而非返回错误，
 // 因为此方法不返回 error（保持 API 兼容性），且与 nil 接收者的
 // "提供可用默认值"语义一致。
@@ -234,6 +237,8 @@ func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 //
 // 与 Retrier() 类似，但用于需要返回值的场景。
 // 如果 r 为 nil，使用默认配置创建实例。
+//
+// 重要: 返回的实例为一次性使用，详见 Retrier 方法的文档说明。
 func RetrierWithData[T any](ctx context.Context, r *Retryer) *retry.RetrierWithData[T] {
 	if ctx == nil {
 		ctx = context.Background()

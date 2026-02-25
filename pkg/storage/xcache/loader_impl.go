@@ -315,6 +315,12 @@ func (l *loader) loadWithLock(ctx context.Context, key string, loadFn LoadFunc, 
 
 // checkCacheGet 检查缓存，返回 (value, done, error)。
 // 如果 done 为 true，表示已有结果（缓存命中或错误），调用方应直接返回。
+//
+// 设计决策: Redis 非 redis.Nil 错误时直接回源（不走分布式锁路径）。
+// 此时 Redis 本身不可用，通过同一 Redis 获取分布式锁同样会失败，
+// 走锁路径只会增加额外的失败 roundtrip。singleflight 已在上层提供
+// 进程内并发去重，足以防止单实例内的回源风暴。跨实例场景依赖
+// 后端自身的限流/熔断能力。
 func (l *loader) checkCacheGet(ctx context.Context, key string, loadFn LoadFunc, ttl time.Duration) ([]byte, bool, error) {
 	value, err := l.cache.Client().Get(ctx, key).Bytes()
 	if err == nil {
@@ -379,6 +385,15 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 		return nil, err
 	}
 
+	cacheTTL := l.applyTTLJitter(ttl)
+
+	// 设计决策: 负 TTL 时跳过写入缓存，与 loadHashAndCache 行为一致。
+	// go-redis 对负 expiration 的行为不是拒绝写入，而是设置永久 key（或 KEEPTTL），
+	// 因此必须在调用 Set 之前显式过滤。
+	if cacheTTL < 0 {
+		return value, nil
+	}
+
 	// 设计决策: 缓存写入使用脱离取消链的 context + 独立短超时，确保回源数据不会
 	// 因调用方取消而丢失。singleflight 路径的 ctx 已经是 detached 的，但非
 	// singleflight 路径使用调用方原始 ctx，调用方取消可能导致缓存写入失败。
@@ -386,7 +401,6 @@ func (l *loader) loadAndCache(ctx context.Context, key string, loadFn LoadFunc, 
 	writeCtx, writeCancel := context.WithTimeout(contextDetached(ctx), defaultOperationTimeout)
 	defer writeCancel()
 
-	cacheTTL := l.applyTTLJitter(ttl)
 	if setErr := l.cache.Client().Set(writeCtx, key, value, cacheTTL).Err(); setErr != nil {
 		l.logWarn("xcache: cache set failed", "key", key, "error", setErr)
 		l.onCacheSetError(writeCtx, key, setErr)
@@ -470,6 +484,9 @@ func (l *loader) loadHashWithLock(ctx context.Context, key, field string, loadFn
 
 // checkCacheHGet 检查 Hash 缓存，返回 (value, done, error)。
 // 如果 done 为 true，表示已有结果（缓存命中或错误），调用方应直接返回。
+//
+// 设计决策: Redis 非 redis.Nil 错误时直接回源（不走分布式锁路径），
+// 与 checkCacheGet 对称。详见 checkCacheGet 注释。
 func (l *loader) checkCacheHGet(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, bool, error) {
 	value, err := l.cache.Client().HGet(ctx, key, field).Bytes()
 	if err == nil {
@@ -499,9 +516,9 @@ func (l *loader) loadHashAndCache(ctx context.Context, key, field string, loadFn
 
 	cacheTTL := l.applyTTLJitter(ttl)
 
-	// 设计决策: 负 TTL 时跳过写入缓存，与 Load 行为一致。
-	// Load 中 Redis SET 会拒绝负 TTL（返回错误，等同于不缓存），
-	// 但 HSet 不受 TTL 约束，若不显式跳过会写入永不过期的数据。
+	// 设计决策: 负 TTL 时跳过写入缓存，与 loadAndCache 行为一致。
+	// go-redis 对负 expiration 的行为不可靠（可能设置永久 key），
+	// 因此 loadAndCache 和 loadHashAndCache 均在写入前显式过滤。
 	if cacheTTL < 0 {
 		return value, nil
 	}

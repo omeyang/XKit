@@ -3,7 +3,7 @@ package xcron
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -241,10 +241,14 @@ func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 
 		// 等待退避时间
 		if backoff > 0 {
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
 				return ctx.Err()
-			case <-time.After(backoff):
+			case <-timer.C:
 			}
 		}
 	}
@@ -300,7 +304,16 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 			case <-renewCtx.Done():
 				return
 			case <-ticker.C:
-				if err := lockHandle.Renew(renewCtx, w.opts.lockTTL); err != nil {
+				// 设计决策: 每次续期使用独立超时（取 lockTimeout 和 lockTTL/3 的较小值），
+				// 防止后端响应慢导致续期协程卡住，进而导致 stopRenew 的 wg.Wait() 阻塞。
+				renewTimeout := min(w.opts.lockTimeout, w.opts.lockTTL/3)
+				if renewTimeout <= 0 {
+					renewTimeout = 5 * time.Second
+				}
+				callCtx, callCancel := context.WithTimeout(renewCtx, renewTimeout)
+				err := lockHandle.Renew(callCtx, w.opts.lockTTL)
+				callCancel()
+				if err != nil {
 					w.logError(ctx, "lock renewal failed, canceling task to prevent concurrent execution",
 						"job", w.opts.name, "error", err)
 					// 续期失败时取消任务执行，防止锁过期后并发执行
@@ -328,8 +341,8 @@ func (w *jobWrapper) stopRenew(rh *renewHandle) {
 // 日志辅助方法
 
 // logDebug 记录调试日志。
-// 设计决策: 无 logger 时静默丢弃（不回退到 log.Printf），因为 Debug 日志通常量大，
-// 输出到标准库 log 会造成噪音。logWarn/logError 回退是因为警告和错误不应被静默忽略。
+// 设计决策: 无 logger 时静默丢弃（不回退到 slog），因为 Debug 日志通常量大，
+// 输出到默认 logger 会造成噪音。logWarn/logError 回退到 slog 是因为警告和错误不应被静默忽略。
 func (w *jobWrapper) logDebug(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Debug(ctx, msg, args...)
@@ -340,7 +353,7 @@ func (w *jobWrapper) logWarn(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Warn(ctx, msg, args...)
 	} else {
-		log.Printf("[WARN] xcron: %s %v", msg, args)
+		slog.WarnContext(ctx, "xcron: "+msg, args...)
 	}
 }
 
@@ -348,7 +361,7 @@ func (w *jobWrapper) logError(ctx context.Context, msg string, args ...any) {
 	if w.logger != nil {
 		w.logger.Error(ctx, msg, args...)
 	} else {
-		log.Printf("[ERROR] xcron: %s %v", msg, args)
+		slog.ErrorContext(ctx, "xcron: "+msg, args...)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -202,6 +203,56 @@ func TestXlogger_With_PreservesOnError(t *testing.T) {
 	if callbackCount.Load() != 1 {
 		t.Errorf("child logger onError callback count = %d, want 1", callbackCount.Load())
 	}
+}
+
+// TestXlogger_StackWithSkip_BufferExpansion 测试堆栈缓冲区扩容路径
+func TestXlogger_StackWithSkip_BufferExpansion(t *testing.T) {
+	var buf testWriterBuffer
+	levelVar := new(slog.LevelVar)
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: levelVar})
+	l := &xlogger{
+		handler:        handler,
+		levelVar:       levelVar,
+		errorCount:     new(atomic.Uint64),
+		inErrorHandler: new(atomic.Bool),
+	}
+
+	// 使用深度递归生成超过 initialStackSize(4096) 字节的堆栈
+	var deepCall func(depth int)
+	deepCall = func(depth int) {
+		if depth > 0 {
+			deepCall(depth - 1)
+			return
+		}
+		l.Stack(context.Background(), "deep stack test")
+	}
+	deepCall(100) // 100 层递归应产生远超 4096 字节的堆栈
+
+	output := buf.String()
+	if !containsStr(output, "deep stack test") {
+		t.Errorf("output missing message\noutput: %s", output[:min(len(output), 500)])
+	}
+	if !containsStr(output, "goroutine") {
+		t.Errorf("output missing stack trace\noutput: %s", output[:min(len(output), 500)])
+	}
+}
+
+// testWriterBuffer 简单的非线程安全写缓冲（白盒测试用）
+type testWriterBuffer struct {
+	data []byte
+}
+
+func (b *testWriterBuffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *testWriterBuffer) String() string {
+	return string(b.data)
+}
+
+func containsStr(s, substr string) bool {
+	return len(s) > 0 && len(s) >= len(substr) && strings.Contains(s, substr)
 }
 
 // TestXlogger_WithGroup_PreservesOnError 测试 WithGroup 是否保留 onError

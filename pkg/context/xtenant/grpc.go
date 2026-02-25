@@ -428,7 +428,7 @@ func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (con
 	trace := ExtractTraceFromMetadata(md)
 	ctx, err = injectGRPCTraceToContext(ctx, trace, cfg.ensureTrace)
 	if err != nil { // 防御性处理：当前 xctx 实现下不可达
-		return nil, err
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return ctx, nil
@@ -449,16 +449,17 @@ func validateGRPCTenantInfo(info TenantInfo, cfg *grpcInterceptorConfig) error {
 }
 
 // injectGRPCTraceToContext 处理追踪信息并注入 context
+//
+// 设计决策: 返回原始 error 而非 status.Error，由调用方 injectTenantToContext
+// 统一转换为 gRPC status error。与 HTTP 路径（injectHTTPTraceToContext 返回原始
+// error，由 injectTenantToHTTPContext 统一转换为 HTTP 状态码）保持一致的错误包装策略。
 func injectGRPCTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
 	ctx, err := xctx.WithTrace(ctx, trace)
 	if err != nil { // 防御性处理：当前 xctx 实现下不可达
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, err
 	}
 	if ensureTrace {
-		ctx, err = xctx.EnsureTrace(ctx)
-		if err != nil { // 防御性处理：当前 xctx 实现下不可达
-			return nil, status.Error(codes.Internal, err.Error())
-		}
+		return xctx.EnsureTrace(ctx)
 	}
 	return ctx, nil
 }

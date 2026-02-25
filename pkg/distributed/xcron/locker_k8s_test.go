@@ -2,6 +2,7 @@ package xcron
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // ============================================================================
@@ -560,6 +564,152 @@ func TestK8sLocker_leaseName(t *testing.T) {
 		assert.LessOrEqual(t, len(result), 63,
 			"lease name must not exceed 63 chars, got %d: %s", len(result), result)
 	})
+}
+
+// ============================================================================
+// K8s API Error Path Tests
+// ============================================================================
+
+func TestK8sLocker_CreateLease_AlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	// 注入 AlreadyExists 错误：模拟并发创建场景
+	fakeClient.PrependReactor("create", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewAlreadyExists(
+			coordinationv1.Resource("leases"), "xcron-test-job")
+	})
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	assert.NoError(t, err)
+	assert.Nil(t, handle) // 并发创建时返回 nil（锁被其他实例先创建）
+}
+
+func TestK8sLocker_AcquireLease_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	// 先创建一个已过期的 Lease，使 acquireLease 路径被触发
+	pastTime := metav1.NewMicroTime(time.Now().Add(-10 * time.Minute))
+	duration := int32(60)
+	holder := "other-pod:old-uuid"
+	_, err := fakeClient.CoordinationV1().Leases("default").Create(ctx, &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xcron-test-job",
+			Namespace: "default",
+		},
+		Spec: coordinationv1.LeaseSpec{
+			HolderIdentity:       &holder,
+			LeaseDurationSeconds: &duration,
+			AcquireTime:          &pastTime,
+			RenewTime:            &pastTime,
+		},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 注入 Conflict 错误：模拟乐观锁冲突
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	assert.NoError(t, err)
+	assert.Nil(t, handle) // 版本冲突时返回 nil
+}
+
+func TestK8sLockHandle_Unlock_NotFound(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	// 获取锁
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 删除 Lease（模拟 Lease 被外部删除）
+	err = fakeClient.CoordinationV1().Leases("default").Delete(ctx, "xcron-test-job", metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	// Unlock 应返回 nil（Lease 已不存在，视为已释放）
+	err = handle.Unlock(ctx)
+	assert.NoError(t, err)
+}
+
+func TestK8sLockHandle_Unlock_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 注入 Conflict 错误（模拟 Unlock 时被其他实例接管）
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	err = handle.Unlock(ctx)
+	assert.Equal(t, ErrLockNotHeld, err)
+}
+
+func TestK8sLockHandle_Renew_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 注入 Conflict 错误（模拟续期时版本冲突）
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	err = handle.Renew(ctx, 10*time.Minute)
+	assert.Equal(t, ErrLockNotHeld, err)
 }
 
 // ============================================================================

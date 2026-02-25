@@ -206,7 +206,7 @@ func TestBuildDLQMessageFromPolicy_Basic(t *testing.T) {
 		Value: []byte("value"),
 	}
 
-	dlqMsg := buildDLQMessageFromPolicy(originalMsg, "dlq-topic", errors.New("test error"), 3)
+	dlqMsg := buildDLQMessageFromPolicy(originalMsg, "dlq-topic", "test error", 3)
 
 	assert.Equal(t, "dlq-topic", *dlqMsg.TopicPartition.Topic)
 	assert.Equal(t, []byte("key"), dlqMsg.Key)
@@ -236,7 +236,7 @@ func TestBuildDLQMessageFromPolicy_PreservesExistingOriginal(t *testing.T) {
 		Value: []byte("value"),
 	}
 
-	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", errors.New("error"), 5)
+	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", "error", 5)
 
 	// 应保留原始信息，而非使用重试队列的 TopicPartition
 	assert.Equal(t, "real-original-topic", getHeader(dlqMsg, HeaderOriginalTopic))
@@ -256,7 +256,7 @@ func TestBuildDLQMessageFromPolicy_NilTopicPtr(t *testing.T) {
 		Value: []byte("value"),
 	}
 
-	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", errors.New("error"), 0)
+	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", "error", 0)
 
 	// originalTopic 应该为空
 	assert.Empty(t, getHeader(dlqMsg, HeaderOriginalTopic))
@@ -278,7 +278,7 @@ func TestBuildDLQMessageFromPolicy_PreservesCustomHeaders(t *testing.T) {
 		Value: []byte("value"),
 	}
 
-	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", nil, 0)
+	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", "", 0)
 
 	// 验证自定义 headers 被保留
 	assert.Equal(t, "value1", getHeader(dlqMsg, "custom-header-1"))
@@ -294,7 +294,7 @@ func TestBuildDLQMessageFromPolicy_NilError(t *testing.T) {
 		Value: []byte("value"),
 	}
 
-	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", nil, 0)
+	dlqMsg := buildDLQMessageFromPolicy(msg, "dlq-topic", "", 0)
 
 	// nil 错误应该转为空字符串
 	assert.Empty(t, getHeader(dlqMsg, HeaderFailureReason))
@@ -316,7 +316,7 @@ func TestBuildDLQMetadataFromMessage_Basic(t *testing.T) {
 		Timestamp: now,
 	}
 
-	metadata := buildDLQMetadataFromMessage(msg, errors.New("test error"), 3)
+	metadata := buildDLQMetadataFromMessage(msg, "test error", 3)
 
 	assert.Equal(t, "test-topic", metadata.OriginalTopic)
 	assert.Equal(t, int32(1), metadata.OriginalPartition)
@@ -332,7 +332,7 @@ func TestBuildDLQMetadataFromMessage_NilTopic(t *testing.T) {
 		},
 	}
 
-	metadata := buildDLQMetadataFromMessage(msg, nil, 0)
+	metadata := buildDLQMetadataFromMessage(msg, "", 0)
 
 	assert.Empty(t, metadata.OriginalTopic)
 }
@@ -351,7 +351,7 @@ func TestBuildDLQMetadataFromMessage_WithValidFirstFailTime(t *testing.T) {
 		},
 	}
 
-	metadata := buildDLQMetadataFromMessage(msg, errors.New("test error"), 2)
+	metadata := buildDLQMetadataFromMessage(msg, "test error", 2)
 
 	// 验证使用了 header 中的 FirstFailTime
 	assert.Equal(t, expectedTime, metadata.FirstFailureTime)
@@ -373,7 +373,7 @@ func TestBuildDLQMetadataFromMessage_WithInvalidFirstFailTime(t *testing.T) {
 		},
 	}
 
-	metadata := buildDLQMetadataFromMessage(msg, errors.New("test error"), 1)
+	metadata := buildDLQMetadataFromMessage(msg, "test error", 1)
 
 	// 解析失败时应回退到当前时间
 	assert.True(t, metadata.FirstFailureTime.After(beforeTest) || metadata.FirstFailureTime.Equal(beforeTest))
@@ -410,7 +410,7 @@ func TestUpdateRetryHeaders_FirstRetry(t *testing.T) {
 		},
 	}
 
-	updateRetryHeaders(msg, errors.New("test error"))
+	updateRetryHeaders(msg, "test error")
 
 	assert.Equal(t, "1", getHeader(msg, HeaderRetryCount))
 	assert.Equal(t, "test-topic", getHeader(msg, HeaderOriginalTopic))
@@ -436,7 +436,7 @@ func TestUpdateRetryHeaders_SubsequentRetry(t *testing.T) {
 		},
 	}
 
-	updateRetryHeaders(msg, errors.New("new error"))
+	updateRetryHeaders(msg, "new error")
 
 	assert.Equal(t, "3", getHeader(msg, HeaderRetryCount))
 	// 原始信息应保持不变
@@ -539,4 +539,82 @@ func TestDLQStatsCollector_IncSuccessAfterRetry(t *testing.T) {
 
 	stats := collector.get()
 	assert.Equal(t, int64(1), stats.SuccessAfterRetry)
+}
+
+// =============================================================================
+// defaultFailureReasonFormatter Tests (FG-S1)
+// =============================================================================
+
+func TestDefaultFailureReasonFormatter_NilError(t *testing.T) {
+	result := defaultFailureReasonFormatter(nil)
+	assert.Empty(t, result)
+}
+
+func TestDefaultFailureReasonFormatter_ShortError(t *testing.T) {
+	result := defaultFailureReasonFormatter(errors.New("short error"))
+	assert.Equal(t, "short error", result)
+}
+
+func TestDefaultFailureReasonFormatter_TruncatesLongError(t *testing.T) {
+	// 构造超过 maxFailureReasonLen 的错误
+	longMsg := make([]byte, maxFailureReasonLen+100)
+	for i := range longMsg {
+		longMsg[i] = 'x'
+	}
+	result := defaultFailureReasonFormatter(errors.New(string(longMsg)))
+
+	assert.Len(t, result, maxFailureReasonLen+len("...(truncated)"))
+	assert.True(t, len(result) < len(string(longMsg)))
+	assert.Contains(t, result, "...(truncated)")
+}
+
+func TestDefaultFailureReasonFormatter_ExactlyMaxLen(t *testing.T) {
+	// 刚好等于 maxFailureReasonLen 不应截断
+	exactMsg := make([]byte, maxFailureReasonLen)
+	for i := range exactMsg {
+		exactMsg[i] = 'y'
+	}
+	result := defaultFailureReasonFormatter(errors.New(string(exactMsg)))
+	assert.Equal(t, string(exactMsg), result)
+	assert.NotContains(t, result, "...(truncated)")
+}
+
+// =============================================================================
+// parseOriginalPartition / parseOriginalOffset Success Path Tests (FG-L5)
+// =============================================================================
+
+func TestParseOriginalPartition_ValidHeader(t *testing.T) {
+	msg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{Partition: 5},
+		Headers: []kafka.Header{
+			{Key: HeaderOriginalPartition, Value: []byte("42")},
+		},
+	}
+
+	assert.Equal(t, int32(42), parseOriginalPartition(msg))
+}
+
+func TestParseOriginalOffset_ValidHeader(t *testing.T) {
+	msg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{Offset: 99},
+		Headers: []kafka.Header{
+			{Key: HeaderOriginalOffset, Value: []byte("12345")},
+		},
+	}
+
+	assert.Equal(t, int64(12345), parseOriginalOffset(msg))
+}
+
+// =============================================================================
+// DefaultBackoffPolicy Tests (FG-L4)
+// =============================================================================
+
+func TestDefaultBackoffPolicy_NotNil(t *testing.T) {
+	bp := DefaultBackoffPolicy()
+	assert.NotNil(t, bp)
+
+	// 验证默认延迟在合理范围内（100ms ± 10% jitter）
+	delay := bp.NextDelay(1)
+	assert.GreaterOrEqual(t, delay.Milliseconds(), int64(80))
+	assert.LessOrEqual(t, delay.Milliseconds(), int64(120))
 }

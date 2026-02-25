@@ -2,6 +2,7 @@ package xcron
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -782,4 +783,33 @@ func TestScheduler_AddJob_WithImmediate(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	assert.True(t, executed.Load())
+}
+
+// TestScheduler_ConcurrentAddRemove 验证并发 AddJob/Remove 不会触发 map 竞态。
+// 此测试配合 -race 标志运行，确保 jobNames 的并发安全。
+func TestScheduler_ConcurrentAddRemove(t *testing.T) {
+	s := New(WithLocker(NoopLocker()))
+	defer s.Stop()
+
+	const goroutines = 20
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			name := fmt.Sprintf("concurrent-job-%d", idx)
+			id, err := s.AddFunc("@every 1h", func(ctx context.Context) error {
+				return nil
+			}, WithName(name))
+			if err != nil {
+				return
+			}
+			// 立即移除，制造 AddJob 和 Remove 的并发竞争
+			s.Remove(id)
+		}(i)
+	}
+
+	wg.Wait()
 }

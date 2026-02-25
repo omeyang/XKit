@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/omeyang/xkit/internal/storageopt"
+	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -186,6 +187,12 @@ func New(client *mongo.Client, opts ...Option) (Mongo, error) {
 		if opt != nil {
 			opt(options)
 		}
+	}
+
+	// 防御性校验：确保 Observer 不为 nil（defaultOptions 已设置 NoopObserver，
+	// 但自定义 Option 可能误设为 nil）
+	if options.Observer == nil {
+		options.Observer = xmetrics.NoopObserver{}
 	}
 
 	// 创建慢查询检测器

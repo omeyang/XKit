@@ -94,14 +94,26 @@ var (
 //   - "LOCAL", "local", "Local" -> DeploymentLocal
 //   - "SAAS", "saas", "SaaS" -> DeploymentSaaS
 //
+// 错误优先级：ErrAlreadyInitialized > ErrMissingEnv > ErrEmptyEnv > ErrInvalidDeploymentType。
+//
 // 错误场景：
+//   - 已初始化: ErrAlreadyInitialized
 //   - 环境变量未设置: ErrMissingEnv
 //   - 环境变量为空/纯空白: ErrEmptyEnv
 //   - 值非法: ErrInvalidDeploymentType
-//   - 已初始化: ErrAlreadyInitialized
 //
 // 此函数应在 main() 中服务启动时调用一次。
 func Init() error {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	// 设计决策: 先检查初始化状态，再校验输入。
+	// 确保"已初始化 + 环境缺失/非法"场景始终返回 ErrAlreadyInitialized，
+	// 避免调用方将状态错误误判为输入错误。与 xplatform.Init 策略一致。
+	if initialized.Load() {
+		return ErrAlreadyInitialized
+	}
+
 	v, ok := os.LookupEnv(EnvDeploymentType)
 	if !ok {
 		return ErrMissingEnv
@@ -113,14 +125,6 @@ func Init() error {
 	dt, err := Parse(v)
 	if err != nil {
 		return err
-	}
-
-	globalMu.Lock()
-	defer globalMu.Unlock()
-
-	// 在锁内检查，避免并发读取到空配置
-	if initialized.Load() {
-		return ErrAlreadyInitialized
 	}
 
 	// 先写配置，再设置 initialized 标志
@@ -147,19 +151,23 @@ func MustInit() {
 // （如集成测试、嵌入式部署）。通过 ErrAlreadyInitialized 保证单次初始化语义，
 // 与 Init() 具有相同的不可变性保障。
 //
-// 如果部署类型非法，返回 ErrInvalidDeploymentType。
+// 错误优先级：ErrAlreadyInitialized > ErrInvalidDeploymentType。
+//
 // 如果已经初始化过，返回 ErrAlreadyInitialized。
+// 如果部署类型非法，返回 ErrInvalidDeploymentType。
 func InitWith(dt DeploymentType) error {
-	if !dt.IsValid() {
-		return fmt.Errorf("%w: %q (expected LOCAL or SAAS)", ErrInvalidDeploymentType, dt)
-	}
-
 	globalMu.Lock()
 	defer globalMu.Unlock()
 
-	// 在锁内检查，避免并发覆盖
+	// 设计决策: 先检查初始化状态，再校验参数。
+	// 确保"已初始化 + 非法参数"场景始终返回 ErrAlreadyInitialized，
+	// 与 Init() 和 xplatform.Init 的错误优先级策略保持一致。
 	if initialized.Load() {
 		return ErrAlreadyInitialized
+	}
+
+	if !dt.IsValid() {
+		return fmt.Errorf("%w: %q (expected LOCAL or SAAS)", ErrInvalidDeploymentType, dt)
 	}
 
 	globalType.Store(dt)
@@ -220,8 +228,11 @@ func RequireType() (DeploymentType, error) {
 	}
 	// 设计决策: globalType 仅存储 DeploymentType 值，类型断言必然成功。
 	// 保留 comma-ok 形式以满足 golangci-lint check-type-assertions 规则。
+	// dt == "" 后置校验捕获 Reset 并发窗口中的 TOCTOU：读者先观察到
+	// initialized=true（旧值），再读到 globalType=""（新值），此时返回
+	// ErrNotInitialized 而非 ("", nil)，确保函数语义契约不被违反。
 	dt, ok := globalType.Load().(DeploymentType)
-	if !ok {
+	if !ok || dt == "" {
 		return "", ErrNotInitialized
 	}
 	return dt, nil

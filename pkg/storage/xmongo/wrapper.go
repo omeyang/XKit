@@ -60,6 +60,9 @@ func (w *mongoWrapper) Client() *mongo.Client {
 
 // Health 执行健康检查。
 func (w *mongoWrapper) Health(ctx context.Context) (err error) {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if w.closed.Load() {
 		return ErrClosed
 	}
@@ -119,11 +122,17 @@ func (w *mongoWrapper) getPoolStats() PoolStats {
 // Close 关闭 MongoDB 连接。
 // 重复调用返回 ErrClosed。并发安全。
 //
+// 设计决策: nil context 替换为 context.Background() 而非返回 ErrNilContext，
+// 因为关闭操作不应因 nil ctx 而失败（资源释放优先于参数校验）。
+//
 // 设计决策: Disconnect 失败时不回滚 closed 状态（不支持重试）。
 // 原因：(1) 标准 Go 模式，io.Closer 契约为"调用一次释放资源";
 // (2) 允许重试会引入复杂的并发状态管理;
 // (3) Disconnect 失败通常意味着网络不可达，重试同样会失败。
 func (w *mongoWrapper) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !w.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}
@@ -144,6 +153,9 @@ func (w *mongoWrapper) Close(ctx context.Context) error {
 
 // FindPage 分页查询。
 func (w *mongoWrapper) FindPage(ctx context.Context, coll *mongo.Collection, filter any, opts PageOptions) (*PageResult, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
@@ -152,6 +164,9 @@ func (w *mongoWrapper) FindPage(ctx context.Context, coll *mongo.Collection, fil
 
 // BulkInsert 批量插入。
 func (w *mongoWrapper) BulkInsert(ctx context.Context, coll *mongo.Collection, docs []any, opts BulkOptions) (*BulkResult, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}

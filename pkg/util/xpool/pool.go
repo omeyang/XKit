@@ -94,10 +94,11 @@ func (p *Pool[T]) worker() {
 func (p *Pool[T]) safeHandle(task T) {
 	defer func() {
 		if r := recover(); r != nil {
-			attrs := []slog.Attr{
+			attrs := make([]slog.Attr, 0, 4) // 预分配：panic + stack + task/task_type + pool（可选）
+			attrs = append(attrs,
 				slog.Any("panic", r),
 				slog.String("stack", string(debug.Stack())),
-			}
+			)
 			if p.opts.logTaskValue {
 				attrs = append(attrs, slog.Any("task", task))
 			} else {

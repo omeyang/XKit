@@ -49,7 +49,7 @@ func (w *TracingProducer) Produce(ctx context.Context, msg *kafka.Message, deliv
 	err = w.producer.Produce(msg, deliveryChan)
 	if err != nil {
 		w.errors.Add(1)
-		return err
+		return fmt.Errorf("kafka produce: %w", err)
 	}
 
 	w.messagesProduced.Add(1)

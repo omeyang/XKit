@@ -13,7 +13,7 @@ import (
 )
 
 // 设计决策: 健康检查通过错误消息匹配判断 "topic 不存在" 这一预期错误。
-// Pulsar Go SDK（pulsar-client-go v0.14）未导出结构化错误类型，仅能通过字符串匹配。
+// Pulsar Go SDK（pulsar-client-go v0.18）未导出结构化错误类型，仅能通过字符串匹配。
 // 以下模式限定为 topic 相关关键词，避免宽泛匹配导致误判。
 // SDK 版本更新时需验证这些模式是否仍然有效。
 var healthCheckTopicPatterns = []string{
@@ -41,6 +41,10 @@ type clientWrapper struct {
 	// 统计信息
 	producersCount atomic.Int32
 	consumersCount atomic.Int32
+
+	// healthWg 跟踪 Health() 超时后的后台清理 goroutine。
+	// Close() 等待所有清理 goroutine 完成，防止 goroutine 泄漏。
+	healthWg sync.WaitGroup
 
 	// 关闭状态
 	closed atomic.Bool
@@ -81,7 +85,7 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		Component: componentName,
 		Operation: "health",
 		Kind:      xmetrics.KindClient,
-		Attrs:     pulsarAttrs(""),
+		Attrs:     pulsarAttrs(w.options.HealthCheckTopic),
 	})
 	defer func() {
 		span.End(xmetrics.Result{Err: err})
@@ -105,12 +109,13 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		// 超时后，goroutine 仍可能在执行（因为 CreateReader 不接受 context）
 		// 启动后台清理 goroutine，避免阻塞调用方，同时确保资源被清理。
 		// 清理 goroutine 最终会因 Pulsar 客户端的 OperationTimeout 而返回。
-		go func() {
+		// 通过 healthWg 跟踪，Close() 会等待所有清理 goroutine 完成。
+		w.healthWg.Go(func() {
 			result := <-resultCh
 			if result.reader != nil {
 				result.reader.Close()
 			}
-		}()
+		})
 		return healthCtx.Err()
 	case result := <-resultCh:
 		if result.err != nil {
@@ -137,7 +142,7 @@ func (w *clientWrapper) CreateProducer(options pulsar.ProducerOptions) (pulsar.P
 	}
 	producer, err := w.client.CreateProducer(options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: create producer: %w", err)
 	}
 	w.producersCount.Add(1)
 	return &trackedProducer{
@@ -153,7 +158,7 @@ func (w *clientWrapper) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consum
 	}
 	consumer, err := w.client.Subscribe(options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xpulsar: subscribe: %w", err)
 	}
 	w.consumersCount.Add(1)
 	return &trackedConsumer{
@@ -175,11 +180,13 @@ func (w *clientWrapper) Stats() Stats {
 // 重复调用是安全的，仅首次调用会实际关闭底层连接。
 // Pulsar 内部关闭所有 producer/consumer 时不经过 tracked wrapper，
 // 因此手动重置计数器以确保 Stats() 返回一致状态。
+// Close 会等待 Health() 超时后的后台清理 goroutine 全部完成，防止 goroutine 泄漏。
 func (w *clientWrapper) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	w.client.Close()
+	w.healthWg.Wait()
 	w.producersCount.Store(0)
 	w.consumersCount.Store(0)
 	return nil

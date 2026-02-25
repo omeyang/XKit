@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -18,9 +19,10 @@ import (
 type Client struct {
 	client    etcdClient // 使用接口以支持测试时的 mock 注入
 	rawClient *clientv3.Client
-	config    *Config
+	config    *Config // 保留已规范化的配置副本，用于调试和未来扩展（如 Reconnect、config 审计）
 	closed    atomic.Bool
-	closeCh   chan struct{} // 关闭信号通道，用于通知 Watch goroutine 退出
+	closeCh   chan struct{}  // 关闭信号通道，用于通知 Watch goroutine 退出
+	watchWg   sync.WaitGroup // 追踪活跃的 Watch goroutine，确保 Close 时等待退出
 }
 
 // NewClient 创建 etcd 客户端。
@@ -49,6 +51,9 @@ func NewClient(config *Config, opts ...Option) (*Client, error) {
 	// 应用选项
 	o := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(o)
 	}
 
@@ -121,6 +126,9 @@ func (c *Client) RawClient() *clientv3.Client {
 // 关闭后客户端不可再使用。
 // Client 必须通过 NewClient 创建，零值 Client 的行为未定义。
 //
+// Close 会等待所有 Watch goroutine 退出后再关闭底层连接，
+// 确保关闭后不会有残留的 goroutine 继续使用已关闭的连接。
+//
 // 设计决策: ctx 参数当前未使用，保留是为了与 D-02 决策保持一致
 // （统一生命周期接口保留 ctx 参数以保持扩展性），
 // 未来可用于控制关闭超时（如等待 Watch goroutine 退出）。
@@ -132,6 +140,10 @@ func (c *Client) Close(_ context.Context) error {
 	if c.closeCh != nil {
 		close(c.closeCh)
 	}
+	// 设计决策: 先等待所有 Watch goroutine 退出，再关闭底层连接。
+	// 这确保 goroutine 不会在关闭后继续使用已关闭的 etcd 客户端，
+	// 避免高频创建/销毁场景下的资源泄漏与停机抖动。
+	c.watchWg.Wait()
 	if c.client != nil {
 		return c.client.Close()
 	}

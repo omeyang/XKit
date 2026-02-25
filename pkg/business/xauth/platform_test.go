@@ -131,7 +131,7 @@ func TestPlatformManager_GetPlatformID(t *testing.T) {
 		cfg.Host = platformServer.URL
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: platformServer.URL})
 		tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-		tokenMgr := NewTokenManager(TokenManagerConfig{
+		tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  tokenCache,
@@ -314,7 +314,7 @@ func TestPlatformManager_Singleflight(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -369,7 +369,7 @@ func TestPlatformManager_FetchPlatformID_Empty(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -415,7 +415,7 @@ func TestPlatformManager_FetchUnclassRegionID_Empty(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -460,7 +460,7 @@ func TestPlatformManager_HasParentPlatform_GetFieldError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -503,7 +503,7 @@ func TestPlatformManager_FetchHasParent_API(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -536,7 +536,7 @@ func TestPlatformManager_FetchPlatformID_TokenError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -576,7 +576,7 @@ func TestPlatformManager_FetchPlatformID_HTTPError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -606,7 +606,7 @@ func TestPlatformManager_FetchUnclassRegionID_TokenError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -646,7 +646,7 @@ func TestPlatformManager_FetchUnclassRegionID_HTTPError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -691,7 +691,7 @@ func TestPlatformManager_CacheWriteError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,
@@ -748,7 +748,7 @@ func TestPlatformManager_URLEncoding(t *testing.T) {
 		cfg.Host = server.URL
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 		tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-		tokenMgr := NewTokenManager(TokenManagerConfig{
+		tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 			Config: cfg,
 			HTTP:   httpClient,
 			Cache:  tokenCache,
@@ -802,7 +802,7 @@ func TestPlatformManager_CacheError(t *testing.T) {
 	cfg.Host = server.URL
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
 	tokenCache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr := mustNewTokenManager(t, TokenManagerConfig{
 		Config: cfg,
 		HTTP:   httpClient,
 		Cache:  tokenCache,

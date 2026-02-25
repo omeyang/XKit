@@ -286,6 +286,8 @@ func (r *lumberjackRotator) Write(p []byte) (n int, err error) {
 		// 设计决策: Write 与 Close 存在 TOCTOU 窗口——Write 通过 closed 前置检查后，
 		// Close 可能在 logger.Write 执行期间完成。此处后置检查确保调用者始终得到
 		// ErrClosed（而非底层 I/O 错误），保持 ErrClosed 契约的可靠性。
+		// 成功路径不做后置检查：数据已实际写入磁盘，返回 success 在语义上更准确——
+		// 返回 ErrClosed 会误导调用方认为数据丢失。
 		if r.closed.Load() {
 			return n, ErrClosed
 		}
@@ -295,6 +297,8 @@ func (r *lumberjackRotator) Write(p []byte) (n int, err error) {
 	// 权限调整是尽力而为，不影响日志写入的返回值
 	if r.fileMode != 0 {
 		needCheck := !r.modeApplied.Load()
+		// 设计决策: maxSizeBytes > 0 是防御性检查，当前验证保证 MaxSizeMB >= 1，
+		// 因此 maxSizeBytes 永远 >= 1048576。保留此守卫以防未来验证逻辑变更。
 		if !needCheck && r.maxSizeBytes > 0 {
 			if r.bytesWritten.Add(int64(n)) >= r.maxSizeBytes {
 				needCheck = true
@@ -382,7 +386,8 @@ func (r *lumberjackRotator) Rotate() error {
 	}
 
 	if err := r.logger.Rotate(); err != nil {
-		// 设计决策: 与 Write 相同的 TOCTOU 后置检查（见 Write 注释）
+		// 设计决策: 与 Write 相同的 TOCTOU 后置检查（见 Write 注释）。
+		// 成功路径不做后置检查：轮转已完成，返回 success 在语义上更准确。
 		if r.closed.Load() {
 			return ErrClosed
 		}

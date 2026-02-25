@@ -242,23 +242,16 @@ func TestEnsureDirWithPermNullByte(t *testing.T) {
 }
 
 func TestEnsureDirWithPermMkdirFailure(t *testing.T) {
-	// 创建只读目录，使 os.MkdirAll 在其下创建子目录时失败
+	// 使用普通文件作为父路径，使 os.MkdirAll 在其下创建子目录时失败。
+	// 比 chmod 0500 方案更稳定：root/CAP_DAC_OVERRIDE 环境下权限检查可能不生效，
+	// 但"父路径是普通文件"在任何权限环境下都会导致 MkdirAll 失败。
 	tmpDir := t.TempDir()
-	readonlyDir := filepath.Join(tmpDir, "readonly")
-	if err := os.MkdirAll(readonlyDir, 0750); err != nil {
-		t.Fatalf("创建 readonly 目录失败: %v", err)
+	blockingFile := filepath.Join(tmpDir, "blocker")
+	if err := os.WriteFile(blockingFile, []byte("block"), 0600); err != nil {
+		t.Fatalf("创建阻塞文件失败: %v", err)
 	}
-	if err := os.Chmod(readonlyDir, 0500); err != nil {
-		t.Fatalf("修改权限失败: %v", err)
-	}
-	t.Cleanup(func() {
-		// 恢复权限以便 t.TempDir() 能清理
-		if err := os.Chmod(readonlyDir, 0750); err != nil {
-			t.Logf("恢复权限失败: %v", err)
-		}
-	})
 
-	err := EnsureDirWithPerm(filepath.Join(readonlyDir, "subdir", "app.log"), 0750)
+	err := EnsureDirWithPerm(filepath.Join(blockingFile, "subdir", "app.log"), 0750)
 	if err == nil {
 		t.Fatal("期望 os.MkdirAll 失败，但没有返回错误")
 	}

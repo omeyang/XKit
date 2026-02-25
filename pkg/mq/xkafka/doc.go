@@ -25,6 +25,14 @@
 // 使用 ConsumerWithDLQ 结合 DLQPolicy 实现消息重试和死信处理。
 // 推荐使用 [DefaultDLQTopic] 生成 DLQ Topic 名称以保持命名一致性。
 //
+// DLQ 遵循 at-least-once 语义：消息投递到 DLQ 成功后才存储 offset。
+// 如果 StoreMessage 在 DLQ 投递成功后失败，消费者重启会重新消费该消息，
+// 可能导致 DLQ 中出现重复。建议使用方在 DLQ 消费端基于
+// x-original-topic + x-original-partition + x-original-offset 做幂等处理。
+//
+// 失败原因写入 x-failure-reason Header 时默认截断至 1024 字符，
+// 防止敏感信息泄露。可通过 [DLQPolicy].FailureReasonFormatter 自定义格式化。
+//
 // # 统计信息
 //
 // [ProducerStats] 和 [ConsumerStats] 中的 MessagesProduced/MessagesConsumed 等计数
@@ -33,6 +41,7 @@
 //
 // [ConsumerStats].Lag 通过对每个分区执行 Committed + QueryWatermarkOffsets RPC 计算，
 // 在分区数较多时可能持有锁数秒。不建议在高频路径（如秒级健康检查）中调用 Stats()。
+// Lag RPC 超时复用 [WithConsumerHealthTimeout] 配置，设置较短值可能导致 lag 返回 0。
 //
 // # Offset 提交模型
 //

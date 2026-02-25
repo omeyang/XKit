@@ -586,10 +586,36 @@ func TestTryAcquireCloseAfterSend(t *testing.T) {
 	assert.Equal(t, 0, kl.Len())
 }
 
+// TestTryAcquireDefaultCloseAfterReleaseRef 确定性覆盖 TryAcquire default 分支的
+// "releaseRef 后发现已关闭"路径（keylock_impl.go: default → releaseRef → testHook 注入
+// Close → closed 检查 → 返回 ErrClosed）。与 TestTryAcquireCloseAfterSend 配合，
+// 完整覆盖 TryAcquire 的两条竞态分支。
+func TestTryAcquireDefaultCloseAfterReleaseRef(t *testing.T) {
+	kl := newForTest(t)
+	impl, ok := kl.(*keyLockImpl)
+	require.True(t, ok)
+
+	// 持有锁，使 TryAcquire 走 default 分支。
+	h, err := kl.Acquire(context.Background(), "key1")
+	require.NoError(t, err)
+
+	// 在 default 分支 releaseRef 后、closed 检查前注入 Close。
+	impl.testHookAfterDefaultReleaseRef = func() {
+		assert.NoError(t, kl.Close())
+	}
+
+	h2, err := kl.TryAcquire("key1")
+	assert.Nil(t, h2)
+	assert.ErrorIs(t, err, ErrClosed)
+
+	require.NoError(t, h.Unlock())
+}
+
 // TestTryAcquireCloseRace 压力测试 TryAcquire 与 Close 的并发安全性。
 // 设计决策: 此测试为非确定性压力测试（配合 -race 检测数据竞争），
-// 不断言特定分支命中——TryAcquire 的 "send 后发现 closed" 回滚分支
-// 由 TestTryAcquireCloseAfterSend 通过 hook 确定性覆盖。
+// 不断言特定分支命中——TryAcquire 的两条竞态分支分别由
+// TestTryAcquireCloseAfterSend 和 TestTryAcquireDefaultCloseAfterReleaseRef
+// 通过 hook 确定性覆盖。
 func TestTryAcquireCloseRace(t *testing.T) {
 	kl := newForTest(t)
 

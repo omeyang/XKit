@@ -66,6 +66,8 @@ func New() *Builder {
 // SetOutput 设置日志输出目标
 //
 // nil 会立即报错（fail-fast，与 SetDeploymentType 行为一致）。
+// 注意：如果之前调用了 SetRotation，SetOutput 会覆盖轮转输出。
+// Builder 遵循 last-wins 语义：以最后一次设置的输出目标为准。
 func (b *Builder) SetOutput(w io.Writer) *Builder {
 	if b.err != nil {
 		return b

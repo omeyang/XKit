@@ -22,6 +22,8 @@
 // # DLQ 配置
 //
 // 使用 DLQBuilder 构建死信队列策略，通过 WithMaxDeliveries/WithDeadLetterTopic 等方法配置。
+// ConsumerOptionsBuilder 默认订阅类型为 Shared（非 Pulsar 原生默认的 Exclusive），
+// 因为 Shared 更适合多实例微服务部署。如需 Exclusive 模式请显式调用 WithType。
 //
 // # 健康检查
 //
@@ -29,6 +31,8 @@
 // 默认使用 non-persistent://public/default/__health_check__ 作为探测 Topic。
 // 在启用 ACL 或非 public/default 命名空间的集群中，
 // 使用 WithHealthCheckTopic 配置为客户端有权限访问的 Topic。
+//
+// Health() 超时后会启动后台清理 goroutine，Close() 会等待其完成，不会泄漏 goroutine。
 //
 // Stats().Connected 仅表示客户端未调用 Close()，不反映实际网络连接状态。
 // 若需检测连接健康，请使用 Health() 方法。

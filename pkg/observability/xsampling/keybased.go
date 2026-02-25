@@ -52,6 +52,7 @@ type KeyBasedSampler struct {
 //
 // rate 表示采样比率，范围 [0.0, 1.0]，超出范围或为 NaN 时返回 ErrInvalidRate。
 // keyFunc 用于从 context 中提取采样 key，不能为 nil（为 nil 时返回 ErrNilKeyFunc）。
+// nil option 返回 ErrNilOption。
 //
 // 当 keyFunc 返回空字符串时，采样器回退到随机采样（保持采样率语义但失去一致性）。
 // 可通过 WithOnEmptyKey 注册回调来监控空 key 事件，帮助排查上下文传播问题。
@@ -82,6 +83,9 @@ func NewKeyBasedSampler(rate float64, keyFunc KeyFunc, opts ...KeyBasedOption) (
 		keyFunc: keyFunc,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(s)
 	}
 	return s, nil

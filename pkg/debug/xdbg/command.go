@@ -25,19 +25,19 @@ type CommandFunc struct {
 
 // NewCommandFunc 创建函数式命令。
 //
-// 前置条件: name 不能为空，fn 不能为 nil。违反时 panic（编程错误，应在开发期发现）。
-func NewCommandFunc(name, help string, fn func(ctx context.Context, args []string) (string, error)) *CommandFunc {
+// 前置条件: name 不能为空，fn 不能为 nil。违反时返回对应错误。
+func NewCommandFunc(name, help string, fn func(ctx context.Context, args []string) (string, error)) (*CommandFunc, error) {
 	if name == "" {
-		panic("xdbg: NewCommandFunc: name must not be empty")
+		return nil, ErrEmptyCommandName
 	}
 	if fn == nil {
-		panic("xdbg: NewCommandFunc: fn must not be nil")
+		return nil, ErrNilCommandFunc
 	}
 	return &CommandFunc{
 		name:    name,
 		help:    help,
 		execute: fn,
-	}
+	}, nil
 }
 
 // Name 返回命令名称。

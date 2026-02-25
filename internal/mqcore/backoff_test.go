@@ -175,35 +175,56 @@ func TestRunConsumeLoop_NilConsume(t *testing.T) {
 
 func TestRunConsumeLoop_NilContext(t *testing.T) {
 	// nil ctx 应归一化为 context.Background()，不 panic。
+	// 使用 ErrClosed 终止循环，避免 goroutine 泄漏和忙循环。
 	var ctxWasNil atomic.Bool
 	var count atomic.Int32
-	done := make(chan struct{})
 
-	go func() {
-		defer close(done)
-		//nolint:staticcheck // SA1012: 此测试专门验证 nil ctx 归一化行为
-		RunConsumeLoop(nil, func(innerCtx context.Context) error { //nolint:errcheck // 测试 goroutine 中无法传递错误
-			if innerCtx == nil {
-				ctxWasNil.Store(true)
-			}
-			count.Add(1)
-			return nil
-		})
-	}()
-
-	// 等待至少执行 3 次 consume，证明 nil ctx 已归一化且循环正常运行
-	deadline := time.After(2 * time.Second)
-	for count.Load() < 3 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for consume calls")
-		default:
-			time.Sleep(time.Millisecond)
+	//nolint:staticcheck // SA1012: 此测试专门验证 nil ctx 归一化行为
+	err := RunConsumeLoop(nil, func(innerCtx context.Context) error {
+		if innerCtx == nil {
+			ctxWasNil.Store(true)
 		}
-	}
+		if count.Add(1) >= 3 {
+			return ErrClosed // 终止循环
+		}
+		return nil
+	})
 
+	if !errors.Is(err, ErrClosed) {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
 	if ctxWasNil.Load() {
 		t.Error("ctx inside consume should not be nil after normalization")
+	}
+	if count.Load() < 3 {
+		t.Errorf("expected at least 3 calls, got %d", count.Load())
+	}
+}
+
+func TestRunConsumeLoop_ErrClosedTerminatesImmediately(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count atomic.Int32
+	consume := func(_ context.Context) error {
+		count.Add(1)
+		return ErrClosed
+	}
+
+	start := time.Now()
+	err := RunConsumeLoop(ctx, consume, WithBackoff(xretry.NewFixedBackoff(time.Second)))
+	elapsed := time.Since(start)
+
+	// ErrClosed 应立即终止循环，不走退避
+	if !errors.Is(err, ErrClosed) {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+	if count.Load() != 1 {
+		t.Errorf("expected exactly 1 call, got %d", count.Load())
+	}
+	// 不应有退避延迟（固定 1s），应在几毫秒内完成
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("expected immediate termination, took %v", elapsed)
 	}
 }
 

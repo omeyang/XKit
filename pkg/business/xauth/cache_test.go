@@ -482,6 +482,65 @@ func TestRedisCacheStore_Integration(t *testing.T) {
 		assert.ErrorIs(t, err, ErrCacheMiss)
 	})
 
+	t.Run("DeleteToken removes only token", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+
+		// Set both token and platform data
+		err := store.SetToken(ctx, "tenant-1", testToken("del-token", 3600), time.Hour)
+		require.NoError(t, err)
+		err = store.SetPlatformData(ctx, "tenant-1", "platform_id", "plat-1", time.Hour)
+		require.NoError(t, err)
+
+		// DeleteToken
+		err = store.DeleteToken(ctx, "tenant-1")
+		require.NoError(t, err)
+
+		// Token should be gone
+		_, err = store.GetToken(ctx, "tenant-1")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+
+		// Platform data should still exist
+		value, err := store.GetPlatformData(ctx, "tenant-1", "platform_id")
+		require.NoError(t, err)
+		assert.Equal(t, "plat-1", value)
+	})
+
+	t.Run("DeletePlatformData removes only platform data", func(t *testing.T) {
+		store, _ := newMiniredisStore(t)
+
+		// Set both token and platform data
+		err := store.SetToken(ctx, "tenant-1", testToken("keep-token", 3600), time.Hour)
+		require.NoError(t, err)
+		err = store.SetPlatformData(ctx, "tenant-1", "platform_id", "plat-1", time.Hour)
+		require.NoError(t, err)
+
+		// DeletePlatformData
+		err = store.DeletePlatformData(ctx, "tenant-1")
+		require.NoError(t, err)
+
+		// Platform data should be gone
+		_, err = store.GetPlatformData(ctx, "tenant-1", "platform_id")
+		assert.ErrorIs(t, err, ErrCacheMiss)
+
+		// Token should still exist
+		got, err := store.GetToken(ctx, "tenant-1")
+		require.NoError(t, err)
+		assert.Equal(t, "keep-token", got.AccessToken)
+	})
+
+	t.Run("DeleteToken and DeletePlatformData on Redis error", func(t *testing.T) {
+		store, mr := newMiniredisStore(t)
+		mr.Close()
+
+		err := store.DeleteToken(ctx, "tenant-1")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "redis del token failed")
+
+		err = store.DeletePlatformData(ctx, "tenant-1")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "redis del platform data failed")
+	})
+
 	t.Run("WithKeyPrefix option", func(t *testing.T) {
 		mr := miniredis.RunT(t)
 		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

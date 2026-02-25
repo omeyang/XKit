@@ -285,6 +285,102 @@ func TestWithOnRetry_Nil(t *testing.T) {
 	assert.True(t, called, "OnRetry callback should not be cleared by WithOnRetry(nil)")
 }
 
+// TestRetryer_SequentialReuse 验证 Retryer.Do 可安全复用
+// 每次 Do 调用创建独立的 attemptCount 闭包，因此连续调用应互不影响。
+func TestRetryer_SequentialReuse(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(3)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	// 第一次调用：执行 3 次后成功
+	var attempts1 int
+	err := r.Do(context.Background(), func(_ context.Context) error {
+		attempts1++
+		if attempts1 < 3 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, attempts1)
+
+	// 第二次调用：重试次数不应受第一次影响
+	var attempts2 int
+	err = r.Do(context.Background(), func(_ context.Context) error {
+		attempts2++
+		if attempts2 < 3 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, attempts2, "second call should have independent retry count")
+}
+
+// TestRetryer_ConcurrentUse 验证 Retryer.Do 并发安全（应通过 -race 检测）
+func TestRetryer_ConcurrentUse(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(3)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	const goroutines = 10
+	errs := make(chan error, goroutines)
+
+	for range goroutines {
+		go func() {
+			var attempts int32
+			errs <- r.Do(context.Background(), func(_ context.Context) error {
+				n := atomic.AddInt32(&attempts, 1)
+				if n < 2 {
+					return errors.New("fail")
+				}
+				return nil
+			})
+		}()
+	}
+
+	for range goroutines {
+		assert.NoError(t, <-errs)
+	}
+}
+
+// TestRetrier_ReuseAccumulatesCount 记录 Retrier() 返回实例的一次性使用特性。
+// 设计决策: Retrier() 返回的实例内部 RetryIf 闭包维护 attemptCount 状态，
+// 复用同一实例会导致计数累积。此测试明确记录该行为，防止回归。
+func TestRetrier_ReuseAccumulatesCount(t *testing.T) {
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(5)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+
+	retrier := r.Retrier(context.Background())
+
+	// 第一次调用：执行 2 次后成功
+	var attempts1 int
+	err := retrier.Do(func() error {
+		attempts1++
+		if attempts1 < 2 {
+			return errors.New("fail")
+		}
+		return nil
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, attempts1)
+
+	// 第二次调用同一实例：计数累积导致 ShouldRetry 提前拒绝
+	// 这是已知且已记录的行为（一次性使用实例）
+	var attempts2 int
+	err = retrier.Do(func() error {
+		attempts2++
+		return errors.New("always fail")
+	})
+	assert.Error(t, err)
+	// 由于 attemptCount 从上次终值继续累积，实际可用重试次数少于 MaxAttempts
+	assert.Less(t, attempts2, 5, "reused retrier should have fewer retries due to accumulated count")
+}
+
 func TestZeroValueRetryer(t *testing.T) {
 	// 零值 Retryer 使用时不应该 panic
 	t.Run("zero value Retryer should not panic", func(t *testing.T) {

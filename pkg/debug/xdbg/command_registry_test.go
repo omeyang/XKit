@@ -154,6 +154,17 @@ func TestCommandRegistry_Whitelist(t *testing.T) {
 	}
 }
 
+func TestCommandRegistry_RegisterNil(t *testing.T) {
+	registry := NewCommandRegistry()
+
+	// nil 命令应该被静默忽略，不 panic
+	registry.Register(nil)
+
+	if registry.Count() != 0 {
+		t.Errorf("Count() = %d, want 0 after registering nil", registry.Count())
+	}
+}
+
 func TestCommandRegistry_OverwriteCommand(t *testing.T) {
 	registry := NewCommandRegistry()
 
@@ -171,7 +182,7 @@ func TestCommandRegistry_OverwriteCommand(t *testing.T) {
 
 func TestCommandFunc(t *testing.T) {
 	executed := false
-	cmd := NewCommandFunc("test", "test command", func(_ context.Context, args []string) (string, error) {
+	cmd := mustNewCommandFunc(t, "test", "test command", func(_ context.Context, args []string) (string, error) {
 		executed = true
 		return "output: " + args[0], nil
 	})
@@ -198,28 +209,20 @@ func TestCommandFunc(t *testing.T) {
 	}
 }
 
-func TestNewCommandFunc_EmptyName_Panics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("NewCommandFunc with empty name should panic")
-		}
-	}()
-
-	NewCommandFunc("", "help", func(_ context.Context, _ []string) (string, error) {
+func TestNewCommandFunc_EmptyName_Error(t *testing.T) {
+	_, err := NewCommandFunc("", "help", func(_ context.Context, _ []string) (string, error) {
 		return "", nil
 	})
+	if err != ErrEmptyCommandName {
+		t.Errorf("NewCommandFunc with empty name error = %v, want ErrEmptyCommandName", err)
+	}
 }
 
-func TestNewCommandFunc_NilFn_Panics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("NewCommandFunc with nil fn should panic")
-		}
-	}()
-
-	NewCommandFunc("test", "help", nil)
+func TestNewCommandFunc_NilFn_Error(t *testing.T) {
+	_, err := NewCommandFunc("test", "help", nil)
+	if err != ErrNilCommandFunc {
+		t.Errorf("NewCommandFunc with nil fn error = %v, want ErrNilCommandFunc", err)
+	}
 }
 
 func TestCommandRegistry_EssentialCommandsAlwaysAllowed(t *testing.T) {

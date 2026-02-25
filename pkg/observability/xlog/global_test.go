@@ -299,6 +299,20 @@ func TestGlobal_FallbackNonXlogger(t *testing.T) {
 	}
 }
 
+func TestGlobal_Stack_FallbackNonXlogger(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	mock := &mockLoggerWithLevel{}
+	xlog.SetDefault(mock)
+
+	// 测试 Stack 通过 fallback 路径
+	xlog.Stack(context.Background(), "stack fallback")
+	if mock.lastLevel != slog.LevelError || mock.lastMsg != "stack fallback" {
+		t.Errorf("Stack fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+}
+
 // =============================================================================
 // ResetDefault 测试
 // =============================================================================

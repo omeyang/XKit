@@ -78,6 +78,28 @@ func TestExtractFromHTTPHeader(t *testing.T) {
 	}
 }
 
+// TestExtractFromHTTPHeader_MultiValue 验证多值 Header 取首值的契约（FG-L1 回归测试）。
+//
+// doc.go:31 定义了"单值字段，多值时取第一个"的语义。
+func TestExtractFromHTTPHeader_MultiValue(t *testing.T) {
+	h := make(http.Header)
+	// http.Header.Add 追加多值
+	h.Add(xtenant.HeaderTenantID, "first-tenant")
+	h.Add(xtenant.HeaderTenantID, "second-tenant")
+	h.Add(xtenant.HeaderTenantName, "first-name")
+	h.Add(xtenant.HeaderTenantName, "second-name")
+
+	info := xtenant.ExtractFromHTTPHeader(h)
+
+	// 应取第一个值
+	if info.TenantID != "first-tenant" {
+		t.Errorf("TenantID = %q, want %q (should take first value)", info.TenantID, "first-tenant")
+	}
+	if info.TenantName != "first-name" {
+		t.Errorf("TenantName = %q, want %q (should take first value)", info.TenantName, "first-name")
+	}
+}
+
 func TestExtractFromHTTPRequest(t *testing.T) {
 	t.Run("nil request", func(t *testing.T) {
 		got := xtenant.ExtractFromHTTPRequest(nil)

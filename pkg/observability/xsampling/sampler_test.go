@@ -515,6 +515,11 @@ func TestKeyBasedSampler(t *testing.T) {
 		assert.ErrorIs(t, err, ErrNilKeyFunc)
 	})
 
+	t.Run("nil option", func(t *testing.T) {
+		_, err := NewKeyBasedSampler(0.5, testKeyFunc, nil)
+		assert.ErrorIs(t, err, ErrNilOption)
+	})
+
 	t.Run("rate clamping negative", func(t *testing.T) {
 		_, err := NewKeyBasedSampler(-0.5, testKeyFunc)
 		assert.ErrorIs(t, err, ErrInvalidRate)

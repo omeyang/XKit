@@ -62,7 +62,7 @@ func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 		return nil
 	}
 	if err := os.MkdirAll(dir, perm); err != nil {
-		return fmt.Errorf("xfile: create directory %s: %w", dir, err)
+		return fmt.Errorf("xfile: create directory %q: %w", dir, err)
 	}
 	return nil
 }

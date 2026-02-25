@@ -340,3 +340,45 @@ func TestNewEtcdFactory_NilClient_Internal(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilClient)
 	assert.Nil(t, factory)
 }
+
+// =============================================================================
+// nil context 单元测试（FG-S3 验证）
+// =============================================================================
+
+func TestEtcdFactory_TryLock_NilContext(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	handle, err := f.TryLock(nil, "test-key") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Nil(t, handle)
+}
+
+func TestEtcdFactory_Lock_NilContext(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	handle, err := f.Lock(nil, "test-key") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, ErrNilContext)
+	assert.Nil(t, handle)
+}
+
+func TestEtcdLockHandle_Extend_NilContext(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+	h := NewTestEtcdLockHandle(f, "lock:test")
+
+	err := h.Extend(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+// =============================================================================
+// nil option 单元测试（FG-M7 验证）
+// =============================================================================
+
+func TestEtcdFactory_NilFactoryOption(t *testing.T) {
+	// nil option 应被安全跳过，不 panic
+	_, err := NewEtcdFactory(nil, nil, WithEtcdTTL(30), nil)
+	// 仍然返回 ErrNilClient（client 为 nil），但不应 panic
+	assert.ErrorIs(t, err, ErrNilClient)
+}

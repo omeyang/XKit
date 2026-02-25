@@ -21,6 +21,9 @@ var (
 
 	// ErrNilSampler 表示 CompositeSampler 的子采样器为 nil
 	ErrNilSampler = errors.New("xsampling: sampler must not be nil")
+
+	// ErrNilOption 表示传入了 nil 的 functional option
+	ErrNilOption = errors.New("xsampling: option must not be nil")
 )
 
 // validateRate 校验采样比率是否在 [0.0, 1.0] 范围内

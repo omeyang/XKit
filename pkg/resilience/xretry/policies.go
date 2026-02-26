@@ -20,10 +20,10 @@ func (p *FixedRetryPolicy) MaxAttempts() int {
 	return p.maxAttempts
 }
 
-func (p *FixedRetryPolicy) ShouldRetry(ctx context.Context, attempt int, err error) bool {
-	if ctx.Err() != nil {
-		return false
-	}
+// 设计决策: ShouldRetry 不检查 ctx.Err()，context 取消由 retry-go 的 Context(ctx) 选项
+// 在 sleep 阶段统一处理。这确保了 Retryer.Do 和 Do wrapper 两条路径返回一致的
+// context 错误（而非业务错误），便于上层通过 errors.Is 可靠分类。
+func (p *FixedRetryPolicy) ShouldRetry(_ context.Context, attempt int, err error) bool {
 	if attempt >= p.maxAttempts {
 		return false
 	}
@@ -31,7 +31,7 @@ func (p *FixedRetryPolicy) ShouldRetry(ctx context.Context, attempt int, err err
 }
 
 // AlwaysRetryPolicy 无限重试策略（慎用）
-// 只有上下文取消或遇到永久性错误才会停止
+// 只有遇到永久性错误才停止重试；context 取消由 retry-go 在 sleep 阶段检测。
 type AlwaysRetryPolicy struct{}
 
 // NewAlwaysRetry 创建无限重试策略
@@ -43,10 +43,8 @@ func (p *AlwaysRetryPolicy) MaxAttempts() int {
 	return 0 // 0 表示无限
 }
 
-func (p *AlwaysRetryPolicy) ShouldRetry(ctx context.Context, _ int, err error) bool {
-	if ctx.Err() != nil {
-		return false
-	}
+// 设计决策: 同 FixedRetryPolicy.ShouldRetry，不检查 ctx.Err()。
+func (p *AlwaysRetryPolicy) ShouldRetry(_ context.Context, _ int, err error) bool {
 	return IsRetryable(err)
 }
 

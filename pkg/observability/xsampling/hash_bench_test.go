@@ -145,6 +145,32 @@ func TestHashDistribution(t *testing.T) {
 }
 
 // =============================================================================
+// 哈希稳定性契约测试（固定向量）
+// =============================================================================
+
+// TestXXHashGoldenVectors 验证 xxhash 对固定输入产生固定输出。
+// 如果 xxhash 库升级导致输出变化，此测试会立即失败，防止采样群体整体漂移。
+func TestXXHashGoldenVectors(t *testing.T) {
+	vectors := []struct {
+		key      string
+		expected uint64
+	}{
+		{"0af7651916cd43dd8448eb211c80319c", 0x82d8c03acc9eb486}, // trace_id
+		{"tenant-12345", 0xdb3342fc670a3406},                     // tenant_id
+		{"user-abc-123-xyz", 0xa5300f0a319e99f4},                 // user_id
+		{"", 0xef46db3751d8e999},                                 // empty
+		{"a", 0xd24ec4f1a98c6e5b},                                // single_char
+	}
+	for _, v := range vectors {
+		got := xxhash.Sum64String(v.key)
+		if got != v.expected {
+			t.Errorf("xxhash(%q) = 0x%x, want 0x%x — 哈希输出变化将导致采样决策漂移",
+				v.key, got, v.expected)
+		}
+	}
+}
+
+// =============================================================================
 // 跨进程一致性测试（模拟分布式场景）
 // =============================================================================
 

@@ -59,7 +59,7 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
@@ -89,7 +89,7 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 }
 
 func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      nil, // 无钩子
@@ -119,7 +119,7 @@ func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
@@ -150,7 +150,7 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
@@ -181,7 +181,7 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 0, // 禁用
 		SlowQueryHook:      hook,
@@ -206,7 +206,7 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 }
 
 func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold:      100 * time.Millisecond,
 		AsyncSlowQueryHook:      func(_ SlowQueryInfo) {},
 		AsyncSlowQueryWorkers:   5,
@@ -221,7 +221,7 @@ func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
 
 func TestNewSlowQueryDetector_WithBothHooks(t *testing.T) {
 	var syncCalled bool
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook: func(_ context.Context, _ SlowQueryInfo) {
 			syncCalled = true
@@ -341,7 +341,7 @@ func TestWrapper_SlowQueryCounter(t *testing.T) {
 		callCount++
 	}
 
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
@@ -372,7 +372,7 @@ func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}

@@ -241,6 +241,26 @@ func TestWatch_EmptyKey(t *testing.T) {
 	}
 }
 
+// TestWatch_NilOption 测试 Watch 传入 nil WatchOption 时返回 ErrNilOption。
+func TestWatch_NilOption(t *testing.T) {
+	c := &Client{}
+
+	_, err := c.Watch(context.Background(), "key", nil)
+	if err != ErrNilOption {
+		t.Errorf("Watch() with nil option = %v, want %v", err, ErrNilOption)
+	}
+}
+
+// TestWatch_NilOptionAmongValid 测试 Watch 混入 nil WatchOption 时返回 ErrNilOption。
+func TestWatch_NilOptionAmongValid(t *testing.T) {
+	c := &Client{}
+
+	_, err := c.Watch(context.Background(), "key", WithPrefix(), nil, WithRevision(1))
+	if err != ErrNilOption {
+		t.Errorf("Watch() with nil among valid options = %v, want %v", err, ErrNilOption)
+	}
+}
+
 func TestDispatchEvents_Success(t *testing.T) {
 	c := &Client{}
 	ctx := context.Background()

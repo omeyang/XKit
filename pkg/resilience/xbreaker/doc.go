@@ -26,14 +26,19 @@
 //   - BreakerRetryer：每次重试都经过熔断器检查和记录
 //   - RetryThenBreak：重试期间不影响熔断器统计，只有最终结果才记录
 //
-// 组合构造函数（NewBreakerRetryer、NewRetryThenBreak、NewRetryThenBreakWithConfig）
+// 组合构造函数（NewBreakerRetryer、NewRetryThenBreakWithConfig）
 // 对 nil 参数返回错误（ErrNilBreaker、ErrNilRetryer），不会 panic。
+// RetryThenBreak 推荐使用 [NewRetryThenBreakWithConfig] 构造。
 //
 // # 错误排除
 //
 // 若需将特定错误（如 context.Canceled）从熔断统计中排除（不影响任何计数），
 // 可通过 WithExcludePolicy 设置错误排除策略。
 // 若需将特定错误标记为"成功"（计入成功计数），请使用 WithSuccessPolicy。
+//
+// 比率类策略（FailureRatioPolicy、SlowCallRatioPolicy）在计算失败率时，
+// 使用有效请求数（Requests - TotalExclusions）作为分母，
+// 确保被排除的请求不会稀释失败率或虚增 minRequests 判定基数。
 //
 // # 状态变化回调
 //

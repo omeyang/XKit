@@ -44,11 +44,14 @@ func TestFixedRetryPolicy(t *testing.T) {
 	})
 
 	t.Run("ShouldRetry_ContextCanceled", func(t *testing.T) {
+		// 设计决策: ShouldRetry 不检查 ctx.Err()，
+		// context 取消由 retry-go 的 Context(ctx) 选项在 sleep 阶段处理。
 		p := NewFixedRetry(3)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		assert.False(t, p.ShouldRetry(ctx, 1, errors.New("test")))
+		assert.True(t, p.ShouldRetry(ctx, 1, errors.New("test")),
+			"ShouldRetry should not check ctx.Err(); context cancellation is handled by retry-go")
 	})
 
 	t.Run("ShouldRetry_PermanentError", func(t *testing.T) {
@@ -78,10 +81,12 @@ func TestAlwaysRetryPolicy(t *testing.T) {
 	})
 
 	t.Run("ShouldRetry_ContextCanceled", func(t *testing.T) {
+		// 设计决策: 同 FixedRetryPolicy，不检查 ctx.Err()。
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		assert.False(t, p.ShouldRetry(ctx, 1, errors.New("test")))
+		assert.True(t, p.ShouldRetry(ctx, 1, errors.New("test")),
+			"ShouldRetry should not check ctx.Err(); context cancellation is handled by retry-go")
 	})
 
 	t.Run("ShouldRetry_PermanentError", func(t *testing.T) {

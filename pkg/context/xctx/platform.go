@@ -52,15 +52,11 @@ func HasParent(ctx context.Context) (value bool, ok bool) {
 	return v, ok
 }
 
-// MustHasParent 从 context 提取 has_parent 标志，不存在则返回 false
-//
-// 设计决策: Must 前缀在本包中表示"值缺失时返回零值"（见 doc.go 命名约定），
-// 与 Go 社区的 Must = panic 惯例（如 regexp.MustCompile）不同。
-// 保留此命名以维持包内 API 一致性，并通过文档明确语义边界。
+// HasParentOrDefault 从 context 提取 has_parent 标志，不存在则返回 false（零值）。
 //
 // 语义：简化版获取函数，适用于只关心"是否有上级"而不关心"是否设置"的场景。
 // 如果需要区分"未设置"和"设置为false"，请使用 HasParent。
-func MustHasParent(ctx context.Context) bool {
+func HasParentOrDefault(ctx context.Context) bool {
 	v, _ := HasParent(ctx)
 	return v
 }

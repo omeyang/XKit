@@ -322,6 +322,12 @@ func (w *memoryWrapper) Close(_ context.Context) error {
 // 辅助函数
 // =============================================================================
 
+// osHostname 是 os.Hostname 的可替换函数，用于测试 getHostIdentifier 的后备路径。
+var osHostname = os.Hostname
+
+// cryptoRandRead 是 rand.Read 的可替换函数，用于测试 generateLockValue 的后备路径。
+var cryptoRandRead = rand.Read
+
 // hostIdentifier 缓存的主机标识符，用于锁值后备方案。
 // 只计算一次以避免重复系统调用开销。
 var hostIdentifier = getHostIdentifier()
@@ -329,7 +335,7 @@ var hostIdentifier = getHostIdentifier()
 // getHostIdentifier 获取主机标识符。
 // 优先使用主机名，失败时使用固定前缀 + 随机后缀。
 func getHostIdentifier() string {
-	hostname, err := os.Hostname()
+	hostname, err := osHostname()
 	if err == nil && hostname != "" {
 		return hostname
 	}
@@ -348,7 +354,7 @@ func getHostIdentifier() string {
 //   - lockValueCounter: 区分同一纳秒内的多次调用（理论上不可能，但作为额外保险）
 func generateLockValue() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := cryptoRandRead(b); err != nil {
 		// crypto/rand.Read 极少失败，使用多重因素确保唯一性
 		counter := lockValueCounter.Add(1)
 		return fmt.Sprintf("%s-%d-%d-%d", hostIdentifier, os.Getpid(), time.Now().UnixNano(), counter)

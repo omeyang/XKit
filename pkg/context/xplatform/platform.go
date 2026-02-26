@@ -48,6 +48,11 @@ const (
 // 但用途不同：
 //   - Config: 进程级全局配置，包含 PlatformID
 //   - xctx.Platform: 请求级 context，用于批量获取平台信息
+//
+// 设计决策: 所有字段必须为值类型（string, bool, int 等），不得包含 slice/map/pointer，
+// 以确保 GetConfig() 通过 return *cfg 返回的副本与全局状态完全隔离。
+// 未提供 json/yaml 标签，因为平台信息来源多样（AUTH 服务、配置文件），
+// 调用方应自行反序列化后构造 Config 并调用 Init，确保经过 Validate 校验。
 type Config struct {
 	// PlatformID 平台 ID（必填，来自 AUTH 服务）
 	//

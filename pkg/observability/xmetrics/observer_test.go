@@ -3,6 +3,7 @@ package xmetrics
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -188,7 +189,7 @@ func TestNoopObserver_Start_AllKinds(t *testing.T) {
 	kinds := []Kind{KindInternal, KindServer, KindClient, KindProducer, KindConsumer}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run(kind.String(), func(t *testing.T) {
 			_, span := observer.Start(ctx, SpanOptions{Kind: kind})
 			assert.NotNil(t, span)
 		})
@@ -226,7 +227,7 @@ func TestNoopSpan_End_WithResult(t *testing.T) {
 	}
 
 	for i, result := range results {
-		t.Run("Result_"+string(rune('0'+i)), func(t *testing.T) {
+		t.Run("Result_"+strconv.Itoa(i), func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				span.End(result)
 			})

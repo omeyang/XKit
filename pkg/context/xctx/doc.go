@@ -29,18 +29,31 @@
 //	WithXxx(ctx, value)    - 注入：将 value 写入 context
 //	Xxx(ctx)               - 读取：从 context 读取值，缺失时返回零值
 //	RequireXxx(ctx)        - 强制读取：值必须存在，缺失时返回错误
-//	MustXxx(ctx)           - 简化读取：值缺失时返回零值（不返回 ok/error，注意：与 Go 标准库 Must=panic 惯例不同）
+//	XxxOrDefault(ctx)      - 简化读取：值缺失时返回零值（不返回 ok/error，仅用于 bool 字段）
 //	EnsureXxx(ctx)         - 确保存在：若已存在则返回，否则自动生成
 //	GetXxx(ctx)            - 批量读取：返回结构体
 //
-// 设计决策: 不同字段族根据语义需要提供不同的 API 子集，并非所有字段都具备完整的六件套：
-//   - Identity (string 字段): With/Xxx/Require/GetIdentity/Validate — 无需 Must（零值即空字符串）
-//   - HasParent (bool 字段): With/HasParent(value,ok)/Must/Require — 需要 ok 区分"未设置"
-//   - Trace (string 字段): With/Xxx/Require/Ensure/Validate — 支持强制获取、自动生成和批量校验
-//   - DeploymentType: With/DeploymentTypeRaw/GetDeploymentType — 需要验证，命名见各函数注释
+// 设计决策: 不同字段族根据语义需要提供不同的 API 子集，并非所有字段都具备完整的六件套。
+// API 矩阵（✓ = 已提供）：
+//
+//	| 字段            | With | Xxx | Require | OrDefault | Ensure | Get批量 |
+//	|-----------------|------|-----|---------|-----------|--------|---------|
+//	| PlatformID      | ✓    | ✓   | ✓       |           |        | ✓       |
+//	| TenantID        | ✓    | ✓   | ✓       |           |        | ✓       |
+//	| TenantName      | ✓    | ✓   | ✓       |           |        | ✓       |
+//	| HasParent       | ✓    | ✓*  | ✓       | ✓         |        | ✓       |
+//	| UnclassRegionID | ✓    | ✓   |         |           |        | ✓       |
+//	| TraceID         | ✓    | ✓   | ✓       |           | ✓      | ✓       |
+//	| SpanID          | ✓    | ✓   | ✓       |           | ✓      | ✓       |
+//	| RequestID       | ✓    | ✓   | ✓       |           | ✓      | ✓       |
+//	| TraceFlags      | ✓    | ✓   |         |           |        | ✓       |
+//	| DeploymentType  | ✓    | Raw |  Get*   |           |        |         |
+//
+// * HasParent 的 Xxx 返回 (value, ok) 双返回值，用于区分"未设置"和"设置为 false"
+// * DeploymentType 的 Get 同时验证值有效性（必须为 LOCAL/SAAS），故命名为 GetDeploymentType
 //
 // 推荐使用顺序：
-//   - 读取字段：优先 Xxx(ctx)（零值安全）→ RequireXxx(ctx)（强制存在）→ MustXxx(ctx)（谨慎使用）
+//   - 读取字段：优先 Xxx(ctx)（零值安全）→ RequireXxx(ctx)（强制存在）→ XxxOrDefault(ctx)（bool 简化）
 //   - 批量操作：优先 GetXxx(ctx) → .Validate()（错误链）或 .IsComplete()（条件判断）
 //
 // # 哨兵错误

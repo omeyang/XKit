@@ -14,6 +14,8 @@ import (
 // =============================================================================
 
 func TestContextIsolation(t *testing.T) {
+	t.Parallel()
+
 	parent, err := xctx.WithPlatformID(context.Background(), "parent-platform")
 	if err != nil {
 		t.Fatalf("WithPlatformID() error = %v", err)
@@ -36,6 +38,8 @@ func TestContextIsolation(t *testing.T) {
 // =============================================================================
 
 func TestConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
 	ctx, _ := xctx.WithPlatformID(context.Background(), "platform")
 	ctx, _ = xctx.WithTenantID(ctx, "tenant")
 	ctx, _ = xctx.WithTenantName(ctx, "name")
@@ -67,6 +71,8 @@ func TestConcurrentAccess(t *testing.T) {
 // =============================================================================
 
 func TestErrorMessages(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		err  error
@@ -79,6 +85,8 @@ func TestErrorMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.err.Error(); got != tt.want {
 				t.Errorf("%s.Error() = %q, want %q", tt.name, got, tt.want)
 			}
@@ -87,6 +95,8 @@ func TestErrorMessages(t *testing.T) {
 }
 
 func TestErrorWrapping(t *testing.T) {
+	t.Parallel()
+
 	// 测试错误可以被正确包装和解包
 	ctx := context.Background()
 	_, err := xctx.RequireTenantID(ctx)
@@ -102,11 +112,15 @@ func TestErrorWrapping(t *testing.T) {
 // =============================================================================
 
 func TestEnsureAndGetIdentity_RealWorldScenario(t *testing.T) {
+	t.Parallel()
+
 	// 模拟 HTTP 中间件场景：
 	// 1. 入口处 EnsureTrace 确保追踪信息
 	// 2. 业务层 GetIdentity().Validate() 检查身份信息
 
 	t.Run("入口中间件场景", func(t *testing.T) {
+		t.Parallel()
+
 		// 模拟请求入口：确保追踪信息
 		ctx, err := xctx.EnsureTrace(context.Background())
 		if err != nil {
@@ -126,6 +140,8 @@ func TestEnsureAndGetIdentity_RealWorldScenario(t *testing.T) {
 	})
 
 	t.Run("完整请求链路场景", func(t *testing.T) {
+		t.Parallel()
+
 		// 1. 入口确保追踪
 		ctx, err := xctx.EnsureTrace(context.Background())
 		if err != nil {

@@ -65,6 +65,12 @@ func handleHTTPLimit(w http.ResponseWriter, r *http.Request, limiter Limiter, mo
 		return false // fail-open
 	}
 
+	// 防御性检查: Limiter 接口契约要求 err==nil 时 result 必非 nil，
+	// 但第三方实现可能违反契约。此处 fail-open 避免运行时 panic。
+	if result == nil {
+		return false
+	}
+
 	// 添加限流头（如果启用）
 	if mopts.EnableHeaders {
 		result.SetHeaders(w)

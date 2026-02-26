@@ -193,6 +193,9 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-
 		bufferSize: DefaultWatchBufferSize,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(o)
 	}
 
@@ -419,6 +422,9 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	// 创建带缓冲的事件通道
 	o := &watchOptions{bufferSize: DefaultWatchBufferSize}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(o)
 	}
 	eventCh := make(chan Event, o.bufferSize)

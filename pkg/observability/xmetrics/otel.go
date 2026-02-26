@@ -87,6 +87,7 @@ func WithMeterProvider(provider metric.MeterProvider) Option {
 // WithHistogramBuckets 设置 duration Histogram 的桶边界（单位：秒）。
 // 默认值为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]，
 // 适用于典型 API 操作（1ms ~ 10s）。
+// nil 或空切片会被忽略，保留默认桶边界。
 func WithHistogramBuckets(buckets []float64) Option {
 	return func(cfg *otelConfig) {
 		if len(buckets) > 0 {
@@ -125,6 +126,12 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateCounter, err)
 	}
+	// 设计决策: 对 nil instrument 做 fail-open 防御（即使 err==nil）。
+	// OTel API 契约保证 err==nil 时返回非 nil instrument，但自定义 MeterProvider
+	// 可能违反此约定；作为基础库，不应将观测异常升级为业务崩溃。
+	if total == nil {
+		return nil, fmt.Errorf("%w: meter returned nil counter", ErrCreateCounter)
+	}
 
 	duration, err := meter.Float64Histogram(
 		metricOperationDuration,
@@ -134,6 +141,9 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateHistogram, err)
+	}
+	if duration == nil {
+		return nil, fmt.Errorf("%w: meter returned nil histogram", ErrCreateHistogram)
 	}
 
 	return &otelObserver{
@@ -183,6 +193,20 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 		trace.WithSpanKind(mapSpanKind(opts.Kind)),
 		trace.WithAttributes(attrs...),
 	)
+
+	// 设计决策: 对 nil span 做 fail-open 防御。
+	// OTel API 契约保证 Tracer.Start 返回非 nil span，但自定义 TracerProvider
+	// 可能违反此约定；nil span 时回退到 noop，确保"观测失败不影响业务"。
+	if span == nil {
+		return ctx, &otelSpan{
+			span:      trace.SpanFromContext(ctx), // noop span（保证非 nil）
+			observer:  o,
+			ctx:       ctx,
+			component: component,
+			operation: operation,
+			start:     time.Now(),
+		}
+	}
 
 	ctx = syncXctx(ctx, span.SpanContext())
 
@@ -323,6 +347,9 @@ func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 		}
 		converted = append(converted, toKeyValue(attr))
 	}
+	if len(converted) == 0 {
+		return nil
+	}
 	return converted
 }
 
@@ -341,6 +368,9 @@ func toKeyValue(attr Attr) attribute.KeyValue {
 	case int64:
 		return attribute.Int64(attr.Key, v)
 	case uint64:
+		// 设计决策: OTel API 不支持原生 uint64，小值用 int64 保留数值语义，
+		// 大值回退为 string。同一键在不同调用中可能产生不同类型（int64 vs string），
+		// 但 uint64 > MaxInt64 在实际业务中极少出现，且全部字符串化会丧失小值的数值查询能力。
 		if v <= math.MaxInt64 {
 			return attribute.Int64(attr.Key, int64(v))
 		}

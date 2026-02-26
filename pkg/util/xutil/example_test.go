@@ -25,3 +25,13 @@ func ExampleIf_zeroValue() {
 	// Output:
 	// ""
 }
+
+func ExampleIf_nilSafety() {
+	// nil 值可安全传递——If 仅做值传递，不解引用指针。
+	var missing *string
+	fallback := "default"
+	result := xutil.If(false, missing, &fallback)
+	fmt.Println(*result)
+	// Output:
+	// default
+}

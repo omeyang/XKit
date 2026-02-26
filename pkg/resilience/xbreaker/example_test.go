@@ -203,18 +203,17 @@ func ExampleExecuteWithRetry() {
 	// Output: 结果: 42
 }
 
-// ExampleNewRetryThenBreak 演示先重试后熔断模式
-func ExampleNewRetryThenBreak() {
+// ExampleNewRetryThenBreakWithConfig 演示先重试后熔断模式（推荐方式）
+func ExampleNewRetryThenBreakWithConfig() {
 	// 先重试后熔断：重试期间的失败不影响熔断器计数
 	retryer := xretry.NewRetryer(
 		xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
 		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
 	)
-	breaker := xbreaker.NewBreaker("external-api",
+
+	rtb, err := xbreaker.NewRetryThenBreakWithConfig("external-api", retryer,
 		xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(2)),
 	)
-
-	rtb, err := xbreaker.NewRetryThenBreak(retryer, breaker)
 	if err != nil {
 		fmt.Println("错误:", err)
 		return
@@ -226,8 +225,6 @@ func ExampleNewRetryThenBreak() {
 		return errors.New("always fail")
 	})
 
-	// 注意：使用 rtb.State() 和 rtb.Counts() 获取状态
-	// 传入的 breaker 仅用于配置，状态由 rtb 内部维护
 	fmt.Println("第一次调用后状态:", rtb.State())
 	fmt.Println("总失败数:", rtb.Counts().TotalFailures)
 	// Output:

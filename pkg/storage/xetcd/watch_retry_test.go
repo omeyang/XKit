@@ -162,6 +162,16 @@ func TestWatchWithRetry_EmptyKey(t *testing.T) {
 	}
 }
 
+// TestWatchWithRetry_NilOption 测试 WatchWithRetry 传入 nil WatchOption 时返回 ErrNilOption。
+func TestWatchWithRetry_NilOption(t *testing.T) {
+	c := &Client{closeCh: make(chan struct{})}
+
+	_, err := c.WatchWithRetry(context.Background(), "key", DefaultRetryConfig(), nil)
+	if err != ErrNilOption {
+		t.Errorf("WatchWithRetry() with nil option = %v, want %v", err, ErrNilOption)
+	}
+}
+
 // TestWatchWithRetry_InvalidBackoffMultiplier 测试 BackoffMultiplier < 1 被修正为 2.0。
 func TestWatchWithRetry_InvalidBackoffMultiplier(t *testing.T) {
 	ctrl := gomock.NewController(t)

@@ -1062,9 +1062,59 @@ func TestRedisLockHandle_Extend_NilContext_WithMiniredis(t *testing.T) {
 	assert.ErrorIs(t, err, xdlock.ErrNilContext)
 }
 
+func TestRedisFactory_Health_NilContext_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	err = factory.Health(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, xdlock.ErrNilContext)
+}
+
 // =============================================================================
 // Redis unlocked 标记测试（FG-M8 验证）
 // =============================================================================
+
+// TestRedisLockHandle_Unlock_StolenLock_SetsUnlocked 验证 FG-M9 修复：
+// 当锁被其他持有者抢走后，Unlock 返回 ErrNotLocked 且设置 unlocked 标记，
+// 后续 Extend 也立即返回 ErrNotLocked，不再发送无意义的 Redis 请求。
+func TestRedisLockHandle_Unlock_StolenLock_SetsUnlocked_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	// handle1 获取锁
+	handle1, err := factory.TryLock(ctx, "test-stolen-unlocked", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+
+	// 让锁过期
+	mr.FastForward(200 * time.Millisecond)
+
+	// handle2 获取同一个锁（新的 value）
+	handle2, err := factory.TryLock(ctx, "test-stolen-unlocked", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle2)
+	defer func() { _ = handle2.Unlock(ctx) }()
+
+	// handle1 尝试 Unlock — 锁已被 handle2 持有
+	err = handle1.Unlock(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+
+	// FG-M9 修复验证：后续 Extend 应立即返回 ErrNotLocked（通过 unlocked 标记快速路径）
+	err = handle1.Extend(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+}
 
 func TestRedisLockHandle_DoubleUnlock_WithMiniredis(t *testing.T) {
 	mr := miniredis.RunT(t)

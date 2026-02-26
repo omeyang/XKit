@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// 不可 t.Parallel()：修改进程 rlimit 全局状态，与其他测试互斥。
 func TestSetFileLimit(t *testing.T) {
 	// 保存原始 soft limit，测试结束后恢复。
 	origSoft, hard, err := GetFileLimit()
@@ -38,6 +39,7 @@ func TestSetFileLimit(t *testing.T) {
 	assert.Equal(t, target, soft)
 }
 
+// 不可 t.Parallel()：修改进程 rlimit 全局状态，与其他测试互斥。
 func TestSetFileLimit_HighValue(t *testing.T) {
 	const highLimit = 1 << 30
 
@@ -96,6 +98,7 @@ func TestSetFileLimit_SetrlimitError(t *testing.T) {
 	require.ErrorIs(t, err, mockErr)
 }
 
+// 不可 t.Parallel()：读取进程 rlimit 全局状态，与修改 rlimit 的测试互斥。
 func TestGetFileLimit(t *testing.T) {
 	soft, hard, err := GetFileLimit()
 	require.NoError(t, err)
@@ -119,6 +122,7 @@ func TestGetFileLimit_GetrlimitError(t *testing.T) {
 	assert.Equal(t, uint64(0), hard)
 }
 
+// 不可 t.Parallel()：修改进程 rlimit 全局状态，与其他测试互斥。
 // TestSetFileLimit_Concurrent 验证 fileLimitMu 的并发保护。
 // 配合 -race 运行，将 "并发安全" 从注释承诺提升为可执行契约。
 func TestSetFileLimit_Concurrent(t *testing.T) {

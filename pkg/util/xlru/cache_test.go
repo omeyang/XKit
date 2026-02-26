@@ -888,6 +888,12 @@ func TestStopCleanupGoroutine_EdgeCases(t *testing.T) {
 		t.Error("struct with chan int done should return false")
 	}
 
+	// done 字段类型正确（chan struct{}）但为 nil，应返回 false
+	// 复用 hasDone 类型（下方定义），零值即 done == nil
+	if stopCleanupGoroutine(&struct{ done chan struct{} }{}) {
+		t.Error("struct with nil chan struct{} done should return false")
+	}
+
 	// 二次调用触发 recover（done 通道已关闭）：应返回 false 而非 panic
 	type hasDone struct{ done chan struct{} }
 	s := &hasDone{done: make(chan struct{})}

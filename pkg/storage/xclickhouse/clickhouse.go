@@ -182,7 +182,7 @@ func New(client driver.Conn, opts ...Option) (ClickHouse, error) {
 }
 
 // newSlowQueryDetector 创建慢查询检测器。
-func newSlowQueryDetector(opts *Options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
+func newSlowQueryDetector(opts *options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
 	// 构建 storageopt 的慢查询选项
 	sqOpts := storageopt.SlowQueryOptions[SlowQueryInfo]{
 		Threshold:           opts.SlowQueryThreshold,

@@ -112,6 +112,11 @@ func (w WireRange) IsZero() bool {
 // 如果起止相同则只返回单个 IP。
 // 零值返回空字符串；部分设置（仅 Start 或仅 End）返回有值的部分，避免产生
 // 尾随/前导连字符（如 "10.0.0.1-" 或 "-10.0.0.1"）影响日志可读性。
+//
+// 设计决策: 部分设置（如 Start="10.0.0.1", End=""）与单 IP 范围（Start==End）
+// 的 String() 输出相同，无法通过字符串区分。这是有意取舍——优先日志可读性
+// 而非可逆性。如需区分，请检查 [WireRange.IsZero] 或直接比较 Start/End 字段。
+// [WireRange.ToIPRange] 会对部分设置返回错误，生产运行时不受此歧义影响。
 func (w WireRange) String() string {
 	if w.Start == w.End {
 		return w.Start

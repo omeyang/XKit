@@ -202,6 +202,31 @@ func TestMergeRanges_InvalidRange(t *testing.T) {
 	assert.Contains(t, err.Error(), "range [1]")
 }
 
+func TestIPSetFromRanges_InvalidRange(t *testing.T) {
+	tests := []struct {
+		name string
+		from string
+		to   string
+	}{
+		{"From > To", "192.168.1.100", "192.168.1.1"},
+		{"mixed address families", "192.168.1.1", "::1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ranges := []netipx.IPRange{
+				netipx.IPRangeFrom(
+					netip.MustParseAddr(tt.from),
+					netip.MustParseAddr(tt.to),
+				),
+			}
+			_, err := IPSetFromRanges(ranges)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrInvalidRange)
+		})
+	}
+}
+
 func TestIPSetFromRangesStrict(t *testing.T) {
 	// 有效范围
 	validRanges := []netipx.IPRange{

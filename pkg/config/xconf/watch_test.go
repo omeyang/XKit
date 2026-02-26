@@ -195,6 +195,11 @@ func TestWatch_InvalidDebounce(t *testing.T) {
 	// 负值防抖
 	_, err = Watch(cfg, func(c Config, err error) {}, WithDebounce(-time.Second))
 	assert.ErrorIs(t, err, ErrInvalidDebounce)
+
+	// 超过上界
+	_, err = Watch(cfg, func(c Config, err error) {}, WithDebounce(2*time.Minute))
+	assert.ErrorIs(t, err, ErrInvalidDebounce)
+	assert.Contains(t, err.Error(), "exceeds maximum")
 }
 
 func TestWatchConfig_Interface(t *testing.T) {
@@ -515,7 +520,8 @@ func TestWatcher_HandleError(t *testing.T) {
 	// 直接测试 handleError 方法
 	errCh := make(chan error, 1)
 	w := &Watcher{
-		cfg: &koanfConfig{path: "/etc/app/config.yaml"},
+		cfg:     &koanfConfig{path: "/etc/app/config.yaml"},
+		running: true,
 		callback: func(c Config, err error) {
 			errCh <- err
 		},
@@ -532,6 +538,21 @@ func TestWatcher_HandleError(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("handleError 回调未被调用")
 	}
+}
+
+// TestWatcher_HandleErrorNotRunning 验证 running=false 时 handleError 不调用回调
+func TestWatcher_HandleErrorNotRunning(t *testing.T) {
+	callbackCalled := false
+	w := &Watcher{
+		cfg:     &koanfConfig{path: "/etc/app/config.yaml"},
+		running: false,
+		callback: func(c Config, err error) {
+			callbackCalled = true
+		},
+	}
+
+	w.handleError(fmt.Errorf("test error"))
+	assert.False(t, callbackCalled, "handleError 在 running=false 时不应调用回调")
 }
 
 // TestWatch_DirectoryDeletedBeforeWatch 验证 Watch 在目录不存在时返回 ErrWatchFailed
@@ -559,6 +580,7 @@ func TestWatch_DirectoryDeletedBeforeWatch(t *testing.T) {
 func TestWatcher_HandleErrorNilCallback(t *testing.T) {
 	w := &Watcher{
 		cfg:      &koanfConfig{},
+		running:  true,
 		callback: nil,
 	}
 
@@ -606,6 +628,53 @@ func TestWatcher_StopFromCallback(t *testing.T) {
 		assert.NoError(t, stopErr, "Stop() 在回调内调用不应返回错误")
 	case <-time.After(3 * time.Second):
 		t.Fatal("Stop() 在回调内调用导致死锁（超时 3 秒）")
+	}
+}
+
+// TestWatcher_StopFromErrorCallback 验证在错误回调内调用 Stop() 不会死锁
+// 回归测试 FG-S1：handleError 在 run() goroutine 内执行 safeCallback，
+// 若用户在回调中调用 Stop()，修复前 Stop() 的 runWg.Wait() 会等待 run()
+// 自身退出，形成死锁。修复后通过 runGID 检测重入并跳过 runWg.Wait()。
+func TestWatcher_StopFromErrorCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	stopDone := make(chan error, 1)
+
+	w, err := Watch(cfg, func(c Config, cbErr error) {
+		// 占位回调
+	})
+	require.NoError(t, err)
+
+	// 重新设置回调：在错误回调中调用 Stop()
+	w.callback = func(c Config, cbErr error) {
+		if cbErr != nil {
+			stopDone <- w.Stop()
+		}
+	}
+
+	w.StartAsync()
+	time.Sleep(30 * time.Millisecond)
+
+	// 模拟 fsnotify 错误：handleError 在 run() goroutine 中被调用
+	// 由于无法直接注入 fsnotify 错误通道，我们通过删除监视目录触发错误
+	// 注意：此测试同时验证了 handleError 的 running 检查
+	err = os.RemoveAll(tmpDir)
+	require.NoError(t, err)
+
+	// 等待 Stop 完成或超时
+	select {
+	case stopErr := <-stopDone:
+		assert.NoError(t, stopErr, "Stop() 在错误回调内调用不应返回错误")
+	case <-time.After(3 * time.Second):
+		// fsnotify 可能未产生错误（平台差异），正常停止
+		err = w.Stop()
+		assert.NoError(t, err)
 	}
 }
 

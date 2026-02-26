@@ -62,6 +62,10 @@ var (
 	// 当分布式锁返回此类错误时，会直接传递给调用方而非降级处理。
 	ErrInvalidConfig = errors.New("xcache: invalid configuration")
 
+	// errUnexpectedResultType 表示 singleflight 返回了非预期的结果类型。
+	// 此错误正常不可达，仅在内部类型系统被破坏时触发，因此不导出。
+	errUnexpectedResultType = errors.New("xcache: unexpected result type from singleflight")
+
 	// ErrLoadPanic 表示 loadFn（用户提供的回源函数）发生了 panic。
 	// 设计决策: 在 singleflight DoChan 模式下，loadFn 的 panic 会被
 	// singleflight 捕获后在新 goroutine 中 re-panic，导致进程级崩溃。

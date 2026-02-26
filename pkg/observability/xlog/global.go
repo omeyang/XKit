@@ -41,7 +41,8 @@ func defaultLogger() LoggerWithLevel {
 		if globalLogger.Load() != nil {
 			return
 		}
-		// 默认配置：输出到 stderr，Info 级别，text 格式，启用 enrich
+		// 设计决策: 默认 Logger 使用 stderr，无 rotator，cleanup 为空操作（仅关闭 nil rotator）。
+		// 丢弃 cleanup 是安全的。如需轮转日志，应使用 New().SetRotation(...).Build() 手动管理生命周期。
 		logger, _, err := New().Build()
 		if err != nil {
 			// 设计决策: 默认参数不应失败；如果失败则降级为最小可用 logger，

@@ -63,7 +63,8 @@ type SpanOptions struct {
 	Operation string
 	// Kind 标识跨度类型。
 	Kind Kind
-	// Attrs 附加属性。
+	// Attrs 附加到 trace span 的自定义属性（不影响 metrics 维度）。
+	// 注意：component / operation / status 是保留键，使用这些键的属性会被静默过滤。
 	Attrs []Attr
 }
 
@@ -73,7 +74,8 @@ type Result struct {
 	Status Status
 	// Err 表示操作错误。
 	Err error
-	// Attrs 附加属性。
+	// Attrs 附加到 trace span 的自定义属性（不影响 metrics 维度）。
+	// 注意：component / operation / status 是保留键，使用这些键的属性会被静默过滤。
 	Attrs []Attr
 }
 

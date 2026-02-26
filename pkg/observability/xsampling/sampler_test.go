@@ -510,6 +510,33 @@ func TestKeyBasedSampler(t *testing.T) {
 			"OnEmptyKey callback should not be called when key is present")
 	})
 
+	t.Run("nil ctx fallback", func(t *testing.T) {
+		var callCount atomic.Int64
+		sampler, err := NewKeyBasedSampler(0.5, testKeyFunc, WithOnEmptyKey(func() {
+			callCount.Add(1)
+		}))
+		require.NoError(t, err)
+
+		// nil ctx 不应 panic，应回退到随机采样并触发 onEmptyKey 回调
+		assert.NotPanics(t, func() {
+			sampler.ShouldSample(nil) //nolint:staticcheck // 测试 nil ctx 防护
+		})
+		assert.Equal(t, int64(1), callCount.Load(),
+			"OnEmptyKey callback should be called for nil ctx")
+	})
+
+	t.Run("nil ctx rate boundary", func(t *testing.T) {
+		// rate=0 时 nil ctx 应直接返回 false（短路，不触发 keyFunc）
+		s0, err := NewKeyBasedSampler(0.0, testKeyFunc)
+		require.NoError(t, err)
+		assert.False(t, s0.ShouldSample(nil)) //nolint:staticcheck // 测试 nil ctx 防护
+
+		// rate=1 时 nil ctx 应直接返回 true（短路，不触发 keyFunc）
+		s1, err := NewKeyBasedSampler(1.0, testKeyFunc)
+		require.NoError(t, err)
+		assert.True(t, s1.ShouldSample(nil)) //nolint:staticcheck // 测试 nil ctx 防护
+	})
+
 	t.Run("nil keyFunc", func(t *testing.T) {
 		_, err := NewKeyBasedSampler(0.5, nil)
 		assert.ErrorIs(t, err, ErrNilKeyFunc)

@@ -752,6 +752,39 @@ func TestLoader_LoadHash_WithSingleflight_ContextCancelled_BeforeResult(t *testi
 // NewLoader 构造验证测试
 // =============================================================================
 
+func TestNewLoader_DistLockTTL_LessThanLoadTimeout_ReturnsError(t *testing.T) {
+	// Given - DistributedLockTTL <= LoadTimeout 时应返回 ErrInvalidConfig
+	cache, _ := newTestRedis(t)
+
+	// When - DistributedLockTTL (10s) < LoadTimeout (30s)
+	_, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(30*time.Second),
+	)
+
+	// Then
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+	assert.Contains(t, err.Error(), "DistributedLockTTL")
+}
+
+func TestNewLoader_DistLockTTL_EqualToLoadTimeout_ReturnsError(t *testing.T) {
+	// Given - DistributedLockTTL == LoadTimeout 时也应返回 ErrInvalidConfig
+	cache, _ := newTestRedis(t)
+
+	// When
+	_, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithDistributedLockTTL(30*time.Second),
+		WithLoadTimeout(30*time.Second),
+	)
+
+	// Then
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 func TestNewLoader_NilCache_ReturnsError(t *testing.T) {
 	_, err := NewLoader(nil)
 	assert.ErrorIs(t, err, ErrNilClient)

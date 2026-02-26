@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -648,4 +649,62 @@ func TestMemoryWrapper_DoubleClose_ReturnsErrClosed(t *testing.T) {
 	// 第二次关闭应返回 ErrClosed
 	err = cache.Close(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
+}
+
+// =============================================================================
+// 辅助函数后备路径测试
+// =============================================================================
+
+func TestGetHostIdentifier_WhenHostnameFails_ReturnsFallback(t *testing.T) {
+	// Given - 模拟 os.Hostname 失败
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", errors.New("hostname unavailable")
+	}
+	defer func() { osHostname = origHostname }()
+
+	// When
+	id := getHostIdentifier()
+
+	// Then - 应返回 "unknown-" 前缀的后备值
+	assert.Contains(t, id, "unknown-")
+}
+
+func TestGetHostIdentifier_WhenHostnameEmpty_ReturnsFallback(t *testing.T) {
+	// Given - os.Hostname 返回空字符串
+	origHostname := osHostname
+	osHostname = func() (string, error) {
+		return "", nil
+	}
+	defer func() { osHostname = origHostname }()
+
+	// When
+	id := getHostIdentifier()
+
+	// Then
+	assert.Contains(t, id, "unknown-")
+}
+
+func TestGenerateLockValue_WhenCryptoRandFails_ReturnsFallbackValue(t *testing.T) {
+	// Given - 模拟 crypto/rand.Read 失败
+	origRandRead := cryptoRandRead
+	cryptoRandRead = func(b []byte) (int, error) {
+		return 0, errors.New("rand unavailable")
+	}
+	defer func() { cryptoRandRead = origRandRead }()
+
+	// When
+	value := generateLockValue()
+
+	// Then - 应返回主机标识符格式的后备值（包含 "-" 分隔符）
+	assert.NotEmpty(t, value)
+	assert.Contains(t, value, "-")
+}
+
+func TestGenerateLockValue_Normal_ReturnsHexString(t *testing.T) {
+	// When
+	value := generateLockValue()
+
+	// Then - 应返回 32 字符的 hex 字符串 (16 bytes = 32 hex chars)
+	assert.Len(t, value, 32)
 }

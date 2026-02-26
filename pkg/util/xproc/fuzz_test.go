@@ -6,8 +6,11 @@ import (
 	"testing"
 )
 
-// 注意：本文件中的 fuzz 测试修改包级全局变量（osExecutable、os.Args），
-// Go fuzz 引擎串行执行 corpus entries，因此无并发风险，但不可在 f.Fuzz 外部使用 t.Parallel()。
+// 注意：本文件中的 fuzz 测试修改包级全局变量（osExecutable、os.Args）。
+// go test 常规执行（无 -fuzz 标志）时仅串行运行 seed corpus，无并发风险；
+// go test -fuzz 执行时 fuzz 引擎可能启动多 worker 并发调用 f.Fuzz 回调，
+// 当前通过每次调用保存/恢复全局状态隔离副作用。
+// 不可在 f.Fuzz 外部使用 t.Parallel()。
 
 func FuzzProcessName_ArgsFallback(f *testing.F) {
 	// 添加种子语料：各种 os.Args[0] 格式

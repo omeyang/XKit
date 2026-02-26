@@ -1,10 +1,9 @@
 package deploy
 
 import (
+	"errors"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestType_String(t *testing.T) {
@@ -20,28 +19,50 @@ func TestType_String(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.d.String())
+			if got := tt.d.String(); got != tt.want {
+				t.Errorf("Type.String() = %q, want %q", got, tt.want)
+			}
 		})
 	}
 }
 
 func TestType_IsLocal(t *testing.T) {
-	assert.True(t, Local.IsLocal())
-	assert.False(t, SaaS.IsLocal())
-	assert.False(t, Type("OTHER").IsLocal())
+	if !Local.IsLocal() {
+		t.Error("Local.IsLocal() = false, want true")
+	}
+	if SaaS.IsLocal() {
+		t.Error("SaaS.IsLocal() = true, want false")
+	}
+	if Type("OTHER").IsLocal() {
+		t.Error(`Type("OTHER").IsLocal() = true, want false`)
+	}
 }
 
 func TestType_IsSaaS(t *testing.T) {
-	assert.True(t, SaaS.IsSaaS())
-	assert.False(t, Local.IsSaaS())
-	assert.False(t, Type("OTHER").IsSaaS())
+	if !SaaS.IsSaaS() {
+		t.Error("SaaS.IsSaaS() = false, want true")
+	}
+	if Local.IsSaaS() {
+		t.Error("Local.IsSaaS() = true, want false")
+	}
+	if Type("OTHER").IsSaaS() {
+		t.Error(`Type("OTHER").IsSaaS() = true, want false`)
+	}
 }
 
 func TestType_IsValid(t *testing.T) {
-	assert.True(t, Local.IsValid())
-	assert.True(t, SaaS.IsValid())
-	assert.False(t, Type("").IsValid())
-	assert.False(t, Type("OTHER").IsValid())
+	if !Local.IsValid() {
+		t.Error("Local.IsValid() = false, want true")
+	}
+	if !SaaS.IsValid() {
+		t.Error("SaaS.IsValid() = false, want true")
+	}
+	if Type("").IsValid() {
+		t.Error(`Type("").IsValid() = true, want false`)
+	}
+	if Type("OTHER").IsValid() {
+		t.Error(`Type("OTHER").IsValid() = true, want false`)
+	}
 }
 
 func TestParse(t *testing.T) {
@@ -67,11 +88,19 @@ func TestParse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := Parse(tt.input)
 			if tt.wantErr != nil {
-				require.ErrorIs(t, err, tt.wantErr)
-				assert.Empty(t, got)
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("Parse(%q) error = %v, want %v", tt.input, err, tt.wantErr)
+				}
+				if got != "" {
+					t.Errorf("Parse(%q) = %q, want empty on error", tt.input, got)
+				}
 			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.want, got)
+				if err != nil {
+					t.Fatalf("Parse(%q) unexpected error: %v", tt.input, err)
+				}
+				if got != tt.want {
+					t.Errorf("Parse(%q) = %q, want %q", tt.input, got, tt.want)
+				}
 			}
 		})
 	}
@@ -79,7 +108,13 @@ func TestParse(t *testing.T) {
 
 func TestParse_InvalidTypeIncludesInput(t *testing.T) {
 	_, err := Parse("STAGING")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "STAGING")
-	assert.ErrorIs(t, err, ErrInvalidType)
+	if err == nil {
+		t.Fatal(`Parse("STAGING") error = nil, want error`)
+	}
+	if !errors.Is(err, ErrInvalidType) {
+		t.Errorf(`Parse("STAGING") error = %v, want ErrInvalidType`, err)
+	}
+	if !strings.Contains(err.Error(), "STAGING") {
+		t.Errorf(`Parse("STAGING") error = %q, should contain "STAGING"`, err)
+	}
 }

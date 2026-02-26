@@ -460,8 +460,13 @@ func TestMongo_BulkInsert_Integration(t *testing.T) {
 		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{
 			Ordered: false, // 无序，继续执行
 		})
-		require.NoError(t, err)
+		// 部分失败：MongoDB InsertMany 对重复键返回 BulkWriteException，
+		// xmongo 将其包装为错误并同时保留部分成功的计数。
+		// 与 BulkResult 文档契约一致：即使 err != nil，result 仍包含有效数据。
+		require.Error(t, err)
+		require.NotNil(t, result)
 		assert.Equal(t, int64(3), result.InsertedCount) // 3 条成功
+		assert.NotEmpty(t, result.Errors)
 	})
 
 	t.Run("空文档列表", func(t *testing.T) {

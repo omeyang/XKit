@@ -120,6 +120,8 @@ func FuzzTenantInfo_Validate(f *testing.F) {
 	f.Add("", "")
 	f.Add("id", "")
 	f.Add("", "name")
+	f.Add("   ", "name")
+	f.Add("id", "  \t")
 
 	f.Fuzz(func(t *testing.T, tenantID, tenantName string) {
 		info := xtenant.TenantInfo{
@@ -129,8 +131,8 @@ func FuzzTenantInfo_Validate(f *testing.F) {
 
 		err := info.Validate()
 
-		// Validate() 要求 TenantID 和 TenantName 都非空
-		shouldError := tenantID == "" || tenantName == ""
+		// Validate() 对字段做 TrimSpace 后判空，纯空白值视为空
+		shouldError := strings.TrimSpace(tenantID) == "" || strings.TrimSpace(tenantName) == ""
 
 		if shouldError {
 			if err == nil {

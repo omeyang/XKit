@@ -234,12 +234,17 @@ func stopCleanupGoroutine(lru any) (stopped bool) {
 	}
 
 	doneField := v.Elem().FieldByName("done")
-	if !doneField.IsValid() || doneField.IsNil() {
+	if !doneField.IsValid() {
 		return false
 	}
 
-	// 验证字段类型为 chan struct{}
+	// 设计决策: 类型检查前置于 IsNil()，确保 IsNil() 只在确认为 chan struct{} 后调用。
+	// 非 nilable 类型（如 int）调用 IsNil() 会 panic，前置类型检查消除该路径对 recover 的依赖。
+	// 顶层 recover 仍保留以防 close(doneCh) 的 double-close panic。
 	if doneField.Type() != reflect.TypeOf(make(chan struct{})) {
+		return false
+	}
+	if doneField.IsNil() {
 		return false
 	}
 

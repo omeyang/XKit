@@ -18,6 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // =============================================================================
@@ -920,4 +923,197 @@ func TestClassifyError(t *testing.T) {
 			assert.Equal(t, tc.want, classifyError(tc.err))
 		})
 	}
+}
+
+// =============================================================================
+// FG-M2: 中间件 nil result 防御性检查
+// =============================================================================
+
+// mockNilResultLimiter 模拟违反契约的 Limiter：err==nil 且 result==nil
+type mockNilResultLimiter struct{}
+
+func (m *mockNilResultLimiter) Allow(_ context.Context, _ Key) (*Result, error) {
+	return nil, nil //nolint:nilnil // 故意违反契约用于测试
+}
+
+func (m *mockNilResultLimiter) AllowN(_ context.Context, _ Key, _ int) (*Result, error) {
+	return nil, nil //nolint:nilnil // 故意违反契约用于测试
+}
+
+func (m *mockNilResultLimiter) Close(_ context.Context) error { return nil }
+
+func TestHTTPMiddleware_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: 第三方 Limiter 返回 nil result + nil error 时应 fail-open（不 panic）
+	middleware := HTTPMiddleware(&mockNilResultLimiter{})
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set("X-Tenant-ID", "nil-result-tenant")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code,
+		"nil result + nil error should fail-open with 200")
+}
+
+func TestGRPCUnaryInterceptor_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: gRPC 一元拦截器对 nil result + nil error 的防御
+	interceptor := UnaryServerInterceptor(&mockNilResultLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "nil-result-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ context.Context, _ any) (any, error) {
+		return "response", nil
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	resp, err := interceptor(ctx, "request", info, handler)
+	require.NoError(t, err)
+	assert.Equal(t, "response", resp,
+		"nil result + nil error should fail-open and call handler")
+}
+
+func TestGRPCStreamInterceptor_NilResultFailsOpen(t *testing.T) {
+	// FG-M2: gRPC 流式拦截器对 nil result + nil error 的防御
+	interceptor := StreamServerInterceptor(&mockNilResultLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "nil-result-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handlerCalled := false
+	handler := func(_ any, _ grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.NoError(t, err)
+	assert.True(t, handlerCalled,
+		"nil result + nil error should fail-open and call handler")
+}
+
+// =============================================================================
+// FG-L3: gRPC 拦截器覆盖率提升
+// =============================================================================
+
+func TestGRPCUnaryInterceptor_FallbackCloseDeny(t *testing.T) {
+	// FallbackClose 返回 Allowed=false + ErrRedisUnavailable → ResourceExhausted
+	interceptor := UnaryServerInterceptor(&mockFallbackCloseLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "close-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ context.Context, _ any) (any, error) {
+		t.Fatal("handler should not be called when denied")
+		return nil, nil
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	_, err := interceptor(ctx, "request", info, handler)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}
+
+func TestGRPCStreamInterceptor_FallbackCloseDeny(t *testing.T) {
+	// FallbackClose 返回 Allowed=false + ErrRedisUnavailable → ResourceExhausted
+	interceptor := StreamServerInterceptor(&mockFallbackCloseLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "close-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ any, _ grpc.ServerStream) error {
+		t.Fatal("handler should not be called when denied")
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.Error(t, err)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}
+
+func TestGRPCStreamInterceptor_SkipFunc(t *testing.T) {
+	limiter := setupGRPCTestLimiter(t, 1)
+
+	skipFunc := func(_ context.Context, info *grpc.StreamServerInfo) bool {
+		return info.FullMethod == "/grpc.health.v1.Health/Watch"
+	}
+	interceptor := StreamServerInterceptor(limiter,
+		WithGRPCStreamSkipFunc(skipFunc),
+	)
+
+	md := metadata.Pairs("x-tenant-id", "skip-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handler := func(_ any, _ grpc.ServerStream) error { return nil }
+	healthInfo := &grpc.StreamServerInfo{FullMethod: "/grpc.health.v1.Health/Watch"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	// 跳过函数匹配时不受限流影响
+	for i := 0; i < 5; i++ {
+		err := interceptor(nil, mockStream, healthInfo, handler)
+		require.NoError(t, err, "health watch stream %d should pass", i+1)
+	}
+}
+
+func TestGRPCStreamInterceptor_ErrorNilResultFailsOpen(t *testing.T) {
+	// err != nil + result == nil → fail-open
+	interceptor := StreamServerInterceptor(&mockNilResultErrorLimiter{})
+
+	md := metadata.Pairs("x-tenant-id", "error-tenant")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	handlerCalled := false
+	handler := func(_ any, _ grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+	mockStream := &mockServerStream{ctx: ctx}
+
+	err := interceptor(nil, mockStream, info, handler)
+	require.NoError(t, err)
+	assert.True(t, handlerCalled, "error + nil result should fail-open")
+}
+
+// =============================================================================
+// FG-S1: warnDefaultPodCount 路径覆盖
+// =============================================================================
+
+func TestWarnDefaultPodCount_Skips(t *testing.T) {
+	// 非 FallbackLocal → 不告警
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackOpen},
+	})
+
+	// 有 PodCountProvider → 不告警
+	warnDefaultPodCount(&options{
+		config:           Config{Fallback: FallbackLocal, LocalPodCount: 1},
+		podCountProvider: StaticPodCount(3),
+	})
+
+	// LocalPodCount > 1 → 不告警
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackLocal, LocalPodCount: 5},
+	})
+}
+
+func TestWarnDefaultPodCount_Warns(t *testing.T) {
+	// FallbackLocal + 默认 PodCount=1 + 无 Provider → 触发告警（不 panic 即可）
+	warnDefaultPodCount(&options{
+		config: Config{Fallback: FallbackLocal, LocalPodCount: 1},
+	})
 }

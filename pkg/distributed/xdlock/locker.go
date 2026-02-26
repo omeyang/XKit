@@ -110,6 +110,7 @@ type Factory interface {
 
 	// Health 健康检查。
 	// 检查底层连接是否正常。
+	// 传入 nil ctx 返回 [ErrNilContext]。
 	Health(ctx context.Context) error
 }
 

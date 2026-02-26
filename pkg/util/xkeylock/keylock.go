@@ -19,6 +19,10 @@ type Handle interface {
 
 // Locker 提供基于 key 的进程内互斥锁。
 // 所有方法都是并发安全的。
+//
+// 设计决策: 采用 io.Closer（Close() error）而非 Close(ctx) error。
+// xkeylock 是纯内存操作，Close 仅设置标志位并关闭 channel，无需 context
+// 传递取消/超时语义。D-02 的 Close(ctx) 策略适用于分布式/资源管理类组件。
 type Locker interface {
 	io.Closer
 
@@ -41,6 +45,11 @@ type Locker interface {
 	// 锁被占用时返回 (nil, [ErrLockOccupied])。
 	// Locker 已关闭时返回 (nil, [ErrClosed])。
 	// key 不得为空字符串，否则返回 (nil, [ErrInvalidKey])。
+	//
+	// 设计决策: 与 Close 并发时，TryAcquire 可能返回 ErrLockOccupied 而非 ErrClosed。
+	// 内部使用 best-effort 的 closed 二次检查捕获绝大多数竞态，但 check-to-return
+	// 之间存在纳秒级 TOCTOU 窗口，消除此窗口需加互斥锁，与无锁设计目标冲突。
+	// 调用方应同时处理 ErrLockOccupied 和 ErrClosed。
 	TryAcquire(key string) (Handle, error)
 
 	// Len 返回当前活跃的 key 数量（单次原子读取，瞬时快照）。

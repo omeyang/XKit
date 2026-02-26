@@ -303,15 +303,12 @@ func FuzzRetryer(f *testing.F) {
 func FuzzWrapperDo(f *testing.F) {
 	f.Add(uint(3), int64(0), true)
 	f.Add(uint(1), int64(1000), false)
-	f.Add(uint(0), int64(0), true) // 0 表示无限重试
+	f.Add(uint(0), int64(0), true) // 0 表示无限重试，受 100ms context 超时保护
 
 	f.Fuzz(func(t *testing.T, attempts uint, delayNs int64, shouldSucceed bool) {
-		// 限制参数范围
+		// 限制参数范围（保留 0 = 无限重试，由 100ms context 超时保护）
 		if attempts > 10 {
 			attempts = 10
-		}
-		if attempts == 0 {
-			attempts = 1 // 避免无限循环
 		}
 		if delayNs < 0 {
 			delayNs = 0

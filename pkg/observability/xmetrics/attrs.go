@@ -23,6 +23,8 @@ func Int64(key string, value int64) Attr {
 }
 
 // Uint64 创建 uint64 属性。
+// OTel 转换时：值 ≤ math.MaxInt64 存储为 int64，超出时回退为 string（fmt.Sprint）。
+// 这是 OTel API 不支持原生 uint64 的限制，可能导致同一键在不同调用中产生不同的属性类型。
 func Uint64(key string, value uint64) Attr {
 	return Attr{Key: key, Value: value}
 }

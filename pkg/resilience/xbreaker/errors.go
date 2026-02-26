@@ -161,18 +161,3 @@ func IsTooManyRequests(err error) bool {
 func IsBreakerError(err error) bool {
 	return IsOpen(err) || IsTooManyRequests(err)
 }
-
-// IsRecoverable 检查错误是否表示熔断器拒绝（暂时性保护措施）
-//
-// 设计决策: IsRecoverable 与 BreakerError.Retryable() 语义不同：
-//   - IsRecoverable 判断错误是否来自熔断器拒绝（熔断器最终会恢复）
-//   - BreakerError.Retryable() 返回 false 表示当前请求不应被 xretry 立即重试
-//
-// 两者不矛盾：熔断器拒绝的请求不应立即重试（Retryable=false），
-// 但业务层可通过 IsRecoverable 判断是否需要降级或延迟重试。
-//
-// Deprecated: 推荐使用 IsBreakerError 代替，语义更清晰。计划在 v2.0 移除。
-// TODO(v2.0): 移除 IsRecoverable，统一使用 IsBreakerError
-func IsRecoverable(err error) bool {
-	return IsBreakerError(err)
-}

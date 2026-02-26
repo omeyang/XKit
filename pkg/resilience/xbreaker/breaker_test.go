@@ -365,6 +365,27 @@ func TestWithBucketPeriod_NegativeIgnored(t *testing.T) {
 	assert.NotNil(t, b)
 }
 
+func TestWithBucketPeriod_ValidationWarnings(t *testing.T) {
+	t.Run("BucketPeriod without Interval", func(t *testing.T) {
+		// 应触发 slog.Warn，但不影响创建
+		b := NewBreaker("test-warn",
+			WithBucketPeriod(10*time.Millisecond),
+		)
+		assert.NotNil(t, b)
+		assert.Equal(t, StateClosed, b.State())
+	})
+
+	t.Run("BucketPeriod exceeds Interval", func(t *testing.T) {
+		// 应触发 slog.Warn，但不影响创建
+		b := NewBreaker("test-warn",
+			WithInterval(10*time.Millisecond),
+			WithBucketPeriod(30*time.Millisecond),
+		)
+		assert.NotNil(t, b)
+		assert.Equal(t, StateClosed, b.State())
+	})
+}
+
 func TestWithTripPolicy_NilIgnored(t *testing.T) {
 	b := NewBreaker("test", WithTripPolicy(nil))
 	// 默认策略仍然生效
@@ -592,6 +613,64 @@ func TestWithExcludePolicy(t *testing.T) {
 		b := NewBreaker("test")
 		assert.False(t, b.IsExcluded(errTest))
 		assert.False(t, b.IsExcluded(nil))
+	})
+}
+
+// TestWithExcludePolicy_RatioPolicy 验证 FG-S1 修复：
+// ExcludePolicy 与比率策略组合时，排除的请求不影响熔断判定的分母
+func TestWithExcludePolicy_RatioPolicy(t *testing.T) {
+	excludePolicy := &testExcludePolicy{
+		excludedErrors: []error{context.Canceled},
+	}
+
+	t.Run("excluded requests should not inflate minRequests", func(t *testing.T) {
+		// 场景：minRequests=4, ratio=0.5
+		// 执行：3 excluded(Canceled) + 2 failures + 1 success = 6 total, 3 effective
+		// 修复后：effective=3 < minRequests=4 → 不触发（有效请求不足）
+		b := NewBreaker("test",
+			WithTripPolicy(NewFailureRatio(0.5, 4)),
+			WithExcludePolicy(excludePolicy),
+			WithTimeout(time.Hour),
+		)
+		ctx := context.Background()
+
+		// 3 个被排除的请求
+		for range 3 {
+			_ = b.Do(ctx, func() error { return context.Canceled })
+		}
+		// 2 个失败
+		_ = b.Do(ctx, func() error { return errTest })
+		_ = b.Do(ctx, func() error { return errTest })
+		// 1 个成功
+		_ = b.Do(ctx, func() error { return nil })
+
+		// 有效请求 = 3（不足 minRequests=4），不应触发熔断
+		assert.Equal(t, StateClosed, b.State(),
+			"should not trip: effective requests (3) < minRequests (4)")
+	})
+
+	t.Run("effective ratio triggers trip correctly", func(t *testing.T) {
+		// 场景：minRequests=3, ratio=0.5
+		// 执行：2 excluded + 2 failures + 1 success = 5 total, 3 effective
+		// 有效失败率 = 2/3 ≈ 0.67 > 0.5 → 应触发
+		b := NewBreaker("test",
+			WithTripPolicy(NewFailureRatio(0.5, 3)),
+			WithExcludePolicy(excludePolicy),
+			WithTimeout(time.Hour),
+		)
+		ctx := context.Background()
+
+		// 2 个被排除的请求
+		_ = b.Do(ctx, func() error { return context.Canceled })
+		_ = b.Do(ctx, func() error { return context.Canceled })
+		// 1 个成功
+		_ = b.Do(ctx, func() error { return nil })
+		// 2 个失败
+		_ = b.Do(ctx, func() error { return errTest })
+		_ = b.Do(ctx, func() error { return errTest })
+
+		assert.Equal(t, StateOpen, b.State(),
+			"should trip: effective ratio = 2/3 ≈ 0.67 > 0.5")
 	})
 }
 

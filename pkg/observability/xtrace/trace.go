@@ -363,6 +363,11 @@ const traceparentLen = 55
 //
 // W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
 // 本函数使用固定大小的字节数组减少内存分配。
+//
+// 设计决策: strings.ToLower 在 Go 1.20+ 对纯 ASCII 小写输入有快速路径（直接返回原字符串，
+// 零分配）。由于 parseTraceparent 输出的 traceID/spanID 绝大多数已是小写，
+// 实际运行中 strings.ToLower 几乎不产生额外分配。逐字节小写方案被 gosec G602 阻断，
+// 收益不足以引入 nolint 注解。
 func formatTraceparent(traceID, spanID, traceFlags string) string {
 	if !isValidTraceID(traceID) || !isValidSpanID(spanID) {
 		return ""

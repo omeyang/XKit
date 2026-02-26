@@ -207,7 +207,7 @@ func TestXlogger_With_PreservesOnError(t *testing.T) {
 
 // TestXlogger_StackWithSkip_BufferExpansion 测试堆栈缓冲区扩容路径
 func TestXlogger_StackWithSkip_BufferExpansion(t *testing.T) {
-	var buf testWriterBuffer
+	var buf testBuffer
 	levelVar := new(slog.LevelVar)
 	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: levelVar})
 	l := &xlogger{
@@ -237,22 +237,9 @@ func TestXlogger_StackWithSkip_BufferExpansion(t *testing.T) {
 	}
 }
 
-// testWriterBuffer 简单的非线程安全写缓冲（白盒测试用）
-type testWriterBuffer struct {
-	data []byte
-}
-
-func (b *testWriterBuffer) Write(p []byte) (int, error) {
-	b.data = append(b.data, p...)
-	return len(p), nil
-}
-
-func (b *testWriterBuffer) String() string {
-	return string(b.data)
-}
-
+// containsStr 是 strings.Contains 的直接代理（保持白盒测试辅助函数命名一致性）
 func containsStr(s, substr string) bool {
-	return len(s) > 0 && len(s) >= len(substr) && strings.Contains(s, substr)
+	return strings.Contains(s, substr)
 }
 
 // TestXlogger_WithGroup_PreservesOnError 测试 WithGroup 是否保留 onError
@@ -294,5 +281,59 @@ func TestXlogger_WithGroup_PreservesOnError(t *testing.T) {
 
 	if callbackCount.Load() != 1 {
 		t.Errorf("child logger onError callback count = %d, want 1", callbackCount.Load())
+	}
+}
+
+// =============================================================================
+// Builder 白盒测试（rotator 生命周期）
+// =============================================================================
+
+// failingRotator 模拟 Close 失败的 rotator
+type failingRotator struct {
+	closeErr error
+}
+
+func (r *failingRotator) Write(p []byte) (int, error) { return len(p), nil }
+func (r *failingRotator) Close() error                { return r.closeErr }
+func (r *failingRotator) Rotate() error               { return nil }
+
+// TestBuilder_SetRotation_CloseFailure 测试连续调用 SetRotation 时，旧 rotator Close 失败的错误传播
+func TestBuilder_SetRotation_CloseFailure(t *testing.T) {
+	b := New()
+	// 直接注入一个 Close 会失败的 mock rotator
+	b.rotator = &failingRotator{closeErr: errors.New("close failed")}
+	b.output = b.rotator
+
+	// 再次调用 SetRotation，应尝试关闭旧 rotator 并报错
+	tmpDir := t.TempDir()
+	b.SetRotation(tmpDir + "/test.log")
+
+	_, _, err := b.Build()
+	if err == nil {
+		t.Fatal("Build() should return error when previous rotator close fails")
+	}
+	if !strings.Contains(err.Error(), "close failed") {
+		t.Errorf("error should mention close failure, got: %v", err)
+	}
+}
+
+// TestBuilder_Build_ErrorPath_ClosesRotator 测试 Build() 错误路径关闭 rotator 防止泄漏
+func TestBuilder_Build_ErrorPath_ClosesRotator(t *testing.T) {
+	b := New()
+	// 注入 mock rotator
+	mock := &failingRotator{}
+	b.rotator = mock
+	b.output = mock
+
+	// 注入错误，使 Build() 走 b.err != nil 路径
+	b.err = errors.New("config error")
+
+	_, _, err := b.Build()
+	if err == nil {
+		t.Fatal("Build() should return error")
+	}
+	// 验证 rotator 被清理（b.rotator 被设为 nil）
+	if b.rotator != nil {
+		t.Error("Build() error path should close and nil rotator")
 	}
 }

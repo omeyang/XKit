@@ -46,8 +46,12 @@ func FormatFullIPAddr(addr netip.Addr) string {
 		}
 		return string(buf[:])
 	}
-	b := addr.As16()
-	return hex.EncodeToString(b[:])
+	// 使用栈上 [32]byte 缓冲区 + hex.Encode 避免 hex.EncodeToString 的中间 []byte 堆分配，
+	// 与 IPv4 路径对称：仅 string(buf[:]) 产生一次不可避免的分配。
+	raw := addr.As16()
+	var buf [32]byte
+	hex.Encode(buf[:], raw[:])
+	return string(buf[:])
 }
 
 // ParseFullIP 解析完整长度的 IP 地址字符串。

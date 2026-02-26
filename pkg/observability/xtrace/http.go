@@ -131,7 +131,9 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 
 	info := TraceInfoFromContext(ctx)
 
-	// 如果没有任何追踪信息，直接返回（与 InjectToOutgoingContext 对齐）
+	// 设计决策: 如果 context 无追踪信息，直接返回，不清除请求中已有的 trace 头。
+	// InjectToRequest 仅设置非空字段，不负责清除旧值。
+	// 调用方通常使用新建的 http.Request，不存在旧值覆盖问题。
 	if info.IsEmpty() {
 		return
 	}

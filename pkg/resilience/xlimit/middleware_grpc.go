@@ -164,30 +164,16 @@ func UnaryServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grpc
 		options.KeyExtractor = DefaultGRPCKeyExtractor()
 	}
 
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		// 检查是否跳过
 		if options.SkipFunc != nil && options.SkipFunc(ctx, info) {
 			return handler(ctx, req)
 		}
 
-		// 提取限流键
+		// 提取限流键并执行限流检查
 		key := options.KeyExtractor.Extract(ctx, info)
-
-		// 执行限流检查
-		result, err := limiter.Allow(ctx, key)
-		if err != nil {
-			// 设计决策: 优先检查 result 是否携带拒绝信息（如 FallbackClose 策略
-			// 返回 Allowed=false + ErrRedisUnavailable）。仅当 result 为空时
-			// 才 fail-open（限流器内部错误不阻塞业务请求）。
-			if result != nil && !result.Allowed {
-				return nil, grpcRateLimitError(ctx, result)
-			}
-			return handler(ctx, req)
-		}
-
-		// 检查是否被限流
-		if !result.Allowed {
-			return nil, grpcRateLimitError(ctx, result)
+		if denied, err := handleGRPCLimit(ctx, limiter, key); denied {
+			return nil, err
 		}
 
 		return handler(ctx, req)
@@ -216,7 +202,7 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 		options.KeyExtractor = DefaultGRPCKeyExtractor()
 	}
 
-	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx := stream.Context()
 
 		// 检查是否跳过
@@ -224,26 +210,41 @@ func StreamServerInterceptor(limiter Limiter, opts ...GRPCInterceptorOption) grp
 			return handler(srv, stream)
 		}
 
-		// 提取限流键
+		// 提取限流键并执行限流检查
 		key := options.KeyExtractor.ExtractStream(ctx, info)
-
-		// 执行限流检查
-		result, err := limiter.Allow(ctx, key)
-		if err != nil {
-			// 设计决策: 同 UnaryServerInterceptor，优先检查 result 拒绝信息。
-			if result != nil && !result.Allowed {
-				return grpcRateLimitError(ctx, result)
-			}
-			return handler(srv, stream)
-		}
-
-		// 检查是否被限流
-		if !result.Allowed {
-			return grpcRateLimitError(ctx, result)
+		if denied, err := handleGRPCLimit(ctx, limiter, key); denied {
+			return err
 		}
 
 		return handler(srv, stream)
 	}
+}
+
+// handleGRPCLimit 执行 gRPC 限流检查并处理结果。
+// 返回 (true, error) 表示请求被拒绝；(false, nil) 表示放行。
+func handleGRPCLimit(ctx context.Context, limiter Limiter, key Key) (denied bool, err error) {
+	result, err := limiter.Allow(ctx, key)
+	if err != nil {
+		// 设计决策: 优先检查 result 是否携带拒绝信息（如 FallbackClose 策略
+		// 返回 Allowed=false + ErrRedisUnavailable）。仅当 result 为空时
+		// 才 fail-open（限流器内部错误不阻塞业务请求）。
+		if result != nil && !result.Allowed {
+			return true, grpcRateLimitError(ctx, result)
+		}
+		return false, nil // fail-open
+	}
+
+	// 防御性检查: Limiter 接口契约要求 err==nil 时 result 必非 nil，
+	// 但第三方实现可能违反契约。此处 fail-open 避免运行时 panic。
+	if result == nil {
+		return false, nil
+	}
+
+	if !result.Allowed {
+		return true, grpcRateLimitError(ctx, result)
+	}
+
+	return false, nil
 }
 
 // grpcRateLimitError 创建 gRPC 限流错误并设置 Retry-After trailer metadata。

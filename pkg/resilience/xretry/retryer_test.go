@@ -109,7 +109,10 @@ func TestRetryer_Do(t *testing.T) {
 		})
 
 		assert.Error(t, err)
-		assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || err.Error() == "error")
+		// ShouldRetry 不检查 ctx.Err()，retry-go 在 sleep 阶段检测到 context 取消后
+		// 始终返回 context 错误，而非业务错误。
+		assert.True(t, errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
+			"Retryer.Do should return context error when context is canceled, got: %v", err)
 	})
 
 	t.Run("InternalContextCanceledNoRetry", func(t *testing.T) {

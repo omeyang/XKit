@@ -28,11 +28,15 @@ func (t TenantInfo) IsEmpty() bool {
 }
 
 // Validate 验证必填字段
+//
+// 设计决策: 对字段做 TrimSpace 后再判空，与包内 WithTenantID、WithTenantInfo、
+// ExtractFromHTTPHeader、ExtractFromMetadata 的空白处理语义保持一致。
+// 纯空白值视为空值，返回对应的 ErrEmpty* 错误。
 func (t TenantInfo) Validate() error {
-	if t.TenantID == "" {
+	if strings.TrimSpace(t.TenantID) == "" {
 		return ErrEmptyTenantID
 	}
-	if t.TenantName == "" {
+	if strings.TrimSpace(t.TenantName) == "" {
 		return ErrEmptyTenantName
 	}
 	return nil

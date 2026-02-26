@@ -103,6 +103,8 @@ func TestPrettyE(t *testing.T) {
 }
 
 func TestPretty(t *testing.T) {
+	// Pretty 的成功路径由 PrettyE 实现，TestPrettyE 已充分覆盖。
+	// 此处仅保留代表性成功 case 验证委托正确性，重点测试错误降级行为。
 	tests := []struct {
 		name     string
 		input    any
@@ -115,29 +117,9 @@ func TestPretty(t *testing.T) {
 			contains: `"name": "Alice"`,
 		},
 		{
-			name:     "map",
-			input:    map[string]int{"a": 1},
-			contains: `"a": 1`,
-		},
-		{
 			name:  "nil",
 			input: nil,
 			exact: "null",
-		},
-		{
-			name:  "slice",
-			input: []int{1, 2, 3},
-			exact: "[\n  1,\n  2,\n  3\n]",
-		},
-		{
-			name:  "empty_struct",
-			input: struct{}{},
-			exact: "{}",
-		},
-		{
-			name:  "empty_string",
-			input: "",
-			exact: `""`,
 		},
 		{
 			name:     "error_NaN",

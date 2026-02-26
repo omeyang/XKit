@@ -12,7 +12,7 @@ import (
 //
 // 在服务启动时从环境变量初始化部署类型，然后在业务代码中使用。
 func Example_quickStart() {
-	// 清理之前的状态（测试用）
+	// 清理之前的状态（Reset 仅在 go test 期间可用，生产代码不可调用）
 	xenv.Reset()
 	defer xenv.Reset()
 
@@ -48,7 +48,7 @@ func Example_quickStart() {
 //
 // InitWith 允许直接指定部署类型，无需依赖环境变量。
 func Example_initWith() {
-	// 清理之前的状态
+	// 清理之前的状态（Reset 仅在 go test 期间可用，生产代码不可调用）
 	xenv.Reset()
 	defer xenv.Reset()
 

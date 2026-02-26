@@ -448,6 +448,16 @@ func TestAttrsToOTel(t *testing.T) {
 		assert.Equal(t, attribute.Key("valid"), result[0].Key)
 	})
 
+	t.Run("all_reserved_returns_nil", func(t *testing.T) {
+		attrs := []Attr{
+			{Key: AttrKeyComponent, Value: "override"},
+			{Key: AttrKeyOperation, Value: "override"},
+			{Key: AttrKeyStatus, Value: "override"},
+		}
+		result := attrsToOTel(attrs)
+		assert.Nil(t, result)
+	})
+
 	t.Run("all_types", func(t *testing.T) {
 		attrs := []Attr{
 			String("str", "value"),
@@ -1132,6 +1142,104 @@ func TestNewOTelObserver_CounterCreationFails(t *testing.T) {
 
 func TestNewOTelObserver_HistogramCreationFails(t *testing.T) {
 	obs, err := NewOTelObserver(WithMeterProvider(failingHistogramMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrCreateHistogram)
+}
+
+// ============================================================================
+// FG-S1: nil span 防御测试
+// ============================================================================
+
+// nilSpanTracerProvider 返回 nil span 的 TracerProvider，用于测试 nil span 防御。
+type nilSpanTracerProvider struct {
+	trace.TracerProvider
+}
+
+func (nilSpanTracerProvider) Tracer(string, ...trace.TracerOption) trace.Tracer {
+	return &nilSpanTracer{}
+}
+
+type nilSpanTracer struct {
+	trace.Tracer
+}
+
+func (nilSpanTracer) Start(ctx context.Context, _ string, _ ...trace.SpanStartOption) (context.Context, trace.Span) {
+	return ctx, nil // 故意返回 nil span
+}
+
+func TestOTelObserver_Start_NilSpanFromTracer(t *testing.T) {
+	// 自定义 TracerProvider 返回 nil span 时不应 panic
+	obs, err := NewOTelObserver(WithTracerProvider(nilSpanTracerProvider{}))
+	require.NoError(t, err)
+
+	ctx, span := obs.Start(context.Background(), SpanOptions{
+		Component: "test",
+		Operation: "nil-tracer-span",
+	})
+
+	assert.NotNil(t, ctx)
+	assert.NotNil(t, span)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
+// ============================================================================
+// FG-S2: nil instrument 防御测试
+// ============================================================================
+
+// nilCounterMeterProvider 返回 nil counter（但 err==nil）的 MeterProvider。
+type nilCounterMeterProvider struct {
+	metric.MeterProvider
+}
+
+func (nilCounterMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return &nilCounterMeter{}
+}
+
+type nilCounterMeter struct {
+	metric.Meter
+}
+
+func (nilCounterMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	return nil, nil // nil counter, no error
+}
+
+func TestNewOTelObserver_NilCounterFromMeter(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(nilCounterMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrCreateCounter)
+}
+
+// nilHistogramMeterProvider 返回 nil histogram（但 err==nil）的 MeterProvider。
+type nilHistogramMeterProvider struct {
+	metric.MeterProvider
+}
+
+func (nilHistogramMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return &nilHistogramMeter{}
+}
+
+type nilHistogramMeter struct {
+	metric.Meter
+}
+
+func (m nilHistogramMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	mp, _ := newTestMeterProvider()
+	meter := mp.Meter("test")
+	return meter.Int64Counter("test")
+}
+
+func (nilHistogramMeter) Float64Histogram(string, ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	return nil, nil // nil histogram, no error
+}
+
+func TestNewOTelObserver_NilHistogramFromMeter(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(nilHistogramMeterProvider{}))
 	assert.Nil(t, obs)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrCreateHistogram)

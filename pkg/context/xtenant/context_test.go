@@ -76,6 +76,16 @@ func TestTenantInfo_Validate(t *testing.T) {
 			info:    xtenant.TenantInfo{},
 			wantErr: xtenant.ErrEmptyTenantID,
 		},
+		{
+			name:    "纯空白TenantID视为空（TrimSpace一致性）",
+			info:    xtenant.TenantInfo{TenantID: "   ", TenantName: "n1"},
+			wantErr: xtenant.ErrEmptyTenantID,
+		},
+		{
+			name:    "纯空白TenantName视为空（TrimSpace一致性）",
+			info:    xtenant.TenantInfo{TenantID: "t1", TenantName: "  \t"},
+			wantErr: xtenant.ErrEmptyTenantName,
+		},
 	}
 
 	for _, tt := range tests {

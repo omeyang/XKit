@@ -21,6 +21,10 @@
 //	defer func() { span.End(xmetrics.Result{Err: bizErr}) }()
 //	result, bizErr = doWork(ctx)
 //
+// 注意：上述 defer 模式依赖 bizErr 在 panic 前已被赋值。
+// 若业务代码 panic 且未 recover，bizErr 仍为 nil，span 会记录为 [StatusOK]。
+// 需要 panic 感知的场景应在 defer 中 recover 并将 panic 转为 error 后再调用 End。
+//
 // # 统一指标
 //
 //   - xkit.operation.total — 操作计数（Counter，unit="{operation}"）

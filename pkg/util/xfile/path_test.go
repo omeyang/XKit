@@ -488,7 +488,6 @@ func TestSafeJoin(t *testing.T) {
 	}
 }
 
-// TestSafeJoinVsSanitizePath 对比 SafeJoin 和 SanitizePath 的行为差异
 // TestJoinAndVerifyRelError 测试 joinAndVerify 中 filepath.Rel 失败的防御性分支。
 // filepath.Rel 对两个已清理的绝对路径在当前标准库实现中不会失败，
 // 此测试通过注入模拟实现覆盖该防御性代码路径。
@@ -509,6 +508,30 @@ func TestJoinAndVerifyRelError(t *testing.T) {
 	}
 }
 
+// TestResolveAndVerifySymlinksRelError 测试 resolveAndVerifySymlinks 中 filepath.Rel
+// 失败的防御性分支。与 TestJoinAndVerifyRelError 对称，通过注入模拟实现覆盖
+// 符号链接解析后的防御性代码路径。
+func TestResolveAndVerifySymlinksRelError(t *testing.T) {
+	original := filepathRelResolvedFn
+	t.Cleanup(func() { filepathRelResolvedFn = original })
+
+	filepathRelResolvedFn = func(_, _ string) (string, error) {
+		return "", errors.New("simulated resolved Rel failure")
+	}
+
+	tmpDir := t.TempDir()
+	_, err := SafeJoinWithOptions(tmpDir, "app.log", SafeJoinOptions{
+		ResolveSymlinks: true,
+	})
+	if err == nil {
+		t.Fatal("期望 filepathRelResolvedFn 失败时 SafeJoinWithOptions 返回错误")
+	}
+	if !errors.Is(err, ErrPathEscaped) {
+		t.Errorf("期望 ErrPathEscaped，但得到: %v", err)
+	}
+}
+
+// TestSafeJoinVsSanitizePath 对比 SafeJoin 和 SanitizePath 的行为差异
 func TestSafeJoinVsSanitizePath(t *testing.T) {
 	t.Run("SanitizePath允许绝对路径穿越而SafeJoin不允许", func(t *testing.T) {
 		// SanitizePath 允许绝对路径穿越（已知的设计局限）

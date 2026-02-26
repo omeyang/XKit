@@ -54,15 +54,20 @@ func TestProcessName_Cached(t *testing.T) {
 
 func TestResolveProcessName_FallbackToArgs(t *testing.T) {
 	origExec := osExecutable
-	defer func() { osExecutable = origExec }()
+	origArgs := os.Args
+	defer func() {
+		osExecutable = origExec
+		os.Args = origArgs
+	}()
 
 	// 模拟 os.Executable 失败，应回退到 os.Args[0]
 	osExecutable = func() (string, error) {
 		return "", errors.New("not supported")
 	}
+	os.Args = []string{"/usr/bin/test-app"}
 
 	name := resolveProcessName()
-	assert.NotEmpty(t, name)
+	assert.Equal(t, "test-app", name)
 }
 
 func TestResolveProcessName_EmptyArgs(t *testing.T) {
@@ -141,24 +146,32 @@ func TestResolveProcessName_SpecialPaths(t *testing.T) {
 		os.Args = origArgs
 	}()
 
-	specialPaths := []string{"/", ".", ".."}
+	// 使用描述性标签替代原始路径值，避免 "/" 被 testing 包解释为子测试层级分隔符。
+	specialPaths := []struct {
+		label string
+		path  string
+	}{
+		{"slash", "/"},
+		{"dot", "."},
+		{"dotdot", ".."},
+	}
 
-	for _, path := range specialPaths {
+	for _, tc := range specialPaths {
 		// os.Executable 返回特殊路径时应回退到 os.Args
-		t.Run("exe_"+path+"_fallback", func(t *testing.T) {
+		t.Run("exe_"+tc.label+"_fallback", func(t *testing.T) {
 			osExecutable = func() (string, error) {
-				return path, nil
+				return tc.path, nil
 			}
 			os.Args = []string{"/usr/bin/fallback"}
 			assert.Equal(t, "fallback", resolveProcessName())
 		})
 
 		// os.Args[0] 为特殊路径时应返回空
-		t.Run("args_"+path, func(t *testing.T) {
+		t.Run("args_"+tc.label, func(t *testing.T) {
 			osExecutable = func() (string, error) {
 				return "", errors.New("not supported")
 			}
-			os.Args = []string{path}
+			os.Args = []string{tc.path}
 			assert.Equal(t, "", resolveProcessName())
 		})
 	}
@@ -166,14 +179,18 @@ func TestResolveProcessName_SpecialPaths(t *testing.T) {
 
 func TestResolveProcessName_OsExecutableEmpty(t *testing.T) {
 	origExec := osExecutable
-	defer func() { osExecutable = origExec }()
+	origArgs := os.Args
+	defer func() {
+		osExecutable = origExec
+		os.Args = origArgs
+	}()
 
 	// os.Executable 返回空字符串时，应回退到 os.Args[0]
 	osExecutable = func() (string, error) {
 		return "", nil
 	}
+	os.Args = []string{"/usr/bin/test-app"}
 
 	name := resolveProcessName()
-	// 回退到 os.Args[0]
-	assert.NotEmpty(t, name)
+	assert.Equal(t, "test-app", name)
 }

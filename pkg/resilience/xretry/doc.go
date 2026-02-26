@@ -54,6 +54,8 @@
 //   - Do/DoWithData: 直接暴露 retry-go 选项，API 更简洁，适合一次性使用
 //   - 两者均默认 LastErrorOnly(true)，只返回最后一个错误
 //   - 两者均对 nil context 返回 ErrNilContext、nil 回调函数返回 ErrNilFunc（不 panic）
+//   - 两者均在 context 取消时返回 context 错误（而非最后的业务错误），
+//     调用方可稳定使用 errors.Is(err, context.DeadlineExceeded) 判断
 //   - Do/DoWithData 的 ctx 参数优先于 opts 中的 Context()（不可被覆盖）
 //
 // # 错误分类

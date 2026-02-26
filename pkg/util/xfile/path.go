@@ -271,6 +271,10 @@ func validatePath(path string) (string, error) {
 // 测试注入点：非并发安全，同包测试中修改此变量的用例不应使用 t.Parallel()。
 var filepathRelFn = filepath.Rel
 
+// filepathRelResolvedFn 用于 resolveAndVerifySymlinks 中的路径关系计算。
+// 与 filepathRelFn 对称，为符号链接解析后的防御性分支提供测试注入点。
+var filepathRelResolvedFn = filepath.Rel
+
 // joinAndVerify 拼接路径并验证结果仍在 base 内
 //
 // 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处的错误分支
@@ -281,8 +285,10 @@ func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to compute relative path (%v): %w", err, ErrPathEscaped)
 	}
-	// 使用 hasDotDotSegment 精确检测路径穿越
-	// 避免误判以 ".." 开头的合法文件名（如 "..config"）
+	// 设计决策: 此检查在当前验证流程下不可触发（validatePath 已排除 ".." 段，
+	// filepath.Join + filepath.Rel 不会引入新的 ".." 段），但保留作为防御性代码，
+	// 防止 validatePath 逻辑变更后引入安全漏洞。使用 hasDotDotSegment 精确匹配，
+	// 避免误判以 ".." 开头的合法文件名（如 "..config"）。
 	if hasDotDotSegment(rel) {
 		return "", fmt.Errorf("path escapes base directory: %w", ErrPathEscaped)
 	}
@@ -301,7 +307,7 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 		return "", fmt.Errorf("resolve path symlinks: %w: %w", ErrSymlinkResolution, err)
 	}
 
-	rel, err := filepath.Rel(realBase, realJoined)
+	rel, err := filepathRelResolvedFn(realBase, realJoined)
 	// 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处拆分处理
 	// 是防御性设计，确保排障时能区分"路径计算异常"与"实际路径逃逸"两种场景。
 	if err != nil {

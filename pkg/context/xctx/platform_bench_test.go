@@ -23,11 +23,11 @@ func BenchmarkHasParent(b *testing.B) {
 	}
 }
 
-func BenchmarkMustHasParent(b *testing.B) {
+func BenchmarkHasParentOrDefault(b *testing.B) {
 	ctx, _ := xctx.WithHasParent(context.Background(), true)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = xctx.MustHasParent(ctx)
+		_ = xctx.HasParentOrDefault(ctx)
 	}
 }
 

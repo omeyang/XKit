@@ -57,10 +57,18 @@ func newRatioPolicy(ratio float64, minRequests uint32) ratioPolicy {
 }
 
 func (p *ratioPolicy) readyToTrip(counts Counts) bool {
-	if counts.Requests == 0 || counts.Requests < p.minRequests {
+	// 设计决策: 使用有效请求数（排除被 ExcludePolicy 排除的请求）作为分母和最小请求数判定依据。
+	// gobreaker 在 beforeRequest 阶段无条件递增 Requests，被排除的请求仍计入 Requests，
+	// 仅在 afterRequest 阶段递增 TotalExclusions。若直接使用 Requests 作为分母，
+	// 高频排除场景（如大量 context.Canceled）会稀释失败率，导致该熔断未熔断或误判。
+	effective := counts.Requests
+	if counts.TotalExclusions <= effective {
+		effective -= counts.TotalExclusions
+	}
+	if effective == 0 || effective < p.minRequests {
 		return false
 	}
-	failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+	failureRatio := float64(counts.TotalFailures) / float64(effective)
 	return failureRatio >= p.ratio
 }
 

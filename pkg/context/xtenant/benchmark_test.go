@@ -86,6 +86,7 @@ func BenchmarkGetTenantInfo(b *testing.B) {
 func BenchmarkTenantInfo_IsEmpty(b *testing.B) {
 	info := xtenant.TenantInfo{}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = info.IsEmpty()
@@ -95,6 +96,7 @@ func BenchmarkTenantInfo_IsEmpty(b *testing.B) {
 func BenchmarkTenantInfo_IsEmpty_NonEmpty(b *testing.B) {
 	info := xtenant.TenantInfo{TenantID: "t1", TenantName: "n1"}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = info.IsEmpty()
@@ -104,6 +106,7 @@ func BenchmarkTenantInfo_IsEmpty_NonEmpty(b *testing.B) {
 func BenchmarkTenantInfo_Validate(b *testing.B) {
 	info := xtenant.TenantInfo{TenantID: "t1"}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := info.Validate(); err == nil {

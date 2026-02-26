@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -41,6 +42,7 @@ func randomFloat64() float64 {
 	if _, err := rand.Read(buf[:]); err != nil {
 		// crypto/rand 失败表示系统随机数源不可用，返回 0.5（中间值）
 		// 确保 backoffWithJitter 中 (randomFloat64() - 0.5) 为 0，不产生偏移抖动
+		slog.Warn("xcache: crypto/rand failed, using fallback jitter", "error", err)
 		return 0.5
 	}
 	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * float64MantissaScale
@@ -238,7 +240,9 @@ func (l *loader) loadWithSingleflight(ctx context.Context, key string, loadFn Lo
 	// 而非绑定到任一调用方的返回路径。确保首个 caller cancel 不会通过
 	// defer sfCancel() 取消共享加载，避免级联取消导致缓存未命中放大。
 	ch := l.group.DoChan(key, func() (any, error) {
-		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
+		// 设计决策: sfCtx 仅脱离取消链，不应用超时。超时由 loadAndCache 统一负责，
+		// 避免 singleflight + loadAndCache 双重 context.WithTimeout 创建冗余 timer goroutine。
+		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, 0)
 		defer sfCancel()
 		return l.loadWithDistLock(sfCtx, key, loadFn, ttl)
 	})
@@ -255,7 +259,7 @@ func (l *loader) loadWithSingleflight(ctx context.Context, key string, loadFn Lo
 		value, ok := result.Val.([]byte)
 		if !ok {
 			// 防御性检查：正常不可达，仅在内部类型系统被破坏时触发
-			return nil, errors.New("xcache: unexpected result type from singleflight")
+			return nil, errUnexpectedResultType
 		}
 		return value, nil
 	}
@@ -367,8 +371,10 @@ func (l *loader) applyTTLJitter(ttl time.Duration) time.Duration {
 		return ttl
 	}
 	jittered := float64(ttl) * (1 + l.options.TTLJitter*(randomFloat64()-0.5))
+	// 设计决策: 防御性分支。当前 TTLJitter ∈ [0,1] 且 ttl > 0 保证 jittered > 0
+	// （最小值 = ttl * (1 + 1*(0-0.5)) = 0.5*ttl > 0），保留以应对未来约束变更。
 	if jittered <= 0 {
-		return ttl // 防止抖动到负数
+		return ttl
 	}
 	return time.Duration(jittered)
 }
@@ -416,7 +422,9 @@ func (l *loader) loadHashWithSingleflight(ctx context.Context, key, field, sfKey
 	// 而非绑定到任一调用方的返回路径。确保首个 caller cancel 不会通过
 	// defer sfCancel() 取消共享加载，避免级联取消导致缓存未命中放大。
 	ch := l.group.DoChan(sfKey, func() (any, error) {
-		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, l.options.LoadTimeout)
+		// 设计决策: sfCtx 仅脱离取消链，不应用超时。超时由 loadHashAndCache 统一负责，
+		// 避免 singleflight + loadHashAndCache 双重 context.WithTimeout 创建冗余 timer goroutine。
+		sfCtx, sfCancel := contextWithIndependentTimeout(ctx, 0)
 		defer sfCancel()
 		return l.loadHashWithDistLock(sfCtx, key, field, loadFn, ttl)
 	})
@@ -433,7 +441,7 @@ func (l *loader) loadHashWithSingleflight(ctx context.Context, key, field, sfKey
 		value, ok := result.Val.([]byte)
 		if !ok {
 			// 防御性检查：正常不可达，仅在内部类型系统被破坏时触发
-			return nil, errors.New("xcache: unexpected result type from singleflight")
+			return nil, errUnexpectedResultType
 		}
 		return value, nil
 	}

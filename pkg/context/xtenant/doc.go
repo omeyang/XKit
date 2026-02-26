@@ -109,7 +109,8 @@
 //	    runtime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
 //	        if strings.HasPrefix(key, "X-Tenant-") || strings.HasPrefix(key, "X-Trace-") ||
 //	            strings.HasPrefix(key, "X-Platform-") || strings.EqualFold(key, "X-Has-Parent") ||
-//	            strings.EqualFold(key, "X-Unclass-Region-ID") || strings.EqualFold(key, "X-Request-ID") {
+//	            strings.EqualFold(key, "X-Unclass-Region-ID") || strings.EqualFold(key, "X-Request-ID") ||
+//	            strings.EqualFold(key, "X-Span-ID") {
 //	            return key, true
 //	        }
 //	        return runtime.DefaultHeaderMatcher(key)

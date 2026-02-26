@@ -172,6 +172,11 @@ func TestCompositePolicy(t *testing.T) {
 		assert.False(t, policy.ReadyToTrip(counts))
 	})
 
+	t.Run("empty policies getter", func(t *testing.T) {
+		policy := NewCompositePolicy()
+		assert.Nil(t, policy.Policies())
+	})
+
 	t.Run("first policy triggers", func(t *testing.T) {
 		policy := NewCompositePolicy(
 			NewConsecutiveFailures(5),
@@ -319,5 +324,98 @@ func TestSlowCallRatioPolicy(t *testing.T) {
 		}
 		// 应该返回 false，不应该 panic（除零保护）
 		assert.False(t, policy.ReadyToTrip(counts))
+	})
+}
+
+// TestRatioPolicy_ExcludedRequestsDenominator 验证 FG-S1 修复：
+// 比率策略使用有效请求数（排除被 ExcludePolicy 排除的请求）作为分母和 minRequests 判定依据。
+func TestRatioPolicy_ExcludedRequestsDenominator(t *testing.T) {
+	t.Run("excluded requests not counted in denominator", func(t *testing.T) {
+		// 场景：3 excluded + 2 failures + 1 success = Requests=6, TotalExclusions=3
+		// 有效请求 = 6 - 3 = 3, 失败率 = 2/3 ≈ 0.67 > 0.5 → 应触发熔断
+		policy := NewFailureRatio(0.5, 3) // minRequests=3
+		counts := Counts{
+			Requests:        6,
+			TotalFailures:   2,
+			TotalSuccesses:  1,
+			TotalExclusions: 3,
+		}
+		assert.True(t, policy.ReadyToTrip(counts),
+			"should trip: effective ratio = 2/3 ≈ 0.67 > 0.5")
+	})
+
+	t.Run("excluded requests dilute denominator without fix", func(t *testing.T) {
+		// 修复前此场景会漏断：Requests=6, TotalFailures=2, ratio=2/6=0.33 < 0.5
+		// 修复后：effective=3, ratio=2/3=0.67 > 0.5
+		policy := NewFailureRatio(0.5, 3)
+		counts := Counts{
+			Requests:        6,
+			TotalFailures:   2,
+			TotalSuccesses:  1,
+			TotalExclusions: 3,
+		}
+		assert.True(t, policy.ReadyToTrip(counts))
+	})
+
+	t.Run("excluded requests inflate minRequests check", func(t *testing.T) {
+		// 场景：2 excluded + 2 failures = Requests=4, TotalExclusions=2
+		// 有效请求 = 4 - 2 = 2, 但 minRequests=4 → 不应触发（有效请求不足）
+		policy := NewFailureRatio(0.5, 4) // minRequests=4
+		counts := Counts{
+			Requests:        4,
+			TotalFailures:   2,
+			TotalExclusions: 2,
+		}
+		assert.False(t, policy.ReadyToTrip(counts),
+			"should not trip: effective requests (2) < minRequests (4)")
+	})
+
+	t.Run("all requests excluded", func(t *testing.T) {
+		// 全部被排除：effective = 0 → 不触发
+		policy := NewFailureRatio(0.5, 1)
+		counts := Counts{
+			Requests:        5,
+			TotalExclusions: 5,
+		}
+		assert.False(t, policy.ReadyToTrip(counts),
+			"should not trip: all requests excluded, effective = 0")
+	})
+
+	t.Run("no exclusions unchanged behavior", func(t *testing.T) {
+		// 无排除时行为不变
+		policy := NewFailureRatio(0.5, 10)
+		counts := Counts{
+			Requests:      10,
+			TotalFailures: 5,
+		}
+		assert.True(t, policy.ReadyToTrip(counts),
+			"should trip: no exclusions, ratio = 5/10 = 0.5")
+	})
+
+	t.Run("SlowCallRatioPolicy also uses effective denominator", func(t *testing.T) {
+		// SlowCallRatioPolicy 共享 ratioPolicy.readyToTrip，验证修复一致性
+		policy := NewSlowCallRatio(0.5, 3)
+		counts := Counts{
+			Requests:        6,
+			TotalFailures:   2,
+			TotalSuccesses:  1,
+			TotalExclusions: 3,
+		}
+		assert.True(t, policy.ReadyToTrip(counts),
+			"SlowCallRatioPolicy should also use effective denominator")
+	})
+
+	t.Run("TotalExclusions exceeds Requests underflow protection", func(t *testing.T) {
+		// 防下溢：TotalExclusions > Requests（理论上不会发生，但防御性编程）
+		policy := NewFailureRatio(0.5, 1)
+		counts := Counts{
+			Requests:        3,
+			TotalExclusions: 5, // 异常：排除数大于请求数
+			TotalFailures:   1,
+		}
+		// effective 保持为 Requests=3（不减去，因为 TotalExclusions > Requests）
+		// ratio = 1/3 ≈ 0.33 < 0.5 → 不触发
+		assert.False(t, policy.ReadyToTrip(counts),
+			"underflow protection: effective stays at Requests, ratio = 1/3 < 0.5")
 	})
 }

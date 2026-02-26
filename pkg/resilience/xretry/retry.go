@@ -19,7 +19,8 @@ type RetryPolicy interface {
 
 	// ShouldRetry 判断是否应该重试
 	//
-	// ctx: 上下文，可用于取消
+	// ctx: 上下文（供自定义实现读取 context 值；内置策略不检查 ctx.Err()，
+	//       context 取消由 retry-go 的 Context(ctx) 选项在 sleep 阶段统一处理）
 	// attempt: 当前尝试次数（从 1 开始）
 	// err: 上次执行的错误
 	ShouldRetry(ctx context.Context, attempt int, err error) bool

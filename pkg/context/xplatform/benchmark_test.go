@@ -11,6 +11,7 @@ import (
 var (
 	sinkString string
 	sinkBool   bool
+	sinkConfig xplatform.Config
 )
 
 // =============================================================================
@@ -122,9 +123,11 @@ func BenchmarkRequirePlatformID(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if _, err := xplatform.RequirePlatformID(); err != nil {
+		v, err := xplatform.RequirePlatformID()
+		if err != nil {
 			b.Fatal(err)
 		}
+		sinkString = v
 	}
 }
 
@@ -141,9 +144,11 @@ func BenchmarkGetConfig(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if _, err := xplatform.GetConfig(); err != nil {
+		v, err := xplatform.GetConfig()
+		if err != nil {
 			b.Fatal(err)
 		}
+		sinkConfig = v
 	}
 }
 
@@ -269,10 +274,14 @@ func BenchmarkGetConfig_Parallel(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
+		var local xplatform.Config
 		for pb.Next() {
-			if _, err := xplatform.GetConfig(); err != nil {
+			v, err := xplatform.GetConfig()
+			if err != nil {
 				b.Fatal(err)
 			}
+			local = v
 		}
+		runtime.KeepAlive(local)
 	})
 }

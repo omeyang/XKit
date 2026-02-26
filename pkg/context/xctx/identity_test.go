@@ -16,13 +16,19 @@ import (
 // =============================================================================
 
 func TestPlatformID(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		if got := xctx.PlatformID(context.Background()); got != "" {
 			t.Errorf("PlatformID(empty) = %q, want empty", got)
 		}
 	})
 
 	t.Run("正常注入和提取", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, err := xctx.WithPlatformID(context.Background(), "platform-001")
 		if err != nil {
 			t.Fatalf("WithPlatformID() error = %v", err)
@@ -33,6 +39,8 @@ func TestPlatformID(t *testing.T) {
 	})
 
 	t.Run("覆盖写入返回新值", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithPlatformID(context.Background(), "old-platform")
 		ctx, _ = xctx.WithPlatformID(ctx, "new-platform")
 		if got := xctx.PlatformID(ctx); got != "new-platform" {
@@ -41,6 +49,8 @@ func TestPlatformID(t *testing.T) {
 	})
 
 	t.Run("nil context返回空字符串", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		if got := xctx.PlatformID(nilCtx); got != "" {
 			t.Errorf("PlatformID(nil) = %q, want empty", got)
@@ -48,6 +58,8 @@ func TestPlatformID(t *testing.T) {
 	})
 
 	t.Run("nil context注入返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		_, err := xctx.WithPlatformID(nilCtx, "platform-001")
 		if !errors.Is(err, xctx.ErrNilContext) {
@@ -57,6 +69,8 @@ func TestPlatformID(t *testing.T) {
 }
 
 func TestTenantFields(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		name      string
 		setter    func(context.Context, string) (context.Context, error)
@@ -70,13 +84,19 @@ func TestTenantFields(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			t.Run("空context返回空字符串", func(t *testing.T) {
+				t.Parallel()
+
 				if got := tc.getter(context.Background()); got != "" {
 					t.Errorf("%s(empty) = %q, want empty", tc.fieldName, got)
 				}
 			})
 
 			t.Run("正常注入和提取", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := tc.setter(context.Background(), tc.testValue)
 				if err != nil {
 					t.Fatalf("%s() error = %v", tc.fieldName, err)
@@ -87,6 +107,8 @@ func TestTenantFields(t *testing.T) {
 			})
 
 			t.Run("nil context返回空字符串", func(t *testing.T) {
+				t.Parallel()
+
 				var nilCtx context.Context
 				if got := tc.getter(nilCtx); got != "" {
 					t.Errorf("%s(nil) = %q, want empty", tc.fieldName, got)
@@ -94,6 +116,8 @@ func TestTenantFields(t *testing.T) {
 			})
 
 			t.Run("nil context注入返回ErrNilContext", func(t *testing.T) {
+				t.Parallel()
+
 				var nilCtx context.Context
 				_, err := tc.setter(nilCtx, tc.testValue)
 				if !errors.Is(err, xctx.ErrNilContext) {
@@ -109,7 +133,11 @@ func TestTenantFields(t *testing.T) {
 // =============================================================================
 
 func TestGetIdentity(t *testing.T) {
+	t.Parallel()
+
 	t.Run("空context返回空结构体", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.GetIdentity(context.Background())
 		if id.PlatformID != "" || id.TenantID != "" || id.TenantName != "" {
 			t.Errorf("GetIdentity(empty) = %+v, want empty fields", id)
@@ -117,6 +145,8 @@ func TestGetIdentity(t *testing.T) {
 	})
 
 	t.Run("正常获取", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithPlatformID(context.Background(), "p1")
 		ctx, _ = xctx.WithTenantID(ctx, "t1")
 		ctx, _ = xctx.WithTenantName(ctx, "n1")
@@ -134,6 +164,8 @@ func TestGetIdentity(t *testing.T) {
 	})
 
 	t.Run("部分字段", func(t *testing.T) {
+		t.Parallel()
+
 		ctx, _ := xctx.WithPlatformID(context.Background(), "p1")
 		id := xctx.GetIdentity(ctx)
 		if id.PlatformID != "p1" {
@@ -146,7 +178,11 @@ func TestGetIdentity(t *testing.T) {
 }
 
 func TestIdentity_Validate(t *testing.T) {
+	t.Parallel()
+
 	t.Run("全部存在", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{PlatformID: "p1", TenantID: "t1", TenantName: "n1"}
 		if err := id.Validate(); err != nil {
 			t.Errorf("Validate() error = %v", err)
@@ -154,6 +190,8 @@ func TestIdentity_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少PlatformID", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{TenantID: "t1", TenantName: "n1"}
 		if err := id.Validate(); !errors.Is(err, xctx.ErrMissingPlatformID) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingPlatformID)
@@ -161,6 +199,8 @@ func TestIdentity_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少TenantID", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{PlatformID: "p1", TenantName: "n1"}
 		if err := id.Validate(); !errors.Is(err, xctx.ErrMissingTenantID) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingTenantID)
@@ -168,6 +208,8 @@ func TestIdentity_Validate(t *testing.T) {
 	})
 
 	t.Run("缺少TenantName", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{PlatformID: "p1", TenantID: "t1"}
 		if err := id.Validate(); !errors.Is(err, xctx.ErrMissingTenantName) {
 			t.Errorf("Validate() error = %v, want %v", err, xctx.ErrMissingTenantName)
@@ -176,6 +218,8 @@ func TestIdentity_Validate(t *testing.T) {
 }
 
 func TestIdentity_IsComplete(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		id   xctx.Identity
@@ -189,6 +233,8 @@ func TestIdentity_IsComplete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := tt.id.IsComplete(); got != tt.want {
 				t.Errorf("IsComplete() = %v, want %v", got, tt.want)
 			}
@@ -201,6 +247,8 @@ func TestIdentity_IsComplete(t *testing.T) {
 // =============================================================================
 
 func TestRequireFunctions(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		testValue string
@@ -233,7 +281,11 @@ func TestRequireFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			t.Run("存在则返回", func(t *testing.T) {
+				t.Parallel()
+
 				ctx, err := tt.setter(context.Background(), tt.testValue)
 				if err != nil {
 					t.Fatalf("setter() error = %v", err)
@@ -248,6 +300,8 @@ func TestRequireFunctions(t *testing.T) {
 			})
 
 			t.Run("不存在则返回错误", func(t *testing.T) {
+				t.Parallel()
+
 				_, err := tt.require(context.Background())
 				if err == nil {
 					t.Errorf("Require%s() should return error for empty context", tt.name)
@@ -258,6 +312,8 @@ func TestRequireFunctions(t *testing.T) {
 			})
 
 			t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+				t.Parallel()
+
 				var nilCtx context.Context
 				_, err := tt.require(nilCtx)
 				if !errors.Is(err, xctx.ErrNilContext) {
@@ -304,7 +360,11 @@ func ExampleIdentity_Validate() {
 // =============================================================================
 
 func TestWithIdentity(t *testing.T) {
+	t.Parallel()
+
 	t.Run("全部字段非空", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{
 			PlatformID: "platform-001",
 			TenantID:   "tenant-002",
@@ -320,6 +380,8 @@ func TestWithIdentity(t *testing.T) {
 	})
 
 	t.Run("部分字段为空", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{
 			PlatformID: "platform-001",
 			// TenantID 和 TenantName 为空
@@ -335,6 +397,8 @@ func TestWithIdentity(t *testing.T) {
 	})
 
 	t.Run("全部字段为空", func(t *testing.T) {
+		t.Parallel()
+
 		id := xctx.Identity{}
 		ctx, err := xctx.WithIdentity(context.Background(), id)
 		require.NoError(t, err, "WithIdentity()")
@@ -346,6 +410,8 @@ func TestWithIdentity(t *testing.T) {
 	})
 
 	t.Run("空字段不覆盖已有值", func(t *testing.T) {
+		t.Parallel()
+
 		// 先注入完整身份信息
 		ctx, err := xctx.WithIdentity(context.Background(), xctx.Identity{
 			PlatformID: "original-platform",
@@ -368,6 +434,8 @@ func TestWithIdentity(t *testing.T) {
 	})
 
 	t.Run("nil context返回ErrNilContext", func(t *testing.T) {
+		t.Parallel()
+
 		var nilCtx context.Context
 		id := xctx.Identity{PlatformID: "p1"}
 		_, err := xctx.WithIdentity(nilCtx, id)

@@ -117,6 +117,10 @@ func defaultMutexOptions() *mutexOptions {
 // 最终 key = prefix + key。
 // 默认值："lock:"。
 //
+// 注意：传入空字符串 "" 会移除默认前缀，导致最终 key 等于原始 key。
+// 在多模块或多租户场景中，空前缀可能导致不同业务使用相同 key 时发生冲突。
+// 确保在去掉前缀时，key 本身已包含足够的命名空间隔离。
+//
 // 示例：
 //
 //	handle, _ := factory.TryLock(ctx, "my-resource", xdlock.WithKeyPrefix("myapp:"))

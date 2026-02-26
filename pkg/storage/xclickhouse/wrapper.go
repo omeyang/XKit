@@ -23,7 +23,7 @@ import (
 // clickhouseWrapper 实现 ClickHouse 接口。
 type clickhouseWrapper struct {
 	conn    driver.Conn
-	options *Options
+	options *options
 
 	// closed 标记客户端是否已关闭，防止重复关闭。
 	closed atomic.Bool
@@ -93,9 +93,9 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 	ctx, cancel := storageopt.HealthContext(ctx, w.options.HealthTimeout)
 	defer cancel()
 
-	if err := w.conn.Ping(ctx); err != nil {
+	if pingErr := w.conn.Ping(ctx); pingErr != nil {
 		w.healthCounter.IncPingError()
-		return err
+		return pingErr
 	}
 
 	return nil

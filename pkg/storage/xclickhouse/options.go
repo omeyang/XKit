@@ -52,8 +52,9 @@ type AsyncSlowQueryHook func(info SlowQueryInfo)
 // 选项模式
 // =============================================================================
 
-// Options 包含 ClickHouse 包装器的配置选项。
-type Options struct {
+// options 包含 ClickHouse 包装器的配置选项。
+// 设计决策: 不导出 options 类型，用户通过 WithXxx 函数配置，避免绕过校验逻辑直接赋值。
+type options struct {
 	// HealthTimeout 是健康检查的超时时间。
 	// 默认 5 秒。通过 WithHealthTimeout 设置，仅接受正值；0 或负值被忽略。
 	// 仅在 context 未设置 deadline 时生效；已有 deadline 时取两者较短值。
@@ -87,8 +88,8 @@ type Options struct {
 	Observer xmetrics.Observer
 }
 
-// Option 是用于配置 Options 的函数类型。
-type Option func(*Options)
+// Option 是用于配置 options 的函数类型。
+type Option func(*options)
 
 // 默认值常量（复用 storageopt 定义）。
 const (
@@ -101,8 +102,8 @@ const (
 
 // defaultOptions 返回默认选项。
 // SlowQueryThreshold 零值表示禁用慢查询检测。
-func defaultOptions() *Options {
-	return &Options{
+func defaultOptions() *options {
+	return &options{
 		HealthTimeout:           storageopt.DefaultHealthTimeout,
 		AsyncSlowQueryWorkers:   DefaultAsyncSlowQueryWorkers,
 		AsyncSlowQueryQueueSize: DefaultAsyncSlowQueryQueueSize,
@@ -113,7 +114,7 @@ func defaultOptions() *Options {
 // WithHealthTimeout 设置健康检查超时时间。
 // 仅正值生效；0 或负值被忽略，保持默认值（5 秒）。
 func WithHealthTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		if timeout > 0 {
 			o.HealthTimeout = timeout
 		}
@@ -123,7 +124,7 @@ func WithHealthTimeout(timeout time.Duration) Option {
 // WithSlowQueryThreshold 设置慢查询阈值。
 // 设置为 0 禁用慢查询检测。负值被忽略（保持默认值）。
 func WithSlowQueryThreshold(threshold time.Duration) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		if threshold >= 0 {
 			o.SlowQueryThreshold = threshold
 		}
@@ -132,7 +133,7 @@ func WithSlowQueryThreshold(threshold time.Duration) Option {
 
 // WithSlowQueryHook 设置慢查询同步回调函数。
 func WithSlowQueryHook(hook SlowQueryHook) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		o.SlowQueryHook = hook
 	}
 }
@@ -140,7 +141,7 @@ func WithSlowQueryHook(hook SlowQueryHook) Option {
 // WithAsyncSlowQueryHook 设置慢查询异步回调函数。
 // 通过内部 worker pool 异步执行，不阻塞请求路径。
 func WithAsyncSlowQueryHook(hook AsyncSlowQueryHook) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		o.AsyncSlowQueryHook = hook
 	}
 }
@@ -148,7 +149,7 @@ func WithAsyncSlowQueryHook(hook AsyncSlowQueryHook) Option {
 // WithAsyncSlowQueryWorkers 设置异步慢查询 worker pool 大小。
 // 默认为 10。
 func WithAsyncSlowQueryWorkers(n int) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		if n > 0 {
 			o.AsyncSlowQueryWorkers = n
 		}
@@ -158,7 +159,7 @@ func WithAsyncSlowQueryWorkers(n int) Option {
 // WithAsyncSlowQueryQueueSize 设置异步慢查询任务队列大小。
 // 默认为 1000。
 func WithAsyncSlowQueryQueueSize(n int) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		if n > 0 {
 			o.AsyncSlowQueryQueueSize = n
 		}
@@ -167,7 +168,7 @@ func WithAsyncSlowQueryQueueSize(n int) Option {
 
 // WithObserver 设置统一观测接口。
 func WithObserver(observer xmetrics.Observer) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		if observer != nil {
 			o.Observer = observer
 		}

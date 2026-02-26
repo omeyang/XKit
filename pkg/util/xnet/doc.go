@@ -129,9 +129,10 @@
 //
 // # IPSet 构建行为
 //
-// [IPSetFromRanges] 累积无效范围错误：
-//   - netipx.IPSetBuilder.AddRange 累积错误，在 IPSet() 时返回
-//   - 如需逐个校验范围，使用 [IPSetFromRangesStrict]
+// [IPSetFromRanges] 累积无效范围错误，统一包装为 [ErrInvalidRange]：
+//   - netipx.IPSetBuilder.AddRange 累积错误，在 IPSet() 时返回，外层包装 [ErrInvalidRange]
+//   - errors.Is(err, [ErrInvalidRange]) 可用于统一错误分流
+//   - 如需逐个校验范围并获得具体索引信息，使用 [IPSetFromRangesStrict]
 //
 // # 错误处理
 //

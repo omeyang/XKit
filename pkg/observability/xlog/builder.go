@@ -290,6 +290,7 @@ func (b *Builder) SetDeploymentTypeFromEnv() *Builder {
 //   - error: 配置错误
 func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	if b.err != nil {
+		b.closeRotator() // best-effort 清理已创建的 rotator，防止文件句柄泄漏
 		return nil, nil, b.err
 	}
 
@@ -297,6 +298,7 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	// logger 共享同一个 rotator 实例，第一次 cleanup 关闭 rotator 后会导致第二个 logger
 	// 写入失败。使用 built 标志强制一次性使用，避免隐式的资源共享问题。
 	if b.built {
+		b.closeRotator() // best-effort 清理
 		return nil, nil, fmt.Errorf("xlog: builder already built, create a new Builder via New()")
 	}
 	b.built = true
@@ -356,6 +358,17 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 	cleanup := b.createCleanup()
 
 	return logger, cleanup, nil
+}
+
+// closeRotator best-effort 关闭已创建的 rotator，用于 Build() 错误路径防止文件句柄泄漏。
+// 关闭失败时仅记录到 stderr（此时 logger 尚未构建完成，无法使用自身记录错误）。
+func (b *Builder) closeRotator() {
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "xlog: failed to close rotator during cleanup: %v\n", closeErr)
+		}
+		b.rotator = nil
+	}
 }
 
 // createCleanup 创建清理函数

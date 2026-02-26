@@ -3,6 +3,7 @@ package xretry
 import (
 	"context"
 	"math"
+	"sync/atomic"
 	"time"
 
 	retry "github.com/avast/retry-go/v5"
@@ -174,16 +175,18 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	// ShouldRetry 提供更灵活的逐次判断。两者共同生效——ShouldRetry 可提前终止，
 	// 但不会超过 Attempts 上限。attemptCount 表示"已失败次数"（1-based），
 	// 与 RetryPolicy.ShouldRetry 的 attempt 参数语义一致。
-	// RetryIf 在每次失败后被顺序调用（非并发），因此普通 int 计数器是安全的。
-	var attemptCount int
+	// 设计决策: 使用 atomic.Int64 而非普通 int，确保通过 Retrier() 逃逸的
+	// *retry.Retrier 即使被并发调用也不会触发数据竞争（Go 规范中数据竞争是未定义行为）。
+	// 对 Retryer.Do() 路径（每次创建独立闭包）无额外影响。
+	var attemptCount atomic.Int64
 	opts = append(opts, RetryIf(func(err error) bool {
-		attemptCount++
+		count := int(attemptCount.Add(1))
 		// 先检查 retry-go 的 Unrecoverable（处理 xretry.Unrecoverable 包装的错误）
 		if !IsRecoverable(err) {
 			return false
 		}
 		// 委托给 RetryPolicy.ShouldRetry，传递完整的 ctx 和 attempt 参数
-		return retryPolicy.ShouldRetry(ctx, attemptCount, err)
+		return retryPolicy.ShouldRetry(ctx, count, err)
 	}))
 
 	// 设置延迟类型（使用 BackoffPolicy）
@@ -216,7 +219,8 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 // 内部 RetryIf 闭包维护了 attemptCount 状态，对同一实例多次调用 Do()
 // 会导致计数累积，产生非预期的重试行为（重试次数异常减少）。
 // 每次需要重试时应重新调用 Retrier() 获取新实例。
-// 并发调用同一实例的 Do() 同样不安全（attemptCount 无同步保护）。
+// 并发调用同一实例的 Do() 不会触发数据竞争（attemptCount 使用原子操作），
+// 但计数累积会导致各并发调用的重试预算互相干扰。
 //
 // 设计决策: 未改为返回工厂函数，因为 *retry.Retrier 是 retry-go 的原生类型，
 // 保持类型一致性比防止误用更重要。

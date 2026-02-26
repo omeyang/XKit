@@ -35,7 +35,9 @@
 //
 // 设计决策: lumberjack v2 的 Close 不关闭内部 millCh channel，导致
 // 负责文件压缩和清理的 millRun goroutine 在 Logger 关闭后仍驻留。
-// 这是上游已知限制，无法在 wrapper 层修复。测试通过 goleak 白名单过滤。
+// 该 goroutine 随进程退出回收，不影响正常运行；但在长期运行且多次
+// 创建/关闭 Rotator 的场景中会线性累积。这是上游已知限制，
+// 无法在 wrapper 层修复。测试通过 goleak 白名单过滤。
 //
 // # 扩展新实现
 //

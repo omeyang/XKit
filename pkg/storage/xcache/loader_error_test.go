@@ -394,6 +394,69 @@ func TestLoader_LoadHash_WithDistLock_CacheHitAfterLockAcquired(t *testing.T) {
 }
 
 // =============================================================================
+// handleLockError 运行时路径测试
+// =============================================================================
+
+func TestLoader_Load_WithExternalLock_ReturningInvalidLockTTL_WrapsAsErrInvalidConfig(t *testing.T) {
+	// Given - ExternalLock 返回 ErrInvalidLockTTL，handleLockError 应包装为 ErrInvalidConfig
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, ErrInvalidLockTTL
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "ttlerr-key", loadFn, time.Hour)
+
+	// Then - 应返回 ErrInvalidConfig 包装的 ErrInvalidLockTTL
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
+}
+
+func TestLoader_Load_WithExternalLock_ReturningInvalidConfig_ReturnsDirectly(t *testing.T) {
+	// Given - ExternalLock 返回 ErrInvalidConfig，handleLockError 应直接返回
+	cache, mr := newTestRedisForError(t)
+	t.Cleanup(func() { mr.Close() })
+
+	externalLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, ErrInvalidConfig
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithExternalLock(externalLock),
+		WithDistributedLockTTL(10*time.Second),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("should_not_reach"), nil
+	}
+
+	// When
+	_, err = loader.Load(context.Background(), "cfgerr-key", loadFn, time.Hour)
+
+	// Then - 应直接返回 ErrInvalidConfig
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
+// =============================================================================
 // 配置错误测试
 // =============================================================================
 

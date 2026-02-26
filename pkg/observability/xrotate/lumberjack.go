@@ -342,7 +342,7 @@ func (r *lumberjackRotator) ensureFileMode() error {
 		if chmod == nil {
 			chmod = os.Chmod
 		}
-		//#nosec G302 -- 日志文件权限由调用方配置决定
+		// #nosec G302 -- 日志文件权限由调用方配置决定
 		if err := chmod(r.path, r.fileMode); err != nil {
 			return err
 		}
@@ -393,6 +393,10 @@ func (r *lumberjackRotator) Rotate() error {
 		}
 		return err
 	}
+
+	// 设计决策: Rotate 成功路径不做 TOCTOU 后置检查，与 Write 成功路径一致——
+	// 轮转已完成（旧文件已重命名、新文件已创建），返回 success 在语义上更准确。
+	// 如果 Close 恰好在此窗口内完成，后续 Write 或 Rotate 会得到 ErrClosed。
 
 	if r.fileMode != 0 {
 		// 轮转后新文件使用 lumberjack 默认权限 0600，需要重新调整

@@ -83,6 +83,14 @@ func TestEtcdFactory_Close_WithError(t *testing.T) {
 // Health 单元测试（无 client 的路径）
 // =============================================================================
 
+func TestEtcdFactory_Health_NilContext(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	err := f.Health(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
 func TestEtcdFactory_Health_FactoryClosed(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)

@@ -98,21 +98,3 @@ func TestWrapBreakerError_AlreadyWrapped(t *testing.T) {
 func TestErrFailedByPolicy(t *testing.T) {
 	assert.EqualError(t, errFailedByPolicy, "xbreaker: operation marked as failed by success policy")
 }
-
-func TestIsRecoverable(t *testing.T) {
-	t.Run("ErrOpenState is recoverable", func(t *testing.T) {
-		assert.True(t, IsRecoverable(ErrOpenState))
-	})
-
-	t.Run("ErrTooManyRequests is recoverable", func(t *testing.T) {
-		assert.True(t, IsRecoverable(ErrTooManyRequests))
-	})
-
-	t.Run("other error is not recoverable", func(t *testing.T) {
-		assert.False(t, IsRecoverable(errors.New("business error")))
-	})
-
-	t.Run("nil error is not recoverable", func(t *testing.T) {
-		assert.False(t, IsRecoverable(nil))
-	})
-}

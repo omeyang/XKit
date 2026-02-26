@@ -505,6 +505,54 @@ func TestConcurrentAccess(t *testing.T) {
 // 并发初始化测试
 // =============================================================================
 
+func TestConcurrentResetAndRead(t *testing.T) {
+	xplatform.Reset()
+	t.Cleanup(xplatform.Reset)
+
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "platform-001",
+		HasParent:       true,
+		UnclassRegionID: "region-001",
+	}); err != nil {
+		t.Fatal("Init() failed:", err)
+	}
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines + 1)
+
+	// 并发读取
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for range 1000 {
+				_ = xplatform.PlatformID()
+				_ = xplatform.HasParent()
+				_ = xplatform.UnclassRegionID()
+				_ = xplatform.IsInitialized()
+				_, _ = xplatform.RequirePlatformID()
+				_, _ = xplatform.GetConfig()
+			}
+		}()
+	}
+
+	// 并发 Reset
+	go func() {
+		defer wg.Done()
+		for range 1000 {
+			xplatform.Reset()
+			// 重新初始化，确保读取方有数据可读
+			_ = xplatform.Init(xplatform.Config{
+				PlatformID:      "platform-001",
+				HasParent:       true,
+				UnclassRegionID: "region-001",
+			})
+		}
+	}()
+
+	wg.Wait()
+}
+
 func TestConcurrentInit(t *testing.T) {
 	xplatform.Reset()
 	t.Cleanup(xplatform.Reset)

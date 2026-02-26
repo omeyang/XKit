@@ -24,15 +24,19 @@ func RangeContainsV4(from, to, addr netip.Addr) bool {
 
 // IPSetFromRanges 从 IPRange 切片构建 IPSet。
 // 自动合并重叠和相邻的范围。
-// 无效范围（From > To 或混合地址族）会导致 IPSet() 返回错误。
-// 如需显式校验每个范围，请使用 [IPSetFromRangesStrict]。
+// 无效范围（From > To 或混合地址族）返回包装了 [ErrInvalidRange] 的错误。
+// 如需逐个校验范围并获得具体索引信息，请使用 [IPSetFromRangesStrict]。
 // 空切片返回空的 IPSet（非 nil）。
 func IPSetFromRanges(ranges []netipx.IPRange) (*netipx.IPSet, error) {
 	var b netipx.IPSetBuilder
 	for _, r := range ranges {
 		b.AddRange(r)
 	}
-	return b.IPSet()
+	set, err := b.IPSet()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidRange, err)
+	}
+	return set, nil
 }
 
 // IPSetFromRangesStrict 从 IPRange 切片构建 IPSet，严格校验每个范围。

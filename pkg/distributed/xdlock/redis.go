@@ -52,7 +52,7 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 	rs := redsync.New(pools...)
 
 	return &redisFactory{
-		clients: clients,
+		clients: append([]redis.UniversalClient(nil), clients...),
 		rs:      rs,
 	}, nil
 }
@@ -101,7 +101,10 @@ func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption
 	mutex, fullKey := f.createMutex(key, opts...)
 
 	if err := mutex.LockContext(ctx); err != nil {
-		// redsync 不会传递 context 错误，需要单独检查
+		// 设计决策: redsync 内部会将 context 错误包装在自定义类型中（如 ErrFailed），
+		// 导致 errors.Is(err, context.Canceled) 无法匹配。因此需要通过 ctx.Err()
+		// 独立检查 context 状态。若 context 已取消/超时，优先返回 context 错误，
+		// 因为这是调用方的主动控制信号，比底层 Redis 错误更具决策价值。
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -165,7 +168,11 @@ func (f *redisFactory) Close(_ context.Context) error {
 
 // Health 健康检查。
 // 对所有 Redis 节点执行 PING 命令。
+// 传入 nil ctx 返回 [ErrNilContext]。
 func (f *redisFactory) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if f.closed.Load() {
 		return ErrFactoryClosed
 	}
@@ -230,11 +237,19 @@ func (h *redisLockHandle) Unlock(ctx context.Context) error {
 		// 对 handle 而言两者含义相同——"你已不再持有该锁"。保持与接口契约和
 		// etcd 后端行为一致，调用方只需检查 ErrNotLocked 即可处理所有权丢失。
 		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+			// 设计决策: Redis 返回的 expired/taken 是确定性结论（Lua 脚本执行成功），
+			// 与网络错误不同，此时 handle 确实已不持有锁，设置 unlocked 标记
+			// 防止后续 Extend 发送无意义的 Redis 请求。
+			h.unlocked.Store(true)
 			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
+		// 设计决策: UnlockContext 返回 (false, nil) 意味着 Lua 脚本执行成功但
+		// 解锁未命中（锁已被其他持有者抢走或过期）。这是确定性结论，handle 已
+		// 不持有锁，设置 unlocked 标记与 errLockExpired/ErrLockHeld 路径保持对称。
+		h.unlocked.Store(true)
 		return ErrNotLocked
 	}
 	// 设计决策: unlocked 标记放在成功解锁之后，与 etcd 后端保持一致。

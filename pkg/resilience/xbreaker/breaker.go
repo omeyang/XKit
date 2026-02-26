@@ -257,6 +257,16 @@ func NewBreaker(name string, opts ...BreakerOption) *Breaker {
 
 // buildSettings 构建 gobreaker 配置
 func (b *Breaker) buildSettings() gobreaker.Settings {
+	// 校验 BucketPeriod 与 Interval 的一致性
+	if b.bucketPeriod > 0 && b.interval == 0 {
+		slog.Warn("xbreaker: WithBucketPeriod set without WithInterval, behavior depends on gobreaker internal defaults",
+			"name", b.name, "bucketPeriod", b.bucketPeriod)
+	}
+	if b.bucketPeriod > 0 && b.interval > 0 && b.bucketPeriod > b.interval {
+		slog.Warn("xbreaker: BucketPeriod exceeds Interval, sliding window may behave unexpectedly",
+			"name", b.name, "interval", b.interval, "bucketPeriod", b.bucketPeriod)
+	}
+
 	st := gobreaker.Settings{
 		Name:         b.name,
 		MaxRequests:  b.maxRequests,

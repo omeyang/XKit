@@ -3,6 +3,7 @@ package xmetrics_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -140,7 +141,7 @@ func TestStart_WithAllKinds(t *testing.T) {
 	}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run("Kind_"+kind.String(), func(t *testing.T) {
 			ctx := context.Background()
 			_, span := xmetrics.Start(ctx, xmetrics.NoopObserver{}, xmetrics.SpanOptions{
 				Component: "test",
@@ -200,7 +201,7 @@ func TestNoopSpan_End(t *testing.T) {
 	}
 
 	for i, result := range results {
-		t.Run("Result_"+string(rune('0'+i)), func(t *testing.T) {
+		t.Run("Result_"+strconv.Itoa(i), func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				span.End(result)
 			})
@@ -330,7 +331,7 @@ func TestNewOTelObserver_AllKinds(t *testing.T) {
 	}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run("Kind_"+kind.String(), func(t *testing.T) {
 			ctx, span := obs.Start(context.Background(), xmetrics.SpanOptions{
 				Component: "test",
 				Operation: "op",

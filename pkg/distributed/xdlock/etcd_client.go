@@ -15,10 +15,6 @@ import (
 // etcd 客户端配置
 // =============================================================================
 
-// EtcdConfig etcd 客户端配置。
-// 这是 xetcd.Config 的类型别名，支持 JSON/YAML 反序列化。
-type EtcdConfig = xetcd.Config
-
 // DefaultEtcdConfig 返回默认配置。
 //
 // 默认值：
@@ -107,10 +103,10 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 	}
 
 	// 构建 xetcd 选项
+	// Context 始终非 nil（defaultEtcdClientOptions 设为 context.Background()，
+	// WithEtcdClientContext 跳过 nil 赋值），因此无需条件判断。
 	var xetcdOpts []xetcd.Option
-	if options.Context != nil {
-		xetcdOpts = append(xetcdOpts, xetcd.WithContext(options.Context))
-	}
+	xetcdOpts = append(xetcdOpts, xetcd.WithContext(options.Context))
 	if options.HealthCheck {
 		xetcdOpts = append(xetcdOpts, xetcd.WithHealthCheck(true, options.HealthTimeout))
 	}

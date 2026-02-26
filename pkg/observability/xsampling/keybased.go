@@ -99,6 +99,15 @@ func (s *KeyBasedSampler) ShouldSample(ctx context.Context) bool {
 		return true
 	}
 
+	// 设计决策: nil ctx 与空 key 同等处理——保持弹性，不因上下文缺失而 panic。
+	// 与 XKit 其他包（xkeylock ErrNilContext、xsemaphore applyDefaultTimeout）防御风格一致。
+	if ctx == nil {
+		if s.onEmptyKey != nil {
+			s.onEmptyKey()
+		}
+		return randomFloat64() < s.rate
+	}
+
 	// 获取 key
 	key := s.keyFunc(ctx)
 

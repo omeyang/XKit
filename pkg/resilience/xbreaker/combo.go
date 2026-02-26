@@ -160,6 +160,9 @@ func (br *BreakerRetryer) DoWithRetrySimple(ctx context.Context, fn func() error
 // 适用场景：
 //   - 希望重试期间的瞬时失败不影响熔断器统计
 //   - 但仍需要熔断器的保护能力（阻断请求）
+//
+// 设计决策: 字段顺序 retryer→breaker 与 BreakerRetryer（breaker→retryer）相反，
+// 反映执行语义差异：RetryThenBreak 先重试再记录熔断，BreakerRetryer 每次重试都经过熔断。
 type RetryThenBreak struct {
 	retryer *xretry.Retryer
 	breaker *Breaker
@@ -168,24 +171,14 @@ type RetryThenBreak struct {
 
 // NewRetryThenBreak 创建先重试后熔断执行器（保护模式）
 //
-// 与 BreakerRetryer 的区别：
-//   - BreakerRetryer: 每次重试都经过熔断器，连续失败可能在重试过程中触发熔断
-//   - RetryThenBreak: 重试期间不影响熔断器统计，只有最终结果才记录
+// 设计决策: 此函数只复用传入 Breaker 的【配置】（TripPolicy、SuccessPolicy、Timeout 等），
+// 不复用其【状态】。内部会创建独立的 TwoStepCircuitBreaker，状态从 Closed 开始。
+// 即使传入的 Breaker 已处于 Open 状态，RetryThenBreak 仍会允许请求。
+// Breaker() getter 返回的实例仅用于访问配置，其 State()/Counts() 与内部熔断器不同步。
 //
-// 两者共同点：
-//   - 都会在执行前检查熔断器状态
-//   - 熔断器打开时都会阻断请求
-//
-// 重要说明：
-//   - 此构造函数只复用传入 Breaker 的【配置】，不复用其【状态】
-//   - 内部会创建独立的 TwoStepCircuitBreaker，状态从 Closed 开始
-//   - 如果传入的 Breaker 已经处于 Open 状态，RetryThenBreak 仍会允许请求
-//   - 若需要独立的熔断器实例，建议使用 NewRetryThenBreakWithConfig
-//
-// 设计决策: 此函数只复用 Breaker 的配置（TripPolicy、SuccessPolicy、Timeout 等），
-// 不复用其状态。Breaker() getter 返回的实例仅用于访问配置，
-// 其 State()/Counts() 与 RetryThenBreak 内部的熔断器状态不同步。
-// 如果需要更清晰的语义，建议使用 NewRetryThenBreakWithConfig。
+// Deprecated: 此 API 接收 *Breaker 实例但不复用其状态，容易造成语义误解。
+// 推荐使用 [NewRetryThenBreakWithConfig]，直接接受配置选项，避免状态混淆。
+// TODO(v2.0): 移除 NewRetryThenBreak，统一使用 NewRetryThenBreakWithConfig。
 func NewRetryThenBreak(retryer *xretry.Retryer, breaker *Breaker) (*RetryThenBreak, error) {
 	if retryer == nil {
 		return nil, ErrNilRetryer

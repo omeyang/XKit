@@ -146,6 +146,7 @@ func (c *Client) DeleteWithPrefix(ctx context.Context, prefix string) (int64, er
 // List 列出指定前缀的所有键值，返回键值对映射。
 // 注意：此方法一次性加载所有匹配的键值到内存中，
 // 不适用于前缀下有大量 key 的场景（如数万个服务实例）。
+// 大量 key 场景请使用 RawClient() 配合 clientv3.WithLimit/clientv3.WithRange 自行分页。
 func (c *Client) List(ctx context.Context, prefix string) (map[string][]byte, error) {
 	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err

@@ -16,6 +16,14 @@ func ExampleSetFileLimit() {
 	}
 }
 
+// ExampleSetFileLimit_invalidParam 展示参数校验的错误返回。
+// 零值在所有平台上均返回 ErrInvalidFileLimit，输出确定性可用作回归断言。
+func ExampleSetFileLimit_invalidParam() {
+	err := xsys.SetFileLimit(0)
+	fmt.Println(err)
+	// Output: xsys: file limit must be greater than 0
+}
+
 // ExampleGetFileLimit 展示如何查询进程当前文件限制。
 // 不使用 // Output: 断言，因为 soft/hard limit 值取决于运行环境。
 func ExampleGetFileLimit() {

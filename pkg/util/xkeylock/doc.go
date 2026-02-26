@@ -26,4 +26,7 @@
 //     建议始终使用带 deadline 的 context 以防意外阻塞
 //   - 近似公平：等待者按 Go channel 内部队列顺序唤醒（近似 FIFO），
 //     但不提供严格公平性保证；极端高并发下可能存在微弱的唤醒不均
+//   - 泄漏检测：若调用方获取 Handle 后遗忘 Unlock，lockEntry 将静默驻留。
+//     建议通过 Len() 监控活跃 key 数——若持续单调递增，说明存在 Handle
+//     未释放的编程错误。配合 WithMaxKeys(n) 可设置硬上限防止无限膨胀
 package xkeylock

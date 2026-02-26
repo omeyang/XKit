@@ -169,7 +169,11 @@ func (f *etcdFactory) Close(_ context.Context) error {
 
 // Health 健康检查。
 // 检查 Session 是否仍然有效。
+// 传入 nil ctx 返回 [ErrNilContext]。
 func (f *etcdFactory) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if f.closed.Load() {
 		return ErrFactoryClosed
 	}
@@ -183,6 +187,9 @@ func (f *etcdFactory) Health(ctx context.Context) error {
 
 	// 使用 Status API 验证连接，不依赖特定 key 的 RBAC 权限
 	for _, ep := range f.client.Endpoints() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := f.client.Status(ctx, ep); err != nil {
 			return fmt.Errorf("xdlock: health check endpoint %s: %w", ep, err)
 		}

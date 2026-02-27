@@ -194,10 +194,11 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 		trace.WithAttributes(attrs...),
 	)
 
-	// 设计决策: 对 nil span 做 fail-open 防御。
+	// 设计决策: 对 nil/typed-nil span 做 fail-open 防御。
 	// OTel API 契约保证 Tracer.Start 返回非 nil span，但自定义 TracerProvider
-	// 可能违反此约定；nil span 时回退到 noop，确保"观测失败不影响业务"。
-	if span == nil {
+	// 可能违反此约定（包括返回 typed-nil，如 (*mySpan)(nil)）；
+	// 此时回退到 noop，确保"观测失败不影响业务"。
+	if isNilInterface(span) {
 		return ctx, &otelSpan{
 			span:      trace.SpanFromContext(ctx), // noop span（保证非 nil）
 			observer:  o,
@@ -321,6 +322,9 @@ func mapSpanKind(kind Kind) trace.SpanKind {
 	}
 }
 
+// metricAttrs 构造 metrics 的固定三维属性。
+// 使用 [3] 数组避免 append 扩容分配（编译器会将返回的数组逃逸到堆上，
+// 此处 [3] 的价值在于避免 append 扩容而非栈分配）。
 func metricAttrs(component, operation string, status Status) []attribute.KeyValue {
 	var attrs [3]attribute.KeyValue
 	attrs[0] = attribute.String(AttrKeyComponent, component)

@@ -165,8 +165,14 @@ func (s *cronScheduler) validateJobName(jobOpts *jobOptions, locker Locker) erro
 		return nil
 	}
 	// 任务名唯一性校验：同名任务共享锁 key 和统计维度，会导致互相干扰
-	if _, exists := s.jobNames[jobOpts.name]; exists {
-		return fmt.Errorf("%w: %q", ErrDuplicateJobName, jobOpts.name)
+	if existingID, exists := s.jobNames[jobOpts.name]; exists {
+		// 设计决策: 自修复机制——检查 cron 中是否仍有对应条目。
+		// 调用方可能通过 Cron().Remove(id) 直接移除任务（绕过 xcron.Remove），
+		// 导致 jobNames 残留陈旧记录。此处检测并清理，避免"已删除但无法重新注册"的可用性故障。
+		if s.cron.Entry(existingID).ID != 0 {
+			return fmt.Errorf("%w: %q", ErrDuplicateJobName, jobOpts.name)
+		}
+		delete(s.jobNames, jobOpts.name)
 	}
 	return nil
 }
@@ -220,6 +226,9 @@ func (s *cronScheduler) Stop() context.Context {
 //   - 调试和监控目的
 //
 // 如需添加分布式安全的任务，请使用 AddFunc 或 AddJob 方法。
+//
+// 注意：通过 Cron().Remove(id) 移除的任务，其名称可在后续 AddJob 时自动回收。
+// validateJobName 会检测 cron 中已不存在的陈旧注册，并自动清理。
 func (s *cronScheduler) Cron() *cron.Cron {
 	return s.cron
 }

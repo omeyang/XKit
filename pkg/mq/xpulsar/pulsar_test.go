@@ -20,6 +20,24 @@ func TestNewClient_EmptyURL(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEmptyURL)
 }
 
+func TestNewClient_NilOption(t *testing.T) {
+	client, err := NewClient("pulsar://localhost:6650", nil)
+
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewClient_NilOptionAmongValid(t *testing.T) {
+	client, err := NewClient("pulsar://localhost:6650",
+		WithConnectionTimeout(10*time.Second),
+		nil,
+		WithOperationTimeout(30*time.Second),
+	)
+
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
 func TestClientOptions_Default(t *testing.T) {
 	opts := defaultOptions()
 

@@ -252,8 +252,8 @@ func (m *mockClient) Subscribe(options pulsar.ConsumerOptions) (pulsar.Consumer,
 	}
 	return &mockConsumer{}, nil
 }
-func (m *mockClient) Stats() Stats { return Stats{} }
-func (m *mockClient) Close() error { return nil }
+func (m *mockClient) Stats() Stats                { return Stats{} }
+func (m *mockClient) Close(context.Context) error { return nil }
 
 // =============================================================================
 // NewTracingProducer Error Path Tests

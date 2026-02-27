@@ -39,7 +39,9 @@ var (
 	ErrEmptyTable = errors.New("xclickhouse: empty table name")
 
 	// ErrInvalidTableName 表示表名包含非法字符。
-	ErrInvalidTableName = errors.New("xclickhouse: invalid table name, contains illegal characters")
+	// 支持格式：table、db.table、`table`、`db`.`table`。
+	// 不支持混合引用风格（如 db.`table`），如需此类表名请使用 Client() 直接操作。
+	ErrInvalidTableName = errors.New("xclickhouse: invalid table name (supported: name, db.name, `name`, `db`.`name`; use Client() for advanced patterns)")
 
 	// ErrEmptyRows 表示待插入数据为空。
 	ErrEmptyRows = errors.New("xclickhouse: empty rows")
@@ -50,14 +52,17 @@ var (
 	// ErrQueryContainsFormat 表示查询包含 FORMAT 子句。
 	// QueryPage 使用子查询包装，不支持 FORMAT 子句。
 	//
-	// 注意：检测使用正则匹配，可能对字符串字面量中的 FORMAT 产生误判。
+	// 检测使用末尾锚定正则（"FORMAT <name>" 在查询末尾），
+	// 不会误判 FORMAT() 函数调用或字符串常量中的 FORMAT。
 	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsFormat = errors.New("xclickhouse: query contains FORMAT clause, not supported in QueryPage")
 
 	// ErrQueryContainsSettings 表示查询包含 SETTINGS 子句。
 	// QueryPage 使用子查询包装，SETTINGS 应通过连接参数配置。
 	//
-	// 注意：检测使用正则匹配，可能对字符串字面量中的 SETTINGS 产生误判。
+	// 检测使用 "SETTINGS key=value" 模式匹配，
+	// 不会误判 SETTINGS_KEY 等字段名。
+	// 字符串常量中的 "SETTINGS key=" 模式可能产生误判。
 	// 如遇误判，请使用 Client() 直接执行查询。
 	ErrQueryContainsSettings = errors.New("xclickhouse: query contains SETTINGS clause, use connection options instead")
 

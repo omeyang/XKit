@@ -62,7 +62,7 @@ func hasDotDotSegment(path string) bool {
 	return false
 }
 
-// SanitizePath 对文件路径进行安全检查和规范化
+// SanitizePath 对文件路径进行格式净化（不提供安全沙箱保证）
 //
 // 安全边界：本函数仅做格式净化，不防护绝对路径穿越。
 // 如需将路径限制在特定目录内，请使用 [SafeJoin] 或 [SafeJoinWithOptions]。

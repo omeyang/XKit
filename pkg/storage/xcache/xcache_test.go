@@ -438,10 +438,41 @@ func TestWithLockRetry_SetsOptions(t *testing.T) {
 	assert.Equal(t, 5, opts.LockRetryCount)
 }
 
+func TestWithLockRetry_ClampsCountToUpperBound(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(100*time.Millisecond, MaxLockRetryCount+500)(opts)
+	assert.Equal(t, MaxLockRetryCount, opts.LockRetryCount)
+}
+
+func TestWithLockRetry_ClampsIntervalToUpperBound(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(MaxLockRetryInterval+time.Minute, 5)(opts)
+	assert.Equal(t, MaxLockRetryInterval, opts.LockRetryInterval)
+}
+
+func TestWithLockRetry_ExactUpperBounds(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithLockRetry(MaxLockRetryInterval, MaxLockRetryCount)(opts)
+	assert.Equal(t, MaxLockRetryInterval, opts.LockRetryInterval)
+	assert.Equal(t, MaxLockRetryCount, opts.LockRetryCount)
+}
+
 func TestWithLockKeyPrefix_SetsOption(t *testing.T) {
 	opts := defaultRedisOptions()
 	WithLockKeyPrefix("lock:")(opts)
 	assert.Equal(t, "lock:", opts.LockKeyPrefix)
+}
+
+func TestRedisWrapper_Lock_WithInvalidTTL_ReturnsError(t *testing.T) {
+	cache, _ := newTestRedisCache(t)
+	ctx := context.Background()
+
+	// TTL <= 0 应返回 ErrInvalidLockTTL
+	_, err := cache.Lock(ctx, "key", 0)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
+
+	_, err = cache.Lock(ctx, "key", -1*time.Second)
+	assert.ErrorIs(t, err, ErrInvalidLockTTL)
 }
 
 // =============================================================================

@@ -54,8 +54,10 @@ func BenchmarkCache_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(keys[i%1000], i)
+		i++
 	}
 }
 
@@ -78,8 +80,10 @@ func BenchmarkCache_Set_Eviction(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(keys[i%1000], i)
+		i++
 	}
 }
 
@@ -259,8 +263,10 @@ func BenchmarkCache_IntKey_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(i%1000, i)
+		i++
 	}
 }
 
@@ -299,8 +305,10 @@ func benchmarkCacheSetWithSize(b *testing.B, size int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(keys[i%100], value)
+		i++
 	}
 }
 
@@ -338,7 +346,9 @@ func BenchmarkCache_NoTTL_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		cache.Set(keys[i%1000], i)
+		i++
 	}
 }

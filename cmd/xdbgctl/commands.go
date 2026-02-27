@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,7 +19,7 @@ import (
 
 // errServerRejected 表示服务端拒绝执行命令。
 // 用于 errors.Is 判断，使脚本可区分服务端拒绝与网络/协议错误。
-var errServerRejected = fmt.Errorf("服务端拒绝执行")
+var errServerRejected = errors.New("服务端拒绝执行")
 
 // exitError 表示需要非零退出码但已完成输出的场景。
 // 命令内部已完成所有输出，main 只需设置退出码。
@@ -50,10 +51,16 @@ func isCLIUsageError(err error) bool {
 // maxCommLen 是 Linux TASK_COMM_LEN (16) 减去 null 终止符后的最大进程名长度。
 const maxCommLen = 15
 
+// maxTimeout 超时参数上界。超过此值视为误输入，避免 CLI 表现为"挂起"。
+const maxTimeout = 5 * time.Minute
+
 // validateTimeout 校验超时参数。
 func validateTimeout(timeout time.Duration) error {
 	if timeout <= 0 {
 		return &usageError{msg: fmt.Sprintf("超时时间必须为正数，当前值: %v", timeout)}
+	}
+	if timeout > maxTimeout {
+		return &usageError{msg: fmt.Sprintf("超时时间不能超过 %v，当前值: %v", maxTimeout, timeout)}
 	}
 	return nil
 }

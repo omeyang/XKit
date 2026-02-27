@@ -723,3 +723,43 @@ func TestGRPCInterceptorWithOptions_Combined(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// nil 选项守卫测试（FG-L3 回归测试）
+// =============================================================================
+
+func TestGRPCUnaryServerInterceptorWithOptions_NilOption(t *testing.T) {
+	interceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+		nil,
+		xtenant.WithGRPCRequireTenantID(),
+		nil,
+	)
+
+	md := metadata.Pairs(xtenant.MetaTenantID, "t1")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	resp, err := interceptor(ctx, "request", &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+		return "ok", nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "ok", resp)
+}
+
+func TestGRPCStreamServerInterceptorWithOptions_NilOption(t *testing.T) {
+	interceptor := xtenant.GRPCStreamServerInterceptorWithOptions(
+		nil,
+		xtenant.WithGRPCRequireTenantID(),
+		nil,
+	)
+
+	md := metadata.Pairs(xtenant.MetaTenantID, "t1")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	stream := &mockServerStream{ctx: ctx}
+	err := interceptor(nil, stream, &grpc.StreamServerInfo{}, func(srv any, stream grpc.ServerStream) error {
+		return nil
+	})
+
+	require.NoError(t, err)
+}

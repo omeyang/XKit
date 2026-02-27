@@ -179,7 +179,9 @@ func WithGRPCEnsureTrace() GRPCInterceptorOption {
 func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -206,7 +208,9 @@ func GRPCStreamServerInterceptor() grpc.StreamServerInterceptor {
 func GRPCStreamServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -338,16 +342,19 @@ func injectTraceMetadata(ctx context.Context, md metadata.MD) {
 // 用于手动构造 Metadata 的场景。
 // 采用增量写入语义：只 Set 非空字段，不清除已有的键。
 // 如需"以 context 为准"的清理语义，请使用 InjectToOutgoingContext。
+//
+// 对 TenantID/TenantName 做 TrimSpace 后再判空和 Set，
+// 与包内其他写入路径（WithTenantID、ExtractFromMetadata 等）的归一化语义一致。
 func InjectTenantToMetadata(md metadata.MD, info TenantInfo) {
 	if md == nil {
 		return
 	}
 
-	if info.TenantID != "" {
-		md.Set(MetaTenantID, info.TenantID)
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		md.Set(MetaTenantID, tid)
 	}
-	if info.TenantName != "" {
-		md.Set(MetaTenantName, info.TenantName)
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		md.Set(MetaTenantName, tname)
 	}
 }
 

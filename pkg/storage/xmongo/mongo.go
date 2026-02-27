@@ -2,6 +2,7 @@ package xmongo
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -67,7 +68,8 @@ type PageOptions struct {
 	// Page 页码，从 1 开始。
 	Page int64
 
-	// PageSize 每页大小。
+	// PageSize 每页大小，上限为 MaxPageSize（10000）。
+	// 超过上限时返回 ErrPageSizeTooLarge。
 	PageSize int64
 
 	// Sort 排序条件。
@@ -198,7 +200,7 @@ func New(client *mongo.Client, opts ...Option) (Mongo, error) {
 	// 创建慢查询检测器
 	detector, err := newSlowQueryDetector(options)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xmongo: create slow query detector: %w", err)
 	}
 
 	return &mongoWrapper{

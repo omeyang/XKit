@@ -43,6 +43,10 @@ var (
 
 	// ErrNilCollection 表示传入的 collection 为 nil。
 	ErrNilCollection = errors.New("xmongo: nil collection")
+
+	// ErrPageSizeTooLarge 表示每页大小超过 MaxPageSize 上限。
+	// 防止超大分页请求导致 cursor.All 一次性载入大量数据引发 OOM。
+	ErrPageSizeTooLarge = errors.New("xmongo: page size exceeds maximum limit")
 )
 
 // =============================================================================

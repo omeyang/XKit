@@ -39,7 +39,7 @@ const (
 
 var (
 	// ErrNotInitialized xenv 未初始化
-	ErrNotInitialized = errors.New("xenv: not initialized, call Init() first")
+	ErrNotInitialized = errors.New("xenv: not initialized, call Init()/InitWith() first")
 
 	// ErrAlreadyInitialized 重复初始化
 	ErrAlreadyInitialized = errors.New("xenv: already initialized")
@@ -182,7 +182,7 @@ func InitWith(dt DeploymentType) error {
 
 // Type 返回当前部署类型
 //
-// 需要先调用 Init/MustInit 初始化。
+// 需要先调用 Init/MustInit/InitWith 初始化。
 // 如果未初始化，返回空字符串。
 func Type() DeploymentType {
 	if !initialized.Load() {
@@ -251,6 +251,10 @@ func RequireType() (DeploymentType, error) {
 // 设计决策: 空字符串和非法值统一返回 ErrInvalidDeploymentType（而非区分 ErrMissingValue），
 // 因为 Parse 是纯解析函数，不涉及环境变量语义。"空 vs 非法"的区分由调用方
 // （如 Init）在更高层级处理。
+// 与 xctx.ParseDeploymentType 的差异：xctx 区分空值（ErrMissingDeploymentTypeValue）
+// 和非法值（ErrInvalidDeploymentType），因为 xctx 面向 context 传播场景，
+// 调用方需要区分"值缺失"和"值非法"以决定 fallback 策略。
+// xenv.Parse 面向配置解析，统一为"非法"语义更简洁。
 func Parse(s string) (DeploymentType, error) {
 	// deploy.Parse 内部已做 TrimSpace + ToUpper，直接委托
 	dt, err := deploy.Parse(s)

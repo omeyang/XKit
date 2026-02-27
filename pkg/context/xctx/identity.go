@@ -201,7 +201,9 @@ func (i Identity) IsComplete() bool {
 }
 
 // GetIdentity 从 context 批量获取所有身份信息
+//
 // 返回 Identity 结构体，字段可能为空字符串。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 使用 Validate() 检查必填字段，使用 IsComplete() 检查是否全部存在。
 func GetIdentity(ctx context.Context) Identity {
 	return Identity{

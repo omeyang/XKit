@@ -234,11 +234,6 @@ func (c *dlqConsumer) SendToDLQ(ctx context.Context, msg *kafka.Message, reason 
 
 // sendToDLQInternal 内部发送消息到 DLQ
 func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message, reason error, retryCount int) error {
-	topic := ""
-	if msg.TopicPartition.Topic != nil {
-		topic = *msg.TopicPartition.Topic
-	}
-
 	// 构建 DLQ 消息
 	dlqMsg := c.buildDLQMessage(msg, reason, retryCount)
 
@@ -246,7 +241,7 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(dlqMsg, deliveryChan); err != nil {
-		return err
+		return fmt.Errorf("produce to DLQ topic %q: %w", c.policy.DLQTopic, err)
 	}
 
 	// 等待确认
@@ -254,13 +249,23 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	case <-ctx.Done():
 		return ctx.Err()
 	case e := <-deliveryChan:
-		if m, ok := e.(*kafka.Message); ok && m.TopicPartition.Error != nil {
-			return m.TopicPartition.Error
+		m, ok := e.(*kafka.Message)
+		if !ok {
+			return fmt.Errorf("unexpected DLQ delivery event type: %T", e)
+		}
+		if m.TopicPartition.Error != nil {
+			return fmt.Errorf("DLQ delivery failed for topic %q: %w", c.policy.DLQTopic, m.TopicPartition.Error)
 		}
 	}
 
 	// 投递成功后再递增统计，确保统计准确性
-	c.stats.incDeadLetter(topic)
+	// 设计决策: ByTopic 使用原始 topic（从 x-original-topic header 获取），
+	// 而非当前消息的 TopicPartition.Topic，避免重试队列消息污染统计归因。
+	origTopic := getHeader(msg, HeaderOriginalTopic)
+	if origTopic == "" {
+		origTopic = topicFromKafkaMessage(msg)
+	}
+	c.stats.incDeadLetter(origTopic)
 
 	// DLQ 发送成功，存储 offset（StoreMessage 内部 offset+1）
 	if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
@@ -309,8 +314,8 @@ func (c *dlqConsumer) buildDLQMetadata(msg *kafka.Message, reason error, retryCo
 func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) error {
 	// 确定目标 Topic
 	targetTopic := c.policy.RetryTopic
-	if targetTopic == "" && msg.TopicPartition.Topic != nil {
-		targetTopic = *msg.TopicPartition.Topic
+	if targetTopic == "" {
+		targetTopic = topicFromKafkaMessage(msg)
 	}
 
 	redeliverMsg := &kafka.Message{
@@ -326,15 +331,19 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(redeliverMsg, deliveryChan); err != nil {
-		return err
+		return fmt.Errorf("redeliver to retry topic %q: %w", targetTopic, err)
 	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case e := <-deliveryChan:
-		if m, ok := e.(*kafka.Message); ok && m.TopicPartition.Error != nil {
-			return m.TopicPartition.Error
+		m, ok := e.(*kafka.Message)
+		if !ok {
+			return fmt.Errorf("unexpected redeliver delivery event type: %T", e)
+		}
+		if m.TopicPartition.Error != nil {
+			return fmt.Errorf("redeliver delivery failed for topic %q: %w", targetTopic, m.TopicPartition.Error)
 		}
 	}
 

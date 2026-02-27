@@ -296,6 +296,26 @@ func TestSlowQueryDetector_ConcurrentCloseAndQuery(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSlowQueryDetector_NilContext(t *testing.T) {
+	var called bool
+	detector, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{
+		Threshold: 100 * time.Millisecond,
+		SyncHook: func(ctx context.Context, info testSlowQueryInfo) {
+			assert.NotNil(t, ctx, "nil ctx should be normalized to context.Background()")
+			called = true
+		},
+	})
+	require.NoError(t, err)
+	defer detector.Close()
+
+	info := testSlowQueryInfo{Query: "test", Duration: 200 * time.Millisecond}
+	//nolint:staticcheck // SA1012: 故意传 nil ctx 以测试防御性归一化
+	triggered := detector.MaybeSlowQuery(nil, info, info.Duration)
+
+	assert.True(t, triggered)
+	assert.True(t, called)
+}
+
 func TestNewSlowQueryDetector_InvalidPoolParams(t *testing.T) {
 	// 超大 worker pool 应该返回错误
 	_, err := NewSlowQueryDetector(SlowQueryOptions[testSlowQueryInfo]{

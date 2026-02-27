@@ -10,6 +10,7 @@ import (
 func BenchmarkWithDeploymentType(b *testing.B) {
 	ctx := context.Background()
 	var err error
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err = xctx.WithDeploymentType(ctx, xctx.DeploymentSaaS)
@@ -22,6 +23,7 @@ func BenchmarkGetDeploymentType(b *testing.B) {
 	if err != nil {
 		b.Fatalf("setup WithDeploymentType failed: %v", err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err = xctx.GetDeploymentType(ctx)
@@ -35,6 +37,7 @@ func BenchmarkIsLocal(b *testing.B) {
 		b.Fatalf("setup WithDeploymentType failed: %v", err)
 	}
 	var ok bool
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ok, err = xctx.IsLocal(ctx)
@@ -43,6 +46,7 @@ func BenchmarkIsLocal(b *testing.B) {
 }
 
 func BenchmarkParseDeploymentType(b *testing.B) {
+	b.ReportAllocs()
 	var err error
 	for i := 0; i < b.N; i++ {
 		_, err = xctx.ParseDeploymentType("SAAS")

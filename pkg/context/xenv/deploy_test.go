@@ -611,6 +611,51 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+// TestConcurrentResetAndRead 验证 Reset 与 RequireType/Type 并发时的语义契约：
+// RequireType 绝不返回 ("", nil)，Type 在 Reset 期间返回空字符串是合法行为。
+//
+// 回归守护目标：deploy.go:235 的 dt == "" 后置校验。若误删该校验，
+// RequireType 可能在 TOCTOU 窗口中返回 ("", nil)，本测试将捕获此回退。
+func TestConcurrentResetAndRead(t *testing.T) {
+	const iterations = 1000
+	const readers = 10
+
+	for range iterations {
+		xenv.Reset()
+		if err := xenv.InitWith(xenv.DeploymentLocal); err != nil {
+			t.Fatalf("InitWith(DeploymentLocal) error = %v", err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(readers + 1)
+
+		// 写者：Reset
+		go func() {
+			defer wg.Done()
+			xenv.Reset()
+		}()
+
+		// 读者：RequireType + Type
+		for range readers {
+			go func() {
+				defer wg.Done()
+
+				dt, err := xenv.RequireType()
+				if err == nil && dt == "" {
+					t.Errorf("RequireType() = (%q, nil), contract violation: must not return empty type without error", dt)
+				}
+
+				if got := xenv.Type(); got != "" && got != xenv.DeploymentLocal {
+					t.Errorf("Type() = %q, want empty or DeploymentLocal", got)
+				}
+			}()
+		}
+
+		wg.Wait()
+	}
+	xenv.Reset()
+}
+
 // =============================================================================
 // 常量测试
 // =============================================================================

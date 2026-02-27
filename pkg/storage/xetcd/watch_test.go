@@ -223,8 +223,7 @@ func TestWithBufferSize(t *testing.T) {
 }
 
 func TestWatch_Closed(t *testing.T) {
-	c := &Client{}
-	c.closed.Store(true)
+	c := newClosedStubClient()
 
 	_, err := c.Watch(context.Background(), "key")
 	if err != ErrClientClosed {
@@ -233,7 +232,7 @@ func TestWatch_Closed(t *testing.T) {
 }
 
 func TestWatch_EmptyKey(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.Watch(context.Background(), "")
 	if err != ErrEmptyKey {
@@ -243,7 +242,7 @@ func TestWatch_EmptyKey(t *testing.T) {
 
 // TestWatch_NilOption 测试 Watch 传入 nil WatchOption 时返回 ErrNilOption。
 func TestWatch_NilOption(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.Watch(context.Background(), "key", nil)
 	if err != ErrNilOption {
@@ -253,7 +252,7 @@ func TestWatch_NilOption(t *testing.T) {
 
 // TestWatch_NilOptionAmongValid 测试 Watch 混入 nil WatchOption 时返回 ErrNilOption。
 func TestWatch_NilOptionAmongValid(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.Watch(context.Background(), "key", WithPrefix(), nil, WithRevision(1))
 	if err != ErrNilOption {

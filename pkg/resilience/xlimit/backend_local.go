@@ -3,28 +3,40 @@ package xlimit
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/omeyang/xkit/pkg/observability/xlog"
 )
+
+// maxBuckets 桶数量上限（安全阀）
+// 防止长时间降级 + 高基数 key 场景下内存无界增长。
+// 超过上限后新 key 被拒绝（fail-close），已有 key 正常限流。
+const maxBuckets = 1 << 16 // 65536
 
 // localBackend 本地令牌桶后端
 // 使用内存存储，适用于单 Pod 场景或作为分布式限流的降级方案
 //
-// 设计决策: buckets 使用 sync.Map 存储，当前无自动过期清理。
+// 设计决策: buckets 使用 sync.Map 存储，无自动过期清理，但有 maxBuckets 安全阀。
 // 理由：(1) 本地后端主要用于降级场景，非常驻存储；
 // (2) 高基数场景应使用分布式后端（Redis 自带 TTL）；
-// (3) 可通过 Reset 方法手动清理特定键。
+// (3) 可通过 Reset 方法手动清理特定键；
+// (4) bucketCount 超过 maxBuckets 时拒绝创建新桶（fail-close），防止 OOM。
 // 如需定期清理，由调用方通过重建 limiter 实例实现。
 type localBackend struct {
 	buckets          sync.Map // map[string]*tokenBucket
+	bucketCount      atomic.Int64
 	podCount         int
 	podCountProvider PodCountProvider
+	logger           xlog.Logger // 可选，nil 时使用 slog 降级
 }
 
 // newLocalBackend 创建本地后端
-func newLocalBackend(podCount int, podCountProvider PodCountProvider) *localBackend {
+func newLocalBackend(podCount int, podCountProvider PodCountProvider, logger xlog.Logger) *localBackend {
 	return &localBackend{
 		podCount:         podCount,
 		podCountProvider: podCountProvider,
+		logger:           logger,
 	}
 }
 
@@ -51,6 +63,16 @@ func (b *localBackend) CheckRule(ctx context.Context, key string, limit, burst i
 	localBurst := max(burst/podCount, 1)
 
 	bucket := b.getOrCreateBucket(key, localLimit, localBurst, window)
+	if bucket == nil {
+		// 桶数量超过 maxBuckets 安全阀，拒绝新 key（fail-close）
+		return CheckResult{
+			Allowed:    false,
+			Limit:      localLimit,
+			Remaining:  0,
+			ResetAt:    time.Now().Add(window),
+			RetryAfter: window,
+		}, nil
+	}
 	allowed, remaining, retryAfter := bucket.take(n)
 
 	return CheckResult{
@@ -64,7 +86,9 @@ func (b *localBackend) CheckRule(ctx context.Context, key string, limit, burst i
 
 // Reset 重置指定键的限流计数
 func (b *localBackend) Reset(_ context.Context, key string) error {
-	b.buckets.Delete(key)
+	if _, loaded := b.buckets.LoadAndDelete(key); loaded {
+		b.bucketCount.Add(-1)
+	}
 	return nil
 }
 
@@ -111,14 +135,21 @@ func (b *localBackend) getPodCount(ctx context.Context) int {
 }
 
 // getOrCreateBucket 获取或创建令牌桶
+//
 // 设计决策: 复用已有桶时刷新参数，确保动态 Pod 数量变化后
 // 存量桶的补令牌速率和容量与新计算的 localLimit/localBurst 一致。
+// 当桶数量超过 maxBuckets 时返回 nil，由调用方执行 fail-close。
 func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window time.Duration) *tokenBucket {
 	if val, ok := b.buckets.Load(key); ok {
 		if bucket, ok := val.(*tokenBucket); ok {
 			bucket.updateParams(limit, burst, window)
 			return bucket
 		}
+	}
+
+	// 安全阀：超过桶数量上限时拒绝创建新桶
+	if b.bucketCount.Load() >= maxBuckets {
+		return nil
 	}
 
 	bucket := &tokenBucket{
@@ -129,7 +160,10 @@ func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window ti
 		lastUpdate: time.Now(),
 	}
 
-	actual, _ := b.buckets.LoadOrStore(key, bucket)
+	actual, loaded := b.buckets.LoadOrStore(key, bucket)
+	if !loaded {
+		b.bucketCount.Add(1)
+	}
 	if tb, ok := actual.(*tokenBucket); ok {
 		return tb
 	}

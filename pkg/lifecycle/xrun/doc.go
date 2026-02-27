@@ -121,7 +121,12 @@
 //     HTTPServer 已被同名便捷函数占用，重命名函数为 ServeHTTP 会与
 //     http.Handler.ServeHTTP 混淆，权衡后保持现状。
 //
-//  21. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
+//  21. Cancel(cause) 不应包装 context.Canceled：Wait() 使用 errors.Is 遍历
+//     整个错误链来过滤 context.Canceled。如果 cause 包装了 context.Canceled
+//     （如 fmt.Errorf("...: %w", context.Canceled)），Wait() 会将其视为普通取消
+//     并返回 nil，导致退出原因丢失。有语义的 cause 应使用独立错误类型。
+//
+//  22. 并发启动与关闭：xrun 不提供阶段化启动、逆序关闭或依赖编排能力。
 //     所有服务通过 context 并发启动和同时取消。有序启动可通过嵌套 Group
 //     或在服务内部使用 ready channel 实现；健康检查建议在 HTTPServer 的
 //     handler 中实现，xrun 不内置此功能。这遵循 YAGNI 原则——编排策略

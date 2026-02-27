@@ -47,7 +47,8 @@ type Options struct {
 	LocalCacheMaxSize int
 
 	// LocalCacheTTL 本地缓存 TTL。
-	// 默认与 PlatformDataCacheTTL 相同。
+	// 控制平台数据在本地缓存中的过期时间，默认与 PlatformDataCacheTTL 相同。
+	// Token 本地缓存的 TTL 独立计算（RefreshThreshold * 2），不受此参数影响。
 	LocalCacheTTL time.Duration
 
 	// EnableSingleflight 是否启用 singleflight。

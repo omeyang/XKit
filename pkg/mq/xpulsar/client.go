@@ -181,7 +181,7 @@ func (w *clientWrapper) Stats() Stats {
 // Pulsar 内部关闭所有 producer/consumer 时不经过 tracked wrapper，
 // 因此手动重置计数器以确保 Stats() 返回一致状态。
 // Close 会等待 Health() 超时后的后台清理 goroutine 全部完成，防止 goroutine 泄漏。
-func (w *clientWrapper) Close() error {
+func (w *clientWrapper) Close(_ context.Context) error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil
 	}

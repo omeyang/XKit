@@ -404,16 +404,12 @@ func parseFirstFailTime(msg *kafka.Message) time.Time {
 	return parsed
 }
 
-// errorString 安全地获取错误字符串，nil 返回空字符串。
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
 // defaultFailureReasonFormatter 默认的失败原因格式化函数。
 // 使用 err.Error() 并截断至 maxFailureReasonLen 字符，防止敏感信息泄露到 Kafka Header。
+//
+// 设计决策: 默认使用截断而非错误分类码，因为库无法可靠分类任意用户错误。
+// 截断 + 可配置 FailureReasonFormatter 是库层面的合理折中：
+// 需要完全脱敏的场景应通过 FailureReasonFormatter 显式 opt-in。
 func defaultFailureReasonFormatter(err error) string {
 	if err == nil {
 		return ""

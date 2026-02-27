@@ -342,4 +342,11 @@ func TestWithPlatformInfo(t *testing.T) {
 			t.Errorf("expected ErrPlatformIDNotFound, got %v", err)
 		}
 	})
+
+	t.Run("nil client returns ErrNilClient", func(t *testing.T) {
+		_, err := WithPlatformInfo(ctx, nil, "tenant-123")
+		if err != ErrNilClient {
+			t.Errorf("expected ErrNilClient, got %v", err)
+		}
+	})
 }

@@ -28,9 +28,11 @@
 // WithHealthCheck 提供一次性创建阶段检查，满足 fail-fast 需求。
 //
 // 设计决策: xetcd 不内建可观测性（Trace/Metrics）。
-// etcd 官方客户端已通过 gRPC interceptor 提供基础的 RPC 级别追踪和指标，
-// 调用方可通过 gRPC DialOption 注入自定义 interceptor。
-// 若未来需要统一可观测性，可通过 WithTracer/WithMeter Option 扩展，
+// etcd 官方客户端已通过 gRPC interceptor 提供基础的 RPC 级别追踪和指标。
+// 当前 xetcd 不暴露 gRPC DialOption 注入口，如需自定义 interceptor，
+// 请通过 RawClient() 获取原生客户端后使用 gRPC 拦截器，
+// 或直接使用 clientv3.New 构造带 DialOptions 的客户端。
+// 若未来需要统一可观测性，可通过 WithDialOptions/WithTracer/WithMeter Option 扩展，
 // 当前阶段避免引入 xmetrics 依赖以保持包的轻量性。
 //
 // # 与 xdlock 集成

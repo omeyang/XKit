@@ -1,6 +1,7 @@
 package xid
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"net"
@@ -77,17 +78,18 @@ func DefaultMachineID() (uint16, error) {
 	}
 
 	// 策略 4：从 os.Hostname() 哈希
-	if id, ok := machineIDFromOSHostname(); ok {
-		return id, nil
+	// 设计决策: 策略 2-3 使用 (id, bool) 因为失败原因总是"环境变量未设置"。
+	// 策略 4 使用 (id, error)，因为 os.Hostname() 可能产生有诊断价值的系统错误
+	// （如容器内内核限制），在全链路失败时聚合到最终错误中帮助排障（FG-S1）。
+	hostnameID, hostnameErr := machineIDFromOSHostname()
+	if hostnameErr == nil {
+		return hostnameID, nil
 	}
 
 	// 策略 5：从私有 IP 地址
-	// 设计决策: 策略 2-4 使用 (id, bool) 而非 (id, error)，
-	// 因为失败原因总是"环境变量未设置"或"主机名为空"，不需要聚合中间错误。
-	// 只有策略 5 可能产生有意义的系统级错误（如 net.InterfaceAddrs 失败）。
 	id, err := machineIDFromPrivateIP()
 	if err != nil {
-		return 0, fmt.Errorf("xid: all machine ID strategies exhausted (env/pod/hostname/os-hostname all unavailable): %w", err)
+		return 0, fmt.Errorf("xid: all machine ID strategies exhausted (os-hostname: %v): %w", hostnameErr, err)
 	}
 	return id, nil
 }
@@ -119,14 +121,21 @@ func machineIDFromHostnameEnv() (uint16, bool) {
 	return hashToMachineID(hostname), true
 }
 
-// machineIDFromOSHostname 从 os.Hostname() 的哈希值获取机器 ID
-func machineIDFromOSHostname() (uint16, bool) {
+// machineIDFromOSHostname 从 os.Hostname() 的哈希值获取机器 ID。
+//
+// 设计决策: 与策略 2-3 的 (id, bool) 签名不同，策略 4 返回 error，
+// 因为 os.Hostname() 可能产生有诊断价值的系统错误（如容器内内核限制），
+// 在全链路失败时需要聚合到最终错误信息中帮助排障。
+func machineIDFromOSHostname() (uint16, error) {
 	hostname, err := osHostname()
-	if err != nil || hostname == "" {
-		return 0, false
+	if err != nil {
+		return 0, err
+	}
+	if hostname == "" {
+		return 0, errors.New("os.Hostname returned empty string")
 	}
 
-	return hashToMachineID(hostname), true
+	return hashToMachineID(hostname), nil
 }
 
 // machineIDFromPrivateIP 从私有 IP 地址的低 16 位获取机器 ID。

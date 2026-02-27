@@ -88,6 +88,18 @@
 //	mux.Handle("/api/", handler)          // 需要租户校验
 //	mux.Handle("/healthz", bizHandler)    // 跳过租户校验
 //
+// gRPC 方法级跳过（如健康检查、反射服务）通过包装拦截器实现：
+//
+//	tenantInterceptor := xtenant.GRPCUnaryServerInterceptorWithOptions(
+//	    xtenant.WithGRPCRequireTenantID(),
+//	)
+//	wrapped := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+//	    if info.FullMethod == "/grpc.health.v1.Health/Check" {
+//	        return handler(ctx, req)
+//	    }
+//	    return tenantInterceptor(ctx, req, info, handler)
+//	}
+//
 // # 与 xplatform、xctx 的关系
 //
 //   - xplatform: 管理进程级别的平台信息（PlatformID、HasParent、UnclassRegionID）

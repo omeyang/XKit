@@ -161,6 +161,10 @@ func validateEndpoint(ep string) error {
 	endpoint := ep
 
 	// 1. 去除可能的 scheme 前缀（如 http://、https://）
+	// 设计决策: 仅剥离 scheme 前缀而不校验白名单。
+	// etcd 客户端内部支持 http/https/unix 等 scheme，且未来可能扩展，
+	// xetcd 作为封装层不应假设合法 scheme 集合。非法 scheme 会在
+	// etcd 客户端连接阶段暴露，Validate 仅校验 host:port 格式。
 	if idx := strings.Index(ep, "://"); idx != -1 {
 		endpoint = ep[idx+3:]
 	}

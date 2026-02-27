@@ -25,6 +25,9 @@ var globalMu sync.Mutex
 // globalOnce 确保默认 Logger 只初始化一次
 var globalOnce sync.Once
 
+// newBuilder 默认 Logger 的构建器工厂函数（可通过 export_test.go 替换以测试 fallback 路径）
+var newBuilder = New
+
 // defaultLogger 创建默认 Logger（惰性初始化）
 //
 // 设计决策: 在持锁状态下执行 once.Do，确保 ResetDefault（重置 globalOnce）
@@ -43,7 +46,7 @@ func defaultLogger() LoggerWithLevel {
 		}
 		// 设计决策: 默认 Logger 使用 stderr，无 rotator，cleanup 为空操作（仅关闭 nil rotator）。
 		// 丢弃 cleanup 是安全的。如需轮转日志，应使用 New().SetRotation(...).Build() 手动管理生命周期。
-		logger, _, err := New().Build()
+		logger, _, err := newBuilder().Build()
 		if err != nil {
 			// 设计决策: 默认参数不应失败；如果失败则降级为最小可用 logger，
 			// 避免库代码 panic 终止宿主进程（项目约定：构造不 panic）。

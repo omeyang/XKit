@@ -71,11 +71,20 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 	}
 }
 
+// MaxLockRetryCount 是 LockRetryCount 的上界，防止误配导致过长的锁等待。
+// 与 Loader 侧的 MaxMaxRetryAttempts 保持一致的防御策略。
+const MaxLockRetryCount = 100
+
+// MaxLockRetryInterval 是 LockRetryInterval 的上界，防止单次重试间隔过长。
+const MaxLockRetryInterval = 10 * time.Second
+
 // WithLockRetry 设置锁重试策略。
 //
 // 注意：非正值的 interval 或 count 将被静默忽略（保持当前值不变）。
 // 例如 WithLockRetry(0, 5) 不会启用重试，因为 interval <= 0 被忽略。
 // 需要同时传入正值的 interval 和 count 才能启用重试。
+// count 会被钳位到 [1, MaxLockRetryCount] 范围内；
+// interval 会被钳位到 (0, MaxLockRetryInterval] 范围内。
 //
 // 重试行为说明：
 //   - Lock() 首先会立即尝试获取锁（无等待）
@@ -91,9 +100,15 @@ func WithLockKeyPrefix(prefix string) RedisOption {
 func WithLockRetry(interval time.Duration, count int) RedisOption {
 	return func(o *RedisOptions) {
 		if interval > 0 {
+			if interval > MaxLockRetryInterval {
+				interval = MaxLockRetryInterval
+			}
 			o.LockRetryInterval = interval
 		}
 		if count > 0 {
+			if count > MaxLockRetryCount {
+				count = MaxLockRetryCount
+			}
 			o.LockRetryCount = count
 		}
 	}

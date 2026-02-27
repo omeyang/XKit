@@ -674,7 +674,7 @@ func TestJobWrapper_LogResult(t *testing.T) {
 		wrapper := newJobWrapper(JobFunc(func(ctx context.Context) error { return nil }), NoopLocker(), logger, nil, opts)
 		span := &mockSpan{}
 
-		wrapper.logResult(context.Background(), span, nil)
+		wrapper.logResult(context.Background(), span, 100*time.Millisecond, nil)
 
 		assert.Equal(t, 1, logger.getDebugCount())
 		assert.False(t, span.errorRecorded)
@@ -688,7 +688,7 @@ func TestJobWrapper_LogResult(t *testing.T) {
 		wrapper := newJobWrapper(JobFunc(func(ctx context.Context) error { return nil }), NoopLocker(), logger, nil, opts)
 		span := &mockSpan{}
 
-		wrapper.logResult(context.Background(), span, errors.New("test error"))
+		wrapper.logResult(context.Background(), span, 100*time.Millisecond, errors.New("test error"))
 
 		assert.Equal(t, 1, logger.getErrorCount())
 		assert.True(t, span.errorRecorded)
@@ -702,7 +702,7 @@ func TestJobWrapper_LogResult(t *testing.T) {
 		wrapper := newJobWrapper(JobFunc(func(ctx context.Context) error { return nil }), NoopLocker(), logger, nil, opts)
 
 		// 不应该 panic
-		wrapper.logResult(context.Background(), nil, errors.New("test error"))
+		wrapper.logResult(context.Background(), nil, 100*time.Millisecond, errors.New("test error"))
 
 		assert.Equal(t, 1, logger.getErrorCount())
 	})

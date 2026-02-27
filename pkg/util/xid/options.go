@@ -71,7 +71,8 @@ func WithMaxWaitDuration(d time.Duration) Option {
 // 当检测到时钟回拨时，每隔此间隔尝试一次生成 ID。
 // 默认值为 10ms（sonyflake 时间精度是 10ms）。
 // 传入负值会在 NewGenerator 中返回错误（fail-fast）。
-// 传入零值表示"无间隔"，即重试不等待直接重新尝试。
+// 传入零值表示"无间隔"，即重试不等待直接重新尝试（注意：零值会导致
+// CPU 密集轮询直到 maxWaitDuration 耗尽，建议至少使用 1ms）。
 // 不调用此选项则使用默认值 10ms。
 func WithRetryInterval(d time.Duration) Option {
 	return func(c *options) {

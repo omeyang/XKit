@@ -15,6 +15,10 @@ const maxKeyLength = 512
 const unlockTimeout = 5 * time.Second
 
 // validateKey 验证锁 key 是否有效。
+//
+// 注意：此函数验证的是用户提供的原始 key，不包含 WithKeyPrefix 拼接的前缀。
+// Redis key 实际上限为 512MB，etcd key 推荐 ≤1.5MB。maxKeyLength（512 字节）
+// 是对用户 key 的合理约束，前缀拼接后的总长度远低于两种后端的限制。
 func validateKey(key string) error {
 	if strings.TrimSpace(key) == "" {
 		return ErrEmptyKey
@@ -23,6 +27,18 @@ func validateKey(key string) error {
 		return ErrKeyTooLong
 	}
 	return nil
+}
+
+// resolveFullKey 应用 MutexOption 并返回完整 key（prefix + key）。
+// 用于 etcd 后端在创建 Mutex 前解析最终 key，消除 TryLock/Lock 的选项解析重复。
+func resolveFullKey(key string, opts ...MutexOption) string {
+	options := defaultMutexOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(options)
+		}
+	}
+	return options.KeyPrefix + key
 }
 
 // =============================================================================

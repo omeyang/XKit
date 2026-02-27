@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -715,6 +716,9 @@ func TestValidateTimeout(t *testing.T) {
 		{"zero", 0, true},
 		{"negative", -1 * time.Second, true},
 		{"small_positive", time.Millisecond, false},
+		{"max_boundary", maxTimeout, false},
+		{"over_max", maxTimeout + time.Second, true},
+		{"extreme", 999 * time.Hour, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1471,5 +1475,79 @@ func TestScanProcForSocket(t *testing.T) {
 	_, err := scanProcForSocket(ctx, "socket:[999999999]")
 	if err == nil {
 		t.Fatal("scanProcForSocket with canceled context should return error")
+	}
+}
+
+func TestWrapDecodeError(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantContain string
+	}{
+		{
+			name:        "version_mismatch",
+			err:         fmt.Errorf("%w: unsupported version 99", xdbg.ErrInvalidMessage),
+			wantContain: "协议版本不兼容",
+		},
+		{
+			name:        "other_invalid_message",
+			err:         fmt.Errorf("%w: bad magic", xdbg.ErrInvalidMessage),
+			wantContain: "接收响应失败",
+		},
+		{
+			name:        "generic_error",
+			err:         fmt.Errorf("connection reset"),
+			wantContain: "接收响应失败",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapDecodeError(tt.err)
+			if !strings.Contains(result.Error(), tt.wantContain) {
+				t.Errorf("wrapDecodeError() = %q, want containing %q", result.Error(), tt.wantContain)
+			}
+		})
+	}
+}
+
+func BenchmarkParseCommandLine(b *testing.B) {
+	inputs := []struct {
+		name  string
+		input string
+	}{
+		{"simple", "help"},
+		{"two_args", "setlog debug"},
+		{"quoted", `exec "hello world" arg2`},
+		{"many_args", "pprof cpu start --duration 30s --output /tmp/profile"},
+	}
+
+	for _, bb := range inputs {
+		b.Run(bb.name, func(b *testing.B) {
+			for b.Loop() {
+				parts, err := parseCommandLine(bb.input)
+				if err != nil {
+					b.Fatal(err)
+				}
+				runtime.KeepAlive(parts)
+			}
+		})
+	}
+}
+
+func BenchmarkIsCLIUsageError(b *testing.B) {
+	errs := []struct {
+		name string
+		err  error
+	}{
+		{"match", fmt.Errorf("flag provided but not defined: -xyz")},
+		{"no_match", fmt.Errorf("connection refused")},
+	}
+
+	for _, bb := range errs {
+		b.Run(bb.name, func(b *testing.B) {
+			for b.Loop() {
+				_ = isCLIUsageError(bb.err)
+			}
+		})
 	}
 }

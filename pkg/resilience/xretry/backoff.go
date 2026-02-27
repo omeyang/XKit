@@ -85,6 +85,10 @@ func WithJitter(j float64) ExponentialBackoffOption {
 //   - maxDelay: 30s
 //   - multiplier: 2.0
 //   - jitter: 0.1 (10%)
+//
+// 设计决策: 默认 jitter=0.1 适用于单体应用和低并发场景。
+// 大规模分布式系统建议使用 WithJitter(0.3) 或更高值以增强惊群缓解效果，
+// 详见 doc.go 中的抖动说明。
 func NewExponentialBackoff(opts ...ExponentialBackoffOption) *ExponentialBackoff {
 	b := &ExponentialBackoff{
 		initialDelay: 100 * time.Millisecond,

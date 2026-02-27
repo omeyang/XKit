@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -304,12 +305,44 @@ func TestHealthCheck_CheckTime(t *testing.T) {
 	assert.True(t, result.CheckTime.Before(after) || result.CheckTime.Equal(after))
 }
 
-func TestNewHealthChecker_InvalidScheduler(t *testing.T) {
-	// 测试 fallbackHealthChecker 的行为
-	fallback := &fallbackHealthChecker{message: "test error"}
-	result := fallback.Check(context.Background())
+// customScheduler 是非 *cronScheduler 的 Scheduler 实现，
+// 用于验证 NewHealthChecker 对非标准实现的回退行为。
+type customScheduler struct{}
 
-	assert.Equal(t, HealthStatusUnhealthy, result.Status)
-	assert.False(t, result.HasJobs)
-	assert.Equal(t, "test error", result.Message)
+func (s *customScheduler) AddFunc(_ string, _ func(ctx context.Context) error, _ ...JobOption) (JobID, error) {
+	return 0, nil
+}
+
+func (s *customScheduler) AddJob(_ string, _ Job, _ ...JobOption) (JobID, error) {
+	return 0, nil
+}
+
+func (s *customScheduler) Remove(_ JobID)        {}
+func (s *customScheduler) Start()                {}
+func (s *customScheduler) Stop() context.Context { return context.Background() }
+func (s *customScheduler) Cron() *cron.Cron      { return nil }
+func (s *customScheduler) Entries() []cron.Entry { return nil }
+func (s *customScheduler) Stats() *Stats         { return nil }
+
+var _ Scheduler = (*customScheduler)(nil)
+
+func TestNewHealthChecker_InvalidScheduler(t *testing.T) {
+	t.Run("fallback via NewHealthChecker with custom scheduler", func(t *testing.T) {
+		// 通过 NewHealthChecker 构造器验证回退分支
+		checker := NewHealthChecker(&customScheduler{})
+		result := checker.Check(context.Background())
+
+		assert.Equal(t, HealthStatusUnhealthy, result.Status)
+		assert.False(t, result.HasJobs)
+		assert.Equal(t, "unsupported scheduler type", result.Message)
+	})
+
+	t.Run("fallback checker behavior", func(t *testing.T) {
+		fallback := &fallbackHealthChecker{message: "test error"}
+		result := fallback.Check(context.Background())
+
+		assert.Equal(t, HealthStatusUnhealthy, result.Status)
+		assert.False(t, result.HasJobs)
+		assert.Equal(t, "test error", result.Message)
+	})
 }

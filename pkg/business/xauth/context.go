@@ -93,6 +93,10 @@ func TenantIDFromContext(ctx context.Context) string {
 //	// 后续可以直接从 context 获取平台信息
 //	platformID := xctx.PlatformID(ctx)
 func WithPlatformInfo(ctx context.Context, c Client, tenantID string) (context.Context, error) {
+	if c == nil {
+		return ctx, ErrNilClient
+	}
+
 	// 先解析 tenantID（支持从 context 或环境变量获取）
 	if tenantID == "" {
 		tenantID = TenantIDFromContext(ctx)

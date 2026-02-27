@@ -256,6 +256,33 @@ func mustNewTokenManager(t *testing.T, cfg TokenManagerConfig) *TokenManager {
 	return mgr
 }
 
+// mustNewPlatformManager 创建 PlatformManager，失败时终止测试。
+// 如果 TokenMgr 为 nil，自动创建一个 stub（仅用于不涉及 API 调用的测试）。
+func mustNewPlatformManager(t *testing.T, cfg PlatformManagerConfig) *PlatformManager {
+	t.Helper()
+	if cfg.TokenMgr == nil {
+		cfg.TokenMgr = stubTokenMgr(t, cfg.HTTP)
+	}
+	mgr, err := NewPlatformManager(cfg)
+	if err != nil {
+		t.Fatalf("NewPlatformManager failed: %v", err)
+	}
+	return mgr
+}
+
+// stubTokenMgr 创建一个最小的 TokenManager stub（用于不涉及 Token API 调用的测试）。
+func stubTokenMgr(t *testing.T, httpClient *HTTPClient) *TokenManager {
+	t.Helper()
+	if httpClient == nil {
+		httpClient = NewHTTPClient(HTTPClientConfig{BaseURL: "https://stub.test"})
+	}
+	return mustNewTokenManager(t, TokenManagerConfig{
+		Config: testConfig(),
+		HTTP:   httpClient,
+		Cache:  NewTokenCache(TokenCacheConfig{}),
+	})
+}
+
 // testToken 创建测试用的 TokenInfo。
 func testToken(accessToken string, expiresIn int64) *TokenInfo {
 	now := time.Now()

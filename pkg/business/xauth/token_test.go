@@ -1196,4 +1196,11 @@ func TestVerifyTokenForTenant(t *testing.T) {
 			t.Errorf("expected ErrTokenInvalid, got %v", err)
 		}
 	})
+
+	t.Run("nil client returns ErrNilClient", func(t *testing.T) {
+		_, err := VerifyTokenForTenant(ctx, nil, "any-token", "tenant-abc")
+		if err != ErrNilClient {
+			t.Errorf("expected ErrNilClient, got %v", err)
+		}
+	})
 }

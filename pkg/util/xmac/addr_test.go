@@ -13,6 +13,7 @@ import (
 // 编译期接口实现检查。
 var (
 	_ fmt.Stringer               = Addr{}
+	_ fmt.GoStringer             = Addr{}
 	_ encoding.TextMarshaler     = Addr{}
 	_ encoding.TextUnmarshaler   = (*Addr)(nil)
 	_ encoding.BinaryMarshaler   = Addr{}
@@ -198,6 +199,33 @@ func TestAddr_HardwareAddr(t *testing.T) {
 	invalid := Addr{}
 	if hw := invalid.HardwareAddr(); hw != nil {
 		t.Errorf("invalid.HardwareAddr() = %v, want nil", hw)
+	}
+}
+
+func TestAddr_GoString(t *testing.T) {
+	tests := []struct {
+		name string
+		addr Addr
+		want string
+	}{
+		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), `xmac.MustParse("aa:bb:cc:dd:ee:ff")`},
+		{"zero", Addr{}, "xmac.Addr{}"},
+		{"broadcast", Broadcast(), `xmac.MustParse("ff:ff:ff:ff:ff:ff")`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.addr.GoString(); got != tt.want {
+				t.Errorf("GoString() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// 验证 %#v 格式化使用 GoString
+	addr := MustParse("aa:bb:cc:dd:ee:ff")
+	formatted := fmt.Sprintf("%#v", addr)
+	if formatted != `xmac.MustParse("aa:bb:cc:dd:ee:ff")` {
+		t.Errorf("%%#v = %v, want xmac.MustParse(...)", formatted)
 	}
 }
 

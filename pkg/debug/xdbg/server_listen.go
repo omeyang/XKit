@@ -30,7 +30,10 @@ func (s *Server) startListening() error {
 	s.transportMu.Unlock()
 
 	if err := transport.Listen(s.ctx); err != nil {
-		s.state.Store(int32(ServerStateStarted))
+		// 设计决策: 使用 CAS 而非 Store 回滚状态。若并发 Stop() 已将状态设为 Stopped，
+		// 无条件 Store(Started) 会将终态回退为 Started，破坏生命周期语义。
+		// CAS 仅在当前仍为 Listening 时才回滚到 Started，保持 Stopped 终态不变。
+		s.state.CompareAndSwap(int32(ServerStateListening), int32(ServerStateStarted))
 		return fmt.Errorf("start listening: %w", err)
 	}
 

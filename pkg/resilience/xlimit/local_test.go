@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -415,7 +416,7 @@ func TestLocalBackend_UpdateParamsOnPodCountChange(t *testing.T) {
 	podCount := 2
 	provider := &mockPodCountProvider{count: podCount}
 
-	backend := newLocalBackend(1, provider)
+	backend := newLocalBackend(1, provider, nil)
 
 	ctx := context.Background()
 
@@ -485,6 +486,64 @@ func TestTokenBucket_UpdateParams(t *testing.T) {
 		t.Errorf("expected tokens unchanged at 50, got %f", tb.tokens)
 	}
 	tb.mu.Unlock()
+}
+
+func TestLocalBackend_MaxBucketsSafetyLimit(t *testing.T) {
+	backend := newLocalBackend(1, nil, nil)
+	ctx := context.Background()
+
+	// 填满到 maxBuckets
+	for i := range maxBuckets {
+		key := "key-" + strconv.Itoa(i)
+		res, err := backend.CheckRule(ctx, key, 100, 100, time.Minute, 1)
+		if err != nil {
+			t.Fatalf("CheckRule failed at key %d: %v", i, err)
+		}
+		if !res.Allowed {
+			t.Fatalf("expected allowed at key %d", i)
+		}
+	}
+
+	if backend.bucketCount.Load() != maxBuckets {
+		t.Fatalf("expected %d buckets, got %d", maxBuckets, backend.bucketCount.Load())
+	}
+
+	// 超过上限的新 key 应被拒绝（fail-close）
+	res, err := backend.CheckRule(ctx, "overflow-key", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Allowed {
+		t.Error("new key should be denied when maxBuckets exceeded")
+	}
+	if res.RetryAfter <= 0 {
+		t.Error("RetryAfter should be positive for overflow denial")
+	}
+
+	// 已有 key 仍应正常工作
+	res, err = backend.CheckRule(ctx, "key-0", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule for existing key failed: %v", err)
+	}
+	if !res.Allowed {
+		t.Error("existing key should still be allowed")
+	}
+
+	// Reset 应释放桶，允许新 key
+	if err := backend.Reset(ctx, "key-0"); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+	if backend.bucketCount.Load() != maxBuckets-1 {
+		t.Fatalf("expected %d buckets after reset, got %d", maxBuckets-1, backend.bucketCount.Load())
+	}
+
+	res, err = backend.CheckRule(ctx, "new-key-after-reset", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if !res.Allowed {
+		t.Error("new key should be allowed after reset freed a slot")
+	}
 }
 
 func BenchmarkLocalLimiter_Allow(b *testing.B) {

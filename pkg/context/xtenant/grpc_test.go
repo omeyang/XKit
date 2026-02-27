@@ -202,6 +202,30 @@ func TestInjectTenantToMetadata(t *testing.T) {
 			t.Errorf("MetaTenantName should be empty, got %v", got)
 		}
 	})
+
+	t.Run("TrimSpace归一化（FG-M4回归测试）", func(t *testing.T) {
+		md := metadata.MD{}
+		info := xtenant.TenantInfo{
+			TenantID:   "  t1  ",
+			TenantName: "  n1  ",
+		}
+		xtenant.InjectTenantToMetadata(md, info)
+
+		assertMetadataValue(t, md, xtenant.MetaTenantID, "t1")
+		assertMetadataValue(t, md, xtenant.MetaTenantName, "n1")
+	})
+
+	t.Run("纯空白值不注入（FG-M4回归测试）", func(t *testing.T) {
+		md := metadata.MD{}
+		info := xtenant.TenantInfo{
+			TenantID:   "   ",
+			TenantName: "  \t",
+		}
+		xtenant.InjectTenantToMetadata(md, info)
+
+		assert.Empty(t, md.Get(xtenant.MetaTenantID), "whitespace-only TenantID should not be injected")
+		assert.Empty(t, md.Get(xtenant.MetaTenantName), "whitespace-only TenantName should not be injected")
+	})
 }
 
 // =============================================================================

@@ -23,6 +23,9 @@ var (
 	// ErrEmptyURL URL 为空错误
 	ErrEmptyURL = errors.New("xpulsar: empty URL")
 
+	// ErrNilOption 选项函数为 nil 错误
+	ErrNilOption = errors.New("xpulsar: nil option")
+
 	// ErrNilProducer 生产者为 nil 错误
 	ErrNilProducer = errors.New("xpulsar: nil producer")
 

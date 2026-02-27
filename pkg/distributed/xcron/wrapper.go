@@ -57,8 +57,9 @@ func (w *jobWrapper) Run() {
 		// 需要锁但未获取到
 		if w.stats != nil {
 			if lockErr != nil {
-				// 锁服务异常，计入失败（而非跳过），便于健康检查发现问题
-				w.stats.recordExecution(w.opts.name, 0, lockErr)
+				// 设计决策: 锁服务异常独立统计（recordLockError），不计入 recordExecution。
+				// 任务未实际执行，计入 TotalExecutions/Duration/SuccessRate 会污染执行统计语义。
+				w.stats.recordLockError(w.opts.name)
 			} else {
 				// 锁竞争失败（正常跳过）
 				w.stats.recordSkip(w.opts.name)
@@ -82,20 +83,23 @@ func (w *jobWrapper) Run() {
 	// 4. 执行钩子 BeforeJob（正序），每个钩子独立 panic 保护
 	taskCtx = w.runBeforeHooks(taskCtx)
 
-	// 5. 执行任务（可能带重试）
+	// 5. 记录开始日志
+	w.logDebug(taskCtx, "job starting", "job", w.opts.name)
+
+	// 6. 执行任务（可能带重试）
 	err := w.executeJob(taskCtx, rh)
 	duration := time.Since(startTime)
 
-	// 6. 执行钩子 AfterJob（逆序，类似 defer），每个钩子独立 panic 保护
+	// 7. 执行钩子 AfterJob（逆序，类似 defer），每个钩子独立 panic 保护
 	w.runAfterHooks(taskCtx, duration, err)
 
-	// 7. 记录统计
+	// 8. 记录统计
 	if w.stats != nil {
 		w.stats.recordExecution(w.opts.name, duration, err)
 	}
 
-	// 8. 记录日志结果
-	w.logResult(taskCtx, span, err)
+	// 9. 记录日志结果
+	w.logResult(taskCtx, span, duration, err)
 }
 
 // tryAcquireLock 尝试获取分布式锁。
@@ -202,16 +206,16 @@ func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) (err error
 }
 
 // logResult 记录任务执行结果
-func (w *jobWrapper) logResult(ctx context.Context, span Span, err error) {
+func (w *jobWrapper) logResult(ctx context.Context, span Span, duration time.Duration, err error) {
 	if err != nil {
 		w.logError(ctx, "job failed",
-			"job", w.opts.name, "error", err)
+			"job", w.opts.name, "duration", duration, "error", err)
 		if span != nil {
 			span.RecordError(err)
 		}
 	} else {
 		w.logDebug(ctx, "job completed",
-			"job", w.opts.name)
+			"job", w.opts.name, "duration", duration)
 	}
 }
 

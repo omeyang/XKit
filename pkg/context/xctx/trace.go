@@ -234,8 +234,8 @@ func isAllZeros(buf []byte) bool {
 // W3C 规范要求 trace-id 不能为全零，虽然概率极低（2^-128），但本函数
 // 遵循规范进行检查，若出现全零则重新生成。
 //
-// Panic 策略说明：如果底层熵源不可用（极罕见的系统级错误），函数会 panic。
-// 这是有意的设计选择，原因如下：
+// 设计决策: Panic 策略 — 如果底层熵源不可用（极罕见的系统级错误），函数会 panic。
+// 原因如下：
 //  1. crypto/rand 失败意味着系统无法提供安全随机数，继续运行会导致安全隐患
 //  2. 这与 OpenTelemetry 等标准库采用相同的策略
 //  3. 此错误在正常运行环境中几乎不可能发生（需要内核级故障）
@@ -262,7 +262,7 @@ func GenerateTraceID() string {
 // W3C 规范要求 span-id 不能为全零，虽然概率极低（2^-64），但本函数
 // 遵循规范进行检查，若出现全零则重新生成。
 //
-// Panic 策略：与 GenerateTraceID 相同，熵源不可用时会 panic。
+// 设计决策: Panic 策略 — 与 GenerateTraceID 相同，熵源不可用时会 panic。
 // 详见 GenerateTraceID 的文档说明。
 func GenerateSpanID() string {
 	var buf [SpanIDSize]byte
@@ -409,6 +409,7 @@ type Trace struct {
 // GetTrace 从 context 批量获取所有追踪信息
 //
 // 返回 Trace 结构体，字段可能为空字符串。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 使用 IsComplete() 检查是否全部存在。
 func GetTrace(ctx context.Context) Trace {
 	return Trace{

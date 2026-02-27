@@ -95,7 +95,7 @@ func (w *clickhouseWrapper) Health(ctx context.Context) (err error) {
 
 	if pingErr := w.conn.Ping(ctx); pingErr != nil {
 		w.healthCounter.IncPingError()
-		return pingErr
+		return fmt.Errorf("health ping failed: %w", pingErr)
 	}
 
 	return nil
@@ -216,24 +216,39 @@ func (w *clickhouseWrapper) QueryPage(ctx context.Context, query string, opts Pa
 	}, nil
 }
 
-// queryClausePattern 用于检测查询中的 FORMAT 和 SETTINGS 子句。
-// 使用单词边界匹配，忽略大小写。
+// formatTailPattern 检测查询末尾的 FORMAT 子句。
+// 使用末尾锚定避免误匹配 FORMAT() 函数或字符串常量。
 //
-// 已知局限性：此正则匹配可能产生误判，例如：
-//   - WHERE name = 'FORMAT' → 会误判为包含 FORMAT 子句
-//   - 字符串字面量或注释中的关键字可能被误判
+// 匹配示例：
+//   - "SELECT * FROM users FORMAT JSON" → 匹配
+//   - "SELECT * FROM users FORMAT JSONEachRow" → 匹配
+//   - "SELECT FORMAT(date, '%Y') FROM t" → 不匹配（FORMAT 后紧跟括号，非空白）
+//   - "WHERE name = 'FORMAT'" → 不匹配（FORMAT 后紧跟引号，非空白）
+var formatTailPattern = regexp.MustCompile(`(?i)\bFORMAT\s+[A-Za-z]\w*\s*$`)
+
+// settingsTailPattern 检测查询中的 SETTINGS 子句。
+// 匹配 SETTINGS 后跟 key=value 模式，减少对字段名/字符串常量的误判。
 //
+// 匹配示例：
+//   - "SELECT * FROM users SETTINGS max_threads=4" → 匹配
+//   - "SELECT * FROM users SETTINGS max_threads = 4" → 匹配
+//   - "SELECT SETTINGS_KEY FROM config" → 不匹配（SETTINGS_KEY 后无空白+key=val）
+//
+// 已知局限性：字符串常量中的 "SETTINGS key=" 模式仍可能被误判。
 // 对于复杂查询场景，建议直接使用 Client() 执行查询。
-var queryClausePattern = regexp.MustCompile(`(?i)\b(FORMAT|SETTINGS)\b`)
+var settingsTailPattern = regexp.MustCompile(`(?i)\bSETTINGS\s+\w+\s*=`)
 
 // limitOffsetTailPattern 检测查询末尾的 LIMIT/OFFSET 子句。
 // 使用末尾锚定（$）避免误匹配子查询中的 LIMIT/OFFSET。
+// 同时覆盖参数化写法：LIMIT ?、LIMIT {name:Type}、LIMIT $1 等。
 //
 // 匹配示例：
 //   - "SELECT * FROM users LIMIT 10" → 匹配
 //   - "SELECT * FROM users LIMIT 10 OFFSET 5" → 匹配
+//   - "SELECT * FROM users LIMIT ?" → 匹配
+//   - "SELECT * FROM users LIMIT {n:UInt64}" → 匹配
 //   - "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub" → 不匹配（不在末尾）
-var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*$`)
+var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+|\?|\$\d+|\{[^}]+\})(\s+OFFSET\s+(\d+|\?|\$\d+|\{[^}]+\}))?\s*$`)
 
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
@@ -250,15 +265,14 @@ func validateQuerySyntax(query string) (string, error) {
 		return "", ErrEmptyQuery
 	}
 
-	// 检测 FORMAT 和 SETTINGS 子句
-	matches := queryClausePattern.FindAllString(normalized, -1)
-	for _, match := range matches {
-		if strings.EqualFold(match, "FORMAT") {
-			return "", ErrQueryContainsFormat
-		}
-		if strings.EqualFold(match, "SETTINGS") {
-			return "", ErrQueryContainsSettings
-		}
+	// 检测末尾的 FORMAT 子句（末尾锚定，避免误匹配 FORMAT() 函数）
+	if formatTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsFormat
+	}
+
+	// 检测 SETTINGS 子句（匹配 SETTINGS key=value 模式）
+	if settingsTailPattern.MatchString(normalized) {
+		return "", ErrQueryContainsSettings
 	}
 
 	// 检测末尾的 LIMIT/OFFSET 子句（QueryPage 自动管理分页）
@@ -541,8 +555,17 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 
 // appendRowsToBatch 将行追加到批次中。
 // 每 100 行检查一次 context，平衡性能和响应性。
+//
+// 设计决策: 当 AppendStruct 错误数达到 maxAppendErrors 时提前终止，
+// 避免在 schema 不匹配等场景下产生大量重复错误导致内存膨胀。
+// 典型情况下 AppendStruct 错误对同一批次的所有行是相同的（如 struct tag 不匹配），
+// 继续尝试剩余行没有实际意义。
 func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driver.Batch, batch []any) (appendedCount int64, errs []error) {
-	const checkInterval = 100
+	const (
+		checkInterval   = 100
+		maxAppendErrors = 100
+	)
+	var appendErrors int
 	for i, row := range batch {
 		// 定期检查 context 是否已取消
 		if i > 0 && i%checkInterval == 0 && ctx.Err() != nil {
@@ -550,7 +573,15 @@ func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driv
 			return appendedCount, errs
 		}
 		if err := batchObj.AppendStruct(row); err != nil {
+			appendErrors++
 			errs = append(errs, fmt.Errorf("append struct failed: %w", err))
+			if appendErrors >= maxAppendErrors {
+				remaining := len(batch) - i - 1
+				if remaining > 0 {
+					errs = append(errs, fmt.Errorf("too many append errors (%d), skipped remaining %d rows", appendErrors, remaining))
+				}
+				return appendedCount, errs
+			}
 			continue
 		}
 		appendedCount++

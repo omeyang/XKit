@@ -25,6 +25,10 @@ var fileLimitMu sync.Mutex
 // 设置 soft limit 为指定值，仅在当前 hard limit 不足时提升 hard limit（需要 CAP_SYS_RESOURCE）。
 // 不会降低 hard limit，因为降低 hard limit 是不可逆操作（非特权进程无法再提升）。
 //
+// 上界由操作系统 hard limit 和内核参数（如 Linux fs.nr_open）决定，
+// 超出时系统调用返回 EPERM 或 EINVAL。本函数不在应用层硬编码上界常量，
+// 因为实际上限因系统配置而异。
+//
 // 注意：允许将 soft limit 设置为低于当前值。在进程运行中降低 soft limit
 // 可能导致后续文件操作因 "too many open files" 而失败。通常建议仅在进程启动阶段调用。
 //

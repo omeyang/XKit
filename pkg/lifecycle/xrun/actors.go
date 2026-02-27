@@ -9,6 +9,10 @@ import (
 
 // DefaultSignals 返回默认监听的系统信号列表。
 //
+// 包含 SIGHUP、SIGINT、SIGTERM、SIGQUIT。注意 SIGHUP 在终端断开
+// （如 SSH 断连）时会触发，容器化部署中通常无此问题。如需排除 SIGHUP，
+// 可通过 [WithSignals] 自定义信号列表。
+//
 // 每次调用返回新的切片，调用者可安全修改。
 func DefaultSignals() []os.Signal {
 	return []os.Signal{

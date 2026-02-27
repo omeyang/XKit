@@ -19,6 +19,9 @@
 // # 链路追踪
 //
 // 使用 TracingProducer/TracingConsumer 实现自动追踪注入/提取。
+// [NewTracingProducer] 和 [NewTracingConsumer] 返回具体类型（*TracingProducer/*TracingConsumer）
+// 而非接口，因为 Tracing 类型通过嵌入添加了额外方法（如带追踪的 Produce/Consume），
+// 返回接口会丢失这些方法。
 //
 // # 死信队列
 //
@@ -45,9 +48,10 @@
 //
 // # Offset 提交模型
 //
-// 本包强制设置 enable.auto.offset.store=false 以确保 at-least-once 语义。
-// Offset 仅在成功处理后通过 StoreMessage 存储，由 auto-commit 机制定期提交。
-// Close() 时会执行一次显式 Commit。
+// 本包强制设置 enable.auto.offset.store=false 和 enable.auto.commit=true
+// 以确保 at-least-once 语义。Offset 仅在成功处理后通过 StoreMessage 存储，
+// 由 auto-commit 机制定期提交。Close() 时会执行一次显式 Commit。
+// 用户配置的 enable.auto.commit 或 enable.auto.offset.store 值会被覆盖。
 //
 // 设计决策: SubscribeTopics 未注册 rebalance 回调，分区撤销时 offset 提交
 // 依赖 auto-commit 窗口（默认 5s）。扩缩容时最近窗口内已处理消息可能被重复消费。

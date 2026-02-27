@@ -129,6 +129,7 @@ func Classify(addr netip.Addr) Classification {
 		IsSharedAddress:           IsSharedAddress(addr),
 		IsBenchmark:               IsBenchmark(addr),
 		IsReserved:                IsReserved(addr),
+		IsBroadcast:               IsBroadcast(addr),
 	}
 }
 
@@ -181,8 +182,11 @@ type Classification struct {
 	// IsBenchmark 表示是否为基准测试地址（IPv4: 198.18.0.0/15, IPv6: 2001:2::/48）。
 	IsBenchmark bool
 
-	// IsReserved 表示是否为保留地址（240.0.0.0/4, Class E）。
+	// IsReserved 表示是否为保留地址（240.0.0.0/4, Class E，排除广播地址）。
 	IsReserved bool
+
+	// IsBroadcast 表示是否为 IPv4 有限广播地址（255.255.255.255）。
+	IsBroadcast bool
 }
 
 // String 返回分类信息的字符串表示。
@@ -207,6 +211,7 @@ func (c Classification) String() string {
 		{c.IsSharedAddress, "shared-address"},
 		{c.IsBenchmark, "benchmark"},
 		{c.IsReserved, "reserved"},
+		{c.IsBroadcast, "broadcast"},
 		{c.IsMulticast, "multicast"},
 		{c.IsGlobalUnicast, "global-unicast"},
 	}
@@ -352,8 +357,13 @@ func isIPv6Benchmark(addr netip.Addr) bool {
 }
 
 // IsReserved 报告 addr 是否为保留地址（Class E）。
-// 保留地址：240.0.0.0/4
+// 保留地址：240.0.0.0/4，排除有限广播地址 255.255.255.255。
 // 保留用于未来使用，RFC 1112 定义。
+//
+// 设计决策: 255.255.255.255 虽在 240.0.0.0/4 数值范围内，但 RFC 919/922 将其
+// 定义为有限广播地址，语义不同于 Class E 保留地址。将其排除以避免调用方依据
+// IsReserved 做策略分流时把广播地址错误归入保留地址分支。
+// 如需判断广播地址，请使用 [IsBroadcast]。
 //
 // 仅适用于 IPv4，无效地址或 IPv6 地址返回 false。
 func IsReserved(addr netip.Addr) bool {
@@ -361,6 +371,17 @@ func IsReserved(addr netip.Addr) bool {
 		return false
 	}
 	v := ipv4ToUint32(addr)
-	// 240.0.0.0/4 = 0xF0000000 - 0xFFFFFFFF
-	return v >= 0xF0000000
+	// 240.0.0.0/4 = 0xF0000000 - 0xFFFFFFFE（排除 0xFFFFFFFF 有限广播地址）
+	return v >= 0xF0000000 && v != 0xFFFFFFFF
+}
+
+// IsBroadcast 报告 addr 是否为 IPv4 有限广播地址（255.255.255.255）。
+// RFC 919/922 定义的有限广播地址仅在本地链路使用，不可被路由器转发。
+//
+// 仅适用于 IPv4，无效地址或 IPv6 地址返回 false。
+func IsBroadcast(addr netip.Addr) bool {
+	if !addr.Is4() && !addr.Is4In6() {
+		return false
+	}
+	return ipv4ToUint32(addr) == 0xFFFFFFFF
 }

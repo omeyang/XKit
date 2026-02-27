@@ -214,6 +214,7 @@ func (c *schedulerHealthChecker) checkFailureRate(stats *Stats, result *HealthCh
 // addDetailStats 添加详细统计信息
 func (c *schedulerHealthChecker) addDetailStats(stats *Stats, result *HealthCheck) {
 	result.Details["skip_count"] = stats.SkipCount()
+	result.Details["lock_error_count"] = stats.LockErrorCount()
 	result.Details["min_duration"] = stats.MinDuration().String()
 	result.Details["max_duration"] = stats.MaxDuration().String()
 	result.Details["avg_duration"] = stats.AvgDuration().String()

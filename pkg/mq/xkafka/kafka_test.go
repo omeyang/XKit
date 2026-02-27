@@ -215,6 +215,40 @@ func TestWithConsumerHealthTimeout_Zero(t *testing.T) {
 }
 
 // =============================================================================
+// cloneConfigMap Tests
+// =============================================================================
+
+func TestCloneConfigMap(t *testing.T) {
+	original := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	cloned, err := cloneConfigMap(original)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, cloned)
+
+	// 验证值已复制
+	v, err := cloned.Get("bootstrap.servers", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "localhost:9092", v)
+
+	v, err = cloned.Get("group.id", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "test-group", v)
+}
+
+func TestCloneConfigMap_Empty(t *testing.T) {
+	original := &kafka.ConfigMap{}
+
+	cloned, err := cloneConfigMap(original)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, cloned)
+}
+
+// =============================================================================
 // Stats Tests
 // =============================================================================
 

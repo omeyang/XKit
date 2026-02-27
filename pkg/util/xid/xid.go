@@ -143,6 +143,10 @@ type Generator struct {
 // 无需额外接口。返回具体类型避免过度抽象，符合 "accept interfaces, return structs" 惯例。
 func NewGenerator(opts ...Option) (*Generator, error) {
 	cfg := &options{}
+	// 设计决策: nil Option 静默跳过而非返回错误。xid 是底层工具包，
+	// 跳过 nil 便于条件式构建 Option 列表（如 append 后展开）。
+	// xconf 采用 fail-fast（ErrNilOption），两者适用场景不同，
+	// 待跨包审查（99-cross-package）统一后在 04-style-baseline.md 锁定。
 	for _, opt := range opts {
 		if opt != nil {
 			opt(cfg)
@@ -507,6 +511,10 @@ func MustNewStringWithRetry() string {
 // 字符串必须是 base36 编码的格式（由 NewString 生成）。
 // 验证格式和正数约束。
 // 所有无效输入（语法错误、溢出、非正值）均返回 [ErrInvalidID]。
+//
+// 设计决策: Parse 采用宽松解析（大小写不敏感，允许前导 "+"），
+// 与 strconv.ParseInt 行为一致。NewString 的输出（小写、无前缀）是规范形式，
+// 但 Parse 不强制规范性校验，以便兼容外部系统可能引入的大小写变换。
 //
 // 注意：int64 正数范围恰好覆盖 Sonyflake 的 63 位有效位（39+8+16），
 // 因此 strconv.ParseInt 的溢出检查已隐含位范围校验，无需额外检查。

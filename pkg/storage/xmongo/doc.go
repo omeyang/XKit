@@ -14,8 +14,8 @@
 //   - Client()：暴露底层 mongo.Client
 //   - Health()：健康检查
 //   - Stats()：统计信息
-//   - FindPage()：分页查询（支持排序、字段投影）
-//   - BulkInsert()：批量插入（支持 context 取消）
+//   - FindPage()：分页查询（支持排序、字段投影，PageSize 上限 MaxPageSize=10000）
+//   - BulkInsert()：批量插入（支持 context 取消，BatchSize 上限 10000）
 //   - 慢查询检测：支持同步（SlowQueryHook）和异步（AsyncSlowQueryHook）回调
 //
 // Close() 可安全重复调用，首次关闭执行断连，后续调用返回 ErrClosed。

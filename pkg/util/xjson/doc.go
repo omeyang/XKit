@@ -1,7 +1,6 @@
 // Package xjson 提供 JSON 序列化工具函数。
 //
-// 本包为 pkg/util 层级的 JSON 工具集，当前聚焦格式化输出，
-// 后续可自然扩展 Compact/CompactE 等函数而不破坏现有契约。
+// 本包为 pkg/util 层级的 JSON 工具集，聚焦格式化输出。
 //
 // # 功能概览
 //

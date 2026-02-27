@@ -40,6 +40,10 @@ type Client struct {
 //   - ErrNoEndpoints: 未配置 endpoints
 //   - 连接错误: etcd 连接失败
 //   - 健康检查错误: 启用健康检查但检查失败
+//
+// 测试说明：NewClient 依赖 clientv3.New 建立真实 gRPC 连接，
+// 健康检查、TLS 和 errors.Join 路径仅在集成测试中覆盖（见 integration_test.go）。
+// 单元测试覆盖率约 65%，为该函数的已知限制。
 func NewClient(config *Config, opts ...Option) (*Client, error) {
 	if config == nil {
 		return nil, ErrNilConfig
@@ -96,7 +100,7 @@ func NewClient(config *Config, opts ...Option) (*Client, error) {
 	if o.healthCheck {
 		ctx, cancel := context.WithTimeout(o.ctx, o.healthTimeout)
 		defer cancel()
-		if _, err := rawClient.Get(ctx, "xetcd-health-check"); err != nil {
+		if _, err := rawClient.Get(ctx, o.healthCheckKey); err != nil {
 			closeErr := rawClient.Close()
 			return nil, errors.Join(
 				fmt.Errorf("xetcd: health check failed: %w", err),
@@ -124,7 +128,7 @@ func (c *Client) RawClient() *clientv3.Client {
 
 // Close 关闭客户端连接并通知所有 Watch goroutine 退出。
 // 关闭后客户端不可再使用。
-// Client 必须通过 NewClient 创建，零值 Client 的行为未定义。
+// Client 必须通过 NewClient 创建，零值 Client 调用公开方法会返回 ErrNotInitialized。
 //
 // Close 会等待所有 Watch goroutine 退出后再关闭底层连接，
 // 确保关闭后不会有残留的 goroutine 继续使用已关闭的连接。
@@ -163,12 +167,16 @@ func (c *Client) checkClosed() error {
 	return nil
 }
 
-// checkPreconditions 检查公开方法的前置条件：nil ctx 和 closed 状态。
+// checkPreconditions 检查公开方法的前置条件：nil ctx、未初始化和 closed 状态。
 // 所有接受 context.Context 的公开方法应在入口处调用此方法，
-// 避免 nil ctx 传递到 etcd 客户端导致 panic。
+// 避免 nil ctx 传递到 etcd 客户端导致 panic，
+// 以及零值 Client 访问 nil client 字段导致 panic。
 func (c *Client) checkPreconditions(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilContext
+	}
+	if c.client == nil {
+		return ErrNotInitialized
 	}
 	return c.checkClosed()
 }

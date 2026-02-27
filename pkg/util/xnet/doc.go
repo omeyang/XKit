@@ -88,7 +88,8 @@
 // 分类标志不互斥，例如 240.0.0.1 同时满足 IsGlobalUnicast 和 IsReserved。
 // [Classification.String] 按优先级返回最特殊的分类标签。
 // [IsBenchmark] 同时覆盖 IPv4 (198.18.0.0/15, RFC 2544) 和 IPv6 (2001:2::/48, RFC 5180)。
-// [IsSharedAddress] 和 [IsReserved] 仅适用于 IPv4（无对应 IPv6 范围）。
+// [IsSharedAddress]、[IsReserved] 和 [IsBroadcast] 仅适用于 IPv4（无对应 IPv6 范围）。
+// [IsReserved] 排除 255.255.255.255（有限广播地址），使用 [IsBroadcast] 判断广播地址。
 //
 // # 输入行为说明
 //

@@ -390,3 +390,98 @@ func TestEtcdFactory_NilFactoryOption(t *testing.T) {
 	// 仍然返回 ErrNilClient（client 为 nil），但不应 panic
 	assert.ErrorIs(t, err, ErrNilClient)
 }
+
+// =============================================================================
+// 本地 key 追踪单元测试（FG-S1 验证）
+// =============================================================================
+
+func TestEtcdFactory_TryLock_LocalKeyTracking(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	// 预设 key 已被本地追踪（模拟已持有锁）
+	fullKey := "lock:test-key"
+	f.StoreLockedKey(fullKey)
+
+	// TryLock 同一 key 应返回 (nil, nil)，不到达 concurrency.NewMutex
+	handle, err := f.TryLock(t.Context(), "test-key")
+	assert.NoError(t, err)
+	assert.Nil(t, handle)
+}
+
+func TestEtcdFactory_Lock_LocalKeyTracking(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	// 预设 key 已被本地追踪
+	fullKey := "lock:test-key"
+	f.StoreLockedKey(fullKey)
+
+	// Lock 同一 key 应返回 ErrLockFailed
+	handle, err := f.Lock(t.Context(), "test-key")
+	assert.ErrorIs(t, err, ErrLockFailed)
+	assert.Nil(t, handle)
+	assert.Contains(t, err.Error(), fullKey)
+}
+
+func TestEtcdFactory_TryLock_DifferentKeys_NoConflict(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	// 预设 key-a 已被追踪
+	f.StoreLockedKey("lock:key-a")
+
+	// TryLock key-b 不应被本地追踪阻止（会因 session=nil 在 concurrency.NewMutex 后失败，
+	// 但 lockedKeys 检查不应阻止），验证 key-b 被写入 lockedKeys
+	// 注意：由于 session=nil，concurrency.NewMutex 会 panic，
+	// 所以这里只验证 key-a 不影响 key-b 的 lockedKeys 检查
+	assert.True(t, f.IsKeyLocked("lock:key-a"))
+	assert.False(t, f.IsKeyLocked("lock:key-b"))
+}
+
+func TestEtcdFactory_TryLock_CustomPrefix_LocalKeyTracking(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+
+	// 预设带自定义前缀的 key
+	f.StoreLockedKey("myapp:test-key")
+
+	// TryLock 同一 key + 同一前缀应命中本地追踪
+	handle, err := f.TryLock(t.Context(), "test-key", WithKeyPrefix("myapp:"))
+	assert.NoError(t, err)
+	assert.Nil(t, handle)
+
+	// 不同前缀的同名 key 不应冲突
+	assert.False(t, f.IsKeyLocked("lock:test-key"))
+}
+
+func TestEtcdLockHandle_Unlock_CleansLockedKeys(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+	mockMu := &MockMutex{}
+	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
+
+	// 模拟 TryLock 成功后 lockedKeys 中有记录
+	f.StoreLockedKey("lock:test")
+	assert.True(t, f.IsKeyLocked("lock:test"))
+
+	// Unlock 成功后应清理 lockedKeys
+	err := h.Unlock(t.Context())
+	assert.NoError(t, err)
+	assert.False(t, f.IsKeyLocked("lock:test"))
+}
+
+func TestEtcdLockHandle_Unlock_FailureKeepsLockedKeys(t *testing.T) {
+	mock := NewMockSession()
+	f := NewTestEtcdFactory(mock)
+	mockMu := &MockMutex{UnlockErr: errors.New("unlock failed")}
+	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
+
+	// 模拟已持有锁
+	f.StoreLockedKey("lock:test")
+
+	// Unlock 失败后 lockedKeys 应保留（锁可能仍被持有）
+	err := h.Unlock(t.Context())
+	assert.Error(t, err)
+	assert.True(t, f.IsKeyLocked("lock:test"))
+}

@@ -26,6 +26,10 @@ type TracingProducer struct {
 // WrapProducer 包装 Producer 以注入追踪信息。
 // producer 不能为 nil，否则返回 ErrNilProducer。
 // topic 为空时自动从 producer.Topic() 获取。
+//
+// 设计决策: 4 个参数均为必需且类型各异，不适用 Functional Options 模式。
+// producer 是被包装对象，topic/tracer/observer 是装饰行为的必要依赖。
+// API 已稳定，无新增参数需求。
 func WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error) {
 	if producer == nil {
 		return nil, ErrNilProducer
@@ -147,6 +151,7 @@ type TracingConsumer struct {
 // 设计决策: 与 WrapProducer 不同，topic 为空时不自动回填。
 // pulsar.Consumer 可订阅多个 topic（Topics/TopicsPattern），无单一 Topic() 方法。
 // 使用 NewTracingConsumer 时会通过 topicFromConsumerOptions 自动推导。
+// 4 个参数均为必需且类型各异（同 WrapProducer），不适用 Functional Options 模式。
 func WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error) {
 	if consumer == nil {
 		return nil, ErrNilConsumer
@@ -280,6 +285,9 @@ func (c *TracingConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Mes
 		return c.Consume(ctx, handler)
 	}
 
+	// 设计决策: 不注入 mqcore.WithOnError 进行错误计数。xpulsar 的可观测性以
+	// OTel Span 为中心，Consume 内部通过 span.End(result) 记录每次消费的成功/失败，
+	// 与 xkafka 的 metric-centric（errorsCount 原子计数器）策略不同。
 	var opts []mqcore.ConsumeLoopOption
 	if backoff != nil {
 		opts = append(opts, mqcore.WithBackoff(backoff))

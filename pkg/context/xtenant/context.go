@@ -22,12 +22,18 @@ type TenantInfo struct {
 	TenantName string
 }
 
-// IsEmpty 判断租户信息是否为空
+// IsEmpty 判断租户信息是否为空（结构零值检测）。
+//
+// 注意：本方法不做 TrimSpace，纯空白值（如 "  "）不被视为空。
+// 如需验证业务有效性（会 TrimSpace），请使用 Validate。
 func (t TenantInfo) IsEmpty() bool {
 	return t.TenantID == "" && t.TenantName == ""
 }
 
-// Validate 验证必填字段
+// Validate 验证必填字段。
+//
+// 按字段顺序依次校验（TenantID → TenantName），返回第一个失败的错误。
+// 当两者都为空时，返回 ErrEmptyTenantID。
 //
 // 设计决策: 对字段做 TrimSpace 后再判空，与包内 WithTenantID、WithTenantInfo、
 // ExtractFromHTTPHeader、ExtractFromMetadata 的空白处理语义保持一致。

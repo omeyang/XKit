@@ -299,7 +299,7 @@ func TestConcurrentDifferentKeys(t *testing.T) {
 				}
 				assert.NoError(t, h.Unlock())
 			}
-		}(string(rune('A' + i)))
+		}(fmt.Sprintf("key-%d", i))
 	}
 
 	wg.Wait()

@@ -257,7 +257,7 @@ func (rtb *RetryThenBreak) Do(ctx context.Context, fn func(ctx context.Context) 
 	if cbErr != nil {
 		// 熔断器打开或请求过多，包装错误后返回
 		// 包装后的错误实现 Retryable() 返回 false，避免不必要的重试
-		return wrapBreakerError(cbErr, rtb.breaker.name, rtb.State())
+		return wrapBreakerError(cbErr, rtb.breaker.name)
 	}
 
 	// 使用 defer 确保 done 一定会被调用，即使发生 panic
@@ -359,7 +359,7 @@ func ExecuteRetryThenBreak[T any](ctx context.Context, rtb *RetryThenBreak, fn f
 	if cbErr != nil {
 		// 熔断器打开或请求过多，包装错误后返回
 		// 包装后的错误实现 Retryable() 返回 false，避免不必要的重试
-		return zero, wrapBreakerError(cbErr, rtb.breaker.name, rtb.State())
+		return zero, wrapBreakerError(cbErr, rtb.breaker.name)
 	}
 
 	// 使用 defer 确保 done 一定会被调用，即使发生 panic

@@ -164,6 +164,25 @@ func TestScheduler_AddFunc(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("name reusable after Cron().Remove() bypasses xcron.Remove()", func(t *testing.T) {
+		s := New()
+		defer s.Stop()
+
+		id, err := s.AddFunc("@every 1s", func(ctx context.Context) error {
+			return nil
+		}, WithName("bypass-job"))
+		require.NoError(t, err)
+
+		// 通过 Cron().Remove() 直接移除，绕过 xcron.Remove()
+		s.Cron().Remove(id)
+
+		// 自修复：validateJobName 检测到 cron 中已无此条目，自动清理 jobNames
+		_, err = s.AddFunc("@every 2s", func(ctx context.Context) error {
+			return nil
+		}, WithName("bypass-job"))
+		assert.NoError(t, err)
+	})
+
 	t.Run("unnamed jobs with noop locker are not checked for duplicates", func(t *testing.T) {
 		s := New()
 		defer s.Stop()
@@ -448,9 +467,10 @@ func TestJobWrapper_PanicIsolation(t *testing.T) {
 			wrapper.Run()
 		})
 
-		// TryLock panic 转为锁服务异常，计入失败
-		assert.Equal(t, int64(1), stats.TotalExecutions())
-		assert.Equal(t, int64(1), stats.FailureCount())
+		// TryLock panic 转为锁服务异常，计入 lockErrorCount（不计入执行统计）
+		assert.Equal(t, int64(0), stats.TotalExecutions())
+		assert.Equal(t, int64(0), stats.FailureCount())
+		assert.Equal(t, int64(1), stats.LockErrorCount())
 	})
 
 	t.Run("tracer.Start panic is recovered", func(t *testing.T) {

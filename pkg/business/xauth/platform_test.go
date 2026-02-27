@@ -12,10 +12,25 @@ import (
 )
 
 func TestNewPlatformManager(t *testing.T) {
+	t.Run("nil HTTP returns error", func(t *testing.T) {
+		_, err := NewPlatformManager(PlatformManagerConfig{})
+		if err != ErrNilHTTPClient {
+			t.Errorf("expected ErrNilHTTPClient, got %v", err)
+		}
+	})
+
+	t.Run("nil TokenMgr returns error", func(t *testing.T) {
+		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
+		_, err := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+		if err == nil {
+			t.Error("expected error for nil TokenMgr")
+		}
+	})
+
 	t.Run("default values", func(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
 
-		mgr := NewPlatformManager(PlatformManagerConfig{
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 			HTTP: httpClient,
 		})
 
@@ -38,7 +53,7 @@ func TestNewPlatformManager(t *testing.T) {
 		customCache := newMockCacheStore()
 		customTTL := 10 * time.Minute
 
-		mgr := NewPlatformManager(PlatformManagerConfig{
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 			HTTP:     httpClient,
 			Cache:    customCache,
 			CacheTTL: customTTL,
@@ -55,7 +70,7 @@ func TestPlatformManager_GetPlatformID(t *testing.T) {
 
 	t.Run("from local cache", func(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-		mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 		// Pre-populate local cache
 		mgr.setLocalCache("tenant-1", CacheFieldPlatformID, "platform-123")
@@ -74,7 +89,7 @@ func TestPlatformManager_GetPlatformID(t *testing.T) {
 		mockCache := newMockCacheStore()
 		_ = mockCache.SetPlatformData(ctx, "tenant-1", CacheFieldPlatformID, "remote-platform-123", time.Hour)
 
-		mgr := NewPlatformManager(PlatformManagerConfig{
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 			HTTP:  httpClient,
 			Cache: mockCache,
 		})
@@ -137,7 +152,7 @@ func TestPlatformManager_GetPlatformID(t *testing.T) {
 			Cache:  tokenCache,
 		})
 
-		mgr := NewPlatformManager(PlatformManagerConfig{
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 			HTTP:     httpClient,
 			TokenMgr: tokenMgr,
 		})
@@ -157,7 +172,7 @@ func TestPlatformManager_HasParentPlatform(t *testing.T) {
 
 	t.Run("from local cache - true", func(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-		mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 		mgr.setLocalCache("tenant-1", CacheFieldHasParent, "true")
 
@@ -172,7 +187,7 @@ func TestPlatformManager_HasParentPlatform(t *testing.T) {
 
 	t.Run("from local cache - false", func(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-		mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 		mgr.setLocalCache("tenant-1", CacheFieldHasParent, "false")
 
@@ -191,7 +206,7 @@ func TestPlatformManager_GetUnclassRegionID(t *testing.T) {
 
 	t.Run("from local cache", func(t *testing.T) {
 		httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-		mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 		mgr.setLocalCache("tenant-1", CacheFieldUnclassRegionID, "region-456")
 
@@ -207,7 +222,7 @@ func TestPlatformManager_GetUnclassRegionID(t *testing.T) {
 
 func TestPlatformManager_LocalCache(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-	mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 	t.Run("set and get", func(t *testing.T) {
 		mgr.setLocalCache("tenant-1", "field-1", "value-1")
@@ -234,7 +249,7 @@ func TestPlatformManager_LocalCache(t *testing.T) {
 
 func TestPlatformManager_ClearLocalCache(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-	mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 	// Populate cache
 	mgr.setLocalCache("tenant-1", "field-1", "value-1")
@@ -257,7 +272,7 @@ func TestPlatformManager_InvalidateCache(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
 	mockCache := newMockCacheStore()
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:  httpClient,
 		Cache: mockCache,
 	})
@@ -320,7 +335,7 @@ func TestPlatformManager_Singleflight(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -375,7 +390,7 @@ func TestPlatformManager_FetchPlatformID_Empty(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -421,7 +436,7 @@ func TestPlatformManager_FetchUnclassRegionID_Empty(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -436,7 +451,7 @@ func TestPlatformManager_HasParentPlatform_ParseError(t *testing.T) {
 	ctx := context.Background()
 
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
-	mgr := NewPlatformManager(PlatformManagerConfig{HTTP: httpClient})
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{HTTP: httpClient})
 
 	// Set invalid bool value in cache
 	mgr.setLocalCache("tenant-1", CacheFieldHasParent, "invalid-not-a-bool")
@@ -466,7 +481,7 @@ func TestPlatformManager_HasParentPlatform_GetFieldError(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -509,7 +524,7 @@ func TestPlatformManager_FetchHasParent_API(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -542,7 +557,7 @@ func TestPlatformManager_FetchPlatformID_TokenError(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -582,7 +597,7 @@ func TestPlatformManager_FetchPlatformID_HTTPError(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -612,7 +627,7 @@ func TestPlatformManager_FetchUnclassRegionID_TokenError(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -652,7 +667,7 @@ func TestPlatformManager_FetchUnclassRegionID_HTTPError(t *testing.T) {
 		Cache:  tokenCache,
 	})
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 	})
@@ -701,7 +716,7 @@ func TestPlatformManager_CacheWriteError(t *testing.T) {
 	mockCache := newMockCacheStore()
 	mockCache.setPlatformErr = ErrServerError
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 		Cache:    mockCache,
@@ -754,7 +769,7 @@ func TestPlatformManager_URLEncoding(t *testing.T) {
 			Cache:  tokenCache,
 		})
 
-		mgr := NewPlatformManager(PlatformManagerConfig{
+		mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 			HTTP:     httpClient,
 			TokenMgr: tokenMgr,
 		})
@@ -812,7 +827,7 @@ func TestPlatformManager_CacheError(t *testing.T) {
 	mockCache := newMockCacheStore()
 	mockCache.getPlatformErr = ErrServerError
 
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:     httpClient,
 		TokenMgr: tokenMgr,
 		Cache:    mockCache,
@@ -832,7 +847,7 @@ func TestPlatformManager_LocalCacheTTL(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
 
 	// Create manager with short TTL for testing
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:          httpClient,
 		LocalCacheTTL: 50 * time.Millisecond,
 	})
@@ -858,7 +873,7 @@ func TestPlatformManager_LocalCacheSize(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
 
 	// Create manager with small cache size
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:           httpClient,
 		LocalCacheSize: 2,
 		LocalCacheTTL:  time.Minute,
@@ -886,7 +901,7 @@ func TestPlatformManager_LocalCacheSize(t *testing.T) {
 func TestPlatformManager_DisableLocalCache(t *testing.T) {
 	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
 	enableLocal := false
-	mgr := NewPlatformManager(PlatformManagerConfig{
+	mgr := mustNewPlatformManager(t, PlatformManagerConfig{
 		HTTP:        httpClient,
 		EnableLocal: &enableLocal,
 	})

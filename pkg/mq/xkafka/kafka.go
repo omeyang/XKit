@@ -100,6 +100,17 @@ type ConsumerStats struct {
 	Lag int64
 }
 
+// cloneConfigMap 复制 ConfigMap，避免修改调用方传入的原始配置。
+func cloneConfigMap(config *kafka.ConfigMap) (*kafka.ConfigMap, error) {
+	cloned := &kafka.ConfigMap{}
+	for k, v := range *config {
+		if err := cloned.SetKey(k, v); err != nil {
+			return nil, fmt.Errorf("clone config key %q: %w", k, err)
+		}
+	}
+	return cloned, nil
+}
+
 // =============================================================================
 // 工厂函数
 // =============================================================================
@@ -124,17 +135,15 @@ func newProducerWrapper(config *kafka.ConfigMap, opts ...ProducerOption) (*produ
 		opt(options)
 	}
 
-	// 复制配置，避免修改调用方传入的 ConfigMap，与 newConsumerWrapper 保持一致
-	clonedConfig := &kafka.ConfigMap{}
-	for k, v := range *config {
-		if err := clonedConfig.SetKey(k, v); err != nil {
-			return nil, fmt.Errorf("clone config key %q: %w", k, err)
-		}
+	// 复制配置，避免修改调用方传入的 ConfigMap
+	clonedConfig, err := cloneConfigMap(config)
+	if err != nil {
+		return nil, err
 	}
 
 	producer, err := kafka.NewProducer(clonedConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xkafka: create producer: %w", err)
 	}
 
 	return &producerWrapper{
@@ -168,11 +177,9 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 	}
 
 	// 复制配置，避免修改调用方传入的 ConfigMap
-	clonedConfig := &kafka.ConfigMap{}
-	for k, v := range *config {
-		if err := clonedConfig.SetKey(k, v); err != nil {
-			return nil, fmt.Errorf("clone config key %q: %w", k, err)
-		}
+	clonedConfig, err := cloneConfigMap(config)
+	if err != nil {
+		return nil, err
 	}
 
 	// 强制设置 enable.auto.offset.store=false 以确保 at-least-once 语义
@@ -181,9 +188,17 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 		return nil, fmt.Errorf("failed to set enable.auto.offset.store: %w", err)
 	}
 
+	// 设计决策: 强制 enable.auto.commit=true，确保 offset 提交契约一致。
+	// 本包实现只提供 StoreMessage（存储 offset），依赖 auto-commit 定期提交到 Broker。
+	// 若用户设置 enable.auto.commit=false，除 Close() 时的显式 Commit 外无其他提交路径，
+	// 重启/rebalance 后会导致大规模重复消费。
+	if err := clonedConfig.SetKey("enable.auto.commit", true); err != nil {
+		return nil, fmt.Errorf("failed to set enable.auto.commit: %w", err)
+	}
+
 	consumer, err := kafka.NewConsumer(clonedConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xkafka: create consumer: %w", err)
 	}
 
 	// 设计决策: SubscribeTopics 第二参数为 nil，未注册 rebalance 回调。

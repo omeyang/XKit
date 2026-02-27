@@ -97,7 +97,8 @@ func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSam
 
 func (s *CompositeSampler) ShouldSample(ctx context.Context) bool {
 	if len(s.samplers) == 0 {
-		// 空列表：AND 返回 true（恒等元），OR 返回 false（恒等元）
+		// 设计决策: 空列表遵循逻辑恒等元语义（AND→true, OR→false），
+		// 与 Python all()/any() 一致。不采用 fail-fast，因为空列表是合法状态。
 		return s.mode == ModeAND
 	}
 

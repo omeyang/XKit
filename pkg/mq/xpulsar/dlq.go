@@ -90,7 +90,7 @@ func (b *xretryNackBackoff) Next(redeliveryCount uint32) time.Duration {
 	// 在 32 位架构上 int 为 32 位，直接 int(uint32_max)+1 会溢出为负数或零。
 	// 使用 maxNackAttempt 上界保护，超过上界的 redeliveryCount 统一使用最大退避延迟。
 	attempt := int(redeliveryCount) + 1
-	if attempt <= 0 {
+	if attempt <= 0 || attempt > maxNackAttempt {
 		attempt = maxNackAttempt
 	}
 	return b.policy.NextDelay(attempt)

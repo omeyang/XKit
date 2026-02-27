@@ -191,6 +191,10 @@ func (g *Group) Wait() error {
 // cause 会作为 context 的取消原因，Wait() 会通过 context.Cause
 // 返回该原因（而非 nil）。如果 cause 为 nil，Wait() 返回 nil。
 //
+// 注意：cause 不应包装 context.Canceled（例如 fmt.Errorf("...: %w", context.Canceled)），
+// 否则 Wait() 会将其视为普通取消而过滤掉。有语义的退出原因应使用独立错误类型
+// （如 SignalError、自定义业务错误）。
+//
 // 用于主动触发关闭，比如收到信号后。
 func (g *Group) Cancel(cause error) {
 	g.cancel(cause)

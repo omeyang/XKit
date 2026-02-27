@@ -229,17 +229,12 @@ func TestXlogger_StackWithSkip_BufferExpansion(t *testing.T) {
 	deepCall(100) // 100 层递归应产生远超 4096 字节的堆栈
 
 	output := buf.String()
-	if !containsStr(output, "deep stack test") {
+	if !strings.Contains(output, "deep stack test") {
 		t.Errorf("output missing message\noutput: %s", output[:min(len(output), 500)])
 	}
-	if !containsStr(output, "goroutine") {
+	if !strings.Contains(output, "goroutine") {
 		t.Errorf("output missing stack trace\noutput: %s", output[:min(len(output), 500)])
 	}
-}
-
-// containsStr 是 strings.Contains 的直接代理（保持白盒测试辅助函数命名一致性）
-func containsStr(s, substr string) bool {
-	return strings.Contains(s, substr)
 }
 
 // TestXlogger_WithGroup_PreservesOnError 测试 WithGroup 是否保留 onError

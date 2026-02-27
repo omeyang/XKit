@@ -1,5 +1,7 @@
 package xsemaphore
 
+//go:generate mockgen -source=semaphore.go -destination=xsemaphoremock/mock.go -package=xsemaphoremock -mock_names=Semaphore=MockSemaphore,Permit=MockPermit
+
 import (
 	"context"
 	"time"

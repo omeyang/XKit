@@ -10,6 +10,9 @@ import (
 // =============================================================================
 
 var (
+	// ErrNilClient 表示传入的 Client 为 nil。
+	ErrNilClient = errors.New("xauth: nil client")
+
 	// ErrNilConfig 表示传入的配置为 nil。
 	ErrNilConfig = errors.New("xauth: nil config")
 

@@ -112,7 +112,7 @@ func TestClientWrapper_Stats_AfterClose(t *testing.T) {
 		options: defaultOptions(),
 	}
 
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	stats := w.Stats()
 	assert.False(t, stats.Connected)
@@ -129,7 +129,7 @@ func TestClientWrapper_Stats_AfterClose_CountersReset(t *testing.T) {
 	w.producersCount.Store(3)
 	w.consumersCount.Store(2)
 
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	stats := w.Stats()
 	assert.False(t, stats.Connected)
@@ -149,13 +149,13 @@ func TestClientWrapper_Close_Idempotent(t *testing.T) {
 	}
 
 	// 首次关闭
-	err := w.Close()
+	err := w.Close(context.Background())
 	assert.NoError(t, err)
 	assert.True(t, mc.closeCalled)
 
 	// 重复关闭不应 panic
 	mc.closeCalled = false
-	err = w.Close()
+	err = w.Close(context.Background())
 	assert.NoError(t, err)
 	assert.False(t, mc.closeCalled, "底层 client.Close 不应被重复调用")
 }
@@ -205,7 +205,7 @@ func TestClientWrapper_CreateProducer_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	producer, err := w.CreateProducer(pulsar.ProducerOptions{Topic: "test"})
 	assert.Nil(t, producer)
@@ -260,7 +260,7 @@ func TestClientWrapper_Subscribe_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	consumer, err := w.Subscribe(pulsar.ConsumerOptions{Topic: "test"})
 	assert.Nil(t, consumer)
@@ -381,7 +381,7 @@ func TestClientWrapper_Health_AfterClose(t *testing.T) {
 		client:  mc,
 		options: defaultOptions(),
 	}
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 
 	err := w.Health(context.Background())
 	assert.ErrorIs(t, err, ErrClosed)
@@ -488,7 +488,7 @@ func TestClientWrapper_Close_ThenTrackedClose_NoNegativeCount(t *testing.T) {
 	require.NoError(t, err)
 
 	// 先关闭 clientWrapper（计数器被重置为 0）
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 	assert.Equal(t, 0, w.Stats().ProducersCount)
 	assert.Equal(t, 0, w.Stats().ConsumersCount)
 
@@ -606,5 +606,5 @@ func TestClientWrapper_Health_Timeout_Close_NoLeak(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 
 	// Close 应等待后台清理 goroutine 完成
-	require.NoError(t, w.Close())
+	require.NoError(t, w.Close(context.Background()))
 }

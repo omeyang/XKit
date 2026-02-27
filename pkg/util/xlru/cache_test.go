@@ -12,6 +12,39 @@ import (
 	"go.uber.org/goleak"
 )
 
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr error
+	}{
+		{"valid", Config{Size: 10, TTL: time.Minute}, nil},
+		{"zero size", Config{Size: 0}, ErrInvalidSize},
+		{"negative size", Config{Size: -1}, ErrInvalidSize},
+		{"exceeds max", Config{Size: maxSize + 1}, ErrSizeExceedsMax},
+		{"max size", Config{Size: maxSize}, nil},
+		{"negative TTL", Config{Size: 1, TTL: -time.Second}, ErrInvalidTTL},
+		{"TTL too small", Config{Size: 1, TTL: time.Nanosecond}, ErrTTLTooSmall},
+		{"TTL at min boundary", Config{Size: 1, TTL: 100 * time.Nanosecond}, nil},
+		{"zero TTL", Config{Size: 1, TTL: 0}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Errorf("Validate() unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Validate() = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNew(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
 		cache, err := New[string, int](Config{Size: 10, TTL: time.Minute})

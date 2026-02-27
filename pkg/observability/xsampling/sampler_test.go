@@ -180,13 +180,15 @@ func TestRateSampler(t *testing.T) {
 	})
 
 	t.Run("low rate statistical", func(t *testing.T) {
+		// 容差基于二项分布标准差: σ = sqrt(n*p*(1-p))/n ≈ sqrt(p/n)
+		// 使用 ~8σ 容差平衡检出能力与 CI 稳定性（flake 概率 < 1e-15）
 		tests := []struct {
 			rate      float64
 			total     int
 			tolerance float64
 		}{
-			{0.01, 100000, 0.003},
-			{0.001, 1000000, 0.0005},
+			{0.01, 100000, 0.003},    // σ≈0.000315, 8σ≈0.0025
+			{0.001, 1000000, 0.0003}, // σ≈0.0000316, 8σ≈0.00025
 		}
 		for _, tt := range tests {
 			s, err := NewRateSampler(tt.rate)
@@ -563,14 +565,16 @@ func TestKeyBasedSampler(t *testing.T) {
 	})
 
 	t.Run("distribution", func(t *testing.T) {
+		// 容差基于二项分布标准差: σ = sqrt(n*p*(1-p))/n ≈ sqrt(p/n)
+		// 使用 ~8σ 容差平衡检出能力与 CI 稳定性（flake 概率 < 1e-15）
 		tests := []struct {
 			rate      float64
 			total     int
 			tolerance float64
 		}{
-			{0.1, 10000, 0.05},
-			{0.01, 100000, 0.005},
-			{0.001, 1000000, 0.0005},
+			{0.1, 10000, 0.03},       // σ≈0.003, 8σ≈0.024
+			{0.01, 100000, 0.003},    // σ≈0.000315, 8σ≈0.0025
+			{0.001, 1000000, 0.0003}, // σ≈0.0000316, 8σ≈0.00025
 		}
 		for _, tt := range tests {
 			sampler, err := NewKeyBasedSampler(tt.rate, testKeyFunc)

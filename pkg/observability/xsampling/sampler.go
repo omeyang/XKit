@@ -11,7 +11,8 @@ type Sampler interface {
 	//
 	// ctx 可以携带采样决策所需的上下文信息，
 	// 如 trace_id、tenant_id 等，供 KeyBasedSampler 等策略使用。
-	// ctx 不得为 nil；如需占位请使用 context.TODO()。
+	// ctx 为 nil 时的行为由具体实现决定；推荐使用 context.TODO() 作为占位。
+	// 例如 KeyBasedSampler 将 nil ctx 视为空 key，回退到随机采样。
 	ShouldSample(ctx context.Context) bool
 }
 

@@ -508,6 +508,26 @@ func TestJoinAndVerifyRelError(t *testing.T) {
 	}
 }
 
+// TestJoinAndVerifyRelReturnsDotDot 测试 joinAndVerify 中 filepath.Rel 返回包含 ".."
+// 段的防御性分支。正常情况下 validatePath 已排除 ".." 段，此分支不可触发；
+// 通过注入 filepathRelFn 返回带 ".." 的结果覆盖该防御性代码路径（path.go:292-294）。
+func TestJoinAndVerifyRelReturnsDotDot(t *testing.T) {
+	original := filepathRelFn
+	t.Cleanup(func() { filepathRelFn = original })
+
+	filepathRelFn = func(_, _ string) (string, error) {
+		return "../../escape", nil
+	}
+
+	_, err := SafeJoin("/var/log", "app.log")
+	if err == nil {
+		t.Fatal("期望 filepathRelFn 返回 '..' 路径时 SafeJoin 返回错误")
+	}
+	if !errors.Is(err, ErrPathEscaped) {
+		t.Errorf("期望 ErrPathEscaped，但得到: %v", err)
+	}
+}
+
 // TestResolveAndVerifySymlinksRelError 测试 resolveAndVerifySymlinks 中 filepath.Rel
 // 失败的防御性分支。与 TestJoinAndVerifyRelError 对称，通过注入模拟实现覆盖
 // 符号链接解析后的防御性代码路径。
@@ -525,6 +545,29 @@ func TestResolveAndVerifySymlinksRelError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("期望 filepathRelResolvedFn 失败时 SafeJoinWithOptions 返回错误")
+	}
+	if !errors.Is(err, ErrPathEscaped) {
+		t.Errorf("期望 ErrPathEscaped，但得到: %v", err)
+	}
+}
+
+// TestResolveAndVerifySymlinksRelReturnsDotDot 测试 resolveAndVerifySymlinks 中
+// filepath.Rel 返回包含 ".." 段的防御性分支。与 TestJoinAndVerifyRelReturnsDotDot 对称，
+// 通过注入 filepathRelResolvedFn 返回带 ".." 的结果覆盖该防御性代码路径（path.go:317-319）。
+func TestResolveAndVerifySymlinksRelReturnsDotDot(t *testing.T) {
+	original := filepathRelResolvedFn
+	t.Cleanup(func() { filepathRelResolvedFn = original })
+
+	filepathRelResolvedFn = func(_, _ string) (string, error) {
+		return "../../escape", nil
+	}
+
+	tmpDir := t.TempDir()
+	_, err := SafeJoinWithOptions(tmpDir, "app.log", SafeJoinOptions{
+		ResolveSymlinks: true,
+	})
+	if err == nil {
+		t.Fatal("期望 filepathRelResolvedFn 返回 '..' 路径时 SafeJoinWithOptions 返回错误")
 	}
 	if !errors.Is(err, ErrPathEscaped) {
 		t.Errorf("期望 ErrPathEscaped，但得到: %v", err)

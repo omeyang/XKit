@@ -2,6 +2,7 @@ package xclickhouse
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -861,4 +862,46 @@ func TestBatchInsert_ContextCanceledBeforeSend(t *testing.T) {
 	assert.Contains(t, err.Error(), "context canceled")
 	// InsertedCount 应该为 0（因为 abort 了）
 	assert.Equal(t, int64(0), result.InsertedCount)
+}
+
+func TestBatchInsert_AppendErrorsCapped(t *testing.T) {
+	conn := newMockConn()
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &mockBatch{appendErr: assert.AnError}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	// 创建 200 条记录（超过 maxAppendErrors=100）
+	rows := make([]any, 200)
+	for i := range rows {
+		rows[i] = struct{ ID int }{ID: i}
+	}
+
+	result, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{BatchSize: 200})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+	// 应包含 100 条 append 错误 + 1 条 "too many errors" + 1 条 abort 错误 = 最多 102
+	assert.LessOrEqual(t, len(result.Errors), 102)
+	assert.GreaterOrEqual(t, len(result.Errors), 101) // 至少 100 + "too many errors" 摘要
+
+	// 验证最后一条 append 相关错误是 "too many errors" 摘要
+	found := false
+	for _, e := range result.Errors {
+		if assert.ObjectsAreEqual("too many append errors", "") {
+			break
+		}
+		if e != nil && len(e.Error()) > 0 {
+			if contains := strings.Contains(e.Error(), "too many append errors"); contains {
+				found = true
+				break
+			}
+		}
+	}
+	assert.True(t, found, "应包含 'too many append errors' 摘要错误")
 }

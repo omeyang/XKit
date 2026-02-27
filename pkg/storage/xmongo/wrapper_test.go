@@ -736,6 +736,10 @@ func TestWithAsyncSlowQueryWorkers(t *testing.T) {
 	// 负值被忽略
 	WithAsyncSlowQueryWorkers(-1)(opts)
 	assert.Equal(t, 20, opts.AsyncSlowQueryWorkers)
+
+	// 超过上限被 clamp
+	WithAsyncSlowQueryWorkers(999999)(opts)
+	assert.Equal(t, 1000, opts.AsyncSlowQueryWorkers)
 }
 
 func TestWithAsyncSlowQueryQueueSize(t *testing.T) {
@@ -752,6 +756,10 @@ func TestWithAsyncSlowQueryQueueSize(t *testing.T) {
 	// 负值被忽略
 	WithAsyncSlowQueryQueueSize(-1)(opts)
 	assert.Equal(t, 500, opts.AsyncSlowQueryQueueSize)
+
+	// 超过上限被 clamp
+	WithAsyncSlowQueryQueueSize(999999)(opts)
+	assert.Equal(t, 100000, opts.AsyncSlowQueryQueueSize)
 }
 
 func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
@@ -806,14 +814,57 @@ func TestWrapper_FindPageInternal_PageOverflow(t *testing.T) {
 		options: defaultOptions(),
 	}
 
-	// 极大的 page 和 pageSize 触发 overflow
+	// 极大的 page 配合 MaxPageSize 内的 pageSize 触发 overflow
+	// pageSize 必须 <= MaxPageSize 才能通过上限检查，page 足够大触发溢出
 	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{
 		Page:     1<<62 + 1,
-		PageSize: 1<<62 + 1,
+		PageSize: MaxPageSize,
 	})
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrPageOverflow)
 	assert.Nil(t, result)
+}
+
+// =============================================================================
+// MaxPageSize 上限测试
+// =============================================================================
+
+func TestWrapper_FindPageInternal_PageSizeTooLarge(t *testing.T) {
+	mock := newMockCollectionOps()
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize + 1,
+	})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrPageSizeTooLarge)
+	assert.Nil(t, result)
+}
+
+func TestWrapper_FindPageInternal_PageSizeAtMax(t *testing.T) {
+	docs := []any{bson.M{"_id": "1"}}
+	mock := &cursorCollectionOps{
+		docs:     docs,
+		count:    1,
+		collName: "test_coll",
+	}
+
+	w := &mongoWrapper{
+		client:  nil,
+		options: defaultOptions(),
+	}
+
+	// MaxPageSize 本身是允许的
+	result, err := w.findPageInternal(context.Background(), mock, nil, PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
 }
 
 // =============================================================================
@@ -984,6 +1035,35 @@ func TestWrapper_FindPageInternal_WithSlowQuery(t *testing.T) {
 // =============================================================================
 // buildFindOptions 测试
 // =============================================================================
+
+// =============================================================================
+// validatePageOptions 测试
+// =============================================================================
+
+func TestValidatePageOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    PageOptions
+		wantErr error
+	}{
+		{"valid", PageOptions{Page: 1, PageSize: 10}, nil},
+		{"max page size", PageOptions{Page: 1, PageSize: MaxPageSize}, nil},
+		{"page size too large", PageOptions{Page: 1, PageSize: MaxPageSize + 1}, ErrPageSizeTooLarge},
+		{"invalid page", PageOptions{Page: 0, PageSize: 10}, ErrInvalidPage},
+		{"invalid page size", PageOptions{Page: 1, PageSize: 0}, ErrInvalidPageSize},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := validatePageOptions(tt.opts)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
 
 func TestBuildFindOptions_Basic(t *testing.T) {
 	opts := PageOptions{

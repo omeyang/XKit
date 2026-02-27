@@ -55,9 +55,24 @@ func (m *MockMutex) Unlock(_ context.Context) error {
 // 仅用于测试 checkSession/Close/Health 等不依赖真实 Session 的路径。
 func NewTestEtcdFactory(mock *MockSession) *etcdFactory {
 	return &etcdFactory{
-		sp:      mock,
-		options: defaultEtcdFactoryOptions(),
+		sp: mock,
 	}
+}
+
+// StoreLockedKey 在工厂的 lockedKeys 中写入 key（用于测试本地追踪机制）。
+func (f *etcdFactory) StoreLockedKey(key string) {
+	f.lockedKeys.Store(key, struct{}{})
+}
+
+// DeleteLockedKey 从工厂的 lockedKeys 中删除 key（用于测试）。
+func (f *etcdFactory) DeleteLockedKey(key string) {
+	f.lockedKeys.Delete(key)
+}
+
+// IsKeyLocked 检查 key 是否在工厂的 lockedKeys 中（用于测试）。
+func (f *etcdFactory) IsKeyLocked(key string) bool {
+	_, ok := f.lockedKeys.Load(key)
+	return ok
 }
 
 // NewTestEtcdLockHandle 创建用于测试的 etcdLockHandle。

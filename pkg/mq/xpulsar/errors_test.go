@@ -37,6 +37,7 @@ func TestPulsarSpecificErrors(t *testing.T) {
 		err  error
 		want string
 	}{
+		{"ErrNilOption", ErrNilOption, "nil option"},
 		{"ErrNilProducer", ErrNilProducer, "nil producer"},
 		{"ErrNilConsumer", ErrNilConsumer, "nil consumer"},
 	}

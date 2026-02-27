@@ -932,6 +932,26 @@ func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {
 		assert.NotErrorIs(t, err, ErrInsecureHost)
 	})
 
+	t.Run("mixed case http scheme rejected", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Host = server.URL
+		c, err := NewClient(cfg)
+		require.NoError(t, err)
+		defer c.Close(context.Background())
+
+		internal := c.(*client)
+		internal.config.AllowInsecure = false
+
+		for _, scheme := range []string{"HTTP://", "Http://", "HtTp://"} {
+			err = c.Request(ctx, &AuthRequest{
+				TenantID: "tenant-1",
+				URL:      scheme + "evil.com/steal",
+				Method:   "GET",
+			})
+			assert.ErrorIs(t, err, ErrInsecureHost, "scheme %q should be rejected", scheme)
+		}
+	})
+
 	t.Run("relative URL always allowed", func(t *testing.T) {
 		cfg := testConfig()
 		cfg.Host = server.URL

@@ -58,26 +58,39 @@ type PlatformManagerConfig struct {
 	LocalCacheTTL time.Duration
 }
 
+// applyDefaults 填充 PlatformManagerConfig 中未设置的字段。
+func (c *PlatformManagerConfig) applyDefaults() {
+	if c.Logger == nil {
+		c.Logger = slog.Default()
+	}
+	if c.Observer == nil {
+		c.Observer = xmetrics.NoopObserver{}
+	}
+	if c.CacheTTL <= 0 {
+		c.CacheTTL = DefaultPlatformDataCacheTTL
+	}
+	if c.Cache == nil {
+		c.Cache = NoopCacheStore{}
+	}
+	if c.LocalCacheSize <= 0 {
+		c.LocalCacheSize = 1000
+	}
+	if c.LocalCacheTTL <= 0 {
+		c.LocalCacheTTL = c.CacheTTL
+	}
+}
+
 // NewPlatformManager 创建 PlatformManager。
-func NewPlatformManager(cfg PlatformManagerConfig) *PlatformManager {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+// HTTP 和 TokenMgr 为必填依赖，缺失时返回错误。
+func NewPlatformManager(cfg PlatformManagerConfig) (*PlatformManager, error) {
+	if cfg.HTTP == nil {
+		return nil, ErrNilHTTPClient
 	}
-	if cfg.Observer == nil {
-		cfg.Observer = xmetrics.NoopObserver{}
+	if cfg.TokenMgr == nil {
+		return nil, fmt.Errorf("xauth: nil token manager")
 	}
-	if cfg.CacheTTL <= 0 {
-		cfg.CacheTTL = DefaultPlatformDataCacheTTL
-	}
-	if cfg.Cache == nil {
-		cfg.Cache = NoopCacheStore{}
-	}
-	if cfg.LocalCacheSize <= 0 {
-		cfg.LocalCacheSize = 1000
-	}
-	if cfg.LocalCacheTTL <= 0 {
-		cfg.LocalCacheTTL = cfg.CacheTTL
-	}
+
+	cfg.applyDefaults()
 
 	pm := &PlatformManager{
 		http:     cfg.HTTP,
@@ -104,7 +117,7 @@ func NewPlatformManager(cfg PlatformManagerConfig) *PlatformManager {
 		pm.localCache = localCache
 	}
 
-	return pm
+	return pm, nil
 }
 
 // GetPlatformID 获取平台 ID。

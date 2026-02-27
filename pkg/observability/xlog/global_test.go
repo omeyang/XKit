@@ -338,6 +338,37 @@ func TestResetDefault(t *testing.T) {
 }
 
 // =============================================================================
+// defaultLogger fallback 路径测试
+// =============================================================================
+
+func TestDefaultLogger_FallbackPath(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	// 替换构建器工厂为总是失败的版本，强制进入 fallback 路径
+	restore := xlog.SetNewBuilderForTest(func() *xlog.Builder {
+		// 返回一个已注入错误的 Builder（模拟 New().Build() 失败）
+		return xlog.New().SetOutput(nil)
+	})
+	defer restore()
+
+	// Default() 应返回 fallback logger（不为 nil）
+	logger := xlog.Default()
+	if logger == nil {
+		t.Fatal("Default() should return fallback logger, not nil")
+	}
+
+	// fallback logger 应该能正常工作（不 panic）
+	logger.Info(context.Background(), "fallback logger message")
+
+	// 验证 fallback logger 支持动态级别控制
+	logger.SetLevel(xlog.LevelDebug)
+	if logger.GetLevel() != xlog.LevelDebug {
+		t.Errorf("fallback logger GetLevel() = %v, want %v", logger.GetLevel(), xlog.LevelDebug)
+	}
+}
+
+// =============================================================================
 // 性能测试
 // =============================================================================
 

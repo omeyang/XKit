@@ -5,7 +5,7 @@
 //
 // # 路径安全函数对比
 //
-//   - SanitizePath: 仅格式净化（空字节、穿越、目录标记），不限制目标目录，不防护绝对路径穿越
+//   - SanitizePath: 仅格式净化（空字节、穿越段、目录标记），不限制目标目录，不提供安全沙箱保证
 //   - SafeJoin: 确保结果路径始终在指定的 base 目录内，推荐用于处理用户输入（默认不解析符号链接）
 //   - SafeJoinWithOptions: SafeJoin 的增强版，支持符号链接解析等选项（高安全场景推荐）
 //
@@ -51,6 +51,13 @@
 // [EnsureDir] 使用安全默认权限 0750。[EnsureDirWithPerm] 允许自定义权限，
 // 仅校验所有者执行位（目录必须可遍历），不限制 world-writable 等权限位。
 // 传入宽松权限（如 0777）前请确认安全影响，gosec G301 可在下游用法中检测。
+//
+// 重要：[EnsureDir] 和 [EnsureDirWithPerm] 不校验路径穿越。若 filename 来自
+// 不可信输入，应先用 [SafeJoin] 约束路径再调用：
+//
+//	safePath, err := xfile.SafeJoin("/var/log", userInput)
+//	if err != nil { return err }
+//	err = xfile.EnsureDir(safePath)
 //
 // # 错误处理
 //

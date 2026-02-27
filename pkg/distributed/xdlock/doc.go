@@ -62,8 +62,16 @@
 //
 // # 锁重入
 //
-// 设计决策: xdlock 的锁是非重入的。同一 goroutine/进程对同一 key 重复加锁
-// 在 etcd 后端可能导致自等待阻塞。调用方需自行保证不重复对同一 key 加锁。
+// 设计决策: xdlock 的锁是非重入的。
+//
+// etcd 后端：同一 Factory（同一 Session）对同一 key 只能持有一个 LockHandle。
+// etcd concurrency.Mutex 的所有权标识由 Session Lease 决定，同一 Session 对同一
+// key prefix 创建的 Mutex 共享相同的 owner key（pfx + hex(leaseID)）。
+// 为防止多个 handle 错误共享所有权（其中一个 Unlock 会释放所有 handle 的锁），
+// Factory 使用本地追踪机制：TryLock 返回 (nil, nil)，Lock 返回 ErrLockFailed。
+//
+// Redis 后端：每个 LockHandle 通过随机值（redsync 默认）实现独立所有权，
+// 同一 Factory 可对同一 key 创建多个独立 handle（前提是锁未被占用）。
 //
 // # 与 xcache 的关系
 //

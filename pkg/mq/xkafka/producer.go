@@ -75,7 +75,7 @@ func (w *producerWrapper) Health(ctx context.Context) (err error) {
 
 		_, err := w.producer.GetMetadata(nil, true, timeoutMs)
 		if err != nil {
-			done <- fmt.Errorf("kafka producer health check failed: %w", err)
+			done <- fmt.Errorf("%w: producer get metadata: %w", ErrHealthCheckFailed, err)
 			return
 		}
 		done <- nil

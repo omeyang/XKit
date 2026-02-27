@@ -117,6 +117,11 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 		return false
 	}
 
+	// 与 HealthContext 保持一致的 nil ctx 防御
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// 触发同步钩子
 	if d.options.SyncHook != nil {
 		d.options.SyncHook(ctx, info)
@@ -137,6 +142,10 @@ func (d *SlowQueryDetector[T]) MaybeSlowQuery(ctx context.Context, info T, durat
 // 设计决策: pool 引用在锁内取出后立即释放锁，pool.Close() 在锁外执行。
 // 这避免了 pool 排空期间占用写锁导致并发 MaybeSlowQuery 阻塞（尾延迟）。
 // 并发的 MaybeSlowQuery 会快速看到 closed == true 并跳过提交。
+//
+// 设计决策: pool.Close() 内部使用 context.Background() 等待排空，无超时上限。
+// 前提假设是 AsyncHook 为轻量操作（日志/指标），不会长时间阻塞。
+// 如需超时控制，应由上层调用方在 Close 外部实施（如 context.WithTimeout + select）。
 func (d *SlowQueryDetector[T]) Close() {
 	d.mu.Lock()
 	if d.closed {

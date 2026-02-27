@@ -62,8 +62,12 @@ func DefaultBackoff() xretry.BackoffPolicy {
 //  3. 如果失败（err != nil），应用退避延迟后重试
 //  4. 循环直到 ctx 取消
 //
-// 契约: consume 函数在无消息时应自行阻塞（如 poll with timeout），而非立即返回 nil。
+// 重要: consume 函数在无消息时必须自行阻塞（如 poll with timeout），而非立即返回 nil。
 // 成功路径不插入延迟，依赖 consume 自身的阻塞语义避免忙等。
+// 如果 consume 在无消息时立即返回 nil，循环将进入无延迟的紧密自旋，导致 CPU 100%。
+//
+// 建议: 调用方通过 WithOnError 注入错误回调进行错误计数或日志记录，
+// 以获得消费循环的可观测性。参考 xkafka 的 runConsumeLoop 实现。
 //
 // 参数：
 //   - ctx: 上下文，取消时退出循环

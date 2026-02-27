@@ -1187,6 +1187,49 @@ func TestOTelObserver_Start_NilSpanFromTracer(t *testing.T) {
 	})
 }
 
+// typedNilSpanTracerProvider 返回 typed-nil span 的 TracerProvider，
+// 用于测试 typed-nil span 防御（FG-S1 回归）。
+type typedNilSpanTracerProvider struct {
+	trace.TracerProvider
+}
+
+func (typedNilSpanTracerProvider) Tracer(string, ...trace.TracerOption) trace.Tracer {
+	return &typedNilSpanTracer{}
+}
+
+type typedNilSpanTracer struct {
+	trace.Tracer
+}
+
+// customTraceSpan 用于构造 typed-nil trace.Span。
+type customTraceSpan struct {
+	trace.Span
+}
+
+func (typedNilSpanTracer) Start(ctx context.Context, _ string, _ ...trace.SpanStartOption) (context.Context, trace.Span) {
+	var s *customTraceSpan // typed-nil：接口 type=*customTraceSpan, value=nil
+	return ctx, s
+}
+
+func TestOTelObserver_Start_TypedNilSpanFromTracer(t *testing.T) {
+	// 自定义 TracerProvider 返回 typed-nil span 时不应 panic
+	obs, err := NewOTelObserver(WithTracerProvider(typedNilSpanTracerProvider{}))
+	require.NoError(t, err)
+
+	ctx, span := obs.Start(context.Background(), SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-tracer-span",
+	})
+
+	assert.NotNil(t, ctx)
+	assert.NotNil(t, span)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
 // ============================================================================
 // FG-S2: nil instrument 防御测试
 // ============================================================================

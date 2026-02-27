@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -110,10 +112,19 @@ func (c *Client) Execute(ctx context.Context, command string, args []string) (_ 
 	// 接收并解码响应
 	resp, err := c.codec.DecodeResponse(conn)
 	if err != nil {
-		return nil, fmt.Errorf("接收响应失败: %w", err)
+		return nil, wrapDecodeError(err)
 	}
 
 	return resp, nil
+}
+
+// wrapDecodeError 包装解码错误，对版本不匹配场景提供更友好的提示。
+func wrapDecodeError(err error) error {
+	if errors.Is(err, xdbg.ErrInvalidMessage) && strings.Contains(err.Error(), "unsupported version") {
+		return fmt.Errorf("协议版本不兼容: 服务端可能运行了不同版本的 xdbg，"+
+			"请确保 xdbgctl 与目标进程使用相同版本的 XKit: %w", err)
+	}
+	return fmt.Errorf("接收响应失败: %w", err)
 }
 
 // Ping 测试连接。

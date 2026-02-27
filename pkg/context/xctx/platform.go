@@ -125,6 +125,7 @@ type Platform struct {
 // GetPlatform 从 context 批量获取平台信息
 //
 // 返回 Platform 结构体。
+// 如果 ctx 为 nil，所有字段返回零值。如需检测 nil context，请先显式判断。
 // 注意：HasParent 默认为 false，无法区分"未设置"和"设置为false"。
 // 如需区分，请使用 HasParent(ctx) 函数。
 func GetPlatform(ctx context.Context) Platform {

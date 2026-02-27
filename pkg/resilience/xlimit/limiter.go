@@ -136,7 +136,7 @@ func New(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
 		// 多 Pod 部署下每个 Pod 按完整配额执行本地限流，总放行量可达 N 倍。
 		// 不设为硬错误是因为单 Pod 场景（开发/测试/小型服务）默认值合理。
 		warnDefaultPodCount(cfg)
-		localBackend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider)
+		localBackend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider, cfg.logger)
 		local := newLimiterCore(localBackend, matcher, cfg)
 		return newFallbackLimiter(distributed, local, cfg), nil
 	}
@@ -169,7 +169,7 @@ func NewLocal(opts ...Option) (Limiter, error) {
 	}
 
 	matcher := newRuleMatcher(cfg.config.Rules)
-	backend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider)
+	backend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider, cfg.logger)
 	return newLimiterCore(backend, matcher, cfg), nil
 }
 

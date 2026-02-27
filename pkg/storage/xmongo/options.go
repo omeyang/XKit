@@ -62,6 +62,10 @@ type AsyncSlowQueryHook func(info SlowQueryInfo)
 // =============================================================================
 
 // Options 定义 MongoDB 包装器的配置选项。
+//
+// 设计决策: Options 字段公开导出以便调用方检查当前配置（如日志、调试），
+// 但应始终通过 WithXxx 函数配置。直接构造 Options{} 不保证字段有效性，
+// 因为 WithXxx 函数包含负值过滤、上限 clamp 等防御逻辑。
 type Options struct {
 	// HealthTimeout 健康检查超时时间。
 	// 默认为 5 秒。
@@ -133,6 +137,14 @@ const (
 	// 当调用方 context 没有 deadline 时，BulkInsert 使用此超时防止无限阻塞。
 	// 可通过 WithWriteTimeout(0) 显式禁用。
 	DefaultWriteTimeout = 60 * time.Second
+
+	// maxAsyncWorkers 异步慢查询 worker pool 大小上限。
+	// 防止配置错误（如从环境变量读取到异常值）导致创建海量 goroutine。
+	maxAsyncWorkers = 1000
+
+	// maxAsyncQueueSize 异步慢查询任务队列大小上限。
+	// 防止配置错误导致分配过大内存。
+	maxAsyncQueueSize = 100000
 )
 
 // defaultOptions 返回默认配置。
@@ -187,21 +199,21 @@ func WithAsyncSlowQueryHook(hook AsyncSlowQueryHook) Option {
 }
 
 // WithAsyncSlowQueryWorkers 设置异步慢查询 worker pool 大小。
-// 默认为 10。
+// 默认为 10，上限为 1000。超过上限时自动限制为上限值。
 func WithAsyncSlowQueryWorkers(n int) Option {
 	return func(o *Options) {
 		if n > 0 {
-			o.AsyncSlowQueryWorkers = n
+			o.AsyncSlowQueryWorkers = min(n, maxAsyncWorkers)
 		}
 	}
 }
 
 // WithAsyncSlowQueryQueueSize 设置异步慢查询任务队列大小。
-// 默认为 1000。
+// 默认为 1000，上限为 100000。超过上限时自动限制为上限值。
 func WithAsyncSlowQueryQueueSize(n int) Option {
 	return func(o *Options) {
 		if n > 0 {
-			o.AsyncSlowQueryQueueSize = n
+			o.AsyncSlowQueryQueueSize = min(n, maxAsyncQueueSize)
 		}
 	}
 }

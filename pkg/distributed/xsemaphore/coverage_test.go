@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/omeyang/xkit/pkg/observability/xlog"
 )
@@ -3224,4 +3225,431 @@ func TestConvertScriptResult(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// =============================================================================
+// releasePermit / extendPermit default 分支测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_ReleasePermit_UnknownStatus(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			// 返回未知状态码 99
+			release: redis.NewScript(`return {99, 0}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+	assert.Contains(t, err.Error(), "release returned status 99")
+}
+
+func TestRedisSemaphore_ReleasePermit_UnknownStatus_WithTenant(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			release: redis.NewScript(`return {99, 0}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "tenant-1", time.Now().Add(5*time.Minute), 5*time.Minute, true, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+}
+
+func TestRedisSemaphore_ExtendPermit_UnknownStatus(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			// 返回未知状态码 99
+			extend: redis.NewScript(`return {99}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+	assert.Contains(t, err.Error(), "extend returned status 99")
+}
+
+func TestRedisSemaphore_ExtendPermit_UnknownStatus_WithTenant(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			extend: redis.NewScript(`return {99}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "tenant-1", time.Now().Add(5*time.Minute), 5*time.Minute, true, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+}
+
+// =============================================================================
+// recordAcquireMetrics 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_Acquire_WithMetrics(t *testing.T) {
+	_, client := setupRedis(t)
+
+	mp := noop.NewMeterProvider()
+	sem, err := New(client, WithMeterProvider(mp))
+	require.NoError(t, err)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 成功路径：recordAcquireMetrics 在 Acquire 中被调用
+	permit, err := sem.Acquire(ctx, "test-resource",
+		WithCapacity(10),
+		WithMaxRetries(3),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, permit)
+	releasePermit(t, ctx, permit)
+
+	// 失败路径：容量满时 Acquire 重试耗尽
+	// 先占满容量
+	permits := make([]Permit, 2)
+	for i := range permits {
+		p, err := sem.TryAcquire(ctx, "full-resource", WithCapacity(2))
+		require.NoError(t, err)
+		require.NotNil(t, p)
+		permits[i] = p
+	}
+
+	// Acquire 应失败
+	_, err = sem.Acquire(ctx, "full-resource",
+		WithCapacity(2),
+		WithMaxRetries(2),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.ErrorIs(t, err, ErrAcquireFailed)
+
+	for _, p := range permits {
+		releasePermit(t, ctx, p)
+	}
+}
+
+// =============================================================================
+// localSemaphore Acquire + Extend 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestLocalSemaphore_Acquire_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 成功路径
+	permit, err := sem.Acquire(ctx, "test-resource",
+		WithCapacity(10),
+		WithMaxRetries(3),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, permit)
+
+	// Extend 路径（测试 recordExtendMetrics with non-nil metrics）
+	err = permit.Extend(ctx)
+	require.NoError(t, err)
+
+	err = permit.Release(ctx)
+	assert.NoError(t, err)
+}
+
+func TestLocalSemaphore_Acquire_Exhausted_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 占满容量
+	p, err := sem.TryAcquire(ctx, "full-resource", WithCapacity(1))
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	defer releasePermit(t, ctx, p)
+
+	// Acquire 失败路径
+	_, err = sem.Acquire(ctx, "full-resource",
+		WithCapacity(1),
+		WithMaxRetries(2),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.ErrorIs(t, err, ErrAcquireFailed)
+}
+
+// =============================================================================
+// recordFallbackObservability 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRecordFallbackObservability_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	logger := &testLogger{}
+	opts := &options{
+		metrics:  metrics,
+		logger:   logger,
+		fallback: FallbackLocal,
+	}
+
+	f := &fallbackSemaphore{
+		strategy: FallbackLocal,
+		opts:     opts,
+	}
+
+	f.recordFallbackObservability(context.Background(), "resource", ErrRedisUnavailable)
+
+	assert.True(t, logger.warnCalled, "expected logger.Warn to be called")
+}
+
+// =============================================================================
+// Health 关闭状态路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_Health_Closed(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+	}
+	sem.closed.Store(true)
+
+	err := sem.Health(context.Background())
+	assert.ErrorIs(t, err, ErrSemaphoreClosed)
+}
+
+func TestLocalSemaphore_Health_Closed(t *testing.T) {
+	opts := defaultOptions()
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	_ = sem.Close(context.Background())
+
+	err := sem.Health(context.Background())
+	assert.ErrorIs(t, err, ErrSemaphoreClosed)
+}
+
+func TestRedisSemaphore_Health_NilContext(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+	}
+
+	err := sem.Health(nil) //nolint:staticcheck // 测试 nil context 路径
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestLocalSemaphore_Health_NilContext(t *testing.T) {
+	opts := defaultOptions()
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	err := sem.Health(nil) //nolint:staticcheck // 测试 nil context 路径
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+// =============================================================================
+// extendPermit NotHeld 路径带 metrics 测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_ExtendPermit_NotHeld_WithMetrics(t *testing.T) {
+	_, client := setupRedis(t)
+
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   opts,
+		scripts: &scripts{
+			// scriptStatusNotHeld = 3
+			extend: redis.NewScript(`return {3}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err = sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	assert.ErrorIs(t, err, ErrPermitNotHeld)
+}
+
+func TestRedisSemaphore_ExtendPermit_ScriptError(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			extend: redis.NewScript(`return redis.error_reply("test error")`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "extend script failed")
+}
+
+func TestRedisSemaphore_ReleasePermit_ScriptError(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			release: redis.NewScript(`return redis.error_reply("test error")`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release script failed")
+}
+
+// =============================================================================
+// noopPermit Release/Extend 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestNoopPermit_Release_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+	require.NoError(t, err)
+
+	err = p.Release(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestNoopPermit_Extend_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+	require.NoError(t, err)
+
+	err = p.Extend(context.Background())
+	assert.NoError(t, err)
+}
+
+// =============================================================================
+// handleQueryError 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_HandleQueryError_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	sem := &redisSemaphore{opts: opts}
+
+	// 模拟 nil span（从 Background context 获取）
+	ctx := context.Background()
+	_, span := startSpan(ctx, nil, "test")
+	defer span.End()
+
+	resultErr := sem.handleQueryError(ctx, span, "resource", time.Now(), errors.New("test error"))
+	require.Error(t, resultErr)
+	assert.Contains(t, resultErr.Error(), "query script failed")
+}
+
+// =============================================================================
+// local.Acquire context 取消路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestLocalSemaphore_Acquire_ContextCanceled_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	// 占满容量
+	p, err := sem.TryAcquire(context.Background(), "resource", WithCapacity(1))
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	defer releasePermit(t, context.Background(), p)
+
+	// 已取消的 context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = sem.Acquire(ctx, "resource",
+		WithCapacity(1),
+		WithMaxRetries(5),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.Error(t, err)
 }

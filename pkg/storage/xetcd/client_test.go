@@ -84,22 +84,78 @@ func TestClient_checkClosed(t *testing.T) {
 }
 
 func TestClient_checkPreconditions(t *testing.T) {
+	// nil context（优先检查）
 	c := &Client{}
-
-	// nil context
 	if err := c.checkPreconditions(nil); err != ErrNilContext { //nolint:staticcheck // 测试 nil ctx 防御
 		t.Errorf("checkPreconditions(nil) = %v, want %v", err, ErrNilContext)
 	}
 
-	// valid context, open client
-	if err := c.checkPreconditions(context.Background()); err != nil {
-		t.Errorf("checkPreconditions(ctx) on open client = %v, want nil", err)
+	// 零值 Client（client 字段为 nil）
+	if err := c.checkPreconditions(context.Background()); err != ErrNotInitialized {
+		t.Errorf("checkPreconditions(ctx) on zero-value client = %v, want %v", err, ErrNotInitialized)
 	}
 
-	// valid context, closed client
-	c.closed.Store(true)
-	if err := c.checkPreconditions(context.Background()); err != ErrClientClosed {
+	// 正常初始化的 Client
+	c2 := newTestClientForPreconditions()
+	if err := c2.checkPreconditions(context.Background()); err != nil {
+		t.Errorf("checkPreconditions(ctx) on initialized client = %v, want nil", err)
+	}
+
+	// 已关闭的 Client
+	c2.closed.Store(true)
+	if err := c2.checkPreconditions(context.Background()); err != ErrClientClosed {
 		t.Errorf("checkPreconditions(ctx) on closed client = %v, want %v", err, ErrClientClosed)
+	}
+}
+
+// newTestClientForPreconditions 创建用于前置条件测试的最小 Client。
+func newTestClientForPreconditions() *Client {
+	return &Client{
+		client:  &noopEtcdClient{},
+		closeCh: make(chan struct{}),
+	}
+}
+
+// TestClient_ZeroValue_NoPanic 验证零值 Client 调用所有公开方法不会 panic。
+func TestClient_ZeroValue_NoPanic(t *testing.T) {
+	c := &Client{}
+	ctx := context.Background()
+
+	if _, err := c.Get(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("Get() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, _, err := c.GetWithRevision(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("GetWithRevision() = %v, want %v", err, ErrNotInitialized)
+	}
+	if err := c.Put(ctx, "key", []byte("v")); err != ErrNotInitialized {
+		t.Errorf("Put() = %v, want %v", err, ErrNotInitialized)
+	}
+	if err := c.PutWithTTL(ctx, "key", []byte("v"), 10); err != ErrNotInitialized {
+		t.Errorf("PutWithTTL() = %v, want %v", err, ErrNotInitialized)
+	}
+	if err := c.Delete(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("Delete() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.DeleteWithPrefix(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("DeleteWithPrefix() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.List(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("List() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.ListKeys(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("ListKeys() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.Exists(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("Exists() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.Count(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("Count() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.Watch(ctx, "key"); err != ErrNotInitialized {
+		t.Errorf("Watch() = %v, want %v", err, ErrNotInitialized)
+	}
+	if _, err := c.WatchWithRetry(ctx, "key", DefaultRetryConfig()); err != ErrNotInitialized {
+		t.Errorf("WatchWithRetry() = %v, want %v", err, ErrNotInitialized)
 	}
 }
 

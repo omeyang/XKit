@@ -9,7 +9,7 @@
 // 全局选项:
 //
 //	-s, --socket   Unix Socket 路径 (默认: /var/run/xdbg.sock)
-//	-t, --timeout  命令超时时间 (默认: 30s)
+//	-t, --timeout  命令超时时间 (默认: 30s, 上限: 5m)
 //
 // 命令:
 //

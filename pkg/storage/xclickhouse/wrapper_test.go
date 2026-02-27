@@ -584,19 +584,27 @@ func TestValidateQuerySyntax(t *testing.T) {
 		{"带分号的正常查询", "SELECT * FROM users;", nil, "SELECT * FROM users"},
 		{"空查询", "", ErrEmptyQuery, ""},
 		{"只有空白", "   ", ErrEmptyQuery, ""},
+		// FORMAT 子句检测（末尾锚定）
 		{"包含 FORMAT", "SELECT * FROM users FORMAT JSON", ErrQueryContainsFormat, ""},
 		{"包含小写 format", "SELECT * FROM users format TabSeparated", ErrQueryContainsFormat, ""},
+		{"FORMAT 末尾带空格", "SELECT * FROM users FORMAT CSV  ", ErrQueryContainsFormat, ""},
+		{"FORMAT 函数不误判", "SELECT FORMAT(date, '%Y') FROM t", nil, "SELECT FORMAT(date, '%Y') FROM t"},
+		{"FORMAT 在 LIKE 中不误判", "SELECT * FROM users WHERE name LIKE '%FORMAT%'", nil, "SELECT * FROM users WHERE name LIKE '%FORMAT%'"},
+		{"FORMAT 在字符串常量中不误判", "SELECT * FROM users WHERE type = 'FORMAT'", nil, "SELECT * FROM users WHERE type = 'FORMAT'"},
+		{"FORMATTER 不匹配", "SELECT * FROM users WHERE type = 'FORMATTER'", nil, "SELECT * FROM users WHERE type = 'FORMATTER'"},
+		// SETTINGS 子句检测（key=value 模式）
 		{"包含 SETTINGS", "SELECT * FROM users SETTINGS max_threads=4", ErrQueryContainsSettings, ""},
 		{"包含小写 settings", "SELECT * FROM users settings enable_optimize=1", ErrQueryContainsSettings, ""},
-		// 已知限制：正则使用 \b 单词边界，无法区分 SQL 关键字和字符串常量中的同名词
-		// 实际使用中很少在字符串常量中使用 FORMAT/SETTINGS 作为关键字
-		{"FORMAT 在字符串中", "SELECT * FROM users WHERE name LIKE '%FORMAT%'", ErrQueryContainsFormat, ""},
-		{"FORMATTER 不匹配", "SELECT * FROM users WHERE type = 'FORMATTER'", nil, "SELECT * FROM users WHERE type = 'FORMATTER'"},
+		{"SETTINGS 带空格等号", "SELECT * FROM users SETTINGS max_threads = 4", ErrQueryContainsSettings, ""},
 		{"SETTINGS_KEY 不匹配", "SELECT SETTINGS_KEY FROM config", nil, "SELECT SETTINGS_KEY FROM config"},
 		// LIMIT/OFFSET 末尾检测
 		{"末尾 LIMIT", "SELECT * FROM users LIMIT 10", ErrQueryContainsLimitOffset, ""},
 		{"末尾 LIMIT OFFSET", "SELECT * FROM users LIMIT 10 OFFSET 5", ErrQueryContainsLimitOffset, ""},
 		{"末尾小写 limit", "SELECT * FROM users limit 100", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 问号", "SELECT * FROM users LIMIT ?", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 命名参数", "SELECT * FROM users LIMIT {n:UInt64}", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT OFFSET 命名参数", "SELECT * FROM users LIMIT {n:UInt64} OFFSET {off:UInt64}", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 位置参数", "SELECT * FROM users LIMIT $1", ErrQueryContainsLimitOffset, ""},
 		{"子查询中 LIMIT 不拦截", "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0", nil, "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0"},
 	}
 

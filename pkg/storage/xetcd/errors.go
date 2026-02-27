@@ -49,6 +49,11 @@ var (
 	// 此错误用于防御性校验。与 xconf.ErrNilOption 保持一致。
 	ErrNilOption = errors.New("xetcd: option must not be nil")
 
+	// ErrNotInitialized 客户端未通过 NewClient 初始化。
+	// 零值 Client 或未正确初始化的 Client 调用公开方法时返回此错误，
+	// 避免 nil 指针 panic。
+	ErrNotInitialized = errors.New("xetcd: client not initialized, use NewClient to create")
+
 	// errNilKv 内部错误：收到 Kv 为 nil 的 etcd 事件。
 	// 正常协议中不应出现，但防御性处理以避免 goroutine panic。
 	errNilKv = errors.New("xetcd: received event with nil Kv")

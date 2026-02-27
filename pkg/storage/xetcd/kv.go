@@ -144,9 +144,14 @@ func (c *Client) DeleteWithPrefix(ctx context.Context, prefix string) (int64, er
 }
 
 // List 列出指定前缀的所有键值，返回键值对映射。
-// 注意：此方法一次性加载所有匹配的键值到内存中，
-// 不适用于前缀下有大量 key 的场景（如数万个服务实例）。
+//
+// ⚠️ 注意：此方法一次性加载所有匹配的键值到内存中，
+// 不适用于前缀下有大量 key 的场景（如数万个服务实例），可能导致内存暴涨。
 // 大量 key 场景请使用 RawClient() 配合 clientv3.WithLimit/clientv3.WithRange 自行分页。
+//
+// 设计决策: 不在 List 内部添加结果集大小限制（如 WithLimit），
+// 因为 xetcd 定位为简化的 KV 封装，分页逻辑涉及游标管理和多次请求，
+// 超出了简化 API 的设计边界。需要分页的场景应使用 RawClient()。
 func (c *Client) List(ctx context.Context, prefix string) (map[string][]byte, error) {
 	if err := c.checkPreconditions(ctx); err != nil {
 		return nil, err

@@ -388,6 +388,8 @@ func (r *lumberjackRotator) Rotate() error {
 	if err := r.logger.Rotate(); err != nil {
 		// 设计决策: 与 Write 相同的 TOCTOU 后置检查（见 Write 注释）。
 		// 成功路径不做后置检查：轮转已完成，返回 success 在语义上更准确。
+		// 测试边界: 此分支需要 logger.Rotate() 执行期间 Close() 在另一 goroutine 完成，
+		// 属于精确竞态时序，当前测试通过前置检查覆盖等价逻辑。
 		if r.closed.Load() {
 			return ErrClosed
 		}

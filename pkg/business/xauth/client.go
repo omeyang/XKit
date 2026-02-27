@@ -186,7 +186,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) (*client
 	}
 
 	enableLocal := options.EnableLocalCache
-	platformMgr := NewPlatformManager(PlatformManagerConfig{
+	platformMgr, err := NewPlatformManager(PlatformManagerConfig{
 		HTTP:           httpClient,
 		Cache:          d.cache,
 		TokenMgr:       tokenMgr,
@@ -197,6 +197,9 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) (*client
 		LocalCacheSize: options.LocalCacheMaxSize,
 		LocalCacheTTL:  d.localCacheTTL,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("xauth: create platform manager: %w", err)
+	}
 
 	return &client{
 		config:      cfg,
@@ -327,7 +330,7 @@ func (c *client) doAuthRequest(ctx context.Context, tenantID string, req *AuthRe
 	// 绝对 HTTPS URL 允许跨主机——同一认证域内的服务可能部署在不同主机上，
 	// 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
 	// 不做主机白名单限制，因为 xauth 作为基础库不了解业务拓扑。
-	if !c.config.AllowInsecure && strings.HasPrefix(req.URL, "http://") {
+	if !c.config.AllowInsecure && len(req.URL) >= 7 && strings.EqualFold(req.URL[:7], "http://") {
 		return fmt.Errorf("%w: request URL must use https:// when carrying Bearer token", ErrInsecureHost)
 	}
 

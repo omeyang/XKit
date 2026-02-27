@@ -1,6 +1,7 @@
 package xpulsar
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -563,7 +564,7 @@ func FuzzNewClient_URL(f *testing.F) {
 		// 我们只确保不会 panic
 		if client != nil {
 			// 如果成功创建，需要关闭
-			_ = client.Close()
+			_ = client.Close(context.Background())
 		}
 	})
 }

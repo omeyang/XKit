@@ -108,9 +108,9 @@ func TestMachineIDFromHostnameEnv(t *testing.T) {
 
 func TestMachineIDFromOSHostname(t *testing.T) {
 	// os.Hostname() 在大多数系统上都能成功。
-	// 此测试依赖运行环境：有 hostname 时走成功路径，无 hostname 时验证返回 false。
-	id, ok := machineIDFromOSHostname()
-	if ok {
+	// 此测试依赖运行环境：有 hostname 时走成功路径，无 hostname 时验证返回 error。
+	id, err := machineIDFromOSHostname()
+	if err == nil {
 		assert.NotZero(t, id)
 	} else {
 		assert.Zero(t, id, "failed machineIDFromOSHostname should return zero ID")
@@ -248,8 +248,9 @@ func TestMachineIDFromOSHostname_Deterministic(t *testing.T) {
 		}
 		t.Cleanup(func() { osHostname = orig })
 
-		id, ok := machineIDFromOSHostname()
-		assert.False(t, ok)
+		id, err := machineIDFromOSHostname()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "hostname unavailable")
 		assert.Zero(t, id)
 	})
 
@@ -260,8 +261,9 @@ func TestMachineIDFromOSHostname_Deterministic(t *testing.T) {
 		}
 		t.Cleanup(func() { osHostname = orig })
 
-		id, ok := machineIDFromOSHostname()
-		assert.False(t, ok)
+		id, err := machineIDFromOSHostname()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty")
 		assert.Zero(t, id)
 	})
 
@@ -272,8 +274,8 @@ func TestMachineIDFromOSHostname_Deterministic(t *testing.T) {
 		}
 		t.Cleanup(func() { osHostname = orig })
 
-		id, ok := machineIDFromOSHostname()
-		assert.True(t, ok)
+		id, err := machineIDFromOSHostname()
+		require.NoError(t, err)
 		assert.Equal(t, hashToMachineID("test-host-injected"), id)
 	})
 }
@@ -422,7 +424,8 @@ func TestDefaultMachineID_AllStrategiesExhausted(t *testing.T) {
 	_, err := DefaultMachineID()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "all machine ID strategies exhausted")
-	// 验证错误链保留底层原因
+	// 验证错误链保留策略 4（os-hostname）和策略 5（private-ip）的失败原因（FG-S1）
+	assert.Contains(t, err.Error(), "hostname unavailable")
 	assert.Contains(t, err.Error(), "no network interfaces")
 }
 

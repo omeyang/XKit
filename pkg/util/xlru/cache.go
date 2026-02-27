@@ -30,6 +30,24 @@ type Config struct {
 	TTL time.Duration
 }
 
+// Validate 校验配置有效性。
+// 可在创建 Cache 前独立调用，用于启动阶段集中校验所有配置。
+func (c Config) Validate() error {
+	if c.Size <= 0 {
+		return ErrInvalidSize
+	}
+	if c.Size > maxSize {
+		return ErrSizeExceedsMax
+	}
+	if c.TTL < 0 {
+		return ErrInvalidTTL
+	}
+	if c.TTL > 0 && c.TTL < minTTL {
+		return ErrTTLTooSmall
+	}
+	return nil
+}
+
 // Option 定义缓存可选配置函数类型。
 type Option[K comparable, V any] func(*options[K, V])
 
@@ -67,17 +85,8 @@ type Cache[K comparable, V any] struct {
 // 如果 cfg.TTL < 0，返回 ErrInvalidTTL。
 // 如果 0 < cfg.TTL < 100ns，返回 ErrTTLTooSmall。
 func New[K comparable, V any](cfg Config, opts ...Option[K, V]) (*Cache[K, V], error) {
-	if cfg.Size <= 0 {
-		return nil, ErrInvalidSize
-	}
-	if cfg.Size > maxSize {
-		return nil, ErrSizeExceedsMax
-	}
-	if cfg.TTL < 0 {
-		return nil, ErrInvalidTTL
-	}
-	if cfg.TTL > 0 && cfg.TTL < minTTL {
-		return nil, ErrTTLTooSmall
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	// 应用可选配置

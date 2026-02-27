@@ -146,6 +146,7 @@ func Example_errors() {
 	fmt.Println("空消息错误:", xpulsar.ErrNilMessage)
 	fmt.Println("空处理器错误:", xpulsar.ErrNilHandler)
 	fmt.Println("空 URL 错误:", xpulsar.ErrEmptyURL)
+	fmt.Println("空选项错误:", xpulsar.ErrNilOption)
 	fmt.Println("空生产者错误:", xpulsar.ErrNilProducer)
 	fmt.Println("空消费者错误:", xpulsar.ErrNilConsumer)
 	fmt.Println("客户端已关闭:", xpulsar.ErrClosed)
@@ -154,6 +155,7 @@ func Example_errors() {
 	// 空消息错误: mq: nil message
 	// 空处理器错误: mq: nil handler
 	// 空 URL 错误: xpulsar: empty URL
+	// 空选项错误: xpulsar: nil option
 	// 空生产者错误: xpulsar: nil producer
 	// 空消费者错误: xpulsar: nil consumer
 	// 客户端已关闭: mq: client closed

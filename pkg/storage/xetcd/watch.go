@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"time"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -459,6 +460,9 @@ func validateRetryConfig(cfg *RetryConfig) error {
 	if cfg.MaxBackoff == 0 {
 		cfg.MaxBackoff = 30 * time.Second
 	}
+	if math.IsNaN(cfg.BackoffMultiplier) || math.IsInf(cfg.BackoffMultiplier, 0) {
+		return fmt.Errorf("%w: BackoffMultiplier must be a finite number", ErrInvalidRetryConfig)
+	}
 	if cfg.BackoffMultiplier < 1 {
 		// 设计决策: BackoffMultiplier < 1 意味着退避时间递减（越重试越快），
 		// 违反退避策略初衷，静默修正为 2.0 而非返回错误（保持 API 宽容性）。
@@ -486,6 +490,10 @@ func (c *Client) runWatchWithRetry(ctx context.Context, key string, cfg RetryCon
 		}
 
 		watchOpts := c.buildRetryWatchOptions(opts, state)
+		// 设计决策: 复用公开 Watch 方法而非提取 watchInternal。
+		// 重试是低频操作（秒级退避），双重前置条件检查的开销可忽略。
+		// 复用公开 API 避免维护两条 Watch 创建路径，降低不一致风险。
+		// 每次 Watch 创建的 goroutine 在通道关闭后自然退出，不会累积。
 		innerCh, err := c.Watch(ctx, key, watchOpts...)
 		if err != nil {
 			if c.handleWatchRetry(ctx, cfg, state, err) {

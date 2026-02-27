@@ -124,8 +124,12 @@ func BenchmarkLifecycle(b *testing.B) {
 			b.Fatal(err)
 		}
 		for j := range 10 {
-			pool.Submit(j)
+			if err := pool.Submit(j); err != nil {
+				b.Fatal(err)
+			}
 		}
-		pool.Close()
+		if err := pool.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -329,6 +329,9 @@ func (b *Breaker) buildCircuitBreaker() *gobreaker.CircuitBreaker[any] {
 //   - 熔断器错误会被包装为 BreakerError，实现 Retryable() 返回 false
 //   - 这样在与 xretry 组合使用时，熔断错误不会被重试
 func (b *Breaker) Do(ctx context.Context, fn func() error) error {
+	if b == nil {
+		return ErrNilBreaker
+	}
 	if ctx == nil {
 		return ErrNilContext
 	}
@@ -340,11 +343,17 @@ func (b *Breaker) Do(ctx context.Context, fn func() error) error {
 		return err
 	}
 
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	// 仅当 called == false 时才包装为 BreakerError，避免将业务错误误归因为熔断器拒绝。
+	var called bool
 	_, err := b.cb.Execute(func() (any, error) {
+		called = true
 		return nil, fn()
 	})
-	// 包装熔断器错误，使其实现 Retryable() 返回 false
-	return wrapBreakerError(err, b.name, b.State())
+	if err != nil && !called {
+		return wrapBreakerError(err, b.name)
+	}
+	return err
 }
 
 // Execute 执行受熔断器保护的操作（泛型版本）
@@ -377,12 +386,17 @@ func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, e
 		return zero, err
 	}
 
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	var called bool
 	result, err := b.cb.Execute(func() (any, error) {
+		called = true
 		return fn()
 	})
 	if err != nil {
-		// 包装熔断器错误，使其实现 Retryable() 返回 false
-		return zero, wrapBreakerError(err, b.name, b.State())
+		if !called {
+			return zero, wrapBreakerError(err, b.name)
+		}
+		return zero, err
 	}
 	// result 来自 fn()，类型始终为 T；nil 对应 T 的零值
 	if result == nil {
@@ -398,7 +412,12 @@ func Execute[T any](ctx context.Context, b *Breaker, fn func() (T, error)) (T, e
 }
 
 // State 返回熔断器当前状态
+//
+// 如果 b 为 nil，返回 StateClosed（零值）。
 func (b *Breaker) State() State {
+	if b == nil {
+		return StateClosed
+	}
 	return b.cb.State()
 }
 
@@ -408,7 +427,12 @@ func (b *Breaker) Name() string {
 }
 
 // Counts 返回当前统计计数
+//
+// 如果 b 为 nil，返回零值 Counts。
 func (b *Breaker) Counts() Counts {
+	if b == nil {
+		return Counts{}
+	}
 	return b.cb.Counts()
 }
 
@@ -505,14 +529,25 @@ func NewManagedBreaker[T any](b *Breaker) (*ManagedBreaker[T], error) {
 //   - 熔断器错误会被包装为 BreakerError，实现 Retryable() 返回 false
 //   - 这样在与 xretry 组合使用时，熔断错误不会被重试
 func (m *ManagedBreaker[T]) Execute(fn func() (T, error)) (T, error) {
+	if m == nil {
+		var zero T
+		return zero, ErrNilManagedBreaker
+	}
 	if fn == nil {
 		var zero T
 		return zero, ErrNilFunc
 	}
-	result, err := m.cb.Execute(fn)
+	// 设计决策: called 标志区分"熔断器拒绝"和"业务函数返回 gobreaker sentinel"。
+	var called bool
+	result, err := m.cb.Execute(func() (T, error) {
+		called = true
+		return fn()
+	})
 	if err != nil {
-		// 包装熔断器错误，使其实现 Retryable() 返回 false
-		return result, wrapBreakerError(err, m.breaker.name, m.State())
+		if !called {
+			return result, wrapBreakerError(err, m.breaker.name)
+		}
+		return result, err
 	}
 	return result, nil
 }

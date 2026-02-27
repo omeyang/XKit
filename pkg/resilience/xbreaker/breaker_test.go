@@ -770,3 +770,91 @@ func TestWithOnStateChange_NilIgnored(t *testing.T) {
 		t.Fatal("original callback should still be active after nil WithOnStateChange")
 	}
 }
+
+// === FG-S1 修复验证：nil 接收者防护 ===
+
+func TestBreaker_NilReceiver(t *testing.T) {
+	t.Run("Do returns ErrNilBreaker", func(t *testing.T) {
+		var b *Breaker
+		err := b.Do(context.Background(), func() error { return nil })
+		assert.ErrorIs(t, err, ErrNilBreaker)
+	})
+
+	t.Run("State returns StateClosed", func(t *testing.T) {
+		var b *Breaker
+		assert.Equal(t, StateClosed, b.State())
+	})
+
+	t.Run("Counts returns zero value", func(t *testing.T) {
+		var b *Breaker
+		counts := b.Counts()
+		assert.Equal(t, uint32(0), counts.Requests)
+	})
+}
+
+func TestManagedBreaker_NilReceiver(t *testing.T) {
+	t.Run("Execute returns ErrNilManagedBreaker", func(t *testing.T) {
+		var m *ManagedBreaker[string]
+		_, err := m.Execute(func() (string, error) { return "hello", nil })
+		assert.ErrorIs(t, err, ErrNilManagedBreaker)
+	})
+}
+
+// === FG-M1 修复验证：业务函数返回 gobreaker sentinel 不被误归因 ===
+
+func TestBreaker_Do_BusinessFuncReturnsSentinel(t *testing.T) {
+	t.Run("business func returning ErrOpenState is not wrapped", func(t *testing.T) {
+		b := NewBreaker("test",
+			WithTripPolicy(NewNeverTrip()), // 永不熔断，确保 fn 被调用
+		)
+		ctx := context.Background()
+
+		// 业务函数返回 gobreaker.ErrOpenState（不应被包装为 BreakerError）
+		err := b.Do(ctx, func() error {
+			return ErrOpenState
+		})
+
+		// 错误应原样返回，不被包装为 BreakerError
+		assert.ErrorIs(t, err, ErrOpenState)
+		var be *BreakerError
+		assert.False(t, errors.As(err, &be),
+			"business function's ErrOpenState should not be wrapped as BreakerError")
+	})
+
+	t.Run("actual breaker open is still wrapped", func(t *testing.T) {
+		b := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(1)),
+			WithTimeout(time.Hour),
+		)
+		ctx := context.Background()
+
+		// 触发熔断
+		_ = b.Do(ctx, func() error { return errTest })
+		assert.Equal(t, StateOpen, b.State())
+
+		// 熔断器拒绝的请求应该被包装为 BreakerError
+		err := b.Do(ctx, func() error { return nil })
+		var be *BreakerError
+		assert.True(t, errors.As(err, &be),
+			"breaker rejection should be wrapped as BreakerError")
+		assert.Equal(t, StateOpen, be.State)
+	})
+}
+
+// === FG-M3 修复验证：BreakerError.State 从错误类型推导 ===
+
+func TestWrapBreakerError_StateDerivedFromError(t *testing.T) {
+	t.Run("ErrOpenState maps to StateOpen", func(t *testing.T) {
+		err := wrapBreakerError(ErrOpenState, "test")
+		var be *BreakerError
+		require.True(t, errors.As(err, &be))
+		assert.Equal(t, StateOpen, be.State)
+	})
+
+	t.Run("ErrTooManyRequests maps to StateHalfOpen", func(t *testing.T) {
+		err := wrapBreakerError(ErrTooManyRequests, "test")
+		var be *BreakerError
+		require.True(t, errors.As(err, &be))
+		assert.Equal(t, StateHalfOpen, be.State)
+	})
+}

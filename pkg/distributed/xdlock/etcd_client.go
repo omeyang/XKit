@@ -131,6 +131,10 @@ func NewEtcdClient(config *EtcdConfig, opts ...EtcdClientOption) (*clientv3.Clie
 // 便捷函数，等同于 NewEtcdClient + NewEtcdFactory。
 // 返回的 client 需要调用方负责关闭。
 //
+// 设计决策: clientOpts 为 []EtcdClientOption 切片而非可变参数（...EtcdClientOption），
+// 因为 Go 不支持两组可变参数。factoryOpts 作为最后一个参数使用可变参数语法，
+// 使最常见的调用场景（仅传 factoryOpts）更简洁。
+//
 // 关闭顺序：必须先关闭 factory 再关闭 client，否则 factory 的 Session 会因底层连接断开
 // 而产生网络错误日志。推荐使用以下 defer 模式：
 //

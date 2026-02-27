@@ -30,6 +30,9 @@ var (
 
 	// ErrNilFunc 传入的操作函数为 nil
 	ErrNilFunc = errors.New("xbreaker: function cannot be nil")
+
+	// ErrNilManagedBreaker 传入的 ManagedBreaker 为 nil
+	ErrNilManagedBreaker = errors.New("xbreaker: managed breaker cannot be nil")
 )
 
 // BreakerError 熔断器错误包装类型
@@ -89,7 +92,12 @@ func newBreakerError(err error, name string, state State) *BreakerError {
 //
 // 如果错误已经是 BreakerError，则保留原始错误不再包装，
 // 以保持正确的错误来源信息。
-func wrapBreakerError(err error, name string, state State) error {
+//
+// 设计决策: 从错误类型推导状态（ErrOpenState→StateOpen, ErrTooManyRequests→StateHalfOpen），
+// 而非依赖调用方传入的实时 State() 查询。这避免了 TOCTOU 竞态——
+// cb.Execute 返回后到调用 State() 之间，其他 goroutine 可能触发状态变化，
+// 导致 BreakerError.State 字段与错误发生时的实际状态不一致。
+func wrapBreakerError(err error, name string) error {
 	if err == nil {
 		return nil
 	}
@@ -103,8 +111,11 @@ func wrapBreakerError(err error, name string, state State) error {
 
 	// 只检查直接的 sentinel error，不使用 errors.Is
 	// 这避免了将错误链中的熔断器错误错误地归因到当前熔断器
-	if err == gobreaker.ErrOpenState || err == gobreaker.ErrTooManyRequests {
-		return newBreakerError(err, name, state)
+	if err == gobreaker.ErrOpenState {
+		return newBreakerError(err, name, StateOpen)
+	}
+	if err == gobreaker.ErrTooManyRequests {
+		return newBreakerError(err, name, StateHalfOpen)
 	}
 
 	return err

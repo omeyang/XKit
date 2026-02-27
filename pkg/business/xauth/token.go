@@ -2,6 +2,7 @@ package xauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -352,10 +353,16 @@ func (m *TokenManager) backgroundRefresh(tenantID string) {
 	// 获取当前 Token
 	currentToken, _, err := m.cache.Get(ctx, tenantID)
 	if err != nil {
-		m.logger.Debug("background refresh: get current token failed",
-			slog.String("tenant_id", tenantID),
-			slog.String("error", err.Error()),
-		)
+		if errors.Is(err, ErrCacheMiss) {
+			m.logger.Debug("background refresh: cache miss, skipping",
+				slog.String("tenant_id", tenantID),
+			)
+		} else {
+			m.logger.Warn("background refresh: get current token failed",
+				slog.String("tenant_id", tenantID),
+				slog.String("error", err.Error()),
+			)
+		}
 		return
 	}
 
@@ -422,6 +429,9 @@ func (m *TokenManager) InvalidateToken(ctx context.Context, tenantID string) err
 // 如果 Token 有效但其声明中的 TenantID 与期望的 tenantID 不匹配，返回错误。
 // 这是一个便捷方法，等价于 VerifyToken + 手动校验 Claims.TenantID。
 func VerifyTokenForTenant(ctx context.Context, c Client, token, tenantID string) (*TokenInfo, error) {
+	if c == nil {
+		return nil, ErrNilClient
+	}
 	info, err := c.VerifyToken(ctx, token)
 	if err != nil {
 		return nil, err

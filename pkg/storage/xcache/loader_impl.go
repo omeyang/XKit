@@ -37,6 +37,10 @@ const (
 
 // randomFloat64 返回 [0.0, 1.0) 范围内的随机浮点数。
 // 使用 crypto/rand 确保高质量随机数。
+//
+// 设计决策: 此函数是包级工具函数，无法访问 Loader 的 options.Logger，
+// 因此 crypto/rand 失败时使用全局 slog.Warn 而非 Loader 配置的 Logger。
+// 这符合 Go 惯例（包级工具函数使用全局 slog），且 crypto/rand 失败极为罕见。
 func randomFloat64() float64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {

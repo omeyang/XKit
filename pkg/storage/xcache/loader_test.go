@@ -1062,6 +1062,47 @@ func TestLoader_LoadHash_WhenExpireFails_LogsAndContinues(t *testing.T) {
 	assert.True(t, mr.Exists("expire_err_hash"))
 }
 
+func TestSetHashTTLIfMissing_WhenTTLCheckFails_LogsAndReturns(t *testing.T) {
+	// 直接测试 setHashTTLIfMissing 的 TTL 查询失败路径
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	l := &loader{cache: cache, options: defaultLoaderOptions()}
+
+	// 创建 Hash key
+	err := cache.Client().HSet(ctx, "ttl-err-direct", "field", "value").Err()
+	require.NoError(t, err)
+
+	// 注入全局错误，使 TTL 命令失败
+	mr.SetError("injected TTL error")
+	defer mr.SetError("")
+
+	// 调用不应 panic，TTL 错误被记录并跳过
+	l.setHashTTLIfMissing(ctx, "ttl-err-direct", time.Hour)
+}
+
+func TestSetHashTTLIfMissing_WhenKeyHasTTL_SkipsExpire(t *testing.T) {
+	// 测试 key 已有 TTL 时（currentTTL >= 0），不调用 Expire
+	cache, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	l := &loader{cache: cache, options: defaultLoaderOptions()}
+
+	// 创建 Hash key 并设置 TTL
+	err := cache.Client().HSet(ctx, "has-ttl-hash", "field", "value").Err()
+	require.NoError(t, err)
+	err = cache.Client().Expire(ctx, "has-ttl-hash", time.Hour).Err()
+	require.NoError(t, err)
+
+	// 调用 setHashTTLIfMissing — 因为 TTL >= 0，不应调用 Expire
+	l.setHashTTLIfMissing(ctx, "has-ttl-hash", 2*time.Hour)
+
+	// 验证 TTL 没有被覆盖（仍为最初设置的值，约 1 小时）
+	ttlResult, err := cache.Client().TTL(ctx, "has-ttl-hash").Result()
+	require.NoError(t, err)
+	assert.True(t, ttlResult > 30*time.Minute, "original TTL should be preserved")
+}
+
 // =============================================================================
 // WithMaxRetryAttempts 上界钳位测试（FG-L6 修复）
 // =============================================================================

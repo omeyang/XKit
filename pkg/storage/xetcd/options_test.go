@@ -111,6 +111,25 @@ func TestWithTLS_Nil(t *testing.T) {
 	}
 }
 
+func TestWithHealthCheckKey(t *testing.T) {
+	o := defaultOptions()
+	WithHealthCheckKey("/app/health")(o)
+
+	if o.healthCheckKey != "/app/health" {
+		t.Errorf("healthCheckKey = %v, want /app/health", o.healthCheckKey)
+	}
+}
+
+func TestWithHealthCheckKey_Empty(t *testing.T) {
+	o := defaultOptions()
+	original := o.healthCheckKey
+	WithHealthCheckKey("")(o)
+
+	if o.healthCheckKey != original {
+		t.Errorf("empty key should not change healthCheckKey, got %v", o.healthCheckKey)
+	}
+}
+
 func TestDefaultOptions(t *testing.T) {
 	o := defaultOptions()
 
@@ -122,6 +141,9 @@ func TestDefaultOptions(t *testing.T) {
 	}
 	if o.healthTimeout != 10*time.Second {
 		t.Errorf("healthTimeout = %v, want %v", o.healthTimeout, 10*time.Second)
+	}
+	if o.healthCheckKey != defaultHealthCheckKey {
+		t.Errorf("healthCheckKey = %v, want %v", o.healthCheckKey, defaultHealthCheckKey)
 	}
 	if o.tlsConfig != nil {
 		t.Error("tlsConfig should be nil by default")

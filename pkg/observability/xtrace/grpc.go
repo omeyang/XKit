@@ -112,11 +112,14 @@ func GRPCStreamServerInterceptor(opts ...Option) grpc.StreamServerInterceptor {
 		info *grpc.StreamServerInfo,
 		handler grpc.StreamHandler,
 	) error {
+		// 缓存 context（与 HTTP 中间件的 ctx := r.Context() 写法保持一致）
+		ctx := ss.Context()
+
 		// 提取追踪信息
-		traceInfo := ExtractFromIncomingContext(ss.Context())
+		traceInfo := ExtractFromIncomingContext(ctx)
 
 		// 注入到 context
-		ctx := injectTraceToContext(ss.Context(), traceInfo, cfg.autoGenerate)
+		ctx = injectTraceToContext(ctx, traceInfo, cfg.autoGenerate)
 
 		return handler(srv, &wrappedServerStream{ServerStream: ss, ctx: ctx})
 	}

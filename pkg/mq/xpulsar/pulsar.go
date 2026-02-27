@@ -40,9 +40,10 @@ type Client interface {
 	// Close 优雅关闭客户端。
 	// 会关闭所有生产者和消费者，并等待 Health() 超时后的后台清理 goroutine 完成。
 	//
-	// 设计决策: 保留 error 返回值以与项目接口惯例一致（参见 D-02），
-	// 当前实现始终返回 nil（Pulsar SDK 的 Client.Close() 无返回值）。
-	Close() error
+	// 设计决策: ctx 参数当前未使用（Pulsar SDK 的 Client.Close() 不接受 context），
+	// 保留 ctx 参数以与项目 D-02 惯例一致，便于未来扩展超时/取消语义。
+	// error 返回值当前始终为 nil（Pulsar SDK 的 Client.Close() 无返回值）。
+	Close(ctx context.Context) error
 }
 
 // Stats 包含 Pulsar 客户端的统计信息。
@@ -70,6 +71,9 @@ func NewClient(url string, opts ...Option) (Client, error) {
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(options)
 	}
 

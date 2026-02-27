@@ -168,7 +168,8 @@ func TestIntegration_Producer_Produce(t *testing.T) {
 	// 等待送达确认
 	select {
 	case e := <-deliveryChan:
-		m := e.(*kafka.Message)
+		m, ok := e.(*kafka.Message)
+		require.True(t, ok, "unexpected delivery event type: %T", e)
 		if m.TopicPartition.Error != nil {
 			t.Fatalf("delivery failed: %v", m.TopicPartition.Error)
 		}
@@ -346,7 +347,8 @@ func TestIntegration_ProduceAndConsume(t *testing.T) {
 	// 等待送达
 	select {
 	case e := <-deliveryChan:
-		m := e.(*kafka.Message)
+		m, ok := e.(*kafka.Message)
+		require.True(t, ok, "unexpected delivery event type: %T", e)
 		require.NoError(t, m.TopicPartition.Error)
 	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for delivery")

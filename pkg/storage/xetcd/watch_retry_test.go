@@ -3,6 +3,7 @@ package xetcd
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,6 +80,30 @@ func TestValidateRetryConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("NaN BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.NaN()}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("positive Inf BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.Inf(1)}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
+	t.Run("negative Inf BackoffMultiplier", func(t *testing.T) {
+		cfg := RetryConfig{BackoffMultiplier: math.Inf(-1)}
+		err := validateRetryConfig(&cfg)
+		if !errors.Is(err, ErrInvalidRetryConfig) {
+			t.Errorf("validateRetryConfig() = %v, want ErrInvalidRetryConfig", err)
+		}
+	})
+
 	t.Run("zero values apply defaults", func(t *testing.T) {
 		cfg := RetryConfig{}
 		err := validateRetryConfig(&cfg)
@@ -114,7 +139,7 @@ func TestValidateRetryConfig(t *testing.T) {
 
 // TestWatchWithRetry_NegativeConfig 测试 WatchWithRetry 对显式负值配置返回错误。
 func TestWatchWithRetry_NegativeConfig(t *testing.T) {
-	c := &Client{closeCh: make(chan struct{})}
+	c := newStubClient()
 
 	t.Run("negative InitialBackoff", func(t *testing.T) {
 		cfg := RetryConfig{InitialBackoff: -1 * time.Second}
@@ -143,8 +168,7 @@ func TestWatchWithRetry_NegativeConfig(t *testing.T) {
 
 // TestWatchWithRetry_Closed 测试已关闭客户端调用 WatchWithRetry 返回错误。
 func TestWatchWithRetry_Closed(t *testing.T) {
-	c := &Client{}
-	c.closed.Store(true)
+	c := newClosedStubClient()
 
 	_, err := c.WatchWithRetry(context.Background(), "key", DefaultRetryConfig())
 	if err != ErrClientClosed {
@@ -154,7 +178,7 @@ func TestWatchWithRetry_Closed(t *testing.T) {
 
 // TestWatchWithRetry_EmptyKey 测试空键调用 WatchWithRetry 返回错误。
 func TestWatchWithRetry_EmptyKey(t *testing.T) {
-	c := &Client{}
+	c := newStubClient()
 
 	_, err := c.WatchWithRetry(context.Background(), "", DefaultRetryConfig())
 	if err != ErrEmptyKey {
@@ -164,7 +188,7 @@ func TestWatchWithRetry_EmptyKey(t *testing.T) {
 
 // TestWatchWithRetry_NilOption 测试 WatchWithRetry 传入 nil WatchOption 时返回 ErrNilOption。
 func TestWatchWithRetry_NilOption(t *testing.T) {
-	c := &Client{closeCh: make(chan struct{})}
+	c := newStubClient()
 
 	_, err := c.WatchWithRetry(context.Background(), "key", DefaultRetryConfig(), nil)
 	if err != ErrNilOption {

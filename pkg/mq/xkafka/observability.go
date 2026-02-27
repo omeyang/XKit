@@ -13,7 +13,8 @@ const (
 )
 
 func kafkaAttrs(topic string) []xmetrics.Attr {
-	attrs := []xmetrics.Attr{xmetrics.String("messaging.system", "kafka")}
+	attrs := make([]xmetrics.Attr, 0, 2)
+	attrs = append(attrs, xmetrics.String("messaging.system", "kafka"))
 	if topic != "" {
 		attrs = append(attrs, xmetrics.String("messaging.destination.name", topic))
 	}

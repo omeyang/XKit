@@ -21,7 +21,8 @@
 //   - 分片 map：默认 32 分片（上限 65536），减少管理锁争用
 //   - 内存安全：WithMaxKeys(n) 可限制最大 key 数
 //   - 关闭语义：Close() 拒绝新请求，已持有锁不受影响
-//   - Close() 唤醒所有等待中的 Acquire，使其返回 ErrClosed
+//   - Close() 唤醒所有等待中的 Acquire，使其返回 ErrClosed 或 ctx.Err()
+//     （Go select 语义，两者均有可能；调用方应同时处理）
 //   - 非可重入：同一 goroutine 对同一 key 重复 Acquire 会死锁，
 //     建议始终使用带 deadline 的 context 以防意外阻塞
 //   - 近似公平：等待者按 Go channel 内部队列顺序唤醒（近似 FIFO），

@@ -65,11 +65,14 @@ type ClickHouse interface {
 // =============================================================================
 
 // PageOptions 分页查询选项。
+// 零值不可用：Page 和 PageSize 必须为正数，
+// 否则返回 ErrInvalidPage 或 ErrInvalidPageSize。
 type PageOptions struct {
-	// Page 是页码，从 1 开始。
+	// Page 是页码，从 1 开始。必须为正数，零值返回 ErrInvalidPage。
 	Page int64
 
-	// PageSize 是每页大小。
+	// PageSize 是每页大小。必须为正数，零值返回 ErrInvalidPageSize。
+	// 不得超过 MaxPageSize（默认 10000），否则返回 ErrPageSizeTooLarge。
 	PageSize int64
 }
 

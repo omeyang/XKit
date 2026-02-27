@@ -7,13 +7,6 @@ import (
 	"github.com/omeyang/xkit/pkg/context/xplatform"
 )
 
-// sink 变量消费 benchmark 返回值，防止编译器死代码消除（DCE）导致结果失真。
-var (
-	sinkString string
-	sinkBool   bool
-	sinkConfig xplatform.Config
-)
-
 // =============================================================================
 // Config 方法 Benchmark
 // =============================================================================
@@ -24,6 +17,7 @@ func BenchmarkConfig_Validate_Valid(b *testing.B) {
 		HasParent:       true,
 		UnclassRegionID: "region-001",
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -37,6 +31,7 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 	cfg := xplatform.Config{
 		PlatformID: "",
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -48,6 +43,9 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 
 // =============================================================================
 // 全局访问函数 Benchmark
+//
+// 设计决策: 串行与并行基准统一使用 runtime.KeepAlive 消费返回值防止 DCE，
+// 避免包级 sink 变量在未来误改为并行基准时引入 DATA RACE。
 // =============================================================================
 
 func BenchmarkPlatformID(b *testing.B) {
@@ -58,11 +56,14 @@ func BenchmarkPlatformID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		sinkString = xplatform.PlatformID()
+		v = xplatform.PlatformID()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkHasParent(b *testing.B) {
@@ -74,11 +75,14 @@ func BenchmarkHasParent(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v bool
 	for i := 0; i < b.N; i++ {
-		sinkBool = xplatform.HasParent()
+		v = xplatform.HasParent()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkUnclassRegionID(b *testing.B) {
@@ -90,11 +94,14 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		sinkString = xplatform.UnclassRegionID()
+		v = xplatform.UnclassRegionID()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkIsInitialized(b *testing.B) {
@@ -105,11 +112,14 @@ func BenchmarkIsInitialized(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v bool
 	for i := 0; i < b.N; i++ {
-		sinkBool = xplatform.IsInitialized()
+		v = xplatform.IsInitialized()
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkRequirePlatformID(b *testing.B) {
@@ -120,15 +130,18 @@ func BenchmarkRequirePlatformID(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v string
 	for i := 0; i < b.N; i++ {
-		v, err := xplatform.RequirePlatformID()
+		var err error
+		v, err = xplatform.RequirePlatformID()
 		if err != nil {
 			b.Fatal(err)
 		}
-		sinkString = v
 	}
+	runtime.KeepAlive(v)
 }
 
 func BenchmarkGetConfig(b *testing.B) {
@@ -141,23 +154,22 @@ func BenchmarkGetConfig(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
+	var v xplatform.Config
 	for i := 0; i < b.N; i++ {
-		v, err := xplatform.GetConfig()
+		var err error
+		v, err = xplatform.GetConfig()
 		if err != nil {
 			b.Fatal(err)
 		}
-		sinkConfig = v
 	}
+	runtime.KeepAlive(v)
 }
 
 // =============================================================================
 // 并发访问 Benchmark
-//
-// 使用 runtime.KeepAlive 消费 goroutine 本地结果，避免并发写入共享 sink 变量
-// 导致 go test -race 报告 DATA RACE。RunParallel 的多个 goroutine 共享
-// 包级变量写入不安全，runtime.KeepAlive 既能防止 DCE 又无竞态风险。
 // =============================================================================
 
 func BenchmarkPlatformID_Parallel(b *testing.B) {
@@ -168,6 +180,7 @@ func BenchmarkPlatformID_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -188,6 +201,7 @@ func BenchmarkHasParent_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -207,6 +221,7 @@ func BenchmarkIsInitialized_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -226,6 +241,7 @@ func BenchmarkRequirePlatformID_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -250,6 +266,7 @@ func BenchmarkUnclassRegionID_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -271,6 +288,7 @@ func BenchmarkGetConfig_Parallel(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {

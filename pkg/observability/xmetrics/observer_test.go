@@ -350,6 +350,114 @@ func TestStart_ObserverReturnsNilSpan(t *testing.T) {
 }
 
 // ============================================================================
+// isNilInterface 测试
+// ============================================================================
+
+// customSpan 是用于测试的自定义 Span 实现。
+type customSpan struct{}
+
+func (*customSpan) End(_ Result) {}
+
+func TestIsNilInterface(t *testing.T) {
+	t.Parallel()
+
+	t.Run("untyped_nil", func(t *testing.T) {
+		assert.True(t, isNilInterface(nil))
+	})
+
+	t.Run("nil_interface", func(t *testing.T) {
+		var span Span
+		assert.True(t, isNilInterface(span))
+	})
+
+	t.Run("typed_nil_pointer", func(t *testing.T) {
+		var s *customSpan
+		var span Span = s
+		assert.True(t, isNilInterface(span))
+	})
+
+	t.Run("non_nil_pointer", func(t *testing.T) {
+		s := &customSpan{}
+		var span Span = s
+		assert.False(t, isNilInterface(span))
+	})
+
+	t.Run("struct_value", func(t *testing.T) {
+		var span Span = NoopSpan{}
+		assert.False(t, isNilInterface(span))
+	})
+}
+
+// ============================================================================
+// FG-S1: typed-nil 防御回归测试
+// ============================================================================
+
+// typedNilSpanObserver 返回 typed-nil span（接口 type 非空但 value 为 nil），
+// 用于验证 Start 的 typed-nil 兜底逻辑。
+type typedNilSpanObserver struct{}
+
+func (typedNilSpanObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	var s *customSpan // typed-nil：接口内部 type=*customSpan, value=nil
+	return ctx, s
+}
+
+// typedNilObserver 是 typed-nil Observer，用于验证 Start 的 typed-nil observer 兜底逻辑。
+type typedNilObserver struct{}
+
+func (*typedNilObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	return ctx, NoopSpan{}
+}
+
+func TestStart_TypedNilObserver(t *testing.T) {
+	t.Parallel()
+
+	// typed-nil observer：接口内部 type=*typedNilObserver, value=nil
+	var obs *typedNilObserver
+	var observer Observer = obs
+
+	ctx := context.Background()
+	newCtx, span := Start(ctx, observer, SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-observer",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
+func TestStart_TypedNilSpan(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 typed-nil span，Start 应兜底为 NoopSpan
+	ctx := context.Background()
+	newCtx, span := Start(ctx, typedNilSpanObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-span",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
+// ============================================================================
 // 接口实现验证
 // ============================================================================
 

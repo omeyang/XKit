@@ -77,7 +77,7 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 		// 检查是否有分配的分区
 		assignment, err := w.consumer.Assignment()
 		if err != nil {
-			done <- fmt.Errorf("kafka consumer health check failed: %w", err)
+			done <- fmt.Errorf("%w: consumer get assignment: %w", ErrHealthCheckFailed, err)
 			return
 		}
 
@@ -86,7 +86,7 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 			timeoutMs := int(w.options.HealthTimeout.Milliseconds())
 			_, err := w.consumer.GetMetadata(nil, true, timeoutMs)
 			if err != nil {
-				done <- fmt.Errorf("kafka consumer health check failed: %w", err)
+				done <- fmt.Errorf("%w: consumer get metadata: %w", ErrHealthCheckFailed, err)
 				return
 			}
 		}

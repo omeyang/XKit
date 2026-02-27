@@ -3,6 +3,8 @@ package mqcore
 import "errors"
 
 // 共享错误定义（xkafka 和 xpulsar 共同使用）。
+// 设计决策: 错误前缀使用 "mq:" 而非 "mqcore:"，因为这些错误被 xkafka/xpulsar
+// 重导出给终端用户，"mq:" 前缀更通用，避免暴露 internal 包名。
 var (
 	// ErrNilClient 表示传入的客户端为空。
 	ErrNilClient = errors.New("mq: nil client")

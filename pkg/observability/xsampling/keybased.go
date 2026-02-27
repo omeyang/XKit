@@ -22,6 +22,9 @@ type KeyBasedOption func(*KeyBasedSampler)
 // 当 KeyFunc 返回空字符串时，在执行随机采样回退前调用此回调。
 // 用于指标计数或日志记录，帮助发现上下文传播链路断裂问题。
 //
+// 设计决策: 回调未做 recover 隔离——回调 panic 会直接传播到 ShouldSample 调用方。
+// 这是有意为之：(1) 采样热路径不引入 defer 开销；(2) panic 是编程错误，应快速暴露而非静默吞没；
+// (3) 回调由调用方注入，调用方有责任保证其安全性。
 // 回调应当轻量（如原子计数器递增），避免阻塞采样热路径。
 // nil 回调会被忽略。
 func WithOnEmptyKey(fn func()) KeyBasedOption {

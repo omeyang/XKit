@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -35,8 +36,14 @@ type etcdFactory struct {
 	client  *clientv3.Client
 	session *concurrency.Session
 	sp      sessionProvider // checkSession/Close 使用，通常等于 session
-	options *etcdFactoryOptions
 	closed  atomic.Bool
+
+	// 设计决策: lockedKeys 追踪当前 Session 已锁定的 key，防止同 Session 下
+	// 多个 handle 共享所有权。etcd concurrency.Mutex 的 myKey 由 Session Lease
+	// 决定（pfx + hex(leaseID)），同一 Session 对同一 prefix 的多个 Mutex
+	// 共享同一 owner key，导致 Unlock 一个 handle 会释放所有 handle 的锁。
+	// 本地追踪确保每个 key 在同一工厂内最多只有一个活跃的 LockHandle。
+	lockedKeys sync.Map
 }
 
 // NewEtcdFactory 创建 etcd 锁工厂。
@@ -67,14 +74,10 @@ func NewEtcdFactory(client *clientv3.Client, opts ...EtcdFactoryOption) (EtcdFac
 		client:  client,
 		session: session,
 		sp:      session,
-		options: options,
 	}, nil
 }
 
 // TryLock 非阻塞式获取锁，返回 LockHandle。
-//
-// 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项（Expiry、Tries 等）
-// 被忽略，因为 etcd 的锁生命周期由 Session TTL 控制。
 func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -86,17 +89,19 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 		return nil, err
 	}
 
-	options := defaultMutexOptions()
-	for _, opt := range opts {
-		if opt != nil {
-			opt(options)
-		}
+	fullKey := resolveFullKey(key, opts...)
+
+	// 设计决策: 同一 etcd Session 对同一 key 创建的 Mutex 共享相同 Lease，
+	// 多个 handle 实际指向同一 owner key（见 concurrency.Mutex.tryAcquire）。
+	// 本地追踪已锁定 key，当同一工厂重复获取同一 key 时返回 (nil, nil)，
+	// 等同于"锁被占用"语义，防止多个 handle 共享所有权。
+	if _, loaded := f.lockedKeys.LoadOrStore(fullKey, struct{}{}); loaded {
+		return nil, nil
 	}
 
-	fullKey := options.KeyPrefix + key
 	mutex := concurrency.NewMutex(f.session, fullKey)
-
 	if err := mutex.TryLock(ctx); err != nil {
+		f.lockedKeys.Delete(fullKey)
 		err = wrapEtcdError(err)
 		if errors.Is(err, ErrLockHeld) {
 			return nil, nil // 锁被占用，返回 (nil, nil)
@@ -112,8 +117,6 @@ func (f *etcdFactory) TryLock(ctx context.Context, key string, opts ...MutexOpti
 }
 
 // Lock 阻塞式获取锁，返回 LockHandle。
-//
-// 设计决策: etcd 后端仅使用 KeyPrefix 选项，Redis 专用选项被忽略。
 func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
@@ -125,17 +128,18 @@ func (f *etcdFactory) Lock(ctx context.Context, key string, opts ...MutexOption)
 		return nil, err
 	}
 
-	options := defaultMutexOptions()
-	for _, opt := range opts {
-		if opt != nil {
-			opt(options)
-		}
+	fullKey := resolveFullKey(key, opts...)
+
+	// 设计决策: 同一 etcd Session 重复 Lock 同一 key 不会阻塞（etcd 视为重入），
+	// 但多个 handle 共享所有权会导致其中一个 Unlock 时另一个静默失锁。
+	// 本地检查在此场景返回 ErrLockFailed，提前暴露使用错误。
+	if _, loaded := f.lockedKeys.LoadOrStore(fullKey, struct{}{}); loaded {
+		return nil, fmt.Errorf("%w: key %q already held by this factory", ErrLockFailed, fullKey)
 	}
 
-	fullKey := options.KeyPrefix + key
 	mutex := concurrency.NewMutex(f.session, fullKey)
-
 	if err := mutex.Lock(ctx); err != nil {
+		f.lockedKeys.Delete(fullKey)
 		return nil, wrapEtcdError(err)
 	}
 
@@ -247,6 +251,7 @@ func (h *etcdLockHandle) Unlock(ctx context.Context) error {
 	// "锁已释放"。网络抖动时 Unlock 可能失败但锁仍由 Session KeepAlive 维持，
 	// 此时 Extend 应继续报告锁状态正常，而非错误返回 ErrNotLocked。
 	h.unlocked.Store(true)
+	h.factory.lockedKeys.Delete(h.key)
 	return nil
 }
 

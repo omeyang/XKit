@@ -47,6 +47,11 @@ const (
 	// maxBatchSize 批量写入每批文档数上限。
 	// 避免单次 InsertMany 请求过大导致 MongoDB 16MB BSON 限制或内存问题。
 	maxBatchSize = 10000
+
+	// MaxPageSize 分页查询每页最大文档数。
+	// 防止调用方传入超大 PageSize 导致 cursor.All 一次性载入大量数据引发 OOM。
+	// 此值对外导出，便于调用方在参数校验中引用。
+	MaxPageSize int64 = 10000
 )
 
 // Client 返回底层 MongoDB 客户端。
@@ -218,6 +223,22 @@ func (w *mongoWrapper) findPage(ctx context.Context, coll *mongo.Collection, fil
 	return w.findPageInternal(ctx, collOps, filter, opts)
 }
 
+// validatePageOptions 验证分页参数并返回计算后的 skip。
+// 包含 MaxPageSize 上限检查和 storageopt 的基础校验。
+func validatePageOptions(opts PageOptions) (int64, error) {
+	// 设计决策: PageSize 上限检查在 storageopt.ValidatePagination 之前执行，
+	// 因为 ValidatePagination 仅校验 >=1 和溢出，不含业务层上限。
+	// MaxPageSize 防止调用方（尤其是来自外部请求的参数）传入超大值导致 OOM。
+	if opts.PageSize > MaxPageSize {
+		return 0, ErrPageSizeTooLarge
+	}
+	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	if err != nil {
+		return 0, convertPaginationError(err)
+	}
+	return skip, nil
+}
+
 // convertPaginationError 将 storageopt 的分页错误转换为 xmongo 的错误类型。
 // 由于 xmongo 的分页错误已包装 storageopt 的错误，errors.Is 可以匹配任一错误。
 func convertPaginationError(err error) error {
@@ -246,10 +267,9 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	ctx, cancel = applyTimeout(ctx, w.options.QueryTimeout)
 	defer cancel()
 
-	// 使用 storageopt 验证分页参数并计算 skip，防止溢出
-	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
+	skip, err := validatePageOptions(opts)
 	if err != nil {
-		return nil, convertPaginationError(err)
+		return nil, err
 	}
 
 	info := buildSlowQueryInfoFromOps(coll, "findPage", filter)
@@ -263,6 +283,8 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 			xmetrics.String("db.system", "mongodb"),
 			xmetrics.String("db.name", info.Database),
 			xmetrics.String("db.collection", info.Collection),
+			xmetrics.Int64("xmongo.page", opts.Page),
+			xmetrics.Int64("xmongo.page_size", opts.PageSize),
 		},
 	})
 	defer func() {
@@ -290,11 +312,11 @@ func (w *mongoWrapper) findPageInternal(ctx context.Context, coll collectionOper
 	if err != nil {
 		return nil, fmt.Errorf("xmongo find_page find %s.%s: %w", info.Database, info.Collection, err)
 	}
-	defer func() {
-		if closeErr := cursor.Close(ctx); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("xmongo find_page close cursor: %w", closeErr))
-		}
-	}()
+	// 设计决策: cursor.Close 错误不合并到返回值。cursor.All 已将数据全量读入内存，
+	// Close 仅释放服务端游标资源，失败不影响已获取的数据。合并错误会导致调用方
+	// 因 if err != nil 丢弃有效的查询结果。
+	//nolint:errcheck,gosec // cursor.Close 是清理操作，数据已全量读取，忽略关闭错误
+	defer func() { cursor.Close(ctx) }()
 
 	// 解析结果
 	var data []bson.M

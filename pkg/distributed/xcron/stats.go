@@ -11,6 +11,10 @@ import (
 // 线程安全，可在任务执行期间安全读取。
 // 统计数据包括执行次数、成功/失败次数、执行时长等。
 //
+// 设计决策: 锁服务异常（lockErrorCount）与执行失败（failureCount）分离统计。
+// 锁获取失败时任务未实际执行，不计入 TotalExecutions/SuccessRate/Duration，
+// 避免执行统计被"调度前依赖故障"污染。锁异常通过独立的 LockErrorCount() 暴露。
+//
 // 用法：
 //
 //	scheduler := xcron.New()
@@ -26,7 +30,8 @@ type Stats struct {
 	totalExecutions atomic.Int64
 	successCount    atomic.Int64
 	failureCount    atomic.Int64
-	skipCount       atomic.Int64 // 因锁获取失败跳过的次数
+	skipCount       atomic.Int64 // 因锁竞争失败跳过的次数
+	lockErrorCount  atomic.Int64 // 锁服务异常次数（区别于执行失败和竞争跳过）
 
 	mu           sync.RWMutex
 	lastExecTime time.Time     // 最后执行时间
@@ -52,6 +57,7 @@ type JobStats struct {
 	successCount    atomic.Int64
 	failureCount    atomic.Int64
 	skipCount       atomic.Int64
+	lockErrorCount  atomic.Int64
 
 	mu           sync.RWMutex
 	lastExecTime time.Time
@@ -86,9 +92,17 @@ func (s *Stats) FailureCount() int64 {
 	return s.failureCount.Load()
 }
 
-// SkipCount 返回因锁获取失败跳过的次数。
+// SkipCount 返回因锁竞争失败跳过的次数。
 func (s *Stats) SkipCount() int64 {
 	return s.skipCount.Load()
+}
+
+// LockErrorCount 返回锁服务异常次数。
+//
+// 与 FailureCount（任务执行失败）和 SkipCount（锁竞争正常跳过）语义不同：
+// LockErrorCount 统计锁服务本身的异常（如连接失败、超时），此时任务未实际执行。
+func (s *Stats) LockErrorCount() int64 {
+	return s.lockErrorCount.Load()
 }
 
 // LastExecTime 返回最后一次执行时间。
@@ -218,13 +232,27 @@ func (s *Stats) recordExecution(name string, duration time.Duration, err error) 
 	}
 }
 
-// recordSkip 记录一次跳过（锁获取失败）。
+// recordSkip 记录一次跳过（锁竞争失败）。
 func (s *Stats) recordSkip(name string) {
 	s.skipCount.Add(1)
 
 	if name != "" {
 		js := s.getOrCreateJobStats(name)
 		js.skipCount.Add(1)
+	}
+}
+
+// recordLockError 记录一次锁服务异常。
+//
+// 设计决策: 锁获取异常时任务未实际执行，不计入 TotalExecutions/Duration/SuccessRate，
+// 独立统计以保证"执行统计"与"调度前依赖故障"语义分离。
+// 健康检查通过 LockErrorCount() 和 LockerHealthChecker 接口检测锁服务问题。
+func (s *Stats) recordLockError(name string) {
+	s.lockErrorCount.Add(1)
+
+	if name != "" {
+		js := s.getOrCreateJobStats(name)
+		js.lockErrorCount.Add(1)
 	}
 }
 
@@ -267,6 +295,11 @@ func (js *JobStats) FailureCount() int64 {
 // SkipCount 返回任务跳过次数。
 func (js *JobStats) SkipCount() int64 {
 	return js.skipCount.Load()
+}
+
+// LockErrorCount 返回任务的锁服务异常次数。
+func (js *JobStats) LockErrorCount() int64 {
+	return js.lockErrorCount.Load()
 }
 
 // LastExecTime 返回任务最后执行时间。
@@ -371,6 +404,7 @@ type StatsSnapshot struct {
 	SuccessCount    int64                        `json:"success_count"`
 	FailureCount    int64                        `json:"failure_count"`
 	SkipCount       int64                        `json:"skip_count"`
+	LockErrorCount  int64                        `json:"lock_error_count"`
 	SuccessRate     float64                      `json:"success_rate"`
 	LastExecTime    time.Time                    `json:"last_exec_time,omitempty"`
 	LastDuration    time.Duration                `json:"last_duration"`
@@ -388,6 +422,7 @@ type JobStatsSnapshot struct {
 	SuccessCount    int64         `json:"success_count"`
 	FailureCount    int64         `json:"failure_count"`
 	SkipCount       int64         `json:"skip_count"`
+	LockErrorCount  int64         `json:"lock_error_count"`
 	SuccessRate     float64       `json:"success_rate"`
 	LastExecTime    time.Time     `json:"last_exec_time,omitempty"`
 	LastDuration    time.Duration `json:"last_duration"`
@@ -404,6 +439,7 @@ func (s *Stats) Snapshot() *StatsSnapshot {
 		SuccessCount:    s.SuccessCount(),
 		FailureCount:    s.FailureCount(),
 		SkipCount:       s.SkipCount(),
+		LockErrorCount:  s.LockErrorCount(),
 		SuccessRate:     s.SuccessRate(),
 		LastExecTime:    s.LastExecTime(),
 		LastDuration:    s.LastDuration(),
@@ -432,6 +468,7 @@ func (js *JobStats) Snapshot() *JobStatsSnapshot {
 		SuccessCount:    js.SuccessCount(),
 		FailureCount:    js.FailureCount(),
 		SkipCount:       js.SkipCount(),
+		LockErrorCount:  js.LockErrorCount(),
 		SuccessRate:     js.SuccessRate(),
 		LastExecTime:    js.LastExecTime(),
 		LastDuration:    js.LastDuration(),

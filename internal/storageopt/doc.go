@@ -12,5 +12,6 @@
 //   - 健康检查配置常量
 //   - 分页参数验证函数
 //   - 慢查询检测器（支持同步/异步钩子）
-//   - 统计计数器（HealthCounter、SlowQueryCounter、QueryCounter）
+//   - 统计计数器（HealthCounter、SlowQueryCounter 供所有存储包使用；
+//     QueryCounter 仅 xclickhouse 使用，详见 stats.go 设计决策注释）
 package storageopt

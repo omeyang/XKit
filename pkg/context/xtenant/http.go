@@ -165,7 +165,9 @@ func WithEnsureTrace() MiddlewareOption {
 func HTTPMiddlewareWithOptions(opts ...MiddlewareOption) func(http.Handler) http.Handler {
 	cfg := &middlewareConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -325,15 +327,18 @@ func injectTraceHeaders(ctx context.Context, h http.Header) {
 // 用于手动构造 HTTP Header 的场景。
 // 采用增量写入语义：只 Set 非空字段，不清除已有的键。
 // 如需"以 context 为准"的清理语义，请使用 InjectToRequest。
+//
+// 对 TenantID/TenantName 做 TrimSpace 后再判空和 Set，
+// 与包内其他写入路径（WithTenantID、ExtractFromHTTPHeader 等）的归一化语义一致。
 func InjectTenantToHeader(h http.Header, info TenantInfo) {
 	if h == nil {
 		return
 	}
 
-	if info.TenantID != "" {
-		h.Set(HeaderTenantID, info.TenantID)
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		h.Set(HeaderTenantID, tid)
 	}
-	if info.TenantName != "" {
-		h.Set(HeaderTenantName, info.TenantName)
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		h.Set(HeaderTenantName, tname)
 	}
 }

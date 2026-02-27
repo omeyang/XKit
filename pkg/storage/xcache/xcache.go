@@ -330,6 +330,11 @@ var cryptoRandRead = rand.Read
 
 // hostIdentifier 缓存的主机标识符，用于锁值后备方案。
 // 只计算一次以避免重复系统调用开销。
+//
+// 设计决策: 使用包级初始化而非 sync.Once 惰性初始化。
+// os.Hostname() 在 Linux 上调用 uname(2) 系统调用，直接从内核获取主机名，
+// 不涉及 DNS 解析，执行时间在微秒级，不存在阻塞风险。
+// 包级初始化更简单且保证并发安全，无需额外的 sync.Once 开销。
 var hostIdentifier = getHostIdentifier()
 
 // getHostIdentifier 获取主机标识符。

@@ -29,12 +29,15 @@
 // Offset 受 MaxOffset（默认 100000）限制，超过时返回 ErrOffsetTooLarge。
 // QueryPage 会检测查询末尾的 LIMIT/OFFSET 子句并返回 ErrQueryContainsLimitOffset。
 //
-// ## FORMAT/SETTINGS 检测
+// ## FORMAT/SETTINGS/LIMIT 检测
 //
-// 设计决策: QueryPage 使用正则表达式检测 FORMAT 和 SETTINGS 子句。
-// 此方法是有意的设计权衡，而非 bug：
-//   - 正则检测可能对字符串字面量产生误判（如 WHERE name = 'FORMAT'）
-//   - 这是已知限制，复杂 SQL 解析成本过高
+// 设计决策: QueryPage 使用末尾锚定正则检测 FORMAT 子句和 key=value 模式检测 SETTINGS 子句。
+// FORMAT 检测仅匹配查询末尾的 "FORMAT <name>" 模式，不会误判 FORMAT() 函数调用。
+// SETTINGS 检测匹配 "SETTINGS key=value" 模式，不会误判 SETTINGS_KEY 等字段名。
+// LIMIT/OFFSET 检测同时覆盖字面量和参数化写法（?、{name:Type}、$1）。
+//
+// 已知局限性：
+//   - SETTINGS 检测可能对字符串常量中的 "SETTINGS key=" 模式产生误判
 //   - 遇到误判时，请使用 Client() 直接执行查询
 //
 // 相关错误：ErrQueryContainsFormat, ErrQueryContainsSettings, ErrQueryContainsLimitOffset

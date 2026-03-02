@@ -2,7 +2,7 @@ package xjson
 
 import "testing"
 
-// 设计决策: Go 1.24+ 的 b.Loop() 内置 runtime.KeepAlive 防优化机制，
+// 设计决策: 使用传统 b.N 循环，函数调用本身具有副作用（JSON 序列化），
 // 无需额外的包级 sink 变量来防止编译器消除函数调用。
 
 func BenchmarkPretty(b *testing.B) {
@@ -14,7 +14,7 @@ func BenchmarkPretty(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		Pretty(v)
 	}
 }
@@ -30,7 +30,7 @@ func BenchmarkPrettyMap(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		Pretty(v)
 	}
 }
@@ -53,7 +53,7 @@ func BenchmarkPrettyLargeObject(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		Pretty(v)
 	}
 }
@@ -63,7 +63,7 @@ func BenchmarkPrettyError(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		Pretty(v)
 	}
 }
@@ -77,7 +77,7 @@ func BenchmarkPrettyE(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		PrettyE(v)
 	}
 }

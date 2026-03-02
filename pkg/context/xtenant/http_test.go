@@ -218,7 +218,7 @@ func TestHTTPMiddlewareWithOptions_RequireTenant(t *testing.T) {
 
 func TestInjectToRequest(t *testing.T) {
 	t.Run("nil request不panic", func(t *testing.T) {
-		ctx, err := xctx.WithTenantID(t.Context(), "t1")
+		ctx, err := xctx.WithTenantID(context.Background(), "t1")
 		if err != nil {
 			t.Fatalf("xctx.WithTenantID() error = %v", err)
 		}
@@ -226,7 +226,7 @@ func TestInjectToRequest(t *testing.T) {
 	})
 
 	t.Run("注入租户信息", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := context.Background()
 		ctx, err := xctx.WithTenantID(ctx, "tenant-123")
 		if err != nil {
 			t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -398,7 +398,7 @@ func TestHTTPMiddlewareWithOptions_OnlyTenantName(t *testing.T) {
 }
 
 func TestInjectToRequest_OnlyTenantID(t *testing.T) {
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantID(ctx, "tenant-only")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -418,7 +418,7 @@ func TestInjectToRequest_OnlyTenantID(t *testing.T) {
 }
 
 func TestInjectToRequest_OnlyTenantName(t *testing.T) {
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantName(ctx, "name-only")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantName() error = %v", err)
@@ -476,7 +476,7 @@ func TestInjectToRequest_WithPlatformInitialized(t *testing.T) {
 	t.Cleanup(xplatform.Reset)
 
 	// 设置租户信息
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err = xctx.WithTenantID(ctx, "tenant-123")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -521,7 +521,7 @@ func TestInjectToRequest_WithPlatformNoParent(t *testing.T) {
 	}
 	t.Cleanup(xplatform.Reset)
 
-	ctx := t.Context()
+	ctx := context.Background()
 	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
 	xtenant.InjectToRequest(ctx, req)
 
@@ -539,7 +539,7 @@ func TestInjectToRequest_WithPlatformNotInitialized(t *testing.T) {
 	// 确保 xplatform 未初始化
 	xplatform.Reset()
 
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantID(ctx, "tenant-123")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -572,7 +572,7 @@ func TestInjectTraceHeaders_EmptyTrace(t *testing.T) {
 	// 测试空 context 时 trace headers 不被设置
 	xplatform.Reset() // 确保平台未初始化，避免干扰
 
-	ctx := t.Context()
+	ctx := context.Background()
 	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
 	xtenant.InjectToRequest(ctx, req)
 
@@ -606,7 +606,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "只有TraceID",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceID(t.Context(), "trace-001")
+				ctx, err := xctx.WithTraceID(context.Background(), "trace-001")
 				if err != nil {
 					t.Fatalf("WithTraceID error: %v", err)
 				}
@@ -620,7 +620,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "TraceID和SpanID",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceID(t.Context(), "trace-002")
+				ctx, err := xctx.WithTraceID(context.Background(), "trace-002")
 				if err != nil {
 					t.Fatalf("WithTraceID error: %v", err)
 				}
@@ -638,7 +638,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "只有TraceFlags",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceFlags(t.Context(), "01")
+				ctx, err := xctx.WithTraceFlags(context.Background(), "01")
 				if err != nil {
 					t.Fatalf("WithTraceFlags error: %v", err)
 				}
@@ -677,7 +677,7 @@ func TestInjectTraceHeaders_FullTrace(t *testing.T) {
 	// 测试完整 trace 字段时的行为
 	xplatform.Reset()
 
-	ctx := t.Context()
+	ctx := context.Background()
 	var err error
 
 	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
@@ -1101,7 +1101,7 @@ func TestInjectToRequest_ClearsStalePlatformHeaders(t *testing.T) {
 		t.Fatalf("xplatform.Init() error = %v", err)
 	}
 
-	ctx := t.Context()
+	ctx := context.Background()
 	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
 	xtenant.InjectToRequest(ctx, req)
 
@@ -1124,7 +1124,7 @@ func TestInjectToRequest_ClearsStaleHeaders(t *testing.T) {
 
 	t.Run("清除旧租户Header", func(t *testing.T) {
 		// 第一次调用: 注入租户信息
-		ctx1 := t.Context()
+		ctx1 := context.Background()
 		var err error
 		ctx1, err = xctx.WithTenantID(ctx1, "tenant-old")
 		if err != nil {
@@ -1143,7 +1143,7 @@ func TestInjectToRequest_ClearsStaleHeaders(t *testing.T) {
 		assert.Equal(t, "OldTenant", req.Header.Get(xtenant.HeaderTenantName))
 
 		// 第二次调用: context 无租户信息，旧 Header 应被清除
-		ctx2 := t.Context()
+		ctx2 := context.Background()
 		xtenant.InjectToRequest(ctx2, req)
 
 		assert.Empty(t, req.Header.Get(xtenant.HeaderTenantID), "stale TenantID should be cleared")
@@ -1151,7 +1151,7 @@ func TestInjectToRequest_ClearsStaleHeaders(t *testing.T) {
 	})
 
 	t.Run("清除旧Trace Header", func(t *testing.T) {
-		ctx1 := t.Context()
+		ctx1 := context.Background()
 		var err error
 		ctx1, err = xctx.WithTraceID(ctx1, "trace-old")
 		if err != nil {
@@ -1164,7 +1164,7 @@ func TestInjectToRequest_ClearsStaleHeaders(t *testing.T) {
 		assert.Equal(t, "trace-old", req.Header.Get(xtenant.HeaderTraceID))
 
 		// 第二次调用: context 无 trace 信息
-		ctx2 := t.Context()
+		ctx2 := context.Background()
 		xtenant.InjectToRequest(ctx2, req)
 
 		assert.Empty(t, req.Header.Get(xtenant.HeaderTraceID), "stale TraceID should be cleared")

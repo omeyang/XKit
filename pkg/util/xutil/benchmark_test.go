@@ -7,7 +7,7 @@ import (
 )
 
 // 设计决策: 使用包级 sink 变量阻止编译器将内联纯函数的返回值丢弃后优化掉整个调用。
-// b.Loop() 有部分防优化机制，但对纯值传递的内联函数仍不够可靠。
+// b.N 循环没有防优化机制，对纯值传递的内联函数需要 sink 变量确保调用不被优化掉。
 var (
 	sinkInt    int
 	sinkString string
@@ -23,7 +23,7 @@ type benchLarge struct {
 
 func BenchmarkIf_True(b *testing.B) {
 	var r int
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r = xutil.If(true, 1, 2)
 	}
 	sinkInt = r
@@ -31,7 +31,7 @@ func BenchmarkIf_True(b *testing.B) {
 
 func BenchmarkIf_False(b *testing.B) {
 	var r int
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r = xutil.If(false, 1, 2)
 	}
 	sinkInt = r
@@ -39,7 +39,7 @@ func BenchmarkIf_False(b *testing.B) {
 
 func BenchmarkIfString_True(b *testing.B) {
 	var r string
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r = xutil.If(true, "hello", "world")
 	}
 	sinkString = r
@@ -47,7 +47,7 @@ func BenchmarkIfString_True(b *testing.B) {
 
 func BenchmarkIfString_False(b *testing.B) {
 	var r string
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r = xutil.If(false, "hello", "world")
 	}
 	sinkString = r
@@ -57,7 +57,7 @@ func BenchmarkIfStruct(b *testing.B) {
 	x := benchLarge{ID: 1, Name: "a"}
 	y := benchLarge{ID: 2, Name: "b"}
 	var r benchLarge
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r = xutil.If(true, x, y)
 	}
 	sinkLarge = r

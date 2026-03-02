@@ -47,7 +47,7 @@ func TestEtcdFactory_Close_Success(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Close(t.Context())
+	err := f.Close(context.Background())
 	assert.NoError(t, err)
 	assert.True(t, mock.Closed)
 	assert.True(t, f.closed.Load())
@@ -58,13 +58,13 @@ func TestEtcdFactory_Close_Idempotent(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 
 	// 第一次关闭
-	err := f.Close(t.Context())
+	err := f.Close(context.Background())
 	assert.NoError(t, err)
 	assert.True(t, mock.Closed)
 
 	// 第二次关闭，不应再调用 session.Close()
 	mock.Closed = false // 重置标记
-	err = f.Close(t.Context())
+	err = f.Close(context.Background())
 	assert.NoError(t, err)
 	assert.False(t, mock.Closed) // 第二次不应调用
 }
@@ -74,7 +74,7 @@ func TestEtcdFactory_Close_WithError(t *testing.T) {
 	mock.CloseErr = errors.New("close failed")
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Close(t.Context())
+	err := f.Close(context.Background())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "close failed")
 }
@@ -96,7 +96,7 @@ func TestEtcdFactory_Health_FactoryClosed(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	f.closed.Store(true)
 
-	err := f.Health(t.Context())
+	err := f.Health(context.Background())
 	assert.ErrorIs(t, err, ErrFactoryClosed)
 }
 
@@ -104,7 +104,7 @@ func TestEtcdFactory_Health_SessionExpired(t *testing.T) {
 	mock := NewExpiredMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Health(t.Context())
+	err := f.Health(context.Background())
 	assert.ErrorIs(t, err, ErrSessionExpired)
 }
 
@@ -129,7 +129,7 @@ func TestEtcdFactory_TryLock_FactoryClosed(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	f.closed.Store(true)
 
-	handle, err := f.TryLock(t.Context(), "test-key")
+	handle, err := f.TryLock(context.Background(), "test-key")
 	assert.ErrorIs(t, err, ErrFactoryClosed)
 	assert.Nil(t, handle)
 }
@@ -138,7 +138,7 @@ func TestEtcdFactory_TryLock_SessionExpired(t *testing.T) {
 	mock := NewExpiredMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.TryLock(t.Context(), "test-key")
+	handle, err := f.TryLock(context.Background(), "test-key")
 	assert.ErrorIs(t, err, ErrSessionExpired)
 	assert.Nil(t, handle)
 }
@@ -147,7 +147,7 @@ func TestEtcdFactory_TryLock_EmptyKey(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.TryLock(t.Context(), "")
+	handle, err := f.TryLock(context.Background(), "")
 	assert.ErrorIs(t, err, ErrEmptyKey)
 	assert.Nil(t, handle)
 }
@@ -161,7 +161,7 @@ func TestEtcdFactory_TryLock_KeyTooLong(t *testing.T) {
 		longKey[i] = 'x'
 	}
 
-	handle, err := f.TryLock(t.Context(), string(longKey))
+	handle, err := f.TryLock(context.Background(), string(longKey))
 	assert.ErrorIs(t, err, ErrKeyTooLong)
 	assert.Nil(t, handle)
 }
@@ -171,7 +171,7 @@ func TestEtcdFactory_Lock_FactoryClosed(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	f.closed.Store(true)
 
-	handle, err := f.Lock(t.Context(), "test-key")
+	handle, err := f.Lock(context.Background(), "test-key")
 	assert.ErrorIs(t, err, ErrFactoryClosed)
 	assert.Nil(t, handle)
 }
@@ -180,7 +180,7 @@ func TestEtcdFactory_Lock_SessionExpired(t *testing.T) {
 	mock := NewExpiredMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.Lock(t.Context(), "test-key")
+	handle, err := f.Lock(context.Background(), "test-key")
 	assert.ErrorIs(t, err, ErrSessionExpired)
 	assert.Nil(t, handle)
 }
@@ -189,7 +189,7 @@ func TestEtcdFactory_Lock_EmptyKey(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.Lock(t.Context(), "  ")
+	handle, err := f.Lock(context.Background(), "  ")
 	assert.ErrorIs(t, err, ErrEmptyKey)
 	assert.Nil(t, handle)
 }
@@ -203,7 +203,7 @@ func TestEtcdLockHandle_Extend_OK(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	h := NewTestEtcdLockHandle(f, "lock:test")
 
-	err := h.Extend(t.Context())
+	err := h.Extend(context.Background())
 	assert.NoError(t, err)
 }
 
@@ -213,7 +213,7 @@ func TestEtcdLockHandle_Extend_Unlocked(t *testing.T) {
 	h := NewTestEtcdLockHandle(f, "lock:test")
 	h.SetUnlocked(true)
 
-	err := h.Extend(t.Context())
+	err := h.Extend(context.Background())
 	assert.ErrorIs(t, err, ErrNotLocked)
 }
 
@@ -222,7 +222,7 @@ func TestEtcdLockHandle_Extend_SessionExpired(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	h := NewTestEtcdLockHandle(f, "lock:test")
 
-	err := h.Extend(t.Context())
+	err := h.Extend(context.Background())
 	assert.ErrorIs(t, err, ErrSessionExpired)
 }
 
@@ -232,7 +232,7 @@ func TestEtcdLockHandle_Extend_FactoryClosed(t *testing.T) {
 	f.closed.Store(true)
 	h := NewTestEtcdLockHandle(f, "lock:test")
 
-	err := h.Extend(t.Context())
+	err := h.Extend(context.Background())
 	assert.ErrorIs(t, err, ErrFactoryClosed)
 }
 
@@ -271,7 +271,7 @@ func TestEtcdLockHandle_Unlock_Success(t *testing.T) {
 	mockMu := &MockMutex{}
 	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
 
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.NoError(t, err)
 	// unlocked 应在成功后被标记为 true
 	assert.True(t, h.unlocked.Load())
@@ -283,7 +283,7 @@ func TestEtcdLockHandle_Unlock_Error(t *testing.T) {
 	mockMu := &MockMutex{UnlockErr: errors.New("unlock failed")}
 	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
 
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.Error(t, err)
 	// unlocked 不应被标记（解锁失败）
 	assert.False(t, h.unlocked.Load())
@@ -311,7 +311,7 @@ func TestEtcdLockHandle_Unlock_SessionExpiredError(t *testing.T) {
 	mockMu := &MockMutex{UnlockErr: concurrency.ErrSessionExpired}
 	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
 
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.ErrorIs(t, err, ErrSessionExpired)
 	assert.False(t, h.unlocked.Load())
 }
@@ -334,7 +334,7 @@ func TestEtcdLockHandle_Unlock_AlreadyUnlocked(t *testing.T) {
 	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
 	h.SetUnlocked(true)
 
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.ErrorIs(t, err, ErrNotLocked)
 }
 
@@ -404,7 +404,7 @@ func TestEtcdFactory_TryLock_LocalKeyTracking(t *testing.T) {
 	f.StoreLockedKey(fullKey)
 
 	// TryLock 同一 key 应返回 (nil, nil)，不到达 concurrency.NewMutex
-	handle, err := f.TryLock(t.Context(), "test-key")
+	handle, err := f.TryLock(context.Background(), "test-key")
 	assert.NoError(t, err)
 	assert.Nil(t, handle)
 }
@@ -418,7 +418,7 @@ func TestEtcdFactory_Lock_LocalKeyTracking(t *testing.T) {
 	f.StoreLockedKey(fullKey)
 
 	// Lock 同一 key 应返回 ErrLockFailed
-	handle, err := f.Lock(t.Context(), "test-key")
+	handle, err := f.Lock(context.Background(), "test-key")
 	assert.ErrorIs(t, err, ErrLockFailed)
 	assert.Nil(t, handle)
 	assert.Contains(t, err.Error(), fullKey)
@@ -447,7 +447,7 @@ func TestEtcdFactory_TryLock_CustomPrefix_LocalKeyTracking(t *testing.T) {
 	f.StoreLockedKey("myapp:test-key")
 
 	// TryLock 同一 key + 同一前缀应命中本地追踪
-	handle, err := f.TryLock(t.Context(), "test-key", WithKeyPrefix("myapp:"))
+	handle, err := f.TryLock(context.Background(), "test-key", WithKeyPrefix("myapp:"))
 	assert.NoError(t, err)
 	assert.Nil(t, handle)
 
@@ -466,7 +466,7 @@ func TestEtcdLockHandle_Unlock_CleansLockedKeys(t *testing.T) {
 	assert.True(t, f.IsKeyLocked("lock:test"))
 
 	// Unlock 成功后应清理 lockedKeys
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.NoError(t, err)
 	assert.False(t, f.IsKeyLocked("lock:test"))
 }
@@ -481,7 +481,7 @@ func TestEtcdLockHandle_Unlock_FailureKeepsLockedKeys(t *testing.T) {
 	f.StoreLockedKey("lock:test")
 
 	// Unlock 失败后 lockedKeys 应保留（锁可能仍被持有）
-	err := h.Unlock(t.Context())
+	err := h.Unlock(context.Background())
 	assert.Error(t, err)
 	assert.True(t, f.IsKeyLocked("lock:test"))
 }

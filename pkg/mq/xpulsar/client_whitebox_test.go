@@ -585,7 +585,9 @@ func TestConsumeLoopWithPolicy_WithBackoff(t *testing.T) {
 // =============================================================================
 
 func TestClientWrapper_Health_Timeout_Close_NoLeak(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"), // godbus/dbus 后台连接
+	)
 
 	mc := &mockPulsarClient{
 		createReaderFn: func(pulsar.ReaderOptions) (pulsar.Reader, error) {

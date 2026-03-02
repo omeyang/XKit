@@ -633,28 +633,28 @@ func TestIsBroadcast(t *testing.T) {
 
 func BenchmarkIsPrivate(b *testing.B) {
 	addr := netip.MustParseAddr("192.168.1.1")
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = IsPrivate(addr)
 	}
 }
 
 func BenchmarkClassify(b *testing.B) {
 	addr := netip.MustParseAddr("192.168.1.1")
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = Classify(addr)
 	}
 }
 
 func BenchmarkIsDocumentation(b *testing.B) {
 	addr := netip.MustParseAddr("192.0.2.1")
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = IsDocumentation(addr)
 	}
 }
 
 func BenchmarkIsRoutable(b *testing.B) {
 	addr := netip.MustParseAddr("8.8.8.8")
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = IsRoutable(addr)
 	}
 }

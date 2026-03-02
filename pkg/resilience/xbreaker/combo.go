@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
+	"github.com/sony/gobreaker/v2"
 )
 
 // BreakerRetryer 熔断器+重试组合执行器
@@ -166,7 +167,7 @@ func (br *BreakerRetryer) DoWithRetrySimple(ctx context.Context, fn func() error
 type RetryThenBreak struct {
 	retryer *xretry.Retryer
 	breaker *Breaker
-	tscb    *TwoStepCircuitBreaker[any] // 用于 Allow/Done 模式
+	tscb    *gobreaker.TwoStepCircuitBreaker[any] // 用于 Allow/Done 模式
 }
 
 // NewRetryThenBreak 创建先重试后熔断执行器（保护模式）

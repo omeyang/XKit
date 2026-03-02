@@ -343,9 +343,11 @@ func TestPlatformManager_Singleflight(t *testing.T) {
 	// Launch concurrent requests
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_, _ = mgr.GetPlatformID(ctx, "tenant-1")
-		})
+		}()
 	}
 	wg.Wait()
 

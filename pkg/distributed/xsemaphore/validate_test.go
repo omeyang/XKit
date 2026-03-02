@@ -1,6 +1,7 @@
 package xsemaphore
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -144,7 +145,7 @@ func TestValidateResource(t *testing.T) {
 // TestTryAcquire_InvalidResourceChars 测试 TryAcquire 拒绝无效资源名
 func TestTryAcquire_InvalidResourceChars(t *testing.T) {
 	sem, _ := setupSemaphore(t)
-	ctx := t.Context()
+	ctx := context.Background()
 
 	invalidResources := []string{
 		"test{resource",
@@ -165,7 +166,7 @@ func TestTryAcquire_InvalidResourceChars(t *testing.T) {
 // TestQuery_InvalidResourceChars 测试 Query 拒绝无效资源名
 func TestQuery_InvalidResourceChars(t *testing.T) {
 	sem, _ := setupSemaphore(t)
-	ctx := t.Context()
+	ctx := context.Background()
 
 	info, err := sem.Query(ctx, "test:invalid", QueryWithCapacity(10))
 	assert.ErrorIs(t, err, ErrInvalidResource)
@@ -179,7 +180,7 @@ func TestLocalSemaphore_InvalidResourceChars(t *testing.T) {
 	sem := newLocalSemaphore(opts)
 	defer closeSemaphore(t, sem)
 
-	ctx := t.Context()
+	ctx := context.Background()
 
 	permit, err := sem.TryAcquire(ctx, "test{invalid", WithCapacity(10))
 	assert.ErrorIs(t, err, ErrInvalidResource)
@@ -279,7 +280,7 @@ func TestWithKeyPrefix_ValidPrefix(t *testing.T) {
 	require.NoError(t, err)
 	defer closeSemaphore(t, sem)
 
-	ctx := t.Context()
+	ctx := context.Background()
 	permit, err := sem.TryAcquire(ctx, "test-resource", WithCapacity(10))
 	require.NoError(t, err)
 	require.NotNil(t, permit)
@@ -380,7 +381,7 @@ func TestValidateTenantID(t *testing.T) {
 // TestTryAcquire_InvalidTenantID 测试 TryAcquire 拒绝无效租户 ID
 func TestTryAcquire_InvalidTenantID(t *testing.T) {
 	sem, _ := setupSemaphore(t)
-	ctx := t.Context()
+	ctx := context.Background()
 
 	invalidTenantIDs := []string{
 		"tenant{123}",
@@ -405,7 +406,7 @@ func TestTryAcquire_InvalidTenantID(t *testing.T) {
 // TestQuery_InvalidTenantID 测试 Query 拒绝无效租户 ID
 func TestQuery_InvalidTenantID(t *testing.T) {
 	sem, _ := setupSemaphore(t)
-	ctx := t.Context()
+	ctx := context.Background()
 
 	info, err := sem.Query(ctx, "resource",
 		QueryWithCapacity(10),

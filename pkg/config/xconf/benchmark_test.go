@@ -73,7 +73,7 @@ func createBenchFile(b *testing.B, name, content string) string {
 func BenchmarkNew_YAML_Small(b *testing.B) {
 	path := createBenchFile(b, "config.yaml", benchmarkYAMLSmall)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := New(path)
 		if err != nil {
 			b.Fatal(err)
@@ -84,7 +84,7 @@ func BenchmarkNew_YAML_Small(b *testing.B) {
 func BenchmarkNew_YAML_Medium(b *testing.B) {
 	path := createBenchFile(b, "config.yaml", benchmarkYAMLMedium)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := New(path)
 		if err != nil {
 			b.Fatal(err)
@@ -95,7 +95,7 @@ func BenchmarkNew_YAML_Medium(b *testing.B) {
 func BenchmarkNew_JSON_Small(b *testing.B) {
 	path := createBenchFile(b, "config.json", benchmarkJSONSmall)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := New(path)
 		if err != nil {
 			b.Fatal(err)
@@ -110,7 +110,7 @@ func BenchmarkNew_JSON_Small(b *testing.B) {
 func BenchmarkNewFromBytes_YAML_Small(b *testing.B) {
 	data := []byte(benchmarkYAMLSmall)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := NewFromBytes(data, FormatYAML)
 		if err != nil {
 			b.Fatal(err)
@@ -121,7 +121,7 @@ func BenchmarkNewFromBytes_YAML_Small(b *testing.B) {
 func BenchmarkNewFromBytes_YAML_Medium(b *testing.B) {
 	data := []byte(benchmarkYAMLMedium)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := NewFromBytes(data, FormatYAML)
 		if err != nil {
 			b.Fatal(err)
@@ -132,7 +132,7 @@ func BenchmarkNewFromBytes_YAML_Medium(b *testing.B) {
 func BenchmarkNewFromBytes_JSON_Small(b *testing.B) {
 	data := []byte(benchmarkJSONSmall)
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := NewFromBytes(data, FormatJSON)
 		if err != nil {
 			b.Fatal(err)
@@ -150,7 +150,7 @@ func BenchmarkClient_String(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Client().String("app.name")
 	}
 }
@@ -161,7 +161,7 @@ func BenchmarkClient_Int(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Client().Int("server.port")
 	}
 }
@@ -172,7 +172,7 @@ func BenchmarkClient_Bool(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Client().Bool("app.debug")
 	}
 }
@@ -183,7 +183,7 @@ func BenchmarkClient_Strings(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Client().Strings("app.features")
 	}
 }
@@ -238,7 +238,7 @@ func BenchmarkUnmarshal_Small(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var config BenchAppConfig
 		if err := cfg.Unmarshal("", &config); err != nil {
 			b.Fatal(err)
@@ -252,7 +252,7 @@ func BenchmarkUnmarshal_Medium(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var config BenchFullConfig
 		if err := cfg.Unmarshal("", &config); err != nil {
 			b.Fatal(err)
@@ -271,7 +271,7 @@ func BenchmarkUnmarshal_Partial(b *testing.B) {
 		Version string `koanf:"version"`
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var config AppOnly
 		if err := cfg.Unmarshal("app", &config); err != nil {
 			b.Fatal(err)
@@ -291,7 +291,7 @@ func BenchmarkReload(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := cfg.Reload(); err != nil {
 			b.Fatal(err)
 		}
@@ -341,7 +341,7 @@ func BenchmarkNewFromBytes_Allocs(b *testing.B) {
 	data := []byte(benchmarkYAMLMedium)
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := NewFromBytes(data, FormatYAML)
 		if err != nil {
 			b.Fatal(err)
@@ -356,7 +356,7 @@ func BenchmarkUnmarshal_Allocs(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var config BenchFullConfig
 		if err := cfg.Unmarshal("", &config); err != nil {
 			b.Fatal(err)

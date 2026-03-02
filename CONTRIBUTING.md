@@ -8,7 +8,7 @@
 
 ### 必需工具
 
-- **Go 1.25.4**（固定版本，流水线要求）
+- **Go 1.23.0**（固定版本，流水线要求）
 - **golangci-lint v2**（代码质量检查）
 - **go-task**（任务运行器，替代 Makefile）
 - **Git**（版本控制）
@@ -17,7 +17,7 @@
 
 ```bash
 # 检查 Go 版本
-go version  # 应显示 go1.25.4
+go version  # 应显示 go1.23
 
 # 检查 golangci-lint
 golangci-lint version
@@ -338,7 +338,7 @@ git push origin feature/001-feature-name
 ### Q1: 如何验证 Go 版本？
 
 ```bash
-go version  # 应显示 go1.25.4
+go version  # 应显示 go1.23
 
 # 如版本不对，需安装或切换到正确版本
 ```

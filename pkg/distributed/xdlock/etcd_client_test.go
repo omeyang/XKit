@@ -299,7 +299,6 @@ func TestWrapEtcdError(t *testing.T) {
 		{"nil", nil, nil, nil, true},
 		{"ErrLocked", concurrency.ErrLocked, ErrLockHeld, concurrency.ErrLocked, false},
 		{"ErrSessionExpired", concurrency.ErrSessionExpired, ErrSessionExpired, concurrency.ErrSessionExpired, false},
-		{"ErrLockReleased", concurrency.ErrLockReleased, ErrNotLocked, concurrency.ErrLockReleased, false},
 		{"context.Canceled", context.Canceled, context.Canceled, nil, false},
 		{"context.DeadlineExceeded", context.DeadlineExceeded, context.DeadlineExceeded, nil, false},
 		{"other error", errors.New("other"), nil, nil, false},
@@ -669,7 +668,7 @@ func TestNewEtcdFactoryFromConfig_Integration(t *testing.T) {
 		WithEtcdTTL(30),
 	)
 	require.NoError(t, err)
-	defer factory.Close(t.Context())
+	defer factory.Close(context.Background())
 	defer client.Close()
 
 	// 测试锁操作

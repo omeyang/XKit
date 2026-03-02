@@ -207,9 +207,11 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-
 	eventCh := make(chan Event, o.bufferSize)
 
 	// 启动 watch goroutine
-	c.watchWg.Go(func() {
+	c.watchWg.Add(1)
+	go func() {
+		defer c.watchWg.Done()
 		c.runWatchLoop(ctx, key, etcdOpts, eventCh)
-	})
+	}()
 
 	return eventCh, nil
 }
@@ -431,9 +433,11 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	eventCh := make(chan Event, o.bufferSize)
 
 	// 启动带重试的 watch goroutine
-	c.watchWg.Go(func() {
+	c.watchWg.Add(1)
+	go func() {
+		defer c.watchWg.Done()
 		c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
-	})
+	}()
 
 	return eventCh, nil
 }

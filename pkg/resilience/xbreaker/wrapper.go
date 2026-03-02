@@ -6,6 +6,11 @@ import (
 
 // 以下是 sony/gobreaker/v2 的类型别名，便于直接使用底层能力
 // 用户可以直接使用这些类型，无需导入 gobreaker 包
+//
+// 注意: CircuitBreaker[T] 和 TwoStepCircuitBreaker[T] 是泛型类型，
+// Go 1.23 不支持泛型类型别名（需要 Go 1.24+ GOEXPERIMENT=aliastypeparams）。
+// 请通过工厂函数 NewCircuitBreaker / NewTwoStepCircuitBreaker 获取实例，
+// 或直接导入 github.com/sony/gobreaker/v2 使用泛型类型。
 
 type (
 	// Settings 熔断器配置
@@ -16,13 +21,6 @@ type (
 
 	// State 熔断器状态
 	State = gobreaker.State
-
-	// CircuitBreaker 泛型熔断器
-	CircuitBreaker[T any] = gobreaker.CircuitBreaker[T]
-
-	// TwoStepCircuitBreaker 两阶段熔断器
-	// 用于需要手动报告成功/失败的场景
-	TwoStepCircuitBreaker[T any] = gobreaker.TwoStepCircuitBreaker[T]
 )
 
 // 熔断器状态常量
@@ -68,7 +66,7 @@ var (
 //	result, err := cb.Execute(func() (string, error) {
 //	    return callRemoteService()
 //	})
-func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
+func NewCircuitBreaker[T any](st Settings) *gobreaker.CircuitBreaker[T] {
 	return gobreaker.NewCircuitBreaker[T](st)
 }
 
@@ -94,7 +92,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 //
 //	// 第二阶段：报告结果（nil 表示成功，非 nil 表示失败）
 //	done(err)
-func NewTwoStepCircuitBreaker[T any](st Settings) *TwoStepCircuitBreaker[T] {
+func NewTwoStepCircuitBreaker[T any](st Settings) *gobreaker.TwoStepCircuitBreaker[T] {
 	return gobreaker.NewTwoStepCircuitBreaker[T](st)
 }
 

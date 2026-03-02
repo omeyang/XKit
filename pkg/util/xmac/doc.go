@@ -97,8 +97,8 @@
 //
 // # 平台要求
 //
-// xmac 使用 Go 1.25+ 的 [iter.Seq] 迭代器特性。
-// 最低要求 Go 1.25（与项目 go.mod 一致）。
+// xmac 使用 Go 1.23+ 的 [iter.Seq] 迭代器特性。
+// 最低要求 Go 1.23（与项目 go.mod 一致）。
 //
 // 设计决策: 迭代器索引（[RangeWithIndex]、[RangeReverseWithIndex]）和 [Count] 使用 int 类型，
 // 与 Go 标准库 [slices.All] 保持一致。在 64 位架构上 int 为 64 位，可覆盖完整的 48 位

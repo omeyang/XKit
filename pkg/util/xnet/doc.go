@@ -146,11 +146,11 @@
 //
 // # Go 版本要求
 //
-// xnet 要求 Go 1.25+（与项目 go.mod 对齐）。
+// xnet 要求 Go 1.23+（与项目 go.mod 对齐）。
 //
 // 注意：Go 1.22.4 及更早版本的 [net/netip] 对 IPv4-mapped IPv6 地址
 // 的分类存在 bug（详见 https://go.dev/issue/67289）。
-// 此 bug 在 Go 1.23 中已修复，项目当前要求 Go 1.25+ 不受影响。
+// 此 bug 在 Go 1.23 中已修复，项目当前要求 Go 1.23+ 不受影响。
 //
 // # 范围转 CIDR
 //

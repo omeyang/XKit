@@ -92,5 +92,33 @@
 //	| 业务互斥（多节点） | xdlock.NewRedisFactory(client1, client2, client3) |
 //	| 强一致性互斥 | xdlock.NewEtcdFactory(etcdClient) |
 //
+// # Redis 代理兼容模式
+//
+// redsync 内部使用 Lua 脚本执行 Unlock/Extend 操作。
+// 部分 Redis 代理（如 Predixy）不支持 EVAL/EVALSHA 命令。
+// xdlock 通过 ScriptMode 机制自动适配：
+//
+//   - ScriptModeAuto（默认）：构造时探测一次，缓存结果，运行时零开销
+//   - ScriptModeLua：强制 Lua 脚本
+//   - ScriptModeCompat：将 Lua 脚本翻译为基础命令（GET + DEL/PEXPIRE）
+//
+// compat 模式通过替换 redsync 底层的 Pool/Conn 实现拦截，
+// redsync 完全不感知 compat，保留全部功能（重试、漂移补偿、多节点 Redlock）。
+//
+// 兼容模式下 Unlock 使用 GET-then-DEL，Extend 使用 GET-then-PEXPIRE。
+// GET-DEL/GET-PEXPIRE 之间存在微秒级竞态窗口，
+// redsync 的 Redlock 语义本身允许此级别误差。
+//
+// 使用示例：
+//
+//	// 现有代码（不变）
+//	factory, _ := xdlock.NewRedisFactory(client)
+//
+//	// 代理环境
+//	factory, _ := xdlock.NewRedisFactoryWithOpts(
+//	    []redis.UniversalClient{client},
+//	    xdlock.WithRedisScriptMode(rediscompat.ScriptModeCompat),
+//	)
+//
 // 详细使用示例请参考 example_test.go 中的 Example 函数。
 package xdlock

@@ -9,6 +9,7 @@ import (
 	"github.com/go-redsync/redsync/v4"
 	rsredis "github.com/go-redsync/redsync/v4/redis"
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,6 +33,15 @@ type redisFactory struct {
 //   - 各节点应部署在不同的故障域，避免使用同一 Redis 实例的不同地址
 //   - 传入重复的客户端（指向同一实例）会降低 Redlock 的故障隔离能力
 func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
+	return NewRedisFactoryWithOpts(clients)
+}
+
+// NewRedisFactoryWithOpts 创建 Redis 锁工厂（带选项）。
+// 功能与 NewRedisFactory 相同，额外支持 Redis 代理兼容模式等配置。
+//
+// 在代理环境中（ScriptModeCompat），redsync 的 Lua 脚本会被翻译为基础命令，
+// 保留 Redlock 算法的全部功能（重试、漂移补偿、多节点）。
+func NewRedisFactoryWithOpts(clients []redis.UniversalClient, opts ...RedisFactoryOption) (RedisFactory, error) {
 	if len(clients) == 0 {
 		return nil, ErrNilClient
 	}
@@ -42,10 +52,22 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 		}
 	}
 
+	cfg := &redisFactoryConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// 解析脚本模式（len(clients) > 0 已由上方校验保证）
+	scriptMode := resolveRedisScriptMode(cfg.ScriptMode, clients[0]) //nolint:gosec // G602: len validated above
+
 	// 创建 redsync Pool 列表
 	pools := make([]rsredis.Pool, len(clients))
 	for i, client := range clients {
-		pools[i] = goredis.NewPool(client)
+		if scriptMode == rediscompat.ScriptModeCompat {
+			pools[i] = newCompatPool(client, scriptMode)
+		} else {
+			pools[i] = goredis.NewPool(client)
+		}
 	}
 
 	// 创建 Redsync 实例
@@ -55,6 +77,19 @@ func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
 		clients: append([]redis.UniversalClient(nil), clients...),
 		rs:      rs,
 	}, nil
+}
+
+// resolveRedisScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
+func resolveRedisScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
+	if mode != rediscompat.ScriptModeAuto {
+		return mode
+	}
+	// 网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）
+	detected, err := rediscompat.DetectScriptMode(context.Background(), client)
+	if err != nil {
+		return rediscompat.ScriptModeLua
+	}
+	return detected
 }
 
 // TryLock 非阻塞式获取锁，返回 LockHandle。

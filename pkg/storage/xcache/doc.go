@@ -71,4 +71,27 @@
 // Memory 是独立的本地内存缓存包装（基于 ristretto），不参与 Loader 流程。
 // Loader 仅支持 Redis 后端。如需本地缓存 + Redis 的双层缓存，
 // 应在业务层自行组合 Memory 和 Loader。
+//
+// # Redis 代理兼容模式
+//
+// Lock/Unlock 默认使用 Lua 脚本验证锁持有者身份。
+// 部分 Redis 代理（如 Predixy）不支持 EVAL/EVALSHA 命令。
+// xcache 通过 ScriptMode 机制自动适配：
+//
+//   - ScriptModeAuto（默认）：构造时探测一次，缓存结果，运行时零开销
+//   - ScriptModeLua：强制 Lua 脚本
+//   - ScriptModeCompat：使用 GET + DEL 基础命令替代
+//
+// 兼容模式下 Unlock 使用 GET-then-DEL（先验证 value 再删除）。
+// GET-DEL 之间存在微秒级竞态窗口，缓存防击穿场景可接受。
+//
+// 使用示例：
+//
+//	// 自动探测（默认）
+//	cache, _ := xcache.NewRedis(client)
+//
+//	// 已知代理环境
+//	cache, _ := xcache.NewRedis(client,
+//	    xcache.WithScriptMode(rediscompat.ScriptModeCompat),
+//	)
 package xcache

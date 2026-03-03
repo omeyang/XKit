@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/omeyang/xkit/pkg/observability/xlog"
 	"github.com/omeyang/xkit/pkg/util/xid"
 )
@@ -69,9 +70,10 @@ type options struct {
 	fallback             FallbackStrategy
 	podCount             int
 	onFallback           func(resource string, strategy FallbackStrategy, err error)
-	disableResourceLabel bool            // 禁用 resource 标签，避免高基数问题
-	defaultTimeout       time.Duration   // 默认操作超时时间
-	idGenerator          IDGeneratorFunc // 许可 ID 生成函数，nil 时使用 xid.NewStringWithRetry
+	disableResourceLabel bool                   // 禁用 resource 标签，避免高基数问题
+	defaultTimeout       time.Duration          // 默认操作超时时间
+	idGenerator          IDGeneratorFunc        // 许可 ID 生成函数，nil 时使用 xid.NewStringWithRetry
+	scriptMode           rediscompat.ScriptMode // Redis 脚本执行模式（Auto/Lua/Compat）
 }
 
 // Option 工厂配置选项函数
@@ -195,6 +197,21 @@ func WithIDGenerator(fn IDGeneratorFunc) Option {
 	}
 }
 
+// WithScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，New() 会在构造时执行 EVAL "return 1" 0 探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+//
+// 使用场景：
+//   - 已知 Redis 代理不支持 Lua 脚本时，指定 ScriptModeCompat
+//   - 已知 Redis 直连时，指定 ScriptModeLua 跳过探测
+//   - 不确定时使用默认 ScriptModeAuto 自动探测
+func WithScriptMode(mode rediscompat.ScriptMode) Option {
+	return func(o *options) {
+		o.scriptMode = mode
+	}
+}
+
 // effectiveIDGenerator 返回有效的 ID 生成函数
 func (o *options) effectiveIDGenerator() IDGeneratorFunc {
 	if o.idGenerator != nil {
@@ -213,6 +230,9 @@ func (o *options) validate() error {
 	}
 	if o.fallback != FallbackNone && !o.fallback.IsValid() {
 		return fmt.Errorf("%w: %q", ErrInvalidFallbackStrategy, o.fallback)
+	}
+	if !o.scriptMode.IsValid() {
+		return fmt.Errorf("%w: %d", ErrInvalidScriptMode, o.scriptMode)
 	}
 	return nil
 }

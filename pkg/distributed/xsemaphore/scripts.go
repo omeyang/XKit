@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -81,12 +82,23 @@ func getScripts() *scripts {
 // 建议在应用启动时调用，避免首次执行时的编译开销。
 // 如果 Redis 不可用，返回错误但不影响后续使用（会在首次执行时重试）。
 // 如果 ctx 为 nil，返回 [ErrNilContext]；如果 client 为 nil，返回 [ErrNilClient]。
+//
+// 当 Redis 代理不支持 Lua 脚本时（ScriptModeCompat），此函数自动检测并返回 nil（空操作）。
 func WarmupScripts(ctx context.Context, client redis.UniversalClient) error {
 	if ctx == nil {
 		return ErrNilContext
 	}
 	if client == nil {
 		return ErrNilClient
+	}
+
+	// 探测脚本支持：Compat 模式直接返回（不需要预热脚本）
+	mode, err := rediscompat.DetectScriptMode(ctx, client)
+	if err != nil {
+		return fmt.Errorf("detect script mode: %w", err)
+	}
+	if mode == rediscompat.ScriptModeCompat {
+		return nil
 	}
 
 	s := getScripts()

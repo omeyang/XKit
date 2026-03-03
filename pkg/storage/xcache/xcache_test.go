@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/dgraph-io/ristretto/v2"
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -738,4 +739,90 @@ func TestGenerateLockValue_Normal_ReturnsHexString(t *testing.T) {
 
 	// Then - 应返回 32 字符的 hex 字符串 (16 bytes = 32 hex chars)
 	assert.Len(t, value, 32)
+}
+
+// =============================================================================
+// Redis 代理兼容模式测试
+// =============================================================================
+
+func newTestRedisCacheCompat(t *testing.T) (Redis, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+		PoolSize:     2,
+		MaxRetries:   1,
+	})
+	cache, err := NewRedis(client, WithScriptMode(rediscompat.ScriptModeCompat))
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = cache.Close(context.Background())
+		mr.Close()
+	})
+
+	return cache, mr
+}
+
+func TestRedisWrapper_CompatMode_LockUnlock_Success(t *testing.T) {
+	cache, _ := newTestRedisCacheCompat(t)
+	ctx := context.Background()
+
+	unlock, err := cache.Lock(ctx, "compat-lock", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, unlock)
+
+	err = unlock(ctx)
+	require.NoError(t, err)
+}
+
+func TestRedisWrapper_CompatMode_UnlockExpired(t *testing.T) {
+	cache, mr := newTestRedisCacheCompat(t)
+	ctx := context.Background()
+
+	unlock, err := cache.Lock(ctx, "compat-expire", time.Minute)
+	require.NoError(t, err)
+
+	// 模拟锁过期：直接删除 key
+	mr.Del("lock:compat-expire")
+
+	err = unlock(ctx)
+	assert.ErrorIs(t, err, ErrLockExpired)
+}
+
+func TestRedisWrapper_CompatMode_UnlockStolen(t *testing.T) {
+	cache, mr := newTestRedisCacheCompat(t)
+	ctx := context.Background()
+
+	unlock, err := cache.Lock(ctx, "compat-stolen", time.Minute)
+	require.NoError(t, err)
+
+	// 模拟锁被抢走：覆盖 value
+	mr.Set("lock:compat-stolen", "other-owner")
+
+	err = unlock(ctx)
+	assert.ErrorIs(t, err, ErrLockExpired)
+}
+
+func TestRedisWrapper_CompatMode_LockAlreadyHeld(t *testing.T) {
+	cache, _ := newTestRedisCacheCompat(t)
+	ctx := context.Background()
+
+	unlock1, err := cache.Lock(ctx, "compat-held", time.Minute)
+	require.NoError(t, err)
+	defer func() { _ = unlock1(ctx) }()
+
+	_, err = cache.Lock(ctx, "compat-held", time.Minute)
+	assert.ErrorIs(t, err, ErrLockFailed)
+}
+
+func TestWithScriptMode_SetsOption(t *testing.T) {
+	opts := defaultRedisOptions()
+	WithScriptMode(rediscompat.ScriptModeCompat)(opts)
+	assert.Equal(t, rediscompat.ScriptModeCompat, opts.ScriptMode)
 }

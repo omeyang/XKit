@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -65,10 +66,11 @@ func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis
 
 // redisSemaphore 实现 Semaphore 接口
 type redisSemaphore struct {
-	client  redis.UniversalClient
-	opts    *options
-	scripts *scripts
-	closed  atomic.Bool
+	client     redis.UniversalClient
+	opts       *options
+	scripts    *scripts
+	scriptMode rediscompat.ScriptMode // 已解析的脚本模式（不会是 Auto）
+	closed     atomic.Bool
 }
 
 // New 创建 Redis 信号量
@@ -108,10 +110,14 @@ func New(client redis.UniversalClient, opts ...Option) (Semaphore, error) {
 	// 初始化 tracer
 	cfg.tracer = getTracer(cfg.tracerProvider)
 
+	// 解析脚本模式
+	resolvedMode := resolveScriptMode(cfg, client)
+
 	sem := &redisSemaphore{
-		client:  client,
-		opts:    cfg,
-		scripts: getScripts(),
+		client:     client,
+		opts:       cfg,
+		scripts:    getScripts(),
+		scriptMode: resolvedMode,
 	}
 
 	// 如果配置了降级策略，包装为降级信号量
@@ -121,6 +127,21 @@ func New(client redis.UniversalClient, opts ...Option) (Semaphore, error) {
 	}
 
 	return sem, nil
+}
+
+// resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用指定模式
+func resolveScriptMode(cfg *options, client redis.UniversalClient) rediscompat.ScriptMode {
+	if cfg.scriptMode != rediscompat.ScriptModeAuto {
+		return cfg.scriptMode
+	}
+
+	detected, detectErr := rediscompat.DetectScriptMode(context.Background(), client)
+	if detectErr != nil && cfg.logger != nil {
+		cfg.logger.Warn(context.Background(), "script mode detection failed, defaulting to lua",
+			AttrError(detectErr),
+		)
+	}
+	return detected
 }
 
 // TryAcquire 非阻塞式获取许可
@@ -313,6 +334,11 @@ func (s *redisSemaphore) doAcquire(
 	tenantID string,
 	cfg *acquireOptions,
 ) (Permit, AcquireFailReason, error) {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.doAcquireCompat(ctx, resource, tenantID, cfg)
+	}
+
 	now := time.Now()
 	expiresAt := now.Add(cfg.ttl)
 
@@ -397,6 +423,11 @@ func (s *redisSemaphore) handleAcquireResult(
 // 注意：即使信号量已关闭，也允许释放许可，确保已获取的许可能完成其生命周期。
 // 这与本地信号量的行为保持一致，也符合"Close 阻止新获取，但不影响已有许可"的设计理念。
 func (s *redisSemaphore) releasePermit(ctx context.Context, p *redisPermit) error {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.releasePermitCompat(ctx, p)
+	}
+
 	globalKey := s.buildGlobalKey(p.resource)
 
 	// 动态构建 KEYS 数组（Redis Cluster 兼容）
@@ -438,6 +469,11 @@ func (s *redisSemaphore) releasePermit(ctx context.Context, p *redisPermit) erro
 // 注意：即使信号量已关闭，也允许续期许可，确保已获取的许可能完成其生命周期。
 // 这与本地信号量的行为保持一致，也符合"Close 阻止新获取，但不影响已有许可"的设计理念。
 func (s *redisSemaphore) extendPermit(ctx context.Context, p *redisPermit, newExpiresAt time.Time) error {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.extendPermitCompat(ctx, p, newExpiresAt)
+	}
+
 	globalKey := s.buildGlobalKey(p.resource)
 
 	// 动态构建 KEYS 数组（Redis Cluster 兼容）
@@ -522,20 +558,11 @@ func (s *redisSemaphore) Query(ctx context.Context, resource string, opts ...Que
 	}
 
 	now := time.Now()
-	args := []any{now.UnixMilli()}
 
-	result, err := s.evalScriptInt64Slice(ctx, s.scripts.query, keys, args...)
+	globalUsed, tenantUsed, err := s.execQuery(ctx, globalKey, keys, now)
 	if err != nil {
 		return nil, s.handleQueryError(ctx, span, resource, start, err)
 	}
-
-	// 验证结果长度：query 返回 {globalCount, tenantCount}
-	if err := validateScriptResult(result, 2); err != nil {
-		return nil, s.handleQueryError(ctx, span, resource, start, err)
-	}
-
-	globalUsed := int(result[0])
-	tenantUsed := int(result[1])
 
 	info := &ResourceInfo{
 		Resource:        resource,
@@ -561,6 +588,24 @@ func (s *redisSemaphore) Query(ctx context.Context, resource string, opts ...Que
 	}
 
 	return info, nil
+}
+
+// execQuery 执行查询操作，根据脚本模式分流
+func (s *redisSemaphore) execQuery(ctx context.Context, globalKey string, keys []string, now time.Time) (int, int, error) {
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		g, t, err := s.queryCompat(ctx, globalKey, keys, now)
+		return int(g), int(t), err
+	}
+
+	args := []any{now.UnixMilli()}
+	result, err := s.evalScriptInt64Slice(ctx, s.scripts.query, keys, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := validateScriptResult(result, 2); err != nil {
+		return 0, 0, err
+	}
+	return int(result[0]), int(result[1]), nil
 }
 
 // handleQueryError 处理 Query 脚本错误：记录 span 和指标

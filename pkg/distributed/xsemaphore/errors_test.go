@@ -332,13 +332,13 @@ func TestIsRedisClusterError(t *testing.T) {
 	}{
 		{"nil error", nil, false},
 		{"regular error", errors.New("some error"), false},
-		{"CROSSSLOT", redis.ErrCrossSlot, true},                                                          // CROSSSLOT 由 errors.Is 检测
-		{"CLUSTERDOWN", errors.New("CLUSTERDOWN The cluster is down"), true},                             // 集群处于 fail 状态
-		{"MOVED", errors.New("MOVED 3999 127.0.0.1:6381"), true},                                        // 键所在槽已迁移
-		{"ASK", errors.New("ASK 3999 127.0.0.1:6381"), true},                                            // 键正在迁移中
-		{"READONLY", errors.New("READONLY You can't write against a read only replica"), true},           // 节点处于只读状态
+		{"CROSSSLOT", redis.ErrCrossSlot, true},                                                              // CROSSSLOT 由 errors.Is 检测
+		{"CLUSTERDOWN", errors.New("CLUSTERDOWN The cluster is down"), true},                                 // 集群处于 fail 状态
+		{"MOVED", errors.New("MOVED 3999 127.0.0.1:6381"), true},                                             // 键所在槽已迁移
+		{"ASK", errors.New("ASK 3999 127.0.0.1:6381"), true},                                                 // 键正在迁移中
+		{"READONLY", errors.New("READONLY You can't write against a read only replica"), true},               // 节点处于只读状态
 		{"MASTERDOWN", errors.New("MASTERDOWN Link with MASTER is down and replica-serve-stale-data"), true}, // 主节点不可用
-		{"LOADING", errors.New("LOADING Redis is loading the dataset in memory"), true},                  // Redis 正在加载数据
+		{"LOADING", errors.New("LOADING Redis is loading the dataset in memory"), true},                      // Redis 正在加载数据
 	}
 
 	for _, tt := range tests {
@@ -444,6 +444,16 @@ func TestIsRedisProtocolError(t *testing.T) {
 		{
 			name:     "cluster support disabled",
 			err:      errors.New("ERR This instance has cluster support disabled"),
+			expected: true,
+		},
+		{
+			name:     "Predixy auth permission deny",
+			err:      errors.New("ERR auth permission deny"),
+			expected: true,
+		},
+		{
+			name:     "not allowed generic",
+			err:      errors.New("ERR command 'EVAL' is not allowed"),
 			expected: true,
 		},
 		{

@@ -11,6 +11,8 @@ import (
 
 	"github.com/dgraph-io/ristretto/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/omeyang/xkit/internal/rediscompat"
 )
 
 // lockValueCounter 用于在 crypto/rand 失败时生成唯一的锁值后备。
@@ -32,6 +34,9 @@ var unlockScript = redis.NewScript(`
 
 // NewRedis 创建 Redis 缓存实例。
 // client 必须是已初始化的 redis.UniversalClient。
+//
+// 默认自动探测 Redis 是否支持 Lua 脚本（ScriptModeAuto）。
+// 可通过 WithScriptMode 显式指定以跳过探测。
 func NewRedis(client redis.UniversalClient, opts ...RedisOption) (Redis, error) {
 	if client == nil {
 		return nil, ErrNilClient
@@ -42,10 +47,26 @@ func NewRedis(client redis.UniversalClient, opts ...RedisOption) (Redis, error) 
 		opt(options)
 	}
 
+	scriptMode := resolveScriptMode(options.ScriptMode, client)
+
 	return &redisWrapper{
-		client:  client,
-		options: options,
+		client:     client,
+		options:    options,
+		scriptMode: scriptMode,
 	}, nil
+}
+
+// resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
+func resolveScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
+	if mode != rediscompat.ScriptModeAuto {
+		return mode
+	}
+	// 网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）
+	detected, err := rediscompat.DetectScriptMode(context.Background(), client)
+	if err != nil {
+		return rediscompat.ScriptModeLua
+	}
+	return detected
 }
 
 // NewMemory 创建内存缓存实例。
@@ -130,9 +151,10 @@ func NewLoader(cache Redis, opts ...LoaderOption) (Loader, error) {
 
 // redisWrapper 实现 Redis 接口，提供分布式锁等增值功能。
 type redisWrapper struct {
-	client  redis.UniversalClient
-	options *RedisOptions
-	closed  atomic.Bool
+	client     redis.UniversalClient
+	options    *RedisOptions
+	scriptMode rediscompat.ScriptMode // 已解析的脚本模式（不会是 Auto）
+	closed     atomic.Bool
 }
 
 func (w *redisWrapper) Lock(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
@@ -238,12 +260,45 @@ func (w *redisWrapper) lockWithRetry(ctx context.Context, key, value string, ttl
 
 // unlock 释放锁。使用 Lua 脚本确保只释放自己持有的锁。
 // 返回 ErrLockExpired 表示锁已过期或被其他持有者抢走。
+//
+// Lua 模式：使用脚本原子性验证后删除。
+// Compat 模式：使用 GET + DEL 基础命令替代。
 func (w *redisWrapper) unlock(ctx context.Context, key, value string) error {
+	if w.scriptMode == rediscompat.ScriptModeCompat {
+		return w.unlockCompat(ctx, key, value)
+	}
+
 	result, err := unlockScript.Run(ctx, w.client, []string{key}, value).Int64()
 	if err != nil {
 		return err
 	}
 	if result == 0 {
+		return ErrLockExpired
+	}
+	return nil
+}
+
+// unlockCompat 使用 GET + DEL 释放锁（兼容模式）。
+//
+// 竞态分析：GET-DEL 之间锁可能过期被重获取，DEL 删了新持有者的锁。
+// 窗口微秒级，缓存防击穿场景可接受（任务应幂等，TTL 是安全网）。
+func (w *redisWrapper) unlockCompat(ctx context.Context, key, value string) error {
+	val, err := w.client.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return ErrLockExpired
+		}
+		return err
+	}
+	if val != value {
+		return ErrLockExpired
+	}
+
+	deleted, err := w.client.Del(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
 		return ErrLockExpired
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -50,6 +51,11 @@ type RedisOptions struct {
 	// LockRetryCount 获取锁失败后的最大重试次数。
 	// 默认为 0，表示不重试。
 	LockRetryCount int
+
+	// ScriptMode Redis 脚本执行模式。
+	// 默认为 ScriptModeAuto，构造时探测一次。
+	// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测。
+	ScriptMode rediscompat.ScriptMode
 }
 
 // RedisOption 定义配置 Redis 缓存的函数类型。
@@ -77,6 +83,16 @@ const MaxLockRetryCount = 100
 
 // MaxLockRetryInterval 是 LockRetryInterval 的上界，防止单次重试间隔过长。
 const MaxLockRetryInterval = 10 * time.Second
+
+// WithScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，NewRedis() 会在构造时探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+func WithScriptMode(mode rediscompat.ScriptMode) RedisOption {
+	return func(o *RedisOptions) {
+		o.ScriptMode = mode
+	}
+}
 
 // WithLockRetry 设置锁重试策略。
 //

@@ -98,6 +98,10 @@ var (
 	// 降级策略必须为 FallbackLocal、FallbackOpen 或 FallbackClose。
 	ErrInvalidFallbackStrategy = errors.New("xsemaphore: invalid fallback strategy")
 
+	// ErrInvalidScriptMode 无效的脚本执行模式。
+	// 脚本模式必须为 ScriptModeAuto、ScriptModeLua 或 ScriptModeCompat。
+	ErrInvalidScriptMode = errors.New("xsemaphore: invalid script mode")
+
 	// errUnexpectedScriptResult Lua 脚本返回结果不符合预期（内部使用）
 	errUnexpectedScriptResult = errors.New("xsemaphore: unexpected script result")
 )
@@ -282,6 +286,16 @@ func isRedisProtocolError(err error) bool {
 
 	// 集群支持被禁用
 	if strings.Contains(errStr, "cluster support disabled") {
+		return true
+	}
+
+	// Predixy 代理权限拒绝
+	if strings.Contains(errStr, "auth permission deny") {
+		return true
+	}
+
+	// 通用权限拒绝
+	if strings.Contains(errStr, "not allowed") {
 		return true
 	}
 

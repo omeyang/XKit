@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -427,4 +428,171 @@ func TestRedisLocker_WithPrefix(t *testing.T) {
 	handle2, err := locker2.TryLock(ctx, "job-1", 30*time.Second)
 	require.NoError(t, err)
 	assert.NotNil(t, handle2)
+}
+
+// ============================================================================
+// Compat Mode Tests
+// ============================================================================
+
+// setupCompatLocker 创建兼容模式的 RedisLocker
+func setupCompatLocker(t *testing.T) (*RedisLocker, *miniredis.Miniredis) {
+	t.Helper()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+
+	client := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	})
+
+	locker, err := NewRedisLocker(client,
+		WithRedisIdentity("test-compat"),
+		WithRedisScriptMode(rediscompat.ScriptModeCompat),
+	)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		client.Close()
+		mr.Close()
+	})
+
+	return locker, mr
+}
+
+func TestRedisLocker_Compat_TryLock(t *testing.T) {
+	t.Run("acquire lock successfully", func(t *testing.T) {
+		locker, _ := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		assert.NotNil(t, handle)
+	})
+
+	t.Run("fail to acquire already held lock", func(t *testing.T) {
+		locker, _ := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle1, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		assert.NotNil(t, handle1)
+
+		handle2, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		assert.Nil(t, handle2)
+	})
+}
+
+func TestRedisLockHandle_Compat_Unlock(t *testing.T) {
+	t.Run("unlock successfully", func(t *testing.T) {
+		locker, _ := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Unlock(ctx)
+		require.NoError(t, err)
+
+		// 可以重新获取
+		handle2, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		assert.NotNil(t, handle2)
+	})
+
+	t.Run("double unlock returns error", func(t *testing.T) {
+		locker, _ := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Unlock(ctx)
+		require.NoError(t, err)
+
+		err = handle.Unlock(ctx)
+		assert.ErrorIs(t, err, ErrLockNotHeld)
+	})
+}
+
+func TestRedisLockHandle_Compat_Renew(t *testing.T) {
+	t.Run("renew successfully", func(t *testing.T) {
+		locker, mr := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 100*time.Millisecond)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Renew(ctx, 5*time.Second)
+		require.NoError(t, err)
+
+		// 快进时间（超过原 TTL 但不超过续期后的 TTL）
+		mr.FastForward(200 * time.Millisecond)
+
+		// 锁应该仍然被持有（续期生效）
+		handle2, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		assert.Nil(t, handle2)
+	})
+
+	t.Run("renew after unlock returns error", func(t *testing.T) {
+		locker, _ := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 30*time.Second)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		err = handle.Unlock(ctx)
+		require.NoError(t, err)
+
+		err = handle.Renew(ctx, 60*time.Second)
+		assert.ErrorIs(t, err, ErrLockNotHeld)
+	})
+
+	t.Run("renew after expiry returns error", func(t *testing.T) {
+		locker, mr := setupCompatLocker(t)
+		ctx := context.Background()
+
+		handle, err := locker.TryLock(ctx, "job-1", 100*time.Millisecond)
+		require.NoError(t, err)
+		require.NotNil(t, handle)
+
+		mr.FastForward(200 * time.Millisecond)
+
+		err = handle.Renew(ctx, 60*time.Second)
+		assert.ErrorIs(t, err, ErrLockNotHeld)
+	})
+}
+
+func TestWithRedisScriptMode(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	client := redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	})
+	defer client.Close()
+
+	t.Run("explicit compat mode", func(t *testing.T) {
+		locker, err := NewRedisLocker(client, WithRedisScriptMode(rediscompat.ScriptModeCompat))
+		require.NoError(t, err)
+		assert.Equal(t, rediscompat.ScriptModeCompat, locker.scriptMode)
+	})
+
+	t.Run("explicit lua mode", func(t *testing.T) {
+		locker, err := NewRedisLocker(client, WithRedisScriptMode(rediscompat.ScriptModeLua))
+		require.NoError(t, err)
+		assert.Equal(t, rediscompat.ScriptModeLua, locker.scriptMode)
+	})
+
+	t.Run("auto mode detects lua", func(t *testing.T) {
+		locker, err := NewRedisLocker(client)
+		require.NoError(t, err)
+		assert.Equal(t, rediscompat.ScriptModeLua, locker.scriptMode)
+	})
 }

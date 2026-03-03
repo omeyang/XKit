@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/omeyang/xkit/internal/rediscompat"
 )
 
 // maxKeyLength 锁 key 的最大长度（字节）。
@@ -265,5 +267,27 @@ func WithShufflePools(b bool) MutexOption {
 func WithSetNXOnExtend(b bool) MutexOption {
 	return func(o *mutexOptions) {
 		o.SetNXOnExtend = b
+	}
+}
+
+// =============================================================================
+// Redis 工厂选项
+// =============================================================================
+
+// RedisFactoryOption 定义 Redis 锁工厂的配置选项。
+type RedisFactoryOption func(*redisFactoryConfig)
+
+// redisFactoryConfig Redis 工厂配置。
+type redisFactoryConfig struct {
+	ScriptMode rediscompat.ScriptMode
+}
+
+// WithRedisScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，NewRedisFactoryWithOpts() 会在构造时探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+func WithRedisScriptMode(mode rediscompat.ScriptMode) RedisFactoryOption {
+	return func(c *redisFactoryConfig) {
+		c.ScriptMode = mode
 	}
 }

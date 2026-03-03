@@ -338,26 +338,36 @@
 //   - 这确保短 TTL 的许可不会影响同一资源下长 TTL 许可的生存周期
 //   - 键的最终 TTL 始终等于该资源所有许可中最大的过期时间 + 余量
 //
-// # Redis 代理支持
+// # Redis 代理兼容模式
 //
-// xsemaphore 使用 Lua 脚本执行原子操作，对 Redis 代理（如 Twemproxy、Codis）的支持：
-//   - go-redis 库内部已处理 NOSCRIPT 错误：首次使用 EVALSHA，失败后自动回退到 EVAL
-//   - 使用 {resource} 作为 hash tag，确保多键操作路由到同一节点
-//   - 建议：在应用启动时调用 WarmupScripts() 预热脚本缓存
+// xsemaphore 默认使用 Lua 脚本执行原子操作，但部分 Redis 代理（如 Predixy、Twemproxy、
+// Codis）不支持 EVAL/EVALSHA 命令。xsemaphore 通过 ScriptMode 机制自动适配：
 //
-// 注意：部分代理可能不支持 Lua 脚本或 MULTI/EXEC，请查阅代理文档确认兼容性。
+//   - ScriptModeAuto（默认）：构造时执行 EVAL "return 1" 0 探测一次，缓存结果，
+//     运行时零开销
+//   - ScriptModeLua：强制使用 Lua 脚本（跳过探测）
+//   - ScriptModeCompat：强制使用 Pipeline 基础命令替代 Lua 脚本（跳过探测）
 //
-// 当代理不支持 EVAL/EVALSHA 命令时，会返回类似 "ERR unknown command 'eval'" 的错误。
-// 这类错误会被 IsRedisError() 检测为 Redis 错误，从而触发降级策略。
+// 兼容模式使用 Pipeline 基础命令（ZADD/ZREM/ZCOUNT/ZREMRANGEBYSCORE 等）替代 Lua 脚本。
+// 采用"乐观 add-then-check"算法：先添加许可再检查容量，超容则回滚。
+// 最坏情况是短暂的误拒绝（两个客户端同时超容都回滚），不会过量放行。
+//
+// 使用示例：
+//
+//	// 方式 1：自动探测（推荐，默认行为）
+//	sem, err := xsemaphore.New(rdb)
+//
+//	// 方式 2：已知代理环境，显式指定跳过探测
+//	sem, err := xsemaphore.New(rdb,
+//	    xsemaphore.WithScriptMode(rediscompat.ScriptModeCompat),
+//	)
+//
+// 使用 {resource} 作为 hash tag，确保多键操作路由到同一节点。
 //
 // # Lua 脚本兼容性
 //
-// xsemaphore 依赖 Redis Lua 脚本实现原子操作，需要确保 Redis 部署支持 EVAL/EVALSHA 命令。
-//
-// 兼容性检测：
-//   - 强烈建议在应用启动时调用 WarmupScripts() 预热并检测兼容性
-//   - 如果 Redis 代理不支持 Lua 脚本，WarmupScripts() 会返回错误
-//   - 这样可以在启动时就发现问题，而不是在运行时才遇到错误
+// 当使用 Lua 模式时，建议在应用启动时调用 WarmupScripts() 预热脚本缓存。
+// WarmupScripts 会自动检测 ScriptMode：Compat 模式下直接返回 nil（空操作）。
 //
 // 示例：
 //

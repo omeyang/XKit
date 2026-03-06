@@ -7,7 +7,7 @@ import (
 
 func BenchmarkMeasureOperation(b *testing.B) {
 	start := time.Now()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		MeasureOperation(start)
 	}
 }
@@ -23,13 +23,13 @@ func BenchmarkHealthCounter(b *testing.B) {
 }
 
 func BenchmarkValidatePagination(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ValidatePagination(100, 20) //nolint:errcheck // benchmark 中忽略返回值
 	}
 }
 
 func BenchmarkCalculateTotalPages(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		CalculateTotalPages(9999, 20)
 	}
 }

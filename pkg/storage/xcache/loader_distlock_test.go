@@ -308,11 +308,10 @@ func TestLoader_Load_WithDistributedLock_DoubleCheckAfterLock(t *testing.T) {
 	errs := make([]error, 5)
 
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx], errs[idx] = loader.Load(ctx, "dcheck_key", loadFn, time.Hour)
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -666,27 +665,23 @@ func TestLoader_Load_WithDistributedLock_CacheHitAfterLockAcquired(t *testing.T)
 	errs := make([]error, 2)
 
 	// 第一个请求：获取锁并加载数据
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		atomic.StoreInt32(&phase, 1)
 		results[0], errs[0] = loader.Load(ctx, "race_key", loadFn, time.Hour)
 		atomic.StoreInt32(&phase, 2)
-	}()
+	})
 
 	// 等待第一个请求开始执行
 	time.Sleep(10 * time.Millisecond)
 
 	// 第二个请求：等待锁释放，然后应该在 double-check 时发现缓存已有值
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		// 等待第一个请求写入缓存
 		for atomic.LoadInt32(&phase) < 2 {
 			time.Sleep(5 * time.Millisecond)
 		}
 		results[1], errs[1] = loader.Load(ctx, "race_key", loadFn, time.Hour)
-	}()
+	})
 
 	wg.Wait()
 
@@ -735,24 +730,20 @@ func TestLoader_LoadHash_WithDistributedLock_CacheHitAfterLockAcquired(t *testin
 	results := make([][]byte, 2)
 	errs := make([]error, 2)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		atomic.StoreInt32(&phase, 1)
 		results[0], errs[0] = loader.LoadHash(ctx, "race_hash", "field1", loadFn, time.Hour)
 		atomic.StoreInt32(&phase, 2)
-	}()
+	})
 
 	time.Sleep(10 * time.Millisecond)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for atomic.LoadInt32(&phase) < 2 {
 			time.Sleep(5 * time.Millisecond)
 		}
 		results[1], errs[1] = loader.LoadHash(ctx, "race_hash", "field1", loadFn, time.Hour)
-	}()
+	})
 
 	wg.Wait()
 
@@ -1600,11 +1591,10 @@ func TestLoader_Load_WithExternalLock_Concurrent(t *testing.T) {
 	errs := make([]error, 10)
 
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx], errs[idx] = loader.Load(ctx, "concurrentkey", loadFn, time.Hour)
-		}(i)
+		})
 	}
 	wg.Wait()
 

@@ -220,7 +220,7 @@ func (b *testBuffer) contains(s string) bool {
 func BenchmarkErr(b *testing.B) {
 	err := errors.New("benchmark error")
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Err(err)
 	}
 }
@@ -228,7 +228,7 @@ func BenchmarkErr(b *testing.B) {
 // BenchmarkErrNil 测试 Err(nil) 的性能
 func BenchmarkErrNil(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Err(nil)
 	}
 }
@@ -236,7 +236,7 @@ func BenchmarkErrNil(b *testing.B) {
 // BenchmarkComponent 测试 Component 函数的性能
 func BenchmarkComponent(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Component("auth")
 	}
 }
@@ -244,7 +244,7 @@ func BenchmarkComponent(b *testing.B) {
 // BenchmarkSlogString 对比原生 slog.String 的性能
 func BenchmarkSlogString(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = slog.String("component", "auth")
 	}
 }

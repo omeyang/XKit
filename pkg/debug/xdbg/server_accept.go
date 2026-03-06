@@ -10,8 +10,6 @@ import (
 
 // acceptLoop 接受连接循环。
 func (s *Server) acceptLoop() {
-	defer s.wg.Done()
-
 	backoff := newAcceptBackoff()
 
 	for {
@@ -122,14 +120,12 @@ func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
 	}
 
 	// 创建会话
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		defer s.sessionCount.Add(-1)
 
 		session := newSession(s.ctx, conn, identity, s)
 		session.Run()
-	}()
+	})
 
 	// 重置自动关闭定时器
 	s.resetShutdownTimer()

@@ -312,7 +312,7 @@ func BenchmarkKey_Render(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = key.Render(template)
 	}
 }
@@ -329,7 +329,7 @@ func BenchmarkKey_String(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = key.String()
 	}
 }

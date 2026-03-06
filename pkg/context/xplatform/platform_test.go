@@ -484,18 +484,16 @@ func TestConcurrentAccess(t *testing.T) {
 
 	const goroutines = 100
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = xplatform.PlatformID()
 			_ = xplatform.HasParent()
 			_ = xplatform.UnclassRegionID()
 			_ = xplatform.IsInitialized()
 			_, _ = xplatform.RequirePlatformID()
 			_, _ = xplatform.GetConfig()
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -519,12 +517,10 @@ func TestConcurrentResetAndRead(t *testing.T) {
 
 	const goroutines = 100
 	var wg sync.WaitGroup
-	wg.Add(goroutines + 1)
 
 	// 并发读取
 	for i := 0; i < goroutines; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 1000 {
 				_ = xplatform.PlatformID()
 				_ = xplatform.HasParent()
@@ -533,12 +529,11 @@ func TestConcurrentResetAndRead(t *testing.T) {
 				_, _ = xplatform.RequirePlatformID()
 				_, _ = xplatform.GetConfig()
 			}
-		}()
+		})
 	}
 
 	// 并发 Reset
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 1000 {
 			xplatform.Reset()
 			// 重新初始化，确保读取方有数据可读
@@ -548,7 +543,7 @@ func TestConcurrentResetAndRead(t *testing.T) {
 				UnclassRegionID: "region-001",
 			})
 		}
-	}()
+	})
 
 	wg.Wait()
 }
@@ -559,15 +554,13 @@ func TestConcurrentInit(t *testing.T) {
 
 	const goroutines = 50
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 
 	errs := make(chan error, goroutines)
 
 	for range goroutines {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			errs <- xplatform.Init(xplatform.Config{PlatformID: "platform-001"})
-		}()
+		})
 	}
 
 	wg.Wait()

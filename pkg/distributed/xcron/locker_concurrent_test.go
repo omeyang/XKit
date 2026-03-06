@@ -42,12 +42,10 @@ func TestRedisLocker_ConcurrentAcquire(t *testing.T) {
 	var acquiredHandle LockHandle
 	var handleMu sync.Mutex
 
-	wg.Add(numGoroutines)
 	startBarrier.Add(1)
 
 	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// 等待所有 goroutine 准备就绪后同时开始
 			startBarrier.Wait()
 
@@ -65,7 +63,7 @@ func TestRedisLocker_ConcurrentAcquire(t *testing.T) {
 				handleMu.Unlock()
 				// 注意：不在并发窗口内释放锁，确保测试准确性
 			}
-		}()
+		})
 	}
 
 	// 同时启动所有 goroutine
@@ -221,12 +219,10 @@ func TestMockLocker_ConcurrentAcquire(t *testing.T) {
 	var acquiredHandle LockHandle
 	var handleMu sync.Mutex
 
-	wg.Add(numGoroutines)
 	startBarrier.Add(1)
 
 	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// 等待所有 goroutine 准备就绪后同时开始
 			startBarrier.Wait()
 
@@ -244,7 +240,7 @@ func TestMockLocker_ConcurrentAcquire(t *testing.T) {
 				handleMu.Unlock()
 				// 注意：不在并发窗口内释放锁，确保测试准确性
 			}
-		}()
+		})
 	}
 
 	// 同时启动所有 goroutine
@@ -302,14 +298,11 @@ func TestNoopLocker_AlwaysSucceeds(t *testing.T) {
 
 	const numGoroutines = 10
 	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
 	var handles []LockHandle
 	var mu sync.Mutex
 
 	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			handle, err := locker.TryLock(ctx, "key", time.Second)
 			require.NoError(t, err)
 			require.NotNil(t, handle)
@@ -317,7 +310,7 @@ func TestNoopLocker_AlwaysSucceeds(t *testing.T) {
 			mu.Lock()
 			handles = append(handles, handle)
 			mu.Unlock()
-		}()
+		})
 	}
 
 	wg.Wait()

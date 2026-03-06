@@ -390,12 +390,9 @@ func TestIntegration_MultipleProducersConsumers(t *testing.T) {
 	// 创建多个生产者并发送消息
 	producerCount := 3
 	var wg sync.WaitGroup
-	wg.Add(producerCount)
 
 	for i := 0; i < producerCount; i++ {
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			producer, err := client.CreateProducer(pulsar.ProducerOptions{
 				Topic: topic,
 			})
@@ -417,7 +414,7 @@ func TestIntegration_MultipleProducersConsumers(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

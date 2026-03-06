@@ -1083,10 +1083,8 @@ func TestClickHouse_Concurrent_Insert_Integration(t *testing.T) {
 	var totalInserted int64
 
 	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-
+		workerID := w
+		wg.Go(func() {
 			type workerRow struct {
 				ID       uint64 `ch:"id"`
 				WorkerID uint64 `ch:"worker_id"`
@@ -1109,7 +1107,7 @@ func TestClickHouse_Concurrent_Insert_Integration(t *testing.T) {
 			}
 
 			atomic.AddInt64(&totalInserted, result.InsertedCount)
-		}(w)
+		})
 	}
 
 	wg.Wait()
@@ -1154,10 +1152,8 @@ func TestClickHouse_Concurrent_Query_Integration(t *testing.T) {
 	var successCount int64
 
 	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-
+		workerID := w
+		wg.Go(func() {
 			// 每个 worker 查询不同的页
 			page := int64((workerID % 10) + 1)
 			result, err := wrapper.QueryPage(ctx,
@@ -1172,7 +1168,7 @@ func TestClickHouse_Concurrent_Query_Integration(t *testing.T) {
 			if result.Total == 100 {
 				atomic.AddInt64(&successCount, 1)
 			}
-		}(w)
+		})
 	}
 
 	wg.Wait()

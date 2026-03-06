@@ -10,7 +10,7 @@ import (
 func BenchmarkNewGroup(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g, _ := NewGroup(ctx)
 		_ = g
 	}
@@ -20,7 +20,7 @@ func BenchmarkNewGroupWithOptions(b *testing.B) {
 	ctx := context.Background()
 	opts := []Option{WithName("bench-group")}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g, _ := NewGroup(ctx, opts...)
 		_ = g
 	}
@@ -33,7 +33,7 @@ func BenchmarkGroup_Go(b *testing.B) {
 		return nil
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g.Go(fn)
 	}
 	if err := g.Wait(); err != nil {
@@ -48,7 +48,7 @@ func BenchmarkGroup_GoWithName(b *testing.B) {
 		return nil
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g.GoWithName("bench-service", fn)
 	}
 	if err := g.Wait(); err != nil {
@@ -58,7 +58,7 @@ func BenchmarkGroup_GoWithName(b *testing.B) {
 
 func BenchmarkGroup_Wait(b *testing.B) {
 	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g, _ := NewGroup(ctx)
 		g.Go(func(ctx context.Context) error {
 			return nil
@@ -73,7 +73,7 @@ func BenchmarkGroup_MultipleServices(b *testing.B) {
 	for _, n := range []int{1, 10, 100} {
 		b.Run(strconv.Itoa(n), func(b *testing.B) {
 			ctx := context.Background()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				g, _ := NewGroup(ctx)
 				for range n {
 					g.Go(func(ctx context.Context) error {
@@ -89,7 +89,7 @@ func BenchmarkGroup_MultipleServices(b *testing.B) {
 }
 
 func BenchmarkTicker(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		g, _ := NewGroup(ctx)
 		count := 0
@@ -107,7 +107,7 @@ func BenchmarkTicker(b *testing.B) {
 }
 
 func BenchmarkTimer(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g, _ := NewGroup(context.Background())
 		g.Go(Timer(time.Nanosecond, func(ctx context.Context) error {
 			return nil
@@ -120,7 +120,7 @@ func BenchmarkTimer(b *testing.B) {
 
 func BenchmarkServiceFunc(b *testing.B) {
 	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		svc := ServiceFunc(func(ctx context.Context) error {
 			return nil
 		})
@@ -131,7 +131,7 @@ func BenchmarkServiceFunc(b *testing.B) {
 }
 
 func BenchmarkGroup_Cancel(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g, _ := NewGroup(context.Background())
 		g.Go(func(ctx context.Context) error {
 			<-ctx.Done()
@@ -143,7 +143,7 @@ func BenchmarkGroup_Cancel(b *testing.B) {
 }
 
 func BenchmarkHTTPServer_Shutdown(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		server := newMockHTTPServer()
 
@@ -160,7 +160,7 @@ func BenchmarkHTTPServer_Shutdown(b *testing.B) {
 }
 
 func BenchmarkWaitForDone(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
 		g, _ := NewGroup(ctx)
 		g.Go(WaitForDone())

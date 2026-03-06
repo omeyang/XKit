@@ -105,8 +105,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// 创建触发器
 	if !s.opts.BackgroundMode {
 		s.trigger = NewSignalTrigger()
-		s.wg.Add(1)
-		go s.watchTrigger()
+		s.wg.Go(s.watchTrigger)
 	}
 
 	return nil

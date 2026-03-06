@@ -14,7 +14,7 @@ func BenchmarkPretty(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Pretty(v)
 	}
 }
@@ -30,7 +30,7 @@ func BenchmarkPrettyMap(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Pretty(v)
 	}
 }
@@ -53,7 +53,7 @@ func BenchmarkPrettyLargeObject(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Pretty(v)
 	}
 }
@@ -63,7 +63,7 @@ func BenchmarkPrettyError(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		Pretty(v)
 	}
 }
@@ -77,7 +77,7 @@ func BenchmarkPrettyE(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		PrettyE(v)
 	}
 }

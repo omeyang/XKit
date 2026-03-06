@@ -17,12 +17,12 @@ import (
 
 func BenchmarkParseAddr(b *testing.B) {
 	b.Run("netip.ParseAddr", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = netip.ParseAddr("192.168.1.1")
 		}
 	})
 	b.Run("net.ParseIP", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = net.ParseIP("192.168.1.1")
 		}
 	})
@@ -38,7 +38,7 @@ func BenchmarkAddrCompare(b *testing.B) {
 	c := netip.MustParseAddr("192.168.1.2")
 
 	b.Run("netip.Addr.Compare", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = a.Compare(c)
 		}
 	})
@@ -47,7 +47,7 @@ func BenchmarkAddrCompare(b *testing.B) {
 	ip1 := net.ParseIP("192.168.1.1")
 	ip2 := net.ParseIP("192.168.1.2")
 	b.Run("net.IP.Equal", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = ip1.Equal(ip2)
 		}
 	})
@@ -58,7 +58,7 @@ func BenchmarkAddrCompareIPv6(b *testing.B) {
 	c := netip.MustParseAddr("2001:db8::2")
 
 	b.Run("netip.Addr.Compare", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = a.Compare(c)
 		}
 	})
@@ -67,7 +67,7 @@ func BenchmarkAddrCompareIPv6(b *testing.B) {
 	bi1 := AddrToBigInt(a)
 	bi2 := AddrToBigInt(c)
 	b.Run("big.Int.Cmp", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = bi1.Cmp(bi2)
 		}
 	})
@@ -80,14 +80,14 @@ func BenchmarkAddrCompareIPv6(b *testing.B) {
 func BenchmarkAddrToBigInt(b *testing.B) {
 	addr := netip.MustParseAddr("192.168.1.1")
 	b.Run("IPv4", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = AddrToBigInt(addr)
 		}
 	})
 
 	addr6 := netip.MustParseAddr("2001:db8::1")
 	b.Run("IPv6", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = AddrToBigInt(addr6)
 		}
 	})
@@ -96,7 +96,7 @@ func BenchmarkAddrToBigInt(b *testing.B) {
 func BenchmarkAddrFromBigInt(b *testing.B) {
 	v4 := big.NewInt(0xC0A80101)
 	b.Run("V4", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = AddrFromBigInt(v4, V4)
 		}
 	})
@@ -104,7 +104,7 @@ func BenchmarkAddrFromBigInt(b *testing.B) {
 	v6 := new(big.Int)
 	v6.SetString("42540766411282592856903984951653826561", 10) // 2001:db8::1
 	b.Run("V6", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = AddrFromBigInt(v6, V6)
 		}
 	})
@@ -132,7 +132,7 @@ func BenchmarkIPSetContains(b *testing.B) {
 
 	for _, target := range targets {
 		b.Run(fmt.Sprintf("Contains/%s", target), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_ = set.Contains(target)
 			}
 		})
@@ -157,14 +157,14 @@ func BenchmarkRangeContains(b *testing.B) {
 	target := AddrFromUint32(50*256 + 100)
 
 	b.Run("IPSet.Contains/O(log_n)", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = set.Contains(target)
 		}
 	})
 
 	// 模拟 gobase MIPRanges 线性搜索 O(n)
 	b.Run("LinearSearch/O(n)", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			for _, r := range ranges {
 				if r.Contains(target) {
 					break
@@ -183,13 +183,13 @@ func BenchmarkRangeContainsV4(b *testing.B) {
 	r := netipx.IPRangeFrom(from, to)
 
 	b.Run("RangeContainsV4/uint32", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = RangeContainsV4(from, to, addr)
 		}
 	})
 
 	b.Run("IPRange.Contains", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = r.Contains(addr)
 		}
 	})
@@ -202,13 +202,13 @@ func BenchmarkRangeContainsV4(b *testing.B) {
 func BenchmarkFormatFullIPAddr(b *testing.B) {
 	b.Run("IPv4", func(b *testing.B) {
 		addr := netip.MustParseAddr("192.168.1.1")
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = FormatFullIPAddr(addr)
 		}
 	})
 	b.Run("IPv6", func(b *testing.B) {
 		addr := netip.MustParseAddr("2001:db8::1")
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = FormatFullIPAddr(addr)
 		}
 	})
@@ -216,19 +216,19 @@ func BenchmarkFormatFullIPAddr(b *testing.B) {
 
 func BenchmarkParseFullIP(b *testing.B) {
 	b.Run("IPv4", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseFullIP("192.168.001.001")
 		}
 	})
 	b.Run("IPv6", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseFullIP("00000000000000000000000000000001")
 		}
 	})
 }
 
 func BenchmarkNormalizeIP(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = NormalizeIP("192.168.1.1")
 	}
 }
@@ -239,22 +239,22 @@ func BenchmarkNormalizeIP(b *testing.B) {
 
 func BenchmarkParseRange(b *testing.B) {
 	b.Run("CIDR", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseRange("192.168.1.0/24")
 		}
 	})
 	b.Run("Range", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseRange("10.0.0.1-10.0.0.100")
 		}
 	})
 	b.Run("Mask", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseRange("192.168.1.0/255.255.255.0")
 		}
 	})
 	b.Run("SingleIP", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = ParseRange("192.168.1.1")
 		}
 	})
@@ -269,7 +269,7 @@ func BenchmarkParseRanges(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = ParseRanges(strs)
 	}
 }
@@ -283,14 +283,14 @@ func BenchmarkWireRangeFromUnchecked(b *testing.B) {
 		netip.MustParseAddr("192.168.1.1"),
 		netip.MustParseAddr("192.168.1.100"),
 	)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = WireRangeFromUnchecked(r)
 	}
 }
 
 func BenchmarkWireRangeToIPRange(b *testing.B) {
 	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = w.ToIPRange()
 	}
 }
@@ -309,7 +309,7 @@ func BenchmarkMergeRanges(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = MergeRanges(ranges)
 	}
 }
@@ -323,14 +323,14 @@ func BenchmarkMergeRanges(b *testing.B) {
 // gobase: 创建 MIP 对象（需要额外的 uint32 缓存和 big.Int 惰性初始化）
 func BenchmarkXnetVsGobaseIPCreation(b *testing.B) {
 	b.Run("xnet/netip.ParseAddr", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = netip.ParseAddr("192.168.1.1")
 		}
 	})
 
 	// 模拟 gobase MIP 创建：解析 + uint32 缓存
 	b.Run("gobase-style/ParseAddr+uint32cache", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			addr, _ := netip.ParseAddr("192.168.1.1")
 			_, _ = AddrToUint32(addr) // 模拟 uint32 缓存计算
 		}
@@ -355,13 +355,13 @@ func BenchmarkXnetVsGobaseRangeQuery(b *testing.B) {
 		target := AddrFromUint32((n-1)*256 + 100)
 
 		b.Run(fmt.Sprintf("xnet/IPSet.Contains/n=%d", n), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_ = set.Contains(target)
 			}
 		})
 
 		b.Run(fmt.Sprintf("gobase-style/LinearSearch/n=%d", n), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				for _, r := range ranges {
 					if r.Contains(target) {
 						break
@@ -378,14 +378,14 @@ func BenchmarkXnetVsGobaseRangeQuery(b *testing.B) {
 
 func BenchmarkMapToIPv6(b *testing.B) {
 	addr := netip.MustParseAddr("192.168.1.1")
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = MapToIPv6(addr)
 	}
 }
 
 func BenchmarkUnmapToIPv4(b *testing.B) {
 	addr := netip.MustParseAddr("::ffff:192.168.1.1")
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = UnmapToIPv4(addr)
 	}
 }
@@ -393,13 +393,13 @@ func BenchmarkUnmapToIPv4(b *testing.B) {
 func BenchmarkAddrAdd(b *testing.B) {
 	b.Run("IPv4", func(b *testing.B) {
 		addr := netip.MustParseAddr("192.168.1.100")
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = AddrAdd(addr, 1)
 		}
 	})
 	b.Run("IPv6", func(b *testing.B) {
 		addr := netip.MustParseAddr("2001:db8::100")
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = AddrAdd(addr, 1)
 		}
 	})
@@ -410,7 +410,7 @@ func BenchmarkRangeSize(b *testing.B) {
 		netip.MustParseAddr("192.168.1.0"),
 		netip.MustParseAddr("192.168.1.255"),
 	)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = RangeSize(r)
 	}
 }
@@ -420,7 +420,7 @@ func BenchmarkRangeSizeUint64(b *testing.B) {
 		netip.MustParseAddr("192.168.1.0"),
 		netip.MustParseAddr("192.168.1.255"),
 	)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = RangeSizeUint64(r)
 	}
 }

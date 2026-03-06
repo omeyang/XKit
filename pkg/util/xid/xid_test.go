@@ -203,9 +203,7 @@ func TestConcurrentGeneration(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < idsPerGoroutine; j++ {
 				id, err := New()
 				if err != nil {
@@ -214,7 +212,7 @@ func TestConcurrentGeneration(t *testing.T) {
 				}
 				ids <- id
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -333,7 +331,7 @@ func BenchmarkNew(b *testing.B) {
 
 	// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = New() // benchmark
 	}
 }
@@ -346,7 +344,7 @@ func BenchmarkNewString(b *testing.B) {
 
 	// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = NewString() // benchmark
 	}
 }
@@ -360,20 +358,20 @@ func BenchmarkComparison(b *testing.B) {
 
 	b.Run("xid/New", func(b *testing.B) {
 		// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = New() // benchmark
 		}
 	})
 
 	b.Run("xid/NewString", func(b *testing.B) {
 		// 基准测试仅衡量生成吞吐，错误路径由单元测试覆盖。
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = NewString() // benchmark
 		}
 	})
 
 	b.Run("xid/MustNewStringWithRetry", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = MustNewStringWithRetry()
 		}
 	})
@@ -384,7 +382,7 @@ func BenchmarkComparison(b *testing.B) {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = sf.NextID() // benchmark
 		}
 	})

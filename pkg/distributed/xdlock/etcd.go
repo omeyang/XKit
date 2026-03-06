@@ -310,5 +310,8 @@ func wrapEtcdError(err error) error {
 	if errors.Is(err, concurrency.ErrSessionExpired) {
 		return fmt.Errorf("%w: %w", ErrSessionExpired, err)
 	}
+	if errors.Is(err, concurrency.ErrLockReleased) {
+		return fmt.Errorf("%w: %w", ErrNotLocked, err)
+	}
 	return err
 }

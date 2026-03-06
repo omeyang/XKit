@@ -3,13 +3,13 @@ package xproc
 import "testing"
 
 func BenchmarkProcessID(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = ProcessID()
 	}
 }
 
 func BenchmarkProcessName(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = ProcessName()
 	}
 }
@@ -18,7 +18,7 @@ func BenchmarkProcessName(b *testing.B) {
 // 与 BenchmarkProcessName（缓存命中）配合，覆盖冷/热双路径，
 // 确保首次解析路径出现回归时能及时暴露。
 func BenchmarkProcessName_ColdStart(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ResetProcessName()
 		_ = ProcessName()
 	}

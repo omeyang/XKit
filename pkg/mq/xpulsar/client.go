@@ -110,14 +110,12 @@ func (w *clientWrapper) Health(ctx context.Context) (err error) {
 		// 启动后台清理 goroutine，避免阻塞调用方，同时确保资源被清理。
 		// 清理 goroutine 最终会因 Pulsar 客户端的 OperationTimeout 而返回。
 		// 通过 healthWg 跟踪，Close() 会等待所有清理 goroutine 完成。
-		w.healthWg.Add(1)
-		go func() {
-			defer w.healthWg.Done()
+		w.healthWg.Go(func() {
 			result := <-resultCh
 			if result.reader != nil {
 				result.reader.Close()
 			}
-		}()
+		})
 		return healthCtx.Err()
 	case result := <-resultCh:
 		if result.err != nil {

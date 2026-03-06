@@ -27,7 +27,7 @@ func BenchmarkLocal_Allow_Single(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }
@@ -82,7 +82,7 @@ func BenchmarkDistributed_Allow_Single(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }
@@ -134,7 +134,7 @@ func BenchmarkKey_RenderTemplate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = key.Render(template)
 	}
 }
@@ -176,7 +176,7 @@ func BenchmarkMultipleRulesCheck(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }
@@ -222,7 +222,9 @@ func BenchmarkWithOverridesConfig(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		key := keys[i%len(keys)]
 		_, _ = limiter.Allow(ctx, key)
 	}
@@ -259,7 +261,7 @@ func BenchmarkMiddleware_HTTP(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }
@@ -335,7 +337,7 @@ func BenchmarkFallback_Allow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }
@@ -360,7 +362,7 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 	b.Run("FindRule", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = matcher.FindRule(key)
 		}
 	})
@@ -370,7 +372,7 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 		rendered := key.Render(rule.KeyTemplate)
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, _ = matcher.getEffectiveLimit(rule, rendered)
 		}
 	})
@@ -378,7 +380,7 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 	b.Run("getAllRules", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = matcher.getAllRules()
 		}
 	})
@@ -386,7 +388,7 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 	b.Run("hasRule", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = matcher.hasRule("tenant")
 		}
 	})
@@ -420,7 +422,7 @@ func BenchmarkAllowN_Batch(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _ = limiter.AllowN(ctx, key, n)
 			}
 		})

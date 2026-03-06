@@ -35,49 +35,49 @@ var sinkResult Result
 
 func BenchmarkString(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = String("key", "value")
 	}
 }
 
 func BenchmarkInt(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Int("key", 42)
 	}
 }
 
 func BenchmarkInt64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Int64("key", 42)
 	}
 }
 
 func BenchmarkUint64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Uint64("key", 42)
 	}
 }
 
 func BenchmarkFloat64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Float64("key", 3.14)
 	}
 }
 
 func BenchmarkBool(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Bool("key", true)
 	}
 }
 
 func BenchmarkDuration(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Duration("key", 100*time.Millisecond)
 	}
 }
@@ -88,7 +88,7 @@ func BenchmarkAny(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkAttr = Any("key", val)
 	}
 }
@@ -109,7 +109,7 @@ func BenchmarkNoopObserver_Start(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := observer.Start(ctx, opts)
 		span.End(Result{})
 	}
@@ -132,7 +132,7 @@ func BenchmarkNoopObserver_StartWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := observer.Start(ctx, opts)
 		span.End(Result{Status: StatusOK})
 	}
@@ -145,7 +145,7 @@ func BenchmarkNoopSpan_End(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -158,7 +158,7 @@ func BenchmarkNoopSpan_EndWithError(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -176,7 +176,7 @@ func BenchmarkNoopSpan_EndWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -195,7 +195,7 @@ func BenchmarkStart_NilObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := Start(ctx, nil, opts)
 		span.End(Result{})
 	}
@@ -212,7 +212,7 @@ func BenchmarkStart_NoopObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := Start(ctx, observer, opts)
 		span.End(Result{})
 	}
@@ -286,7 +286,7 @@ func BenchmarkOTelObserver_StartEnd(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := obs.Start(ctx, opts)
 		span.End(Result{})
 	}
@@ -321,7 +321,7 @@ func BenchmarkOTelObserver_StartEndWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := obs.Start(ctx, opts)
 		span.End(Result{
 			Status: StatusOK,
@@ -368,7 +368,7 @@ func BenchmarkOTelObserver_StartEndParallel(b *testing.B) {
 func BenchmarkSpanOptions_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
@@ -380,7 +380,7 @@ func BenchmarkSpanOptions_Create(b *testing.B) {
 func BenchmarkSpanOptions_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
@@ -397,7 +397,7 @@ func BenchmarkSpanOptions_CreateWithAttrs(b *testing.B) {
 func BenchmarkResult_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkResult = Result{Status: StatusOK}
 	}
 }
@@ -405,7 +405,7 @@ func BenchmarkResult_Create(b *testing.B) {
 func BenchmarkResult_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sinkResult = Result{
 			Status: StatusOK,
 			Attrs: []Attr{

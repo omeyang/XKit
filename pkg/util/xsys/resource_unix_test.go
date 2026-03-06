@@ -144,17 +144,16 @@ func TestSetFileLimit_Concurrent(t *testing.T) {
 
 	const goroutines = 10
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 	for i := range goroutines {
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			if err := SetFileLimit(targets[idx%len(targets)]); err != nil {
 				t.Errorf("concurrent SetFileLimit: %v", err)
 			}
 			if _, _, err := GetFileLimit(); err != nil {
 				t.Errorf("concurrent GetFileLimit: %v", err)
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 

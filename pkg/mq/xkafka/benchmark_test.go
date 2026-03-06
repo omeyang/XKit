@@ -26,7 +26,7 @@ func BenchmarkDLQPolicy_Validate(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = policy.Validate()
 		}
 	})
@@ -40,7 +40,7 @@ func BenchmarkDLQPolicy_Validate(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = policy.Validate()
 		}
 	})
@@ -54,7 +54,7 @@ func BenchmarkDLQPolicy_Validate(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = policy.Validate()
 		}
 	})
@@ -83,7 +83,7 @@ func BenchmarkDLQStats_Clone(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = stats.Clone()
 		}
 	})
@@ -101,7 +101,7 @@ func BenchmarkDLQStats_Clone(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = stats.Clone()
 		}
 	})
@@ -119,7 +119,7 @@ func BenchmarkDLQStats_Clone(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = stats.Clone()
 		}
 	})
@@ -137,7 +137,7 @@ func BenchmarkGetRetryCount(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getRetryCount(msg)
 		}
 	})
@@ -152,7 +152,7 @@ func BenchmarkGetRetryCount(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getRetryCount(msg)
 		}
 	})
@@ -168,7 +168,7 @@ func BenchmarkGetRetryCount(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getRetryCount(msg)
 		}
 	})
@@ -180,7 +180,7 @@ func BenchmarkSetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			msg := &kafka.Message{}
 			setHeader(msg, "test-key", "test-value")
 		}
@@ -190,7 +190,7 @@ func BenchmarkSetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			msg := &kafka.Message{
 				Headers: []kafka.Header{
 					{Key: "test-key", Value: []byte("old-value")},
@@ -204,7 +204,7 @@ func BenchmarkSetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			headers := make([]kafka.Header, 10)
 			for j := 0; j < 10; j++ {
 				headers[j] = kafka.Header{Key: "header-" + strconv.Itoa(j), Value: []byte("value")}
@@ -227,7 +227,7 @@ func BenchmarkGetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getHeader(msg, "test-key")
 		}
 	})
@@ -242,7 +242,7 @@ func BenchmarkGetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getHeader(msg, "test-key")
 		}
 	})
@@ -253,7 +253,7 @@ func BenchmarkGetHeader(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = getHeader(msg, "test-key")
 		}
 	})
@@ -281,7 +281,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 3)
 		}
 	})
@@ -307,7 +307,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 3)
 		}
 	})
@@ -333,7 +333,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", err.Error(), 5)
 		}
 	})
@@ -350,7 +350,7 @@ func BenchmarkBuildDLQMessageFromPolicy(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMessageFromPolicy(msg, "dlq-topic", "", 0)
 		}
 	})
@@ -374,7 +374,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMetadataFromMessage(msg, err.Error(), 3)
 		}
 	})
@@ -396,7 +396,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMetadataFromMessage(msg, err.Error(), 2)
 		}
 	})
@@ -411,7 +411,7 @@ func BenchmarkBuildDLQMetadataFromMessage(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = buildDLQMetadataFromMessage(msg, "", 0)
 		}
 	})
@@ -425,7 +425,7 @@ func BenchmarkUpdateRetryHeaders(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			topic := "test-topic"
 			msg := &kafka.Message{
 				TopicPartition: kafka.TopicPartition{
@@ -444,7 +444,7 @@ func BenchmarkUpdateRetryHeaders(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			topic := "test-topic"
 			msg := &kafka.Message{
 				TopicPartition: kafka.TopicPartition{
@@ -475,7 +475,7 @@ func BenchmarkDLQStatsCollector(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			collector.incTotal()
 		}
 	})
@@ -486,7 +486,7 @@ func BenchmarkDLQStatsCollector(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			collector.incRetried()
 		}
 	})
@@ -497,7 +497,7 @@ func BenchmarkDLQStatsCollector(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			collector.incDeadLetter("topic-1")
 		}
 	})
@@ -508,7 +508,7 @@ func BenchmarkDLQStatsCollector(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			collector.incSuccessAfterRetry()
 		}
 	})
@@ -525,7 +525,7 @@ func BenchmarkDLQStatsCollector(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = collector.get()
 		}
 	})
@@ -613,7 +613,7 @@ func BenchmarkErrorString(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = errorString(nil)
 		}
 	})
@@ -624,7 +624,7 @@ func BenchmarkErrorString(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = errorString(err)
 		}
 	})
@@ -635,7 +635,7 @@ func BenchmarkErrorString(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = errorString(err)
 		}
 	})
@@ -651,7 +651,7 @@ func BenchmarkProducerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = defaultProducerOptions()
 		}
 	})
@@ -662,7 +662,7 @@ func BenchmarkProducerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultProducerOptions()
 			opt(options)
 		}
@@ -674,7 +674,7 @@ func BenchmarkProducerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultProducerOptions()
 			opt(options)
 		}
@@ -689,7 +689,7 @@ func BenchmarkProducerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultProducerOptions()
 			for _, opt := range opts {
 				opt(options)
@@ -704,7 +704,7 @@ func BenchmarkConsumerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = defaultConsumerOptions()
 		}
 	})
@@ -715,7 +715,7 @@ func BenchmarkConsumerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultConsumerOptions()
 			opt(options)
 		}
@@ -727,7 +727,7 @@ func BenchmarkConsumerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultConsumerOptions()
 			opt(options)
 		}
@@ -742,7 +742,7 @@ func BenchmarkConsumerOptions(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			options := defaultConsumerOptions()
 			for _, opt := range opts {
 				opt(options)

@@ -70,8 +70,7 @@ func New[T any](workers, queueSize int, handler func(T), opts ...Option) (*Pool[
 	}
 
 	for range p.workers {
-		p.wg.Add(1)
-		go p.worker()
+		p.wg.Go(p.worker)
 	}
 
 	return p, nil
@@ -80,7 +79,6 @@ func New[T any](workers, queueSize int, handler func(T), opts ...Option) (*Pool[
 // worker 是工作协程。
 // 从 queue 中读取任务直到 channel 关闭（优雅关闭）。
 func (p *Pool[T]) worker() {
-	defer p.wg.Done()
 	for task := range p.queue {
 		p.safeHandle(task)
 	}

@@ -79,15 +79,13 @@ func runConcurrentSampling(sampler Sampler, ctx context.Context, goroutines, ite
 	var sampled atomic.Int64
 
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range iterations {
 				if sampler.ShouldSample(ctx) {
 					sampled.Add(1)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -99,13 +97,11 @@ func runConcurrentSamplingOnly(sampler Sampler, ctx context.Context, goroutines,
 	var wg sync.WaitGroup
 
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range iterations {
 				sampler.ShouldSample(ctx)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -650,14 +646,12 @@ func TestConcurrency(t *testing.T) {
 
 		for i := range goroutines {
 			id := i
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range iterations {
 					kctx := context.WithValue(context.Background(), testKeyName, string(rune('a'+id%26)))
 					sampler.ShouldSample(kctx)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()

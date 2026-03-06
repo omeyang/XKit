@@ -162,15 +162,13 @@ func TestWorkerPool_Concurrent(t *testing.T) {
 	var submitted atomic.Int64
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 10 {
 				if submitErr := pool.Submit(1); submitErr == nil {
 					submitted.Add(1)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -296,22 +294,18 @@ func TestWorkerPool_ConcurrentSubmitAndClose(t *testing.T) {
 
 	// 并发提交
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range 100 {
 				pool.Submit(j) // 测试中忽略提交错误
 			}
-		}()
+		})
 	}
 
 	// 并发关闭
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		time.Sleep(10 * time.Millisecond)
 		pool.Close() // 并发关闭测试
-	}()
+	})
 
 	wg.Wait()
 }
@@ -465,11 +459,9 @@ func TestWorkerPool_ConcurrentShutdown(t *testing.T) {
 	results := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results <- pool.Shutdown(context.Background())
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)

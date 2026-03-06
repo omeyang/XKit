@@ -36,7 +36,7 @@ func BenchmarkRedis_Get(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().Get(ctx, "benchmark_key").Result()
 	}
 }
@@ -63,7 +63,9 @@ func BenchmarkRedis_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().Set(ctx, fmt.Sprintf("key_%d", i), value, time.Hour).Err()
 	}
 }
@@ -90,7 +92,7 @@ func BenchmarkRedis_HGet(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().HGet(ctx, "benchmark_hash", "field").Result()
 	}
 }
@@ -116,7 +118,9 @@ func BenchmarkRedis_Lock(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		unlock, err := cache.Lock(ctx, fmt.Sprintf("lock_%d", i), time.Minute)
 		if err != nil {
 			b.Fatal(err)
@@ -141,7 +145,7 @@ func BenchmarkMemory_Get(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().Get("benchmark_key")
 	}
 }
@@ -157,7 +161,9 @@ func BenchmarkMemory_Set(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		cache.Client().SetWithTTL(fmt.Sprintf("key_%d", i%1000), value, int64(len(value)), time.Hour)
 	}
 }
@@ -219,7 +225,7 @@ func BenchmarkLoader_Load_CacheHit(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = loader.Load(ctx, "benchmark_key", loadFn, time.Hour)
 	}
 }
@@ -253,7 +259,9 @@ func BenchmarkLoader_Load_CacheMiss(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_, _ = loader.Load(ctx, fmt.Sprintf("key_%d", i), loadFn, time.Hour)
 	}
 }
@@ -288,7 +296,7 @@ func BenchmarkLoader_LoadHash_CacheHit(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = loader.LoadHash(ctx, "benchmark_hash", "field", loadFn, time.Hour)
 	}
 }
@@ -402,7 +410,9 @@ func benchmarkRedisSetWithSize(b *testing.B, size int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().Set(ctx, fmt.Sprintf("key_%d", i%100), value, time.Hour).Err()
 	}
 }
@@ -433,7 +443,9 @@ func benchmarkMemorySetWithSize(b *testing.B, size int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		cache.Client().SetWithTTL(fmt.Sprintf("key_%d", i%100), value, int64(len(value)), time.Hour)
 	}
 }
@@ -545,7 +557,9 @@ func BenchmarkRedis_HSet(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().HSet(ctx, "benchmark_hash", fmt.Sprintf("field_%d", i%100), value).Err()
 	}
 }
@@ -575,7 +589,7 @@ func BenchmarkRedis_HGetAll(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().HGetAll(ctx, "benchmark_hash").Result()
 	}
 }
@@ -601,7 +615,7 @@ func BenchmarkRedis_Del(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		_ = cache.Client().Set(ctx, "del_key", "value", 0).Err()
 		b.StartTimer()

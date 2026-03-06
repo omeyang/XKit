@@ -23,7 +23,7 @@ func BenchmarkTenantID(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.TenantID(ctx)
 	}
 }
@@ -34,7 +34,7 @@ func BenchmarkTenantName(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.TenantName(ctx)
 	}
 }
@@ -44,7 +44,7 @@ func BenchmarkWithTenantID(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := xtenant.WithTenantID(ctx, "benchmark-tenant"); err != nil {
 			b.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func BenchmarkWithTenantInfo(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := xtenant.WithTenantInfo(ctx, info); err != nil {
 			b.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func BenchmarkGetTenantInfo(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.GetTenantInfo(ctx)
 	}
 }
@@ -88,7 +88,7 @@ func BenchmarkTenantInfo_IsEmpty(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = info.IsEmpty()
 	}
 }
@@ -98,7 +98,7 @@ func BenchmarkTenantInfo_IsEmpty_NonEmpty(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = info.IsEmpty()
 	}
 }
@@ -108,7 +108,7 @@ func BenchmarkTenantInfo_Validate(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := info.Validate(); err == nil {
 			b.Fatal("expected validation error")
 		}
@@ -126,7 +126,7 @@ func BenchmarkExtractFromHTTPHeader(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.ExtractFromHTTPHeader(h)
 	}
 }
@@ -139,7 +139,7 @@ func BenchmarkInjectToRequest(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		xtenant.InjectToRequest(ctx, req)
 	}
 }
@@ -155,7 +155,7 @@ func BenchmarkHTTPMiddleware(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		handler.ServeHTTP(w, req)
 	}
 }
@@ -189,7 +189,7 @@ func BenchmarkExtractFromMetadata(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.ExtractFromMetadata(md)
 	}
 }
@@ -201,7 +201,7 @@ func BenchmarkInjectToOutgoingContext(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.InjectToOutgoingContext(ctx)
 	}
 }
@@ -221,7 +221,7 @@ func BenchmarkGRPCUnaryServerInterceptor(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, handler); err != nil {
 			b.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func BenchmarkGRPCUnaryClientInterceptor(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := interceptor(ctx, "/test.Service/Method", nil, nil, nil, invoker); err != nil {
 			b.Fatal(err)
 		}
@@ -255,7 +255,7 @@ func BenchmarkInjectTenantToMetadata(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		md := metadata.MD{}
 		xtenant.InjectTenantToMetadata(md, info)
 	}

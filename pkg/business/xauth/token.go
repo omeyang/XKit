@@ -116,11 +116,9 @@ func (m *TokenManager) GetToken(ctx context.Context, tenantID string) (string, e
 	// 检查是否需要后台刷新（去重：防止同一租户重复刷新）
 	if m.enableBackgroundRefresh && token.IsExpiringSoon(m.refreshThreshold) {
 		if _, loaded := m.refreshing.LoadOrStore(tenantID, struct{}{}); !loaded {
-			m.wg.Add(1)
-			go func() {
-				defer m.wg.Done()
+			m.wg.Go(func() {
 				m.backgroundRefresh(tenantID)
-			}()
+			})
 		}
 	}
 

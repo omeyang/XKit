@@ -12,7 +12,7 @@ import (
 
 func BenchmarkNew_Default(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = New()
 	}
 }
@@ -22,7 +22,7 @@ func BenchmarkNew_WithOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = New(
 			WithLocker(NoopLocker()),
 			WithLocation(loc),
@@ -42,7 +42,7 @@ func BenchmarkScheduler_AddFunc(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = scheduler.AddFunc("@every 1m", job)
 	}
 }
@@ -54,7 +54,7 @@ func BenchmarkScheduler_AddFuncWithOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = scheduler.AddFunc("@every 1m", job,
 			WithName("test-job"),
 			WithTimeout(30*time.Second),
@@ -70,7 +70,7 @@ func BenchmarkScheduler_AddJob(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = scheduler.AddJob("@every 1m", job)
 	}
 }
@@ -83,7 +83,7 @@ func BenchmarkJobFunc_Create(b *testing.B) {
 	fn := func(ctx context.Context) error { return nil }
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = JobFunc(fn)
 	}
 }
@@ -95,7 +95,7 @@ func BenchmarkJobFunc_Run(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = job.Run(ctx)
 	}
 }
@@ -109,7 +109,7 @@ func BenchmarkSchedulerOptions(b *testing.B) {
 	loc := time.UTC
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		opts := defaultSchedulerOptions()
 		WithLocker(locker)(opts)
 		WithLocation(loc)(opts)
@@ -118,7 +118,7 @@ func BenchmarkSchedulerOptions(b *testing.B) {
 
 func BenchmarkJobOptions(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		opts := defaultJobOptions()
 		WithName("test")(opts)
 		WithTimeout(30 * time.Second)(opts)
@@ -137,7 +137,7 @@ func BenchmarkNoopLocker_TryLock(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = locker.TryLock(ctx, "test-key", 5*time.Minute)
 	}
 }
@@ -150,7 +150,7 @@ func BenchmarkNoopLocker_Unlock(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = handle.Unlock(ctx)
 	}
 }
@@ -163,7 +163,7 @@ func BenchmarkNoopLocker_Renew(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = handle.Renew(ctx, 5*time.Minute)
 	}
 }
@@ -180,7 +180,7 @@ func BenchmarkNewJobWrapper(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = newJobWrapper(job, locker, nil, nil, opts)
 	}
 }
@@ -223,7 +223,7 @@ func BenchmarkJobFunc_RunParallel(b *testing.B) {
 
 func BenchmarkWithImmediate(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		opts := defaultJobOptions()
 		WithImmediate()(opts)
 	}
@@ -235,7 +235,7 @@ func BenchmarkScheduler_AddFuncWithImmediate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		scheduler := New()
 		b.StartTimer()
@@ -259,7 +259,7 @@ func BenchmarkScheduler_AddFuncWithoutImmediate(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		scheduler := New()
 		b.StartTimer()
@@ -276,7 +276,7 @@ func BenchmarkScheduler_AddFuncWithoutImmediate(b *testing.B) {
 
 func BenchmarkJobOptions_WithImmediate(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		opts := defaultJobOptions()
 		WithName("test")(opts)
 		WithTimeout(30 * time.Second)(opts)

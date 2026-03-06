@@ -19,7 +19,7 @@ func BenchmarkEventType_String(b *testing.B) {
 
 	var s string
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, et := range eventTypes {
 			s = et.String()
 		}
@@ -40,7 +40,7 @@ func BenchmarkConvertEvent_Put(b *testing.B) {
 
 	var e Event
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		e = convertEvent(event)
 	}
 	benchSink = e
@@ -58,7 +58,7 @@ func BenchmarkConvertEvent_Delete(b *testing.B) {
 
 	var e Event
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		e = convertEvent(event)
 	}
 	benchSink = e
@@ -71,7 +71,7 @@ func BenchmarkBuildWatchOptions(b *testing.B) {
 
 	var result []clientv3.OpOption
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = c.buildWatchOptions(opts)
 	}
 	benchSink = result
@@ -84,7 +84,7 @@ func BenchmarkBuildWatchOptions_Empty(b *testing.B) {
 
 	var result []clientv3.OpOption
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = c.buildWatchOptions(opts)
 	}
 	benchSink = result
@@ -107,7 +107,7 @@ func BenchmarkDispatchEvents(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		eventCh := make(chan Event, len(events))
 		c.dispatchEvents(ctx, events, eventCh)
 		close(eventCh)
@@ -122,7 +122,7 @@ func BenchmarkConfig_Validate(b *testing.B) {
 
 	var err error
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = cfg.Validate()
 	}
 	benchSink = err
@@ -136,7 +136,7 @@ func BenchmarkConfig_ApplyDefaults(b *testing.B) {
 
 	var result *Config
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = cfg.applyDefaults()
 	}
 	benchSink = result
@@ -145,7 +145,7 @@ func BenchmarkConfig_ApplyDefaults(b *testing.B) {
 // BenchmarkDefaultConfig 测试获取默认配置性能。
 func BenchmarkDefaultConfig(b *testing.B) {
 	var cfg *Config
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		cfg = DefaultConfig()
 	}
 	benchSink = cfg
@@ -157,7 +157,7 @@ func BenchmarkIsKeyNotFound(b *testing.B) {
 
 	var result bool
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = IsKeyNotFound(err)
 	}
 	benchSink = result
@@ -169,7 +169,7 @@ func BenchmarkIsClientClosed(b *testing.B) {
 
 	var result bool
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = IsClientClosed(err)
 	}
 	benchSink = result
@@ -178,7 +178,7 @@ func BenchmarkIsClientClosed(b *testing.B) {
 // BenchmarkWithPrefix 测试 WithPrefix 选项性能。
 func BenchmarkWithPrefix(b *testing.B) {
 	var o *watchOptions
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		o = &watchOptions{}
 		WithPrefix()(o)
 	}
@@ -188,7 +188,7 @@ func BenchmarkWithPrefix(b *testing.B) {
 // BenchmarkWithRevision 测试 WithRevision 选项性能。
 func BenchmarkWithRevision(b *testing.B) {
 	var o *watchOptions
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		o = &watchOptions{}
 		WithRevision(12345)(o)
 	}
@@ -201,7 +201,7 @@ func BenchmarkWithContext(b *testing.B) {
 
 	var o *options
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		o = defaultOptions()
 		WithContext(ctx)(o)
 	}
@@ -211,7 +211,7 @@ func BenchmarkWithContext(b *testing.B) {
 // BenchmarkWithHealthCheck 测试 WithHealthCheck 选项性能。
 func BenchmarkWithHealthCheck(b *testing.B) {
 	var o *options
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		o = defaultOptions()
 		WithHealthCheck(true, 5*time.Second)(o)
 	}
@@ -224,7 +224,7 @@ func BenchmarkCheckClosed(b *testing.B) {
 
 	var err error
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = c.checkClosed()
 	}
 	benchSink = err
@@ -236,7 +236,7 @@ func BenchmarkIsClosed(b *testing.B) {
 
 	var result bool
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		result = c.isClosed()
 	}
 	benchSink = result
@@ -259,7 +259,7 @@ func BenchmarkDispatchEvents_Large(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		eventCh := make(chan Event, len(events))
 		c.dispatchEvents(ctx, events, eventCh)
 		close(eventCh)

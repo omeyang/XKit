@@ -68,14 +68,12 @@ func newLocalSemaphore(opts *options) *localSemaphore {
 func (s *localSemaphore) startBackgroundCleanup() {
 	s.cleanupOnce.Do(func() {
 		s.cleanupTicker = time.NewTicker(localCleanupInterval)
-		s.cleanupWg.Add(1)
-		go s.backgroundCleanupLoop()
+		s.cleanupWg.Go(s.backgroundCleanupLoop)
 	})
 }
 
 // backgroundCleanupLoop 后台清理循环
 func (s *localSemaphore) backgroundCleanupLoop() {
-	defer s.cleanupWg.Done()
 	defer s.cleanupTicker.Stop()
 
 	for {

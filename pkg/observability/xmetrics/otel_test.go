@@ -596,12 +596,10 @@ func TestOTelObserver_ConcurrentStartEnd(t *testing.T) {
 
 	const goroutines = 100
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-
+		id := i
+		wg.Go(func() {
 			for j := 0; j < 10; j++ {
 				_, span := obs.Start(context.Background(), SpanOptions{
 					Component: "concurrent",
@@ -616,7 +614,7 @@ func TestOTelObserver_ConcurrentStartEnd(t *testing.T) {
 					Attrs:  []Attr{String("result", "done")},
 				})
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()

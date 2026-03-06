@@ -17,7 +17,7 @@ func BenchmarkRetryerDo(b *testing.B) {
 		ctx := context.Background()
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			err := r.Do(ctx, func(ctx context.Context) error {
 				return nil
 			})
@@ -35,7 +35,7 @@ func BenchmarkRetryerDo(b *testing.B) {
 		ctx := context.Background()
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			attempt := 0
 			err := r.Do(ctx, func(ctx context.Context) error {
 				attempt++
@@ -62,7 +62,7 @@ func BenchmarkRetryerDo(b *testing.B) {
 		ctx := context.Background()
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			err := r.Do(ctx, func(ctx context.Context) error {
 				return nil
 			})
@@ -82,7 +82,7 @@ func BenchmarkDoWithResult(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := DoWithResult(ctx, r, func(ctx context.Context) (int, error) {
 			return 42, nil
 		})
@@ -98,7 +98,7 @@ func BenchmarkWrapperDo(b *testing.B) {
 		ctx := context.Background()
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			err := Do(ctx, func() error {
 				return nil
 			}, Attempts(3), Delay(0))
@@ -112,7 +112,7 @@ func BenchmarkWrapperDo(b *testing.B) {
 		ctx := context.Background()
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			attempt := 0
 			err := Do(ctx, func() error {
 				attempt++
@@ -133,7 +133,7 @@ func BenchmarkWrapperDoWithData(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := DoWithData(ctx, func() (int, error) {
 			return 42, nil
 		}, Attempts(3), Delay(0))
@@ -146,13 +146,13 @@ func BenchmarkWrapperDoWithData(b *testing.B) {
 // BenchmarkNewRetrier 测试创建 Retrier 的开销
 func BenchmarkNewRetrier(b *testing.B) {
 	b.Run("Default", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = NewRetrier()
 		}
 	})
 
 	b.Run("WithOptions", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = NewRetrier(Attempts(5), Delay(100*time.Millisecond))
 		}
 	})
@@ -164,7 +164,9 @@ func BenchmarkToDelayType(b *testing.B) {
 	delayFunc := ToDelayType(backoff)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		// #nosec G115 -- i%10 is always in range [0,9], safe for uint conversion
 		_ = delayFunc(uint(i%10), nil, nil)
 	}
@@ -173,13 +175,13 @@ func BenchmarkToDelayType(b *testing.B) {
 // BenchmarkNewRetryer 测试创建 Retryer 的开销
 func BenchmarkNewRetryer(b *testing.B) {
 	b.Run("Default", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = NewRetryer()
 		}
 	})
 
 	b.Run("WithAllOptions", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = NewRetryer(
 				WithRetryPolicy(NewFixedRetry(5)),
 				WithBackoffPolicy(NewExponentialBackoff()),
@@ -196,25 +198,25 @@ func BenchmarkIsRetryable(b *testing.B) {
 	temporaryErr := NewTemporaryError(errors.New("temporary"))
 
 	b.Run("RegularError", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = IsRetryable(regularErr)
 		}
 	})
 
 	b.Run("PermanentError", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = IsRetryable(permanentErr)
 		}
 	})
 
 	b.Run("TemporaryError", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = IsRetryable(temporaryErr)
 		}
 	})
 
 	b.Run("NilError", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = IsRetryable(nil)
 		}
 	})

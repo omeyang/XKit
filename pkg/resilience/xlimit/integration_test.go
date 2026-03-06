@@ -375,16 +375,14 @@ func TestDistributed_Concurrent_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for j := 0; j < requestsPerGoroutine; j++ {
 					result, err := limiter.Allow(ctx, key)
 					if err == nil && result.Allowed {
 						allowedCount.Add(1)
 					}
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -408,9 +406,8 @@ func TestDistributed_Concurrent_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < tenants; i++ {
-			wg.Add(1)
-			go func(tenantID int) {
-				defer wg.Done()
+			tenantID := i
+			wg.Go(func() {
 				key := Key{Tenant: fmt.Sprintf("tenant-%d", tenantID)}
 				for j := 0; j < requestsPerTenant; j++ {
 					result, err := limiter.Allow(ctx, key)
@@ -418,7 +415,7 @@ func TestDistributed_Concurrent_Integration(t *testing.T) {
 						results[tenantID].Add(1)
 					}
 				}
-			}(i)
+			})
 		}
 
 		wg.Wait()
@@ -708,7 +705,7 @@ func BenchmarkDistributed_Integration(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = limiter.Allow(ctx, key)
 	}
 }

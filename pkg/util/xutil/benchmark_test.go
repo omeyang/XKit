@@ -23,7 +23,7 @@ type benchLarge struct {
 
 func BenchmarkIf_True(b *testing.B) {
 	var r int
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = xutil.If(true, 1, 2)
 	}
 	sinkInt = r
@@ -31,7 +31,7 @@ func BenchmarkIf_True(b *testing.B) {
 
 func BenchmarkIf_False(b *testing.B) {
 	var r int
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = xutil.If(false, 1, 2)
 	}
 	sinkInt = r
@@ -39,7 +39,7 @@ func BenchmarkIf_False(b *testing.B) {
 
 func BenchmarkIfString_True(b *testing.B) {
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = xutil.If(true, "hello", "world")
 	}
 	sinkString = r
@@ -47,7 +47,7 @@ func BenchmarkIfString_True(b *testing.B) {
 
 func BenchmarkIfString_False(b *testing.B) {
 	var r string
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = xutil.If(false, "hello", "world")
 	}
 	sinkString = r
@@ -57,7 +57,7 @@ func BenchmarkIfStruct(b *testing.B) {
 	x := benchLarge{ID: 1, Name: "a"}
 	y := benchLarge{ID: 2, Name: "b"}
 	var r benchLarge
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r = xutil.If(true, x, y)
 	}
 	sinkLarge = r

@@ -70,12 +70,10 @@ func Example_concurrent() {
 	ids := make(chan result, 10)
 
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			id, err := xid.NewStringWithRetry(context.Background())
 			ids <- result{id: id, err: err}
-		}()
+		})
 	}
 
 	wg.Wait()

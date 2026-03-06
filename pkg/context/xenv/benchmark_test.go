@@ -12,28 +12,28 @@ import (
 
 func BenchmarkDeploymentType_String(b *testing.B) {
 	dt := xenv.DeploymentLocal
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = dt.String()
 	}
 }
 
 func BenchmarkDeploymentType_IsLocal(b *testing.B) {
 	dt := xenv.DeploymentLocal
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = dt.IsLocal()
 	}
 }
 
 func BenchmarkDeploymentType_IsSaaS(b *testing.B) {
 	dt := xenv.DeploymentSaaS
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = dt.IsSaaS()
 	}
 }
 
 func BenchmarkDeploymentType_IsValid(b *testing.B) {
 	dt := xenv.DeploymentLocal
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = dt.IsValid()
 	}
 }
@@ -43,25 +43,25 @@ func BenchmarkDeploymentType_IsValid(b *testing.B) {
 // =============================================================================
 
 func BenchmarkParse_LOCAL(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.Parse("LOCAL")
 	}
 }
 
 func BenchmarkParse_local(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.Parse("local")
 	}
 }
 
 func BenchmarkParse_SAAS(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.Parse("SAAS")
 	}
 }
 
 func BenchmarkParse_Invalid(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.Parse("invalid")
 	}
 }
@@ -77,7 +77,7 @@ func BenchmarkType(b *testing.B) {
 	}
 	b.Cleanup(xenv.Reset)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xenv.Type()
 	}
 }
@@ -89,7 +89,7 @@ func BenchmarkIsLocal(b *testing.B) {
 	}
 	b.Cleanup(xenv.Reset)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xenv.IsLocal()
 	}
 }
@@ -101,7 +101,7 @@ func BenchmarkIsSaaS(b *testing.B) {
 	}
 	b.Cleanup(xenv.Reset)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xenv.IsSaaS()
 	}
 }
@@ -113,7 +113,7 @@ func BenchmarkIsInitialized(b *testing.B) {
 	}
 	b.Cleanup(xenv.Reset)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xenv.IsInitialized()
 	}
 }
@@ -125,7 +125,7 @@ func BenchmarkRequireType(b *testing.B) {
 	}
 	b.Cleanup(xenv.Reset)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.RequireType()
 	}
 }
@@ -133,7 +133,7 @@ func BenchmarkRequireType(b *testing.B) {
 func BenchmarkType_NotInitialized(b *testing.B) {
 	xenv.Reset()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xenv.Type()
 	}
 }
@@ -141,13 +141,13 @@ func BenchmarkType_NotInitialized(b *testing.B) {
 func BenchmarkRequireType_NotInitialized(b *testing.B) {
 	xenv.Reset()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.RequireType()
 	}
 }
 
 func BenchmarkParse_Empty(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xenv.Parse("")
 	}
 }

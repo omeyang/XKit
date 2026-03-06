@@ -110,11 +110,10 @@ func TestDefault_ConcurrencySafety(t *testing.T) {
 	loggers := make([]xlog.LoggerWithLevel, goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			loggers[idx] = xlog.Default()
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -380,7 +379,7 @@ func BenchmarkDefault(b *testing.B) {
 	_ = xlog.Default()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xlog.Default()
 	}
 }
@@ -399,7 +398,7 @@ func BenchmarkGlobal_Info(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		xlog.Info(ctx, "benchmark message")
 	}
 }

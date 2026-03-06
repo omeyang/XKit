@@ -633,15 +633,13 @@ func TestConcurrentWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 10*100)
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < 100; j++ {
 				if _, err := r.Write([]byte("concurrent write\n")); err != nil {
 					errCh <- err
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -671,9 +669,7 @@ func TestConcurrentCloseWrite(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := 0; j < 100; j++ {
 				_, writeErr := r.Write([]byte("data\n"))
 				if writeErr != nil {
@@ -681,7 +677,7 @@ func TestConcurrentCloseWrite(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	// 短暂等待后关闭

@@ -462,12 +462,10 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 	messagesPerProducer := 5
 
 	var wg sync.WaitGroup
-	wg.Add(producerCount)
 
 	for i := 0; i < producerCount; i++ {
-		go func(id int) {
-			defer wg.Done()
-
+		id := i
+		wg.Go(func() {
 			config := &kafka.ConfigMap{
 				"bootstrap.servers": brokers,
 			}
@@ -499,7 +497,7 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 					return
 				}
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()

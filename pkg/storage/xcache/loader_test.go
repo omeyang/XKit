@@ -185,11 +185,10 @@ func TestLoader_Load_WithSingleflight_PreventsThunderingHerd(t *testing.T) {
 	errs := make([]error, 10)
 
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx], errs[idx] = loader.Load(ctx, "mykey", loadFn, time.Hour)
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -219,11 +218,9 @@ func TestLoader_Load_WithoutSingleflight_AllowsDuplicateLoads(t *testing.T) {
 	// When - 并发请求同一个 key
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = loader.Load(ctx, "mykey", loadFn, time.Hour)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -349,11 +346,9 @@ func TestLoader_LoadHash_WithSingleflight_PreventsThunderingHerd(t *testing.T) {
 	// When - 并发请求同一个 key:field
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = loader.LoadHash(ctx, "myhash", "field1", loadFn, time.Hour)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -880,17 +875,14 @@ func TestLoader_Load_WithSingleflight_FirstCallerCancel_DoesNotAffectOthers(t *t
 	var err1, err2 error
 	var val2 []byte
 
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, err1 = loader.Load(ctx1, "sf-cancel-shared", loadFn, time.Hour)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		// 确保 caller2 在 caller1 之后进入 singleflight
 		time.Sleep(10 * time.Millisecond)
 		val2, err2 = loader.Load(ctx2, "sf-cancel-shared", loadFn, time.Hour)
-	}()
+	})
 
 	// 在 loadFn 执行期间取消 caller1
 	time.Sleep(50 * time.Millisecond)

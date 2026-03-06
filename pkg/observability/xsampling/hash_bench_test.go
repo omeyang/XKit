@@ -25,7 +25,7 @@ var testKeys = []string{
 var maphashSeed = maphash.MakeSeed()
 
 func BenchmarkMaphashString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = maphash.String(maphashSeed, key)
 		}
@@ -37,7 +37,7 @@ func BenchmarkMaphashString(b *testing.B) {
 // =============================================================================
 
 func BenchmarkFNVStdlib(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			h := fnv.New64a()
 			_, _ = h.Write([]byte(key))
@@ -66,7 +66,7 @@ func fnv64aString(s string) uint64 {
 }
 
 func BenchmarkFNVManual(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = fnv64aString(key)
 		}
@@ -78,7 +78,7 @@ func BenchmarkFNVManual(b *testing.B) {
 // =============================================================================
 
 func BenchmarkXXHash(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range testKeys {
 			_ = xxhash.Sum64String(key)
 		}

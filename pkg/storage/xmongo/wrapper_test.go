@@ -952,11 +952,10 @@ func TestWrapper_Close_Concurrent(t *testing.T) {
 	results := make([]error, goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx] = w.Close(context.Background())
-		}(i)
+		})
 	}
 	wg.Wait()
 

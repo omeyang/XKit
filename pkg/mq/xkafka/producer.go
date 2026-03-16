@@ -13,8 +13,9 @@ import (
 
 // producerWrapper 实现 Producer 接口。
 type producerWrapper struct {
-	producer *kafka.Producer
-	options  *producerOptions
+	client  kafkaProducerClient // 内部操作通过接口访问，支持测试替换
+	raw     *kafka.Producer     // 保留原始引用，供 Producer() 方法返回具体类型
+	options *producerOptions
 
 	// mu 保护 GetMetadata、Flush、Close 等管理操作的并发访问。
 	// 注意：Producer.Produce() 本身是线程安全的，不需要加锁。
@@ -30,7 +31,7 @@ type producerWrapper struct {
 
 // Producer 返回底层的 *kafka.Producer。
 func (w *producerWrapper) Producer() *kafka.Producer {
-	return w.producer
+	return w.raw
 }
 
 // Health 执行健康检查。
@@ -73,7 +74,7 @@ func (w *producerWrapper) Health(ctx context.Context) (err error) {
 			return
 		}
 
-		_, err := w.producer.GetMetadata(nil, true, timeoutMs)
+		_, err := w.client.GetMetadata(nil, true, timeoutMs)
 		if err != nil {
 			done <- fmt.Errorf("%w: producer get metadata: %w", ErrHealthCheckFailed, err)
 			return
@@ -97,7 +98,7 @@ func (w *producerWrapper) Stats() ProducerStats {
 		// 加锁保护对底层 producer 的访问
 		w.mu.Lock()
 		if !w.closed.Load() {
-			queueLen = w.producer.Len()
+			queueLen = w.client.Len()
 		}
 		w.mu.Unlock()
 	}
@@ -123,13 +124,13 @@ func (w *producerWrapper) Close() error {
 
 	timeoutMs := int(w.options.FlushTimeout.Milliseconds())
 
-	remaining := w.producer.Flush(timeoutMs)
+	remaining := w.client.Flush(timeoutMs)
 	if remaining > 0 {
-		w.producer.Close()
+		w.client.Close()
 		return fmt.Errorf("%w: %d messages still in queue", ErrFlushTimeout, remaining)
 	}
 
-	w.producer.Close()
+	w.client.Close()
 	return nil
 }
 

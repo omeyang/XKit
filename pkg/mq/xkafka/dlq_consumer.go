@@ -16,7 +16,7 @@ import (
 type dlqConsumer struct {
 	*consumerWrapper
 	policy      *DLQPolicy
-	dlqProducer *kafka.Producer
+	dlqProducer kafkaProducerClient // 内部操作通过接口访问，支持测试替换
 
 	stats *dlqStatsCollector
 
@@ -90,7 +90,7 @@ func (c *dlqConsumer) ConsumeWithRetry(ctx context.Context, handler MessageHandl
 		return ErrClosed
 	}
 
-	msg, err := c.consumer.ReadMessage(c.options.PollTimeout)
+	msg, err := c.client.ReadMessage(c.options.PollTimeout)
 	if err != nil {
 		var kafkaErr kafka.Error
 		if errors.As(err, &kafkaErr) && kafkaErr.Code() == kafka.ErrTimedOut {
@@ -169,7 +169,7 @@ func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, ha
 		}
 		// 设计决策: 使用 StoreMessage 而非 StoreOffsets，StoreMessage 内部执行 offset+1，
 		// 表示"下次从此 offset 之后开始消费"，避免重启后重复消费已处理消息。
-		if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
+		if _, storeErr := c.client.StoreMessage(msg); storeErr != nil {
 			resultErr = fmt.Errorf("store offset failed: %w", storeErr)
 			return resultErr
 		}
@@ -268,7 +268,7 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	c.stats.incDeadLetter(origTopic)
 
 	// DLQ 发送成功，存储 offset（StoreMessage 内部 offset+1）
-	if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
+	if _, storeErr := c.client.StoreMessage(msg); storeErr != nil {
 		return fmt.Errorf("store offset after DLQ failed: %w", storeErr)
 	}
 
@@ -348,7 +348,7 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 	}
 
 	// 重新投递成功，存储 offset（StoreMessage 内部 offset+1）
-	if _, storeErr := c.consumer.StoreMessage(msg); storeErr != nil {
+	if _, storeErr := c.client.StoreMessage(msg); storeErr != nil {
 		return fmt.Errorf("store offset after redeliver failed: %w", storeErr)
 	}
 

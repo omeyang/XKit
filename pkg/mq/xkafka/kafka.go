@@ -147,8 +147,9 @@ func newProducerWrapper(config *kafka.ConfigMap, opts ...ProducerOption) (*produ
 	}
 
 	return &producerWrapper{
-		producer: producer,
-		options:  options,
+		client:  producer,
+		raw:     producer,
+		options: options,
 	}, nil
 }
 
@@ -209,9 +210,10 @@ func newConsumerWrapper(config *kafka.ConfigMap, topics []string, opts ...Consum
 	}
 
 	return &consumerWrapper{
-		consumer: consumer,
-		options:  options,
-		groupID:  extractGroupID(clonedConfig),
+		client:  consumer,
+		raw:     consumer,
+		options: options,
+		groupID: extractGroupID(clonedConfig),
 	}, nil
 }
 

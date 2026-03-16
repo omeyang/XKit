@@ -46,7 +46,7 @@ func (w *TracingProducer) Produce(ctx context.Context, msg *kafka.Message, deliv
 		span.End(xmetrics.Result{Err: err})
 	}()
 
-	err = w.producer.Produce(msg, deliveryChan)
+	err = w.client.Produce(msg, deliveryChan)
 	if err != nil {
 		w.errors.Add(1)
 		return fmt.Errorf("kafka produce: %w", err)
@@ -91,7 +91,7 @@ func (w *TracingConsumer) ReadMessage(ctx context.Context) (context.Context, *ka
 			return ctx, nil, ctx.Err()
 		}
 
-		msg, err := w.consumer.ReadMessage(w.options.PollTimeout)
+		msg, err := w.client.ReadMessage(w.options.PollTimeout)
 		if err != nil {
 			var kafkaErr kafka.Error
 			if errors.As(err, &kafkaErr) && kafkaErr.Code() == kafka.ErrTimedOut {
@@ -151,7 +151,7 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 	// 设计决策: 使用 StoreMessage 而非 StoreOffsets，因为 StoreMessage 内部会将 offset+1，
 	// 表示"下次从此 offset 之后的位置开始消费"。直接使用 StoreOffsets 传递当前 offset
 	// 会导致重启后重复消费已处理的消息。
-	if _, storeErr := w.consumer.StoreMessage(msg); storeErr != nil {
+	if _, storeErr := w.client.StoreMessage(msg); storeErr != nil {
 		return fmt.Errorf("store offset failed: %w", storeErr)
 	}
 

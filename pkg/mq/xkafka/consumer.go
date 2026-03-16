@@ -14,9 +14,10 @@ import (
 
 // consumerWrapper 实现 Consumer 接口。
 type consumerWrapper struct {
-	consumer *kafka.Consumer
-	options  *consumerOptions
-	groupID  string // consumer group 标识，用于可观测性 span 属性
+	client  kafkaConsumerClient // 内部操作通过接口访问，支持测试替换
+	raw     *kafka.Consumer     // 保留原始引用，供 Consumer() 方法返回具体类型
+	options *consumerOptions
+	groupID string // consumer group 标识，用于可观测性 span 属性
 
 	// mu 保护 Assignment、Committed、QueryWatermarkOffsets、Close 等管理操作的并发访问。
 	// 设计决策: confluent-kafka-go 底层基于 librdkafka，其 API 是线程安全的。
@@ -33,7 +34,7 @@ type consumerWrapper struct {
 
 // Consumer 返回底层的 *kafka.Consumer。
 func (w *consumerWrapper) Consumer() *kafka.Consumer {
-	return w.consumer
+	return w.raw
 }
 
 // Health 执行健康检查。
@@ -75,7 +76,7 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 		}
 
 		// 检查是否有分配的分区
-		assignment, err := w.consumer.Assignment()
+		assignment, err := w.client.Assignment()
 		if err != nil {
 			done <- fmt.Errorf("%w: consumer get assignment: %w", ErrHealthCheckFailed, err)
 			return
@@ -84,7 +85,7 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 		// 如果没有分配分区，尝试获取元数据来验证连接
 		if len(assignment) == 0 {
 			timeoutMs := int(w.options.HealthTimeout.Milliseconds())
-			_, err := w.consumer.GetMetadata(nil, true, timeoutMs)
+			_, err := w.client.GetMetadata(nil, true, timeoutMs)
 			if err != nil {
 				done <- fmt.Errorf("%w: consumer get metadata: %w", ErrHealthCheckFailed, err)
 				return
@@ -130,7 +131,7 @@ func (w *consumerWrapper) calculateLag() int64 {
 		return 0
 	}
 
-	assignment, err := w.consumer.Assignment()
+	assignment, err := w.client.Assignment()
 	if err != nil || len(assignment) == 0 {
 		return 0
 	}
@@ -151,12 +152,12 @@ func (w *consumerWrapper) calculateLag() int64 {
 // partitionLag 计算单个分区的消费延迟。
 // 调用方必须持有 mu 锁。
 func (w *consumerWrapper) partitionLag(tp kafka.TopicPartition, timeoutMs int) int64 {
-	committed, err := w.consumer.Committed([]kafka.TopicPartition{tp}, timeoutMs)
+	committed, err := w.client.Committed([]kafka.TopicPartition{tp}, timeoutMs)
 	if err != nil || len(committed) == 0 {
 		return 0
 	}
 
-	_, high, err := w.consumer.QueryWatermarkOffsets(*tp.Topic, tp.Partition, timeoutMs)
+	_, high, err := w.client.QueryWatermarkOffsets(*tp.Topic, tp.Partition, timeoutMs)
 	if err != nil {
 		return 0
 	}
@@ -185,7 +186,7 @@ func (w *consumerWrapper) Close() error {
 	defer w.mu.Unlock()
 
 	// 提交通过 StoreOffsets 存储的偏移量
-	_, commitErr := w.consumer.Commit()
+	_, commitErr := w.client.Commit()
 	if commitErr != nil {
 		var kafkaErr kafka.Error
 		if errors.As(commitErr, &kafkaErr) {
@@ -197,7 +198,7 @@ func (w *consumerWrapper) Close() error {
 	}
 
 	// 关闭消费者
-	closeErr := w.consumer.Close()
+	closeErr := w.client.Close()
 
 	// 合并错误返回
 	if commitErr != nil && closeErr != nil {

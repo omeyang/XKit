@@ -435,13 +435,19 @@ func TestWorkerPool_ShutdownNilContext(t *testing.T) {
 }
 
 func TestWorkerPool_ShutdownAlreadyCancelled(t *testing.T) {
-	pool := newPoolForTest(t, 1, 10, func(_ int) {})
+	// 设计决策: 使用慢 handler 确保 worker 不会在 ctx.Done() 之前退出。
+	// 空队列 + 快 worker 存在竞态：workersDone 可能先于 ctx.Done() 关闭，
+	// 导致 Shutdown 返回 nil 而非 context.Canceled。
+	pool := newPoolForTest(t, 1, 10, func(_ int) {
+		time.Sleep(100 * time.Millisecond)
+	})
+	require.NoError(t, pool.Submit(1)) // 提交一个慢任务，确保 worker 忙碌
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消
 
 	err := pool.Shutdown(ctx)
-	// 已取消的 ctx：队列已关闭但不等待 worker，返回 ctx 错误
+	// 已取消的 ctx：队列已关闭但 worker 仍在处理慢任务，返回 ctx 错误
 	assert.ErrorIs(t, err, context.Canceled)
 
 	// worker 仍在后台运行，通过 Done() 等待退出

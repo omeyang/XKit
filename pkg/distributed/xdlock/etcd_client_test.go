@@ -612,13 +612,13 @@ func BenchmarkEtcdConfig_Validate(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = config.Validate()
 	}
 }
 
 func BenchmarkDefaultEtcdClientOptions(b *testing.B) {
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = defaultEtcdClientOptions()
 	}
 }

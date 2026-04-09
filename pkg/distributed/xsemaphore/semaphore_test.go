@@ -382,7 +382,9 @@ func TestConcurrentAcquire(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			permit, err := sem.TryAcquire(ctx, "concurrent",
 				WithCapacity(capacity),
 			)
@@ -402,7 +404,7 @@ func TestConcurrentAcquire(t *testing.T) {
 				concurrent.Add(-1)
 				_ = permit.Release(ctx) //nolint:errcheck // concurrent release may return error
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -426,9 +428,11 @@ func TestConcurrentRelease(t *testing.T) {
 	// 并发释放同一个许可
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_ = permit.Release(ctx) //nolint:errcheck // concurrent release may return error
-		})
+		}()
 	}
 
 	wg.Wait()

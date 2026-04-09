@@ -212,9 +212,11 @@ func TestRedisPermit_AutoExtend_Concurrent(t *testing.T) {
 	// 并发启动和停止
 	for i := 0; i < 10; i++ {
 		idx := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			stops[idx] = permit.StartAutoExtend(50 * time.Millisecond)
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -346,9 +348,11 @@ func TestPermit_Release_ConcurrentSafe(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			releasePermit(t, ctx, permit)
-		})
+		}()
 	}
 
 	wg.Wait()

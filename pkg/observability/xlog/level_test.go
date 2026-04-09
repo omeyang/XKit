@@ -184,7 +184,7 @@ func TestLevel_RoundTrip(t *testing.T) {
 }
 
 func BenchmarkParseLevel(b *testing.B) {
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		level, err := xlog.ParseLevel("info")
 		runtime.KeepAlive(level)
 		runtime.KeepAlive(err)

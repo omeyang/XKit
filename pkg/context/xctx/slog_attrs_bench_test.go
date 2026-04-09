@@ -13,7 +13,7 @@ func BenchmarkIdentityAttrs(b *testing.B) {
 	ctx, _ = xctx.WithTenantName(ctx, "租户名称")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xctx.IdentityAttrs(ctx)
 	}
 }
@@ -24,7 +24,7 @@ func BenchmarkTraceAttrs(b *testing.B) {
 	ctx, _ = xctx.WithRequestID(ctx, "req-789")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xctx.TraceAttrs(ctx)
 	}
 }
@@ -42,7 +42,7 @@ func BenchmarkLogAttrs(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err = xctx.LogAttrs(ctx)
 	}
 	_ = err
@@ -53,7 +53,7 @@ func BenchmarkLogAttrs_Empty(b *testing.B) {
 	var err error
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err = xctx.LogAttrs(ctx)
 	}
 	_ = err

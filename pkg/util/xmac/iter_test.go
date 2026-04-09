@@ -343,7 +343,7 @@ func BenchmarkRange(b *testing.B) {
 	to := MustParse("00:00:00:00:00:64") // 100 addresses
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		for range Range(from, to) {
 		}
 	}
@@ -353,7 +353,7 @@ func BenchmarkRangeN(b *testing.B) {
 	start := MustParse("00:00:00:00:00:01")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		for range RangeN(start, 100) {
 		}
 	}
@@ -364,7 +364,7 @@ func BenchmarkRangeCount(b *testing.B) {
 	to := MustParse("ff:ff:ff:ff:ff:ff")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = RangeCount(from, to)
 	}
 }
@@ -374,7 +374,7 @@ func BenchmarkCollectN(b *testing.B) {
 	to := MustParse("00:00:00:00:00:64")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = CollectN(Range(from, to), 0)
 	}
 }
@@ -599,7 +599,7 @@ func BenchmarkRangeReverse(b *testing.B) {
 	to := MustParse("00:00:00:00:00:64") // 100 addresses
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		for range RangeReverse(from, to) {
 		}
 	}

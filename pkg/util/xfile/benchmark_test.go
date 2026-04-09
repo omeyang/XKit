@@ -14,7 +14,7 @@ import (
 // BenchmarkSanitizePath 测试路径规范化性能
 func BenchmarkSanitizePath(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SanitizePath("/var/log/app.log")
 	}
 }
@@ -23,7 +23,7 @@ func BenchmarkSanitizePath(b *testing.B) {
 func BenchmarkSanitizePathLong(b *testing.B) {
 	longPath := "/var/log/application/service/component/subcomponent/module/app.log"
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SanitizePath(longPath)
 	}
 }
@@ -32,7 +32,7 @@ func BenchmarkSanitizePathLong(b *testing.B) {
 func BenchmarkSanitizePathWithDots(b *testing.B) {
 	pathWithDots := "/var/./log/./app/./service/./app.log"
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SanitizePath(pathWithDots)
 	}
 }
@@ -40,7 +40,7 @@ func BenchmarkSanitizePathWithDots(b *testing.B) {
 // BenchmarkSanitizePathRelative 测试相对路径规范化性能
 func BenchmarkSanitizePathRelative(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SanitizePath("logs/app.log")
 	}
 }
@@ -48,7 +48,7 @@ func BenchmarkSanitizePathRelative(b *testing.B) {
 // BenchmarkSanitizePathTraversal 测试路径穿越拒绝路径性能
 func BenchmarkSanitizePathTraversal(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SanitizePath("../etc/passwd")
 	}
 }
@@ -70,7 +70,7 @@ func BenchmarkSanitizePathParallel(b *testing.B) {
 // BenchmarkSafeJoin 测试安全路径拼接性能
 func BenchmarkSafeJoin(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SafeJoin("/var/log", "app.log")
 	}
 }
@@ -78,7 +78,7 @@ func BenchmarkSafeJoin(b *testing.B) {
 // BenchmarkSafeJoinSubdir 测试子目录路径拼接性能
 func BenchmarkSafeJoinSubdir(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SafeJoin("/var/log", "myapp/service/app.log")
 	}
 }
@@ -86,7 +86,7 @@ func BenchmarkSafeJoinSubdir(b *testing.B) {
 // BenchmarkSafeJoinReject 测试路径穿越拒绝路径性能
 func BenchmarkSafeJoinReject(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SafeJoin("/var/log", "../etc/passwd")
 	}
 }
@@ -106,7 +106,7 @@ func BenchmarkSafeJoinWithSymlinks(b *testing.B) {
 	tmpDir := b.TempDir()
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = SafeJoinWithOptions(tmpDir, "app.log", SafeJoinOptions{ResolveSymlinks: true})
 	}
 }
@@ -125,7 +125,7 @@ func BenchmarkEnsureDir(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = EnsureDir(filename)
 	}
 }
@@ -143,7 +143,7 @@ func BenchmarkEnsureDirMultiPath(b *testing.B) {
 	idx := 0
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = EnsureDir(paths[idx%26])
 		idx++
 	}
@@ -159,7 +159,7 @@ func BenchmarkEnsureDirWithPerm(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = EnsureDirWithPerm(filename, 0750)
 	}
 }
@@ -175,7 +175,7 @@ func BenchmarkEnsureDirDeep(b *testing.B) {
 	idx := 0
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = EnsureDir(paths[idx%26])
 		idx++
 	}
@@ -201,7 +201,7 @@ func BenchmarkEnsureDirParallel(b *testing.B) {
 // BenchmarkEnsureDirCurrentDir 测试当前目录文件性能（快速路径）
 func BenchmarkEnsureDirCurrentDir(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = EnsureDir("app.log")
 	}
 }

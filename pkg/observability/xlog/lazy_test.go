@@ -167,7 +167,7 @@ func BenchmarkLazy(b *testing.B) {
 			ctx := context.Background()
 			b.ResetTimer()
 			b.ReportAllocs()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				logger.Debug(ctx, "test", xlog.Lazy("key", func() any { return "value" }))
 			}
 		})
@@ -198,7 +198,7 @@ func BenchmarkWithoutLazy_Disabled(b *testing.B) {
 	expensive := func() string { return "expensive computation result" }
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		// 不使用 Lazy：expensive() 在参数传递时已经被求值
 		// 即使日志级别禁用，计算开销也已经发生
 		logger.Debug(ctx, "test", slog.String("key", expensive()))
@@ -399,7 +399,7 @@ func BenchmarkLazyDuration(b *testing.B) {
 	start := time.Now()
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		logger.Debug(ctx, "test", xlog.LazyDuration("elapsed", func() time.Duration {
 			return time.Since(start)
 		}))
@@ -456,7 +456,7 @@ func BenchmarkLazyGroup(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		logger.Debug(ctx, "test", xlog.LazyGroup("metrics", func() []slog.Attr {
 			return []slog.Attr{
 				slog.Int64("count", 42),

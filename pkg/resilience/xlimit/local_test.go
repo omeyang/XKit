@@ -230,7 +230,9 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 	var mu sync.Mutex
 
 	for i := 0; i < 100; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			result, err := limiter.Allow(ctx, key)
 			if err != nil {
 				return
@@ -242,7 +244,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 				denied++
 			}
 			mu.Unlock()
-		})
+		}()
 	}
 
 	wg.Wait()

@@ -286,7 +286,9 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 		taskCancel: taskCancel,
 		lockHandle: lockHandle,
 	}
-	rh.wg.Go(func() {
+	rh.wg.Add(1)
+	go func() {
+		defer rh.wg.Done()
 		// 设计决策: panic 隔离防止 lockHandle.Renew 实现 panic 导致进程崩溃，
 		// 续期协程 panic 后取消任务，与续期失败行为一致。
 		defer func() {
@@ -326,7 +328,7 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 				}
 			}
 		}
-	})
+	}()
 
 	return rh
 }

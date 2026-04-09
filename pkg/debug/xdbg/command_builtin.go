@@ -87,12 +87,14 @@ func (c *exitCommand) Execute(_ context.Context, _ []string) (string, error) {
 	// 如果立即 Disable，底层 transport.Close() 会关闭 socket，导致响应发送失败。
 	// goroutine 纳入 WaitGroup 管理，确保 Stop() 的 waitForGoroutines
 	// 能等待此 goroutine 完成，避免 Disable 在 Stop 之后执行产生非预期状态。
-	c.server.wg.Go(func() {
+	c.server.wg.Add(1)
+	go func() {
+		defer c.server.wg.Done()
 		time.Sleep(100 * time.Millisecond)
 		if err := c.server.Disable(); err != nil {
 			c.server.audit(AuditEventCommandFailed, nil, "exit:disable", nil, 0, err)
 		}
-	})
+	}()
 	return "调试服务即将关闭", nil
 }
 

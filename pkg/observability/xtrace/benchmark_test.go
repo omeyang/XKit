@@ -19,7 +19,7 @@ func BenchmarkTraceInfo_IsEmpty_Empty(b *testing.B) {
 	info := xtrace.TraceInfo{}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = info.IsEmpty()
 	}
 }
@@ -34,7 +34,7 @@ func BenchmarkTraceInfo_IsEmpty_NotEmpty(b *testing.B) {
 	}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = info.IsEmpty()
 	}
 }
@@ -47,7 +47,7 @@ func BenchmarkExtractFromHTTPHeader_Empty(b *testing.B) {
 	h := http.Header{}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromHTTPHeader(h)
 	}
 }
@@ -58,7 +58,7 @@ func BenchmarkExtractFromHTTPHeader_WithTraceID(b *testing.B) {
 	h.Set(xtrace.HeaderSpanID, "b7ad6b7169203331")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromHTTPHeader(h)
 	}
 }
@@ -68,7 +68,7 @@ func BenchmarkExtractFromHTTPHeader_WithTraceparent(b *testing.B) {
 	h.Set(xtrace.HeaderTraceparent, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromHTTPHeader(h)
 	}
 }
@@ -82,7 +82,7 @@ func BenchmarkExtractFromHTTPHeader_Full(b *testing.B) {
 	h.Set(xtrace.HeaderTracestate, "congo=t61rcWkgMzE")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromHTTPHeader(h)
 	}
 }
@@ -96,7 +96,7 @@ func BenchmarkExtractFromHTTPRequest(b *testing.B) {
 	req.Header.Set(xtrace.HeaderSpanID, "b7ad6b7169203331")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromHTTPRequest(req)
 	}
 }
@@ -109,7 +109,7 @@ func BenchmarkExtractFromMetadata_Empty(b *testing.B) {
 	md := metadata.MD{}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromMetadata(md)
 	}
 }
@@ -121,7 +121,7 @@ func BenchmarkExtractFromMetadata_WithTraceID(b *testing.B) {
 	)
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromMetadata(md)
 	}
 }
@@ -136,7 +136,7 @@ func BenchmarkExtractFromMetadata_Full(b *testing.B) {
 	)
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromMetadata(md)
 	}
 }
@@ -149,7 +149,7 @@ func BenchmarkExtractFromIncomingContext(b *testing.B) {
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.ExtractFromIncomingContext(ctx)
 	}
 }
@@ -165,7 +165,7 @@ func BenchmarkInjectToRequest(b *testing.B) {
 	ctx, _ = xctx.WithRequestID(ctx, "req-123")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		req, err := http.NewRequest("GET", "/api/test", nil)
 		if err != nil {
 			b.Fatal(err)
@@ -184,7 +184,7 @@ func BenchmarkInjectTraceToHeader(b *testing.B) {
 	}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		h := http.Header{}
 		xtrace.InjectTraceToHeader(h, info)
 	}
@@ -201,7 +201,7 @@ func BenchmarkInjectToOutgoingContext(b *testing.B) {
 	ctx, _ = xctx.WithRequestID(ctx, "req-123")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.InjectToOutgoingContext(ctx)
 	}
 }
@@ -216,7 +216,7 @@ func BenchmarkInjectTraceToMetadata(b *testing.B) {
 	}
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		md := metadata.MD{}
 		xtrace.InjectTraceToMetadata(md, info)
 	}
@@ -231,7 +231,7 @@ func BenchmarkTraceID(b *testing.B) {
 	ctx, _ = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.TraceID(ctx)
 	}
 }
@@ -241,7 +241,7 @@ func BenchmarkSpanID(b *testing.B) {
 	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.SpanID(ctx)
 	}
 }
@@ -251,7 +251,7 @@ func BenchmarkRequestID(b *testing.B) {
 	ctx, _ = xctx.WithRequestID(ctx, "req-123")
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xtrace.RequestID(ctx)
 	}
 }

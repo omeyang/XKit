@@ -14,7 +14,7 @@ func BenchmarkExponentialBackoff_NextDelay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = backoff.NextDelay(5)
 	}
 }
@@ -25,7 +25,7 @@ func BenchmarkLinearBackoff_NextDelay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = backoff.NextDelay(5)
 	}
 }
@@ -36,7 +36,7 @@ func BenchmarkFixedBackoff_NextDelay(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = backoff.NextDelay(5)
 	}
 }

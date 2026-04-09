@@ -228,12 +228,14 @@ func TestSlowQueryDetector_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < 10; j++ {
 				detector.MaybeSlowQuery(context.Background(),
 					testSlowQueryInfo{Duration: time.Hour}, time.Hour)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -273,19 +275,23 @@ func TestSlowQueryDetector_ConcurrentCloseAndQuery(t *testing.T) {
 
 	// 多个 goroutine 并发调用 MaybeSlowQuery
 	for i := 0; i < 10; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				detector.MaybeSlowQuery(context.Background(),
 					testSlowQueryInfo{Duration: time.Hour}, time.Hour)
 			}
-		})
+		}()
 	}
 
 	// 另一个 goroutine 并发调用 Close
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		time.Sleep(time.Millisecond)
 		detector.Close()
-	})
+	}()
 
 	wg.Wait()
 }

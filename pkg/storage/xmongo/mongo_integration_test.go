@@ -792,7 +792,9 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 
 		for i := 0; i < goroutines; i++ {
 			page := int64(i)
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				_, err := wrapper.FindPage(ctx, coll, bson.M{}, PageOptions{
 					Page:     page%10 + 1,
 					PageSize: 10,
@@ -800,7 +802,7 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 				if err != nil {
 					errorCount.Add(1)
 				}
-			})
+			}()
 		}
 
 		wg.Wait()
@@ -820,7 +822,9 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 
 		for i := 0; i < goroutines; i++ {
 			id := i
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				docs := make([]any, 10)
 				for j := 0; j < 10; j++ {
 					docs[j] = bson.M{"worker": id, "item": j}
@@ -829,7 +833,7 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 				if err == nil {
 					successCount.Add(result.InsertedCount)
 				}
-			})
+			}()
 		}
 
 		wg.Wait()

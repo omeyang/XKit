@@ -946,9 +946,11 @@ func TestTokenManager_BackgroundRefresh_CancelBeforeStart(t *testing.T) {
 	mgr.Stop()
 
 	// 此时 ctx 已取消，backgroundRefresh 应立即返回
-	mgr.wg.Go(func() {
+	mgr.wg.Add(1)
+	go func() {
+		defer mgr.wg.Done()
 		mgr.backgroundRefresh("tenant-cancel")
-	})
+	}()
 	mgr.wg.Wait()
 }
 
@@ -984,9 +986,11 @@ func TestTokenManager_BackgroundRefresh_RefreshError(t *testing.T) {
 	defer mgr.Stop()
 
 	// 直接调用 backgroundRefresh（Get 成功，RefreshToken 失败）
-	mgr.wg.Go(func() {
+	mgr.wg.Add(1)
+	go func() {
+		defer mgr.wg.Done()
 		mgr.backgroundRefresh("tenant-err")
-	})
+	}()
 	mgr.wg.Wait()
 }
 
@@ -1035,9 +1039,11 @@ func TestTokenManager_BackgroundRefresh_CacheSetError(t *testing.T) {
 	defer mgr.Stop()
 
 	// 直接调用 backgroundRefresh（Get 成功，Refresh 成功，Set 失败 → 只是 warn log）
-	mgr.wg.Go(func() {
+	mgr.wg.Add(1)
+	go func() {
+		defer mgr.wg.Done()
 		mgr.backgroundRefresh("tenant-cache-err")
-	})
+	}()
 	mgr.wg.Wait()
 
 	// 验证后台 goroutine 正常完成（无 panic）

@@ -257,7 +257,9 @@ func TestConcurrentMutualExclusion(t *testing.T) {
 	var violations atomic.Int64
 
 	for i := 0; i < numGoroutines; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < numIterations; j++ {
 				h, err := kl.Acquire(context.Background(), "shared-key")
 				if err != nil {
@@ -271,7 +273,7 @@ func TestConcurrentMutualExclusion(t *testing.T) {
 				atomic.AddInt64(&counter, -1)
 				assert.NoError(t, h.Unlock())
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -288,7 +290,9 @@ func TestConcurrentDifferentKeys(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < numKeys; i++ {
 		key := fmt.Sprintf("key-%d", i)
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < numIterations; j++ {
 				h, err := kl.Acquire(context.Background(), key)
 				if err != nil {
@@ -296,7 +300,7 @@ func TestConcurrentDifferentKeys(t *testing.T) {
 				}
 				assert.NoError(t, h.Unlock())
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -316,7 +320,9 @@ func TestMaxKeysConcurrent(t *testing.T) {
 	// 启动多个 goroutine 并发获取不同 key，验证 maxKeys 不被突破。
 	for i := 0; i < 100; i++ {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			key := fmt.Sprintf("key-%d", id)
 			h, err := kl.TryAcquire(key)
 			if err != nil {
@@ -331,7 +337,7 @@ func TestMaxKeysConcurrent(t *testing.T) {
 			time.Sleep(time.Millisecond)
 			concurrentKeys.Add(-1)
 			assert.NoError(t, h.Unlock())
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -498,11 +504,13 @@ func TestCloseWakesWaiters(t *testing.T) {
 	ready.Add(numWaiters)
 
 	for range numWaiters {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			ready.Done()
 			_, acqErr := kl.Acquire(context.Background(), "key1")
 			results <- acqErr
-		})
+		}()
 	}
 
 	// 等待所有 goroutine 启动，让出 CPU 使其进入阻塞
@@ -544,7 +552,9 @@ func TestMultipleKeysConcurrentAcquireRelease(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range numKeys {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			key := fmt.Sprintf("concurrent-key-%d", id)
 			for range numIterations {
 				h, err := kl.Acquire(context.Background(), key)
@@ -553,7 +563,7 @@ func TestMultipleKeysConcurrentAcquireRelease(t *testing.T) {
 				}
 				assert.NoError(t, h.Unlock())
 			}
-		})
+		}()
 	}
 	wg.Wait()
 	assert.Empty(t, kl.Keys())
@@ -663,19 +673,23 @@ func TestCloseBarrier_Stress(t *testing.T) {
 
 		var wg sync.WaitGroup
 
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			h, err := kl.Acquire(context.Background(), "a")
 			if err == nil {
 				assert.NoError(t, h.Unlock())
 			}
-		})
+		}()
 
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			h, err := kl.TryAcquire("b")
 			if err == nil {
 				assert.NoError(t, h.Unlock())
 			}
-		})
+		}()
 
 		runtime.Gosched()
 		// Close 可能返回 ErrClosed（若已被并发关闭），此处不断言。

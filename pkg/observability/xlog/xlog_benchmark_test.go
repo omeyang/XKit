@@ -30,7 +30,7 @@ func BenchmarkLogger_Info(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		logger.Info(ctx, "benchmark message")
 	}
 }
@@ -52,7 +52,7 @@ func BenchmarkLogger_Info_Disabled(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		logger.Info(ctx, "should be skipped")
 	}
 }
@@ -69,7 +69,7 @@ func BenchmarkLogger_With(b *testing.B) {
 	})
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = logger.With(slog.String("key", "value"))
 	}
 }

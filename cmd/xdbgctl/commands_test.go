@@ -1523,7 +1523,7 @@ func BenchmarkParseCommandLine(b *testing.B) {
 
 	for _, bb := range inputs {
 		b.Run(bb.name, func(b *testing.B) {
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				parts, err := parseCommandLine(bb.input)
 				if err != nil {
 					b.Fatal(err)
@@ -1545,7 +1545,7 @@ func BenchmarkIsCLIUsageError(b *testing.B) {
 
 	for _, bb := range errs {
 		b.Run(bb.name, func(b *testing.B) {
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				_ = isCLIUsageError(bb.err)
 			}
 		})

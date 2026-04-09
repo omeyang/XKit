@@ -218,9 +218,11 @@ func (w *Watcher) StartAsync() {
 	w.running = true
 	w.mu.Unlock()
 
-	w.runWg.Go(func() {
+	w.runWg.Add(1)
+	go func() {
+		defer w.runWg.Done()
 		w.run()
-	})
+	}()
 }
 
 // Stop 停止监视并释放 fsnotify 资源。

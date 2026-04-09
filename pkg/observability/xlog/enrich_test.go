@@ -209,7 +209,7 @@ func BenchmarkEnrichHandler(b *testing.B) {
 
 			ctx := tc.setupCtx(context.Background())
 			b.ResetTimer()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				logger.InfoContext(ctx, "benchmark message")
 			}
 		})

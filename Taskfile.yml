@@ -428,7 +428,7 @@ tasks:
     desc: 验证项目配置
     cmds:
       - echo "验证 Go 版本..."
-      - 'go version | grep "go1.25" || (echo "错误: 需要 Go 1.25" && exit 1)'
+      - 'go version | grep "go1.23" || (echo "错误: 需要 Go 1.23" && exit 1)'
       - echo "验证 golangci-lint 配置..."
       - golangci-lint config verify
       - echo "验证 Go 模块..."

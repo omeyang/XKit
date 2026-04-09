@@ -16,7 +16,7 @@ func BenchmarkAlwaysSampler(b *testing.B) {
 	sampler := Always()
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -25,7 +25,7 @@ func BenchmarkNeverSampler(b *testing.B) {
 	sampler := Never()
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -37,7 +37,7 @@ func BenchmarkRateSampler(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -49,7 +49,7 @@ func BenchmarkRateSampler_Zero(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -61,7 +61,7 @@ func BenchmarkRateSampler_One(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -73,7 +73,7 @@ func BenchmarkCountSampler(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -93,7 +93,7 @@ func BenchmarkCompositeSampler_AND_2(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -113,7 +113,7 @@ func BenchmarkCompositeSampler_OR_2(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -133,7 +133,7 @@ func BenchmarkCompositeSampler_ShortCircuit_AND(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -153,7 +153,7 @@ func BenchmarkCompositeSampler_ShortCircuit_OR(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }
@@ -171,7 +171,7 @@ func BenchmarkKeyBasedSampler(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(ctx)
 	}
 }
@@ -185,7 +185,7 @@ func BenchmarkKeyBasedSampler_EmptyKey(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		sampler.ShouldSample(benchCtx)
 	}
 }

@@ -381,23 +381,27 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	// Concurrent writes
 	for i := range numGoroutines {
 		idx := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := range numOperations {
 				key := idx*numOperations + j
 				cache.Set(key, key*2)
 			}
-		})
+		}()
 	}
 
 	// Concurrent reads
 	for range numGoroutines {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for range numOperations {
 				cache.Get(42)
 				cache.Len()
 				cache.Contains(42)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -421,18 +425,22 @@ func TestCache_Close_ConcurrentSetGet(t *testing.T) {
 
 	// 并发读写
 	for range 50 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for i := range 200 {
 				cache.Set(i, i*2)
 				cache.Get(i)
 			}
-		})
+		}()
 	}
 
 	// 并发关闭
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		cache.Close()
-	})
+	}()
 
 	wg.Wait()
 

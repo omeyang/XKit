@@ -34,7 +34,7 @@ func BenchmarkQueryPage(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := w.QueryPage(context.Background(), "SELECT id FROM bench", PageOptions{
 			Page:     1,
 			PageSize: 10,
@@ -69,7 +69,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := w.BatchInsert(context.Background(), "bench_table", rows, BatchOptions{
 			BatchSize: 200,
 		}); err != nil {

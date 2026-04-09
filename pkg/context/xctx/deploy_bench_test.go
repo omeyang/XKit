@@ -12,7 +12,7 @@ func BenchmarkWithDeploymentType(b *testing.B) {
 	var err error
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err = xctx.WithDeploymentType(ctx, xctx.DeploymentSaaS)
 	}
 	_ = err
@@ -25,7 +25,7 @@ func BenchmarkGetDeploymentType(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err = xctx.GetDeploymentType(ctx)
 	}
 	_ = err
@@ -39,7 +39,7 @@ func BenchmarkIsLocal(b *testing.B) {
 	var ok bool
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		ok, err = xctx.IsLocal(ctx)
 	}
 	_, _ = ok, err
@@ -48,7 +48,7 @@ func BenchmarkIsLocal(b *testing.B) {
 func BenchmarkParseDeploymentType(b *testing.B) {
 	b.ReportAllocs()
 	var err error
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err = xctx.ParseDeploymentType("SAAS")
 	}
 	_ = err

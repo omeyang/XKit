@@ -550,19 +550,23 @@ func TestReload_Concurrent(t *testing.T) {
 	// 并发读取和重载
 	for range goroutines {
 		// 读取 goroutine
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for range 100 {
 				_ = cfg.Client().String("app.name")
 			}
-		})
+		}()
 
 		// 重载 goroutine
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for range 10 {
 				// 忽略重载错误，仅测试并发安全性
 				_ = cfg.Reload() //nolint:errcheck
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

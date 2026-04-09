@@ -70,7 +70,11 @@ func New[T any](workers, queueSize int, handler func(T), opts ...Option) (*Pool[
 	}
 
 	for range p.workers {
-		p.wg.Go(p.worker)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.worker()
+		}()
 	}
 
 	return p, nil

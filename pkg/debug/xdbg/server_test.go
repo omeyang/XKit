@@ -457,7 +457,11 @@ func TestServer_WatchTrigger(t *testing.T) {
 	srv.cancel = cancel
 
 	// 启动 watchTrigger
-	srv.wg.Go(srv.watchTrigger)
+	srv.wg.Add(1)
+	go func() {
+		defer srv.wg.Done()
+		srv.watchTrigger()
+	}()
 
 	// 发送 Enable 事件
 	mockTrig.Send(TriggerEventEnable)

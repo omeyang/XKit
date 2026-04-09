@@ -22,7 +22,7 @@ func BenchmarkSetFileLimit(b *testing.B) {
 		target = 1
 	}
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := SetFileLimit(target); err != nil {
 			b.Fatalf("SetFileLimit(%d): %v", target, err)
 		}
@@ -31,7 +31,7 @@ func BenchmarkSetFileLimit(b *testing.B) {
 
 func BenchmarkGetFileLimit(b *testing.B) {
 	// 1 alloc/op (16 B) 来自 unix.Rlimit 逃逸（传指针给系统调用），此为预期行为。
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, _, err := GetFileLimit(); err != nil {
 			b.Fatalf("GetFileLimit: %v", err)
 		}

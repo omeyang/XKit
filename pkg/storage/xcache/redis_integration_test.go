@@ -364,7 +364,9 @@ func TestRedis_Lock_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				c, _ := NewRedis(client)
 				defer c.Close(context.Background())
 
@@ -374,7 +376,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 					time.Sleep(50 * time.Millisecond)
 					unlock(ctx)
 				}
-			})
+			}()
 		}
 
 		wg.Wait()
@@ -466,9 +468,11 @@ func TestLoader_Integration(t *testing.T) {
 
 		for i := 0; i < goroutines; i++ {
 			idx := i
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				results[idx], errs[idx] = loader.Load(ctx, "loader:singleflight", loadFn, time.Minute)
-			})
+			}()
 		}
 
 		wg.Wait()
@@ -553,10 +557,12 @@ func TestLoader_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				_, err := loader.Load(ctx, "loader:distlock", loadFn, time.Minute)
 				assert.NoError(t, err)
-			})
+			}()
 		}
 
 		wg.Wait()

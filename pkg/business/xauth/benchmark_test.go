@@ -74,7 +74,7 @@ func BenchmarkTokenInfo_IsExpired(b *testing.B) {
 	token := testToken("test-token", 3600)
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = token.IsExpired()
 	}
 }
@@ -84,7 +84,7 @@ func BenchmarkTokenInfo_IsExpiringSoon(b *testing.B) {
 	threshold := 5 * time.Minute
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = token.IsExpiringSoon(threshold)
 	}
 }
@@ -99,7 +99,7 @@ func BenchmarkConfig_Validate(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Validate()
 	}
 }
@@ -117,7 +117,7 @@ func BenchmarkConfig_Clone(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = cfg.Clone()
 	}
 }
@@ -132,7 +132,7 @@ func BenchmarkIsRetryable(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		for _, err := range errs {
 			_ = IsRetryable(err)
 		}

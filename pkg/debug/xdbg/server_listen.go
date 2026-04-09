@@ -44,7 +44,11 @@ func (s *Server) startListening() error {
 	s.startShutdownTimer()
 
 	// 启动接受连接的 goroutine
-	s.wg.Go(s.acceptLoop)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.acceptLoop()
+	}()
 
 	return nil
 }

@@ -335,7 +335,9 @@ func TestEtcdFactory_Lock_Concurrent(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		gid := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			handle, err := factories[gid].Lock(ctx, "concurrent-lock")
 			if err != nil {
 				t.Logf("Lock failed: %v", err)
@@ -345,7 +347,7 @@ func TestEtcdFactory_Lock_Concurrent(t *testing.T) {
 
 			// 临界区：递增计数器
 			atomic.AddInt64(&counter, 1)
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -380,7 +382,9 @@ func TestEtcdFactory_Lock_MutualExclusion(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		gid := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				handle, err := factories[gid].Lock(ctx, "mutual-exclusion")
 				if err != nil {
@@ -400,7 +404,7 @@ func TestEtcdFactory_Lock_MutualExclusion(t *testing.T) {
 				atomic.AddInt64(&counter, -1)
 				_ = handle.Unlock(ctx)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

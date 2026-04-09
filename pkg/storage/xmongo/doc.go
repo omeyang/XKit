@@ -3,7 +3,7 @@
 // # 设计理念
 //
 // xmongo 不包装底层客户端的所有 API，而是提供：
-//   - 统一的工厂方法（New）
+//   - 统一的工厂方法（New）和便捷连接函数（Connect）
 //   - 底层客户端直接暴露（Client() 方法）
 //   - 增值功能（健康检查、统计、分页查询、批量插入、慢查询检测）
 //
@@ -46,6 +46,23 @@
 //	    xmongo.WithQueryTimeout(0),  // 禁用 FindPage 兜底超时
 //	    xmongo.WithWriteTimeout(0),  // 禁用 BulkInsert 兜底超时
 //	)
+//
+// # 便捷连接
+//
+// Connect 函数提供从 URI 一步创建 Mongo 实例的能力。
+// 用户通过 configFn 回调直接操作 mongo driver 原生的 options.ClientOptions，
+// xmongo 不做任何截流或重复包装：
+//
+//	m, err := xmongo.Connect(ctx, "mongodb://localhost:27017",
+//	    func(opts *options.ClientOptions) {
+//	        opts.SetCompressors([]string{"zstd", "snappy"})
+//	        opts.SetMaxPoolSize(50)
+//	    },
+//	    xmongo.WithSlowQueryThreshold(200*time.Millisecond),
+//	)
+//
+// configFn 为 nil 时使用 URI 中的默认配置。
+// 已有 *mongo.Client 的场景仍应使用 New()。
 //
 // # Write Concern / Read Preference
 //

@@ -4,6 +4,7 @@ package xdbg
 
 import (
 	"fmt"
+	"math"
 	"net"
 
 	"golang.org/x/sys/unix"
@@ -27,6 +28,10 @@ func getPeerIdentity(conn net.Conn) (*PeerIdentity, error) {
 	var credErr error
 
 	err = rawConn.Control(func(fd uintptr) {
+		if fd > math.MaxInt {
+			credErr = fmt.Errorf("fd out of int range: %d", fd)
+			return
+		}
 		cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
 	})
 	if err != nil {

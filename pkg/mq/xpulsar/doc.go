@@ -37,9 +37,37 @@
 // Stats().Connected 仅表示客户端未调用 Close()，不反映实际网络连接状态。
 // 若需检测连接健康，请使用 Health() 方法。
 //
+// # Topic 解析
+//
+// 使用 ParseTopic 从 Pulsar URI 解析 Topic 结构体，或使用 NewTopic 从字段构造。
+// Topic 类型提供严格的命名规则校验（字母数字开头，仅允许字母/数字/连字符/下划线/点号），
+// 支持 persistent:// 和 non-persistent:// 两种 scheme。
+// Topic.URI() 返回标准 Pulsar URI，可直接用于 CreateProducer/Subscribe。
+//
+// # 认证
+//
+// 使用 WithAuth 配合认证工厂函数配置客户端认证：
+//   - Token/TokenFromFile/TokenFromEnv/TokenFromSupplier: JWT Token 认证
+//   - TLSCert/TLSCertFromSupplier: mTLS 双向证书认证
+//   - OAuth2: OAuth2 客户端凭证认证（类型安全参数）
+//   - Athenz: Athenz 认证（map 参数）
+//
+// 所有工厂函数返回 (AuthMethod, error)，在创建时校验必要参数。
+// 字符串参数（token、路径、URL、envKey）前后空白会被去除，
+// 避免复制粘贴引入的空白在运行时以认证失败形式暴露。
+// 必须先接住 error 再交给 WithAuth：
+//
+//	auth, err := xpulsar.Token("my-token")
+//	if err != nil {
+//	    return err
+//	}
+//	client, err := xpulsar.NewClient("pulsar://localhost:6650", xpulsar.WithAuth(auth))
+//
+// 如需直接传入 pulsar.Authentication，请使用 WithAuthentication。
+//
 // # 配置选项
 //
-// 使用 WithTracer/WithObserver/WithConnectionTimeout 等选项配置客户端行为。
+// 使用 WithTracer/WithObserver/WithConnectionTimeout/WithAuth 等选项配置客户端行为。
 //
 // # DLQ 与 xkafka 的差异
 //

@@ -168,6 +168,7 @@ func TestTokenManager_ObtainClientToken(t *testing.T) {
 
 	t.Run("successful obtain", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 			// Verify request parameters
 			if r.FormValue("client_id") == "" {
 				t.Error("missing client_id")
@@ -429,6 +430,7 @@ func TestTokenManager_RefreshToken(t *testing.T) {
 
 	t.Run("refresh with refresh_token", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 			if r.FormValue("grant_type") == "refresh_token" {
 				resp := map[string]any{
 					"access_token":  "refreshed-token",
@@ -726,6 +728,7 @@ func TestTokenManager_RefreshToken_RefreshFails_FallsBackToObtain(t *testing.T) 
 
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		callCount++
 		// First call is refresh, make it fail
 		if r.FormValue("grant_type") == "refresh_token" {
@@ -1046,6 +1049,7 @@ func TestTokenManager_Stop_WaitsForGoroutines(t *testing.T) {
 	refreshStarted := make(chan struct{})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token 获取：立即返回即将过期的 token
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{

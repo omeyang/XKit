@@ -22,6 +22,9 @@ var (
 
 	// ErrClosed 表示客户端已关闭。
 	ErrClosed = errors.New("xmongo: client closed")
+
+	// ErrEmptyURI 表示传入的 MongoDB 连接 URI 为空。
+	ErrEmptyURI = errors.New("xmongo: empty URI")
 )
 
 // =============================================================================

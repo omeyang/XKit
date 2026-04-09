@@ -280,7 +280,7 @@ func (w *jobWrapper) startRenew(ctx context.Context, taskCancel context.CancelFu
 	// 续期间隔为 TTL 的 1/3
 	interval := max(w.opts.lockTTL/3, time.Second)
 
-	renewCtx, cancel := context.WithCancel(ctx)
+	renewCtx, cancel := newCancellableChild(ctx)
 	rh := &renewHandle{
 		cancel:     cancel,
 		taskCancel: taskCancel,

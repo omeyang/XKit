@@ -1201,6 +1201,9 @@ func TestReportErrorNilCallback(t *testing.T) {
 
 // TestWriteErrorPath 测试 Write 底层写入失败的路径
 func TestWriteErrorPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过 DAC 权限，无法通过只读目录触发写入失败")
+	}
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "write_err.log")
 
@@ -1258,6 +1261,9 @@ func TestWriteErrorWithConcurrentClose(t *testing.T) {
 
 // TestRotateErrorPath 测试 Rotate 底层轮转失败的路径
 func TestRotateErrorPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过 DAC 权限，无法通过只读目录触发轮转失败")
+	}
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "rotate_err.log")
 
@@ -1364,6 +1370,9 @@ func TestEnsureFileModeWhenFileRemoved(t *testing.T) {
 
 // TestNewLumberjackEnsureDirFailure 测试目录创建失败的路径
 func TestNewLumberjackEnsureDirFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过 DAC 权限，无法通过只读目录触发子目录创建失败")
+	}
 	// 创建一个目录，然后将其设为只读，使子目录创建失败
 	tmpDir := t.TempDir()
 	readonlyDir := filepath.Join(tmpDir, "readonly")

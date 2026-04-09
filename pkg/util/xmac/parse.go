@@ -151,24 +151,27 @@ func containsSeparator(s string) bool {
 
 // parseHexByte 解析两个十六进制字符为一个字节。
 func parseHexByte(high, low byte) (byte, error) {
-	h := hexValue(high)
-	l := hexValue(low)
-	if h < 0 || l < 0 {
+	h, ok := hexValue(high)
+	if !ok {
 		return 0, ErrInvalidFormat
 	}
-	return byte(h<<4 | l), nil
+	l, ok := hexValue(low)
+	if !ok {
+		return 0, ErrInvalidFormat
+	}
+	return h<<4 | l, nil
 }
 
-// hexValue 返回十六进制字符的数值，无效字符返回 -1。
-func hexValue(c byte) int {
+// hexValue 返回十六进制字符的数值（0-15）。无效字符返回 (0, false)。
+func hexValue(c byte) (byte, bool) {
 	switch {
 	case '0' <= c && c <= '9':
-		return int(c - '0')
+		return c - '0', true
 	case 'a' <= c && c <= 'f':
-		return int(c - 'a' + 10)
+		return c - 'a' + 10, true
 	case 'A' <= c && c <= 'F':
-		return int(c - 'A' + 10)
+		return c - 'A' + 10, true
 	default:
-		return -1
+		return 0, false
 	}
 }

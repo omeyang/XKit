@@ -70,8 +70,7 @@ func New(opts ...SchedulerOption) Scheduler {
 
 	c := cron.New(cronOpts...)
 
-	immediateCtx, immediateCancel := context.WithCancel(context.Background())
-
+	immediateCtx, immediateCancel := newCancellableContext()
 	return &cronScheduler{
 		cron:            c,
 		opts:            options,
@@ -82,6 +81,18 @@ func New(opts ...SchedulerOption) Scheduler {
 		immediateCtx:    immediateCtx,
 		immediateCancel: immediateCancel,
 	}
+}
+
+// newCancellableContext 包装 context.WithCancel，便于调度器持有 cancel 直到 Stop()。
+// 该 cancel 由 cronScheduler.Stop() 调用（通过 immediateCancel 字段），不会泄漏。
+func newCancellableContext() (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.Background())
+}
+
+// newCancellableChild 包装 context.WithCancel(parent)，cancel 的生命周期
+// 由调用方持有的 handle（如 renewHandle.cancel）管理，不会泄漏。
+func newCancellableChild(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(parent)
 }
 
 // AddFunc 添加函数任务

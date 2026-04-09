@@ -3,6 +3,7 @@ package xauth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -422,6 +423,7 @@ func TestClient_GetUnclassRegionID(t *testing.T) {
 func handleTokenAndCustomEndpoint(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint (client_id is in query params for token requests)
 		if r.FormValue("client_id") != "" {
 			writeJSONToken(w, "test-token")
@@ -598,6 +600,7 @@ func TestClient_Request_HTTPError(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
@@ -651,6 +654,7 @@ func TestClient_Request_NilHeaders(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
@@ -695,6 +699,7 @@ func TestClient_Request_HeadersNotMutated(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
 				"access_token": "test-token",
@@ -753,10 +758,11 @@ func TestDefaultTLSConfig(t *testing.T) {
 // and 200 on subsequent requests. It tracks request and token request counts.
 func handleRetryOn401(requestCount, tokenRequestCount *int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
 			*tokenRequestCount++
-			writeJSONToken(w, "token-"+string(rune('0'+*tokenRequestCount)))
+			writeJSONToken(w, fmt.Sprintf("token-%d", *tokenRequestCount))
 			return
 		}
 
@@ -780,6 +786,7 @@ func handleRetryOn401(requestCount, tokenRequestCount *int) http.HandlerFunc {
 // while serving tokens normally. It tracks request count.
 func handleAlways401(requestCount *int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint
 		if r.FormValue("client_id") != "" {
 			writeJSONToken(w, "test-token")

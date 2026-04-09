@@ -52,14 +52,14 @@ func (c *helpCommand) Execute(_ context.Context, args []string) (string, error) 
 		if cmd == nil {
 			return "", fmt.Errorf("未知命令: %s", cmdName)
 		}
-		sb.WriteString(fmt.Sprintf("%s - %s\n", cmd.Name(), cmd.Help()))
+		fmt.Fprintf(&sb, "%s - %s\n", cmd.Name(), cmd.Help())
 		return sb.String(), nil
 	}
 
 	// 显示所有命令
 	sb.WriteString("可用命令:\n")
 	for _, cmd := range c.server.registry.Commands() {
-		sb.WriteString(fmt.Sprintf("  %-12s %s\n", cmd.Name(), cmd.Help()))
+		fmt.Fprintf(&sb, "  %-12s %s\n", cmd.Name(), cmd.Help())
 	}
 	sb.WriteString("\n使用 'help <command>' 查看命令详情")
 	return sb.String(), nil

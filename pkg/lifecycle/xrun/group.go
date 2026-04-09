@@ -387,7 +387,10 @@ func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(
 		go func() {
 			select {
 			case <-ctx.Done():
-				shutdownCtx := context.Background()
+				// 使用 WithoutCancel 派生 shutdown 专用 context：
+				// 既保留父 ctx 的请求级 value（trace id 等），又不继承已触发的取消信号，
+				// 让 server.Shutdown 有完整的 shutdownTimeout 时间窗口完成清理。
+				shutdownCtx := context.WithoutCancel(ctx)
 				if shutdownTimeout > 0 {
 					var cancel context.CancelFunc
 					shutdownCtx, cancel = context.WithTimeout(shutdownCtx, shutdownTimeout)

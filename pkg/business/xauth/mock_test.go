@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// testHandlerMaxBodyBytes 限制测试 mock server 解析的请求体大小。
+// 用法：在 mock handler 入口处显式调用 r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
+// 之所以不用 wrapper helper，是因为 gosec G120 不跟踪跨函数的 MaxBytesReader 调用，
+// 必须在 FormValue/ParseForm 同一个函数体内出现。
+const testHandlerMaxBodyBytes = 1 << 20 // 1 MiB
+
 // =============================================================================
 // Mock CacheStore
 // =============================================================================

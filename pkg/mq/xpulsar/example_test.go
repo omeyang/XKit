@@ -139,6 +139,28 @@ func ExampleNewClient() {
 	// Output: 空 URL 错误: xpulsar: empty URL
 }
 
+// ExampleWithAuth 演示如何通过 Token 工厂函数 + WithAuth 组合配置客户端认证。
+// 认证工厂函数返回 (AuthMethod, error)，必须先接住 error 再传给 WithAuth。
+func ExampleWithAuth() {
+	auth, err := xpulsar.Token("my-secret-token")
+	if err != nil {
+		fmt.Println("token error:", err)
+		return
+	}
+
+	// 实际使用中再配合 NewClient:
+	//
+	//	client, err := xpulsar.NewClient(
+	//	    "pulsar://localhost:6650",
+	//	    xpulsar.WithAuth(auth),
+	//	)
+	_ = xpulsar.WithAuth(auth)
+
+	fmt.Println("auth configured:", !auth.IsZero())
+
+	// Output: auth configured: true
+}
+
 // Example_errors 演示错误常量
 func Example_errors() {
 	// xpulsar 定义了标准错误类型

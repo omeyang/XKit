@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -105,9 +106,13 @@ func TestHTTPMiddleware_CustomDenyHandler(t *testing.T) {
 	limiter := setupTestLimiter(t, 1)
 
 	customDenyHandler := func(w http.ResponseWriter, _ *http.Request, result *Result) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Custom-Header", "rate-limited")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("Custom: " + result.Rule)) //nolint:errcheck // test handler
+		// 转义防止反射型 XSS：result.Rule 来源于配置或请求匹配，可能含特殊字符
+		if _, err := w.Write([]byte("Custom: " + html.EscapeString(result.Rule))); err != nil {
+			t.Errorf("write deny response: %v", err)
+		}
 	}
 
 	middleware := HTTPMiddleware(limiter, WithDenyHandler(customDenyHandler))

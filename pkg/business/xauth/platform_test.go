@@ -572,6 +572,7 @@ func TestPlatformManager_FetchPlatformID_HTTPError(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint succeeds
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{
@@ -642,6 +643,7 @@ func TestPlatformManager_FetchUnclassRegionID_HTTPError(t *testing.T) {
 	ctx := context.Background()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
 		// Token endpoint succeeds
 		if r.FormValue("client_id") != "" {
 			resp := map[string]any{

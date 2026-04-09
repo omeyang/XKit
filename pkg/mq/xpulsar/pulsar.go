@@ -3,6 +3,7 @@ package xpulsar
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
@@ -64,8 +65,9 @@ type Stats struct {
 
 // NewClient 创建 Pulsar 客户端实例。
 // url 是 Pulsar 服务地址，如 "pulsar://localhost:6650"。
+// 前后空白会被去除，纯空白字符串等同于空字符串。
 func NewClient(url string, opts ...Option) (Client, error) {
-	if url == "" {
+	if url = strings.TrimSpace(url); url == "" {
 		return nil, ErrEmptyURL
 	}
 

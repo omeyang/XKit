@@ -275,8 +275,8 @@ func TestTokenInfo_ObtainedAtUnix_Serialization(t *testing.T) {
 			ObtainedAtUnix: obtainedAt.Unix(),
 		}
 
-		// Marshal to JSON
-		data, err := json.Marshal(original)
+		// Marshal to JSON via the same path used by RedisCacheStore.SetToken
+		data, err := marshalTokenInfo(original)
 		require.NoError(t, err, "Marshal failed")
 
 		// Unmarshal back
@@ -338,8 +338,8 @@ func TestTokenInfo_JSONSerialization(t *testing.T) {
 			RefreshToken: "refresh-token",
 		}
 
-		// Marshal to JSON
-		data, err := json.Marshal(original)
+		// Marshal to JSON via the same path used by RedisCacheStore.SetToken
+		data, err := marshalTokenInfo(original)
 		require.NoError(t, err, "Marshal failed")
 
 		// Unmarshal back

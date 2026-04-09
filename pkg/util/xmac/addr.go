@@ -65,14 +65,16 @@ func (a Addr) Next() (Addr, error) {
 	if a == broadcastAddr() {
 		return Addr{}, ErrOverflow
 	}
-	var next Addr
-	carry := uint16(1)
+	// 利用 uint8 自然回绕：从最低字节加 1，回绕到 0 时进位到上一字节
+	next := a
 	for i := 5; i >= 0; i-- {
-		sum := uint16(a.bytes[i]) + carry
-		next.bytes[i] = byte(sum)
-		carry = sum >> 8
+		next.bytes[i]++
+		if next.bytes[i] != 0 {
+			return next, nil // 无进位，完成
+		}
 	}
-	return next, nil
+	// 此分支不可达：广播地址在函数入口已拦截
+	return Addr{}, ErrOverflow
 }
 
 // Prev 返回前一个 MAC 地址（当前地址 -1）。
@@ -81,21 +83,17 @@ func (a Addr) Prev() (Addr, error) {
 	if a == (Addr{}) {
 		return Addr{}, ErrUnderflow
 	}
-	var prev Addr
-	borrow := uint16(1)
+	// 从最低字节减 1：若该字节非 0 则直接减完成；若为 0 则置为 0xff 并向上借位
+	prev := a
 	for i := 5; i >= 0; i-- {
-		// 使用 uint16 避免下溢：当 a.bytes[i] == 0 且 borrow == 1 时，
-		// 0 - 1 在 uint16 中会得到 0xFFFF，取低 8 位得 0xFF（正确的借位结果）
-		diff := uint16(a.bytes[i]) - borrow
-		prev.bytes[i] = byte(diff)
-		// 如果发生借位（原值小于借位值），设置下一轮借位
-		if a.bytes[i] < byte(borrow) {
-			borrow = 1
-		} else {
-			borrow = 0
+		if prev.bytes[i] != 0 {
+			prev.bytes[i]--
+			return prev, nil // 无借位，完成
 		}
+		prev.bytes[i] = 0xff // 借位继续
 	}
-	return prev, nil
+	// 此分支不可达：零地址在函数入口已拦截
+	return Addr{}, ErrUnderflow
 }
 
 // GoString 实现 [fmt.GoStringer]，返回 Go 语法表示。

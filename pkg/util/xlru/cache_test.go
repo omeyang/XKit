@@ -1011,20 +1011,24 @@ func TestCache_Size1_Semantics(t *testing.T) {
 	})
 
 	t.Run("overwrite refreshes TTL without eviction", func(t *testing.T) {
-		cache, err := New[string, int](Config{Size: 1, TTL: 80 * time.Millisecond})
+		// 设计决策：TTL 与 sleep 放大到 400ms/200ms，避免 -race/CI 负载下
+		// 50ms sleep 实际消耗 >80ms 导致首次 TTL 已过期误判失败。
+		const ttl = 400 * time.Millisecond
+		const step = 200 * time.Millisecond
+		cache, err := New[string, int](Config{Size: 1, TTL: ttl})
 		if err != nil {
 			t.Fatalf("New failed: %v", err)
 		}
 		defer cache.Close()
 
 		cache.Set("a", 1)
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(step)
 		evicted := cache.Set("a", 2) // 刷新 TTL
 		if evicted {
 			t.Error("overwrite should not indicate eviction")
 		}
 
-		time.Sleep(50 * time.Millisecond) // 距首次 Set 已 100ms > 80ms TTL
+		time.Sleep(step) // 距首次 Set 已 2*step > ttl，但 overwrite 应已刷新 TTL
 		val, ok := cache.Get("a")
 		if !ok || val != 2 {
 			t.Errorf("Get(a) = (%d, %v), expected (2, true) after TTL refresh", val, ok)

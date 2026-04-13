@@ -323,6 +323,50 @@ func TestEvalCompat_InvalidKeyType(t *testing.T) {
 	assert.Contains(t, err.Error(), "key is not a string")
 }
 
+// -----------------------------------------------------------------------------
+// evalLua 路径（ScriptModeLua）— miniredis 支持 EVAL/EVALSHA 可直接验证
+// -----------------------------------------------------------------------------
+
+// newLuaConn 构造 ScriptModeLua 的 compatConn。
+func newLuaConn(t *testing.T, client redis.UniversalClient) *compatConn {
+	t.Helper()
+	return &compatConn{client: client, ctx: context.Background(), mode: rediscompat.ScriptModeLua}
+}
+
+func TestEvalLua_Delete_Match(t *testing.T) {
+	mr, client := newTestMiniredis(t)
+	conn := newLuaConn(t, client)
+	mr.Set("lock:key", "v1")
+	script := &redsyncredis.Script{
+		KeyCount: 1,
+		Src:      `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`,
+	}
+	script.Hash = "deadbeef" // 故意不匹配，迫使 EVALSHA → NOSCRIPT → EVAL 回退
+
+	got, err := conn.Eval(script, "lock:key", "v1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, got)
+}
+
+func TestEvalLua_ZeroKeyCount(t *testing.T) {
+	_, client := newTestMiniredis(t)
+	conn := newLuaConn(t, client)
+	// KeyCount=0 时 keys 为空切片，args 全部作为 ARGV 传入。
+	script := &redsyncredis.Script{KeyCount: 0, Src: `return tonumber(ARGV[1])`}
+	got, err := conn.Eval(script, 42)
+	require.NoError(t, err)
+	assert.EqualValues(t, 42, got)
+}
+
+func TestEvalLua_KeyNotString(t *testing.T) {
+	_, client := newTestMiniredis(t)
+	conn := newLuaConn(t, client)
+	script := &redsyncredis.Script{KeyCount: 1, Src: `return 1`}
+	_, err := conn.Eval(script, 123, "arg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key at index 0 is not a string")
+}
+
 func TestEvalCompat_InvalidExpiry(t *testing.T) {
 	mr, client := newTestMiniredis(t)
 	conn := newCompatConn(t, client)

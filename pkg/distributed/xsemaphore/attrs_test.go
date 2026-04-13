@@ -52,10 +52,9 @@ func TestAttrError(t *testing.T) {
 		assert.Equal(t, "test error", attr.Value.String())
 	})
 
-	t.Run("nil error", func(t *testing.T) {
+	t.Run("nil error returns zero Attr", func(t *testing.T) {
 		attr := AttrError(nil)
-		assert.Equal(t, attrKeyError, attr.Key)
-		assert.Equal(t, "", attr.Value.String())
+		assert.Equal(t, "", attr.Key, "nil error should return zero-value Attr (elided by slog handlers)")
 	})
 }
 

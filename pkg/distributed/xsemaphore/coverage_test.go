@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/omeyang/xkit/pkg/observability/xlog"
 )
@@ -694,46 +697,31 @@ func TestExtendSpanAttributes(t *testing.T) {
 // =============================================================================
 
 func TestNoopPermit(t *testing.T) {
-	permit, err := newNoopPermit(context.Background(), "resource", "tenant1", 5*time.Minute, nil, map[string]string{"key": "value"}, defaultOptions())
-	if err != nil {
-		t.Fatalf("failed to create noop permit: %v", err)
-	}
+	permit, err := newNoopPermit(context.Background(), "resource", "tenant1", 5*time.Minute, map[string]string{"key": "value"}, defaultOptions())
+	require.NoError(t, err, "failed to create noop permit")
 
 	t.Run("ID has noop prefix", func(t *testing.T) {
-		if len(permit.ID()) < 5 || permit.ID()[:5] != "noop-" {
-			t.Errorf("expected ID to start with 'noop-', got %s", permit.ID())
-		}
+		assert.True(t, len(permit.ID()) >= 5 && permit.ID()[:5] == "noop-", "expected ID to start with 'noop-', got %s", permit.ID())
 	})
 
 	t.Run("Resource returns correct value", func(t *testing.T) {
-		if permit.Resource() != "resource" {
-			t.Errorf("expected resource 'resource', got %s", permit.Resource())
-		}
+		assert.Equal(t, "resource", permit.Resource())
 	})
 
 	t.Run("TenantID returns correct value", func(t *testing.T) {
-		if permit.TenantID() != "tenant1" {
-			t.Errorf("expected tenantID 'tenant1', got %s", permit.TenantID())
-		}
+		assert.Equal(t, "tenant1", permit.TenantID())
 	})
 
 	t.Run("Extend returns nil before release", func(t *testing.T) {
-		if err := permit.Extend(context.Background()); err != nil {
-			t.Errorf("expected nil error, got %v", err)
-		}
+		assert.NoError(t, permit.Extend(context.Background()))
 	})
 
 	t.Run("Release returns nil", func(t *testing.T) {
-		if err := permit.Release(context.Background()); err != nil {
-			t.Errorf("expected nil error, got %v", err)
-		}
+		assert.NoError(t, permit.Release(context.Background()))
 	})
 
 	t.Run("Extend after release returns ErrPermitNotHeld", func(t *testing.T) {
-		err := permit.Extend(context.Background())
-		if !IsPermitNotHeld(err) {
-			t.Errorf("expected ErrPermitNotHeld, got %v", err)
-		}
+		assert.True(t, IsPermitNotHeld(permit.Extend(context.Background())))
 	})
 
 	t.Run("StartAutoExtend returns stop function", func(t *testing.T) {
@@ -743,19 +731,13 @@ func TestNoopPermit(t *testing.T) {
 
 	t.Run("Metadata returns copy", func(t *testing.T) {
 		meta := permit.Metadata()
-		if meta["key"] != "value" {
-			t.Error("expected metadata to be copied")
-		}
+		assert.Equal(t, "value", meta["key"])
 		meta["key"] = "modified"
-		if permit.metadata["key"] != "value" {
-			t.Error("original metadata should not be modified")
-		}
+		assert.Equal(t, "value", permit.metadata["key"], "original metadata should not be modified")
 	})
 
 	t.Run("ExpiresAt is set", func(t *testing.T) {
-		if permit.ExpiresAt().IsZero() {
-			t.Error("expected ExpiresAt to be set")
-		}
+		assert.False(t, permit.ExpiresAt().IsZero(), "expected ExpiresAt to be set")
 	})
 }
 
@@ -1360,24 +1342,30 @@ func TestRecordExtendMetrics(t *testing.T) {
 // =============================================================================
 
 func TestNoopPermit_StartAutoExtend_WithLogger(t *testing.T) {
-	logger := &testLogger{}
-	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, logger, nil, defaultOptions())
+	opts := defaultOptions()
+	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 100*time.Millisecond, nil, opts)
 	if err != nil {
 		t.Fatalf("failed to create noop permit: %v", err)
 	}
 
-	stop := permit.StartAutoExtend(time.Second)
+	// 记录初始过期时间
+	initialExpiry := permit.ExpiresAt()
+
+	// 启动自动续租（间隔 50ms，TTL 100ms）
+	stop := permit.StartAutoExtend(50 * time.Millisecond)
 	defer stop()
 
-	if !logger.infoCalled {
-		t.Error("expected Info to be called when starting auto-extend")
+	// 等待至少一次续租
+	time.Sleep(120 * time.Millisecond)
+
+	// 验证 expiresAt 已被更新（续租生效）
+	updatedExpiry := permit.ExpiresAt()
+	if !updatedExpiry.After(initialExpiry) {
+		t.Errorf("expected expiresAt to be updated after auto-extend, initial=%v, updated=%v", initialExpiry, updatedExpiry)
 	}
 
-	// Call stop and check debug log
+	// 停止自动续租
 	stop()
-	if !logger.debugCalled {
-		t.Error("expected Debug to be called when stopping auto-extend")
-	}
 }
 
 // =============================================================================
@@ -1675,154 +1663,101 @@ func TestApplyQueryOptions(t *testing.T) {
 func TestOptionEdgeCases(t *testing.T) {
 	// Fail-fast 设计：setter 直接接受值，validate() 捕获非法值
 
-	t.Run("WithCapacity sets zero and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithCapacity(0)(cfg)
-		if cfg.capacity != 0 {
-			t.Error("zero capacity should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch zero capacity")
-		}
-	})
+	tests := []struct {
+		name string
+		fn   func(t *testing.T)
+	}{
+		{"WithCapacity sets zero and validate catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithCapacity(0)(cfg)
+			assert.Equal(t, 0, cfg.capacity, "zero capacity should be set")
+			assert.Error(t, cfg.validate(), "validate should catch zero capacity")
+		}},
+		{"WithCapacity sets negative and validate catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithCapacity(-1)(cfg)
+			assert.Equal(t, -1, cfg.capacity, "negative capacity should be set")
+			assert.Error(t, cfg.validate(), "validate should catch negative capacity")
+		}},
+		{"WithTTL sets zero and validate catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithTTL(0)(cfg)
+			assert.Equal(t, time.Duration(0), cfg.ttl, "zero TTL should be set")
+			assert.Error(t, cfg.validate(), "validate should catch zero TTL")
+		}},
+		{"WithTenantQuota allows zero", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			cfg.tenantQuota = 10
+			WithTenantQuota(0)(cfg)
+			assert.Equal(t, 0, cfg.tenantQuota, "zero quota should be accepted (means no tenant quota)")
+		}},
+		{"WithTenantQuota sets negative and validate catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithTenantQuota(-1)(cfg)
+			assert.Equal(t, -1, cfg.tenantQuota, "negative quota should be set")
+			assert.Error(t, cfg.validate(), "validate should catch negative quota")
+		}},
+		{"WithMaxRetries sets zero and validateRetryParams catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithMaxRetries(0)(cfg)
+			assert.Equal(t, 0, cfg.maxRetries, "zero maxRetries should be set")
+			assert.NoError(t, cfg.validate(), "validate should not check maxRetries")
+			assert.Error(t, cfg.validateRetryParams(), "validateRetryParams should catch zero maxRetries")
+		}},
+		{"WithRetryDelay sets zero and validateRetryParams catches it", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithRetryDelay(0)(cfg)
+			assert.Equal(t, time.Duration(0), cfg.retryDelay, "zero retryDelay should be set")
+			assert.NoError(t, cfg.validate(), "validate should not check retryDelay")
+			assert.Error(t, cfg.validateRetryParams(), "validateRetryParams should catch zero retryDelay")
+		}},
+		{"WithMetadata ignores empty", func(t *testing.T) {
+			cfg := defaultAcquireOptions()
+			WithMetadata(map[string]string{})(cfg)
+			assert.Nil(t, cfg.metadata, "empty metadata should not be set")
+		}},
+		{"WithKeyPrefix sets invalid and validate catches it", func(t *testing.T) {
+			opts := defaultOptions()
+			WithKeyPrefix("{invalid}")(opts)
+			assert.Equal(t, "{invalid}", opts.keyPrefix, "invalid prefix should be set by setter")
+			assert.Error(t, opts.validate(), "validate should catch invalid prefix")
+		}},
+		{"WithKeyPrefix ignores empty", func(t *testing.T) {
+			opts := defaultOptions()
+			original := opts.keyPrefix
+			WithKeyPrefix("")(opts)
+			assert.Equal(t, original, opts.keyPrefix, "empty prefix should be ignored")
+		}},
+		{"WithFallback sets invalid and validate catches it", func(t *testing.T) {
+			opts := defaultOptions()
+			WithFallback(FallbackStrategy("invalid"))(opts)
+			assert.Equal(t, FallbackStrategy("invalid"), opts.fallback, "invalid fallback should be set by setter")
+			assert.Error(t, opts.validate(), "validate should catch invalid fallback")
+		}},
+		{"WithPodCount sets zero and validate catches it", func(t *testing.T) {
+			opts := defaultOptions()
+			WithPodCount(0)(opts)
+			assert.Equal(t, 0, opts.podCount, "zero podCount should be set by setter")
+			assert.Error(t, opts.validate(), "validate should catch zero podCount")
+		}},
+		{"QueryWithCapacity rejects zero", func(t *testing.T) {
+			cfg := defaultQueryOptions()
+			QueryWithCapacity(0)(cfg)
+			assert.Equal(t, 0, cfg.capacity, "zero should set capacity to 0")
+			assert.Error(t, cfg.validate(), "validate should reject zero capacity for query")
+		}},
+		{"QueryWithTenantQuota allows zero", func(t *testing.T) {
+			cfg := defaultQueryOptions()
+			cfg.tenantQuota = 10
+			QueryWithTenantQuota(0)(cfg)
+			assert.Equal(t, 0, cfg.tenantQuota, "zero should set tenantQuota to 0")
+			assert.NoError(t, cfg.validate(), "validate should accept zero tenantQuota for query")
+		}},
+	}
 
-	t.Run("WithCapacity sets negative and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithCapacity(-1)(cfg)
-		if cfg.capacity != -1 {
-			t.Error("negative capacity should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch negative capacity")
-		}
-	})
-
-	t.Run("WithTTL sets zero and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithTTL(0)(cfg)
-		if cfg.ttl != 0 {
-			t.Error("zero TTL should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch zero TTL")
-		}
-	})
-
-	t.Run("WithTenantQuota allows zero", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		cfg.tenantQuota = 10
-		WithTenantQuota(0)(cfg)
-		// 0 is valid for tenantQuota (means no tenant quota)
-		if cfg.tenantQuota != 0 {
-			t.Error("zero quota should be accepted (means no tenant quota)")
-		}
-	})
-
-	t.Run("WithTenantQuota sets negative and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithTenantQuota(-1)(cfg)
-		if cfg.tenantQuota != -1 {
-			t.Error("negative quota should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch negative quota")
-		}
-	})
-
-	t.Run("WithMaxRetries sets zero and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithMaxRetries(0)(cfg)
-		if cfg.maxRetries != 0 {
-			t.Error("zero maxRetries should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch zero maxRetries")
-		}
-	})
-
-	t.Run("WithRetryDelay sets zero and validate catches it", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithRetryDelay(0)(cfg)
-		if cfg.retryDelay != 0 {
-			t.Error("zero retryDelay should be set")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should catch zero retryDelay")
-		}
-	})
-
-	t.Run("WithMetadata ignores empty", func(t *testing.T) {
-		cfg := defaultAcquireOptions()
-		WithMetadata(map[string]string{})(cfg)
-		if cfg.metadata != nil {
-			t.Error("empty metadata should not be set")
-		}
-	})
-
-	t.Run("WithKeyPrefix sets invalid and validate catches it", func(t *testing.T) {
-		opts := defaultOptions()
-		WithKeyPrefix("{invalid}")(opts)
-		if opts.keyPrefix != "{invalid}" {
-			t.Error("invalid prefix should be set by setter")
-		}
-		if err := opts.validate(); err == nil {
-			t.Error("validate should catch invalid prefix")
-		}
-	})
-
-	t.Run("WithKeyPrefix ignores empty", func(t *testing.T) {
-		opts := defaultOptions()
-		original := opts.keyPrefix
-		WithKeyPrefix("")(opts)
-		if opts.keyPrefix != original {
-			t.Error("empty prefix should be ignored")
-		}
-	})
-
-	t.Run("WithFallback sets invalid and validate catches it", func(t *testing.T) {
-		opts := defaultOptions()
-		WithFallback(FallbackStrategy("invalid"))(opts)
-		if opts.fallback != FallbackStrategy("invalid") {
-			t.Error("invalid fallback should be set by setter")
-		}
-		if err := opts.validate(); err == nil {
-			t.Error("validate should catch invalid fallback")
-		}
-	})
-
-	t.Run("WithPodCount sets zero and validate catches it", func(t *testing.T) {
-		opts := defaultOptions()
-		WithPodCount(0)(opts)
-		if opts.podCount != 0 {
-			t.Error("zero podCount should be set by setter")
-		}
-		if err := opts.validate(); err == nil {
-			t.Error("validate should catch zero podCount")
-		}
-	})
-
-	t.Run("QueryWithCapacity rejects zero", func(t *testing.T) {
-		cfg := defaultQueryOptions()
-		QueryWithCapacity(0)(cfg)
-		if cfg.capacity != 0 {
-			t.Error("zero should set capacity to 0")
-		}
-		if err := cfg.validate(); err == nil {
-			t.Error("validate should reject zero capacity for query")
-		}
-	})
-
-	t.Run("QueryWithTenantQuota allows zero", func(t *testing.T) {
-		cfg := defaultQueryOptions()
-		cfg.tenantQuota = 10
-		QueryWithTenantQuota(0)(cfg)
-		if cfg.tenantQuota != 0 {
-			t.Error("zero should set tenantQuota to 0")
-		}
-		if err := cfg.validate(); err != nil {
-			t.Error("validate should accept zero tenantQuota for query")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, tt.fn)
+	}
 }
 
 // =============================================================================
@@ -1994,16 +1929,10 @@ func TestDoFallback_AllStrategies(t *testing.T) {
 			WithTTL(5 * time.Minute),
 		}, true)
 
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if permit == nil {
-			t.Error("expected permit to be returned")
-		}
+		require.NoError(t, err)
+		require.NotNil(t, permit, "expected permit to be returned")
 		// Verify it's a noop permit by checking ID prefix
-		if len(permit.ID()) < 5 || permit.ID()[:5] != "noop-" {
-			t.Errorf("expected noop permit, got ID: %s", permit.ID())
-		}
+		assert.True(t, len(permit.ID()) >= 5 && permit.ID()[:5] == "noop-", "expected noop permit, got ID: %s", permit.ID())
 	})
 
 	t.Run("FallbackClose returns error", func(t *testing.T) {
@@ -2017,12 +1946,8 @@ func TestDoFallback_AllStrategies(t *testing.T) {
 
 		permit, err := f.doFallback(context.Background(), "resource", nil, true)
 
-		if err != ErrRedisUnavailable {
-			t.Errorf("expected ErrRedisUnavailable, got %v", err)
-		}
-		if permit != nil {
-			t.Error("expected nil permit")
-		}
+		assert.ErrorIs(t, err, ErrRedisUnavailable)
+		assert.Nil(t, permit, "expected nil permit")
 	})
 
 	t.Run("FallbackLocal uses local semaphore for TryAcquire", func(t *testing.T) {
@@ -2040,12 +1965,8 @@ func TestDoFallback_AllStrategies(t *testing.T) {
 			WithTTL(5 * time.Minute),
 		}, true)
 
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if permit == nil {
-			t.Error("expected permit to be returned")
-		}
+		assert.NoError(t, err)
+		assert.NotNil(t, permit, "expected permit to be returned")
 
 		// Clean up
 		if permit != nil {
@@ -2071,12 +1992,8 @@ func TestDoFallback_AllStrategies(t *testing.T) {
 			WithTTL(5 * time.Minute),
 		}, false) // Acquire, not TryAcquire
 
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if permit == nil {
-			t.Error("expected permit to be returned")
-		}
+		assert.NoError(t, err)
+		assert.NotNil(t, permit, "expected permit to be returned")
 
 		// Clean up
 		if permit != nil {
@@ -2099,12 +2016,8 @@ func TestDoFallback_AllStrategies(t *testing.T) {
 
 		permit, err := f.doFallback(context.Background(), "resource", nil, true)
 
-		if err != ErrRedisUnavailable {
-			t.Errorf("expected ErrRedisUnavailable, got %v", err)
-		}
-		if permit != nil {
-			t.Error("expected nil permit")
-		}
+		assert.ErrorIs(t, err, ErrRedisUnavailable)
+		assert.Nil(t, permit, "expected nil permit")
 	})
 }
 
@@ -2126,15 +2039,9 @@ func TestQueryFallback_AllStrategies(t *testing.T) {
 			QueryWithCapacity(100),
 		}, errors.New("test error"))
 
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if info == nil {
-			t.Fatal("expected info to be returned")
-		}
-		if info.GlobalUsed != 0 {
-			t.Errorf("expected GlobalUsed 0, got %d", info.GlobalUsed)
-		}
+		require.NoError(t, err)
+		require.NotNil(t, info, "expected info to be returned")
+		assert.Equal(t, 0, info.GlobalUsed)
 	})
 
 	t.Run("FallbackClose returns error", func(t *testing.T) {
@@ -2148,12 +2055,8 @@ func TestQueryFallback_AllStrategies(t *testing.T) {
 
 		info, err := f.queryFallback(context.Background(), "resource", nil, errors.New("test error"))
 
-		if err != ErrRedisUnavailable {
-			t.Errorf("expected ErrRedisUnavailable, got %v", err)
-		}
-		if info != nil {
-			t.Error("expected nil info")
-		}
+		assert.ErrorIs(t, err, ErrRedisUnavailable)
+		assert.Nil(t, info, "expected nil info")
 	})
 
 	t.Run("FallbackLocal uses local semaphore", func(t *testing.T) {
@@ -2170,12 +2073,8 @@ func TestQueryFallback_AllStrategies(t *testing.T) {
 			QueryWithCapacity(100),
 		}, errors.New("test error"))
 
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if info == nil {
-			t.Fatal("expected info to be returned")
-		}
+		require.NoError(t, err)
+		require.NotNil(t, info, "expected info to be returned")
 
 		// Clean up
 		if f.local != nil {
@@ -2195,12 +2094,8 @@ func TestQueryFallback_AllStrategies(t *testing.T) {
 
 		info, err := f.queryFallback(context.Background(), "resource", nil, errors.New("test error"))
 
-		if err != ErrRedisUnavailable {
-			t.Errorf("expected ErrRedisUnavailable, got %v", err)
-		}
-		if info != nil {
-			t.Error("expected nil info")
-		}
+		assert.ErrorIs(t, err, ErrRedisUnavailable)
+		assert.Nil(t, info, "expected nil info")
 	})
 }
 
@@ -2431,7 +2326,7 @@ func TestHandleRedisError_Complete(t *testing.T) {
 // =============================================================================
 
 func TestNoopPermit_Metadata_Nil(t *testing.T) {
-	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, nil, defaultOptions())
+	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, defaultOptions())
 	if err != nil {
 		t.Fatalf("failed to create noop permit: %v", err)
 	}
@@ -2995,7 +2890,7 @@ func TestCountActivePermits(t *testing.T) {
 // =============================================================================
 
 func TestNewNoopPermit_Success(t *testing.T) {
-	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, map[string]string{"key": "value"}, defaultOptions())
+	permit, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, map[string]string{"key": "value"}, defaultOptions())
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -3029,4 +2924,732 @@ func TestBackgroundCleanupLoop_StopsOnClose(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error on second close: %v", err)
 	}
+}
+
+// =============================================================================
+// applyDefaultTimeout nil context 回归测试（FG-S1 修复验证）
+// =============================================================================
+
+func TestApplyDefaultTimeout_NilContext(t *testing.T) {
+	// 修复前：当 defaultTimeout > 0 且 ctx == nil 时，ctx.Deadline() 会 panic
+	// 修复后：nil ctx 直接透传，由后续 validateCommonParams 返回 ErrNilContext
+	t.Run("nil ctx with positive timeout does not panic", func(t *testing.T) {
+		ctx, cancel := applyDefaultTimeout(nil, 5*time.Second)
+		defer cancel()
+		assert.Nil(t, ctx)
+	})
+
+	t.Run("nil ctx with zero timeout returns nil", func(t *testing.T) {
+		ctx, cancel := applyDefaultTimeout(nil, 0)
+		defer cancel()
+		assert.Nil(t, ctx)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Redis 验证 Redis 信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Redis(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem, err := New(client, WithDefaultTimeout(5*time.Second))
+	require.NoError(t, err)
+	t.Cleanup(func() { closeSemaphore(t, sem) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Local 验证本地信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Local(t *testing.T) {
+	opts := defaultOptions()
+	opts.defaultTimeout = 5 * time.Second
+	sem := newLocalSemaphore(opts)
+	t.Cleanup(func() { _ = sem.Close(context.Background()) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// TestNilContextWithDefaultTimeout_Fallback 验证降级信号量的 nil context + 默认超时路径
+func TestNilContextWithDefaultTimeout_Fallback(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem, err := New(client,
+		WithDefaultTimeout(5*time.Second),
+		WithFallback(FallbackLocal),
+		WithPodCount(1),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { closeSemaphore(t, sem) })
+
+	t.Run("TryAcquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.TryAcquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Acquire returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Acquire(nil, "resource", WithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Query returns ErrNilContext", func(t *testing.T) {
+		_, err := sem.Query(nil, "resource", QueryWithCapacity(10))
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+}
+
+// =============================================================================
+// ErrNilContext 测试（覆盖新增的 nil context 校验路径）
+// =============================================================================
+
+func TestNilContext_ValidateCommonParams(t *testing.T) {
+	err := validateCommonParams(nil, "resource", false)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestNilContext_PrepareAcquireCommon(t *testing.T) {
+	_, _, err := prepareAcquireCommon(nil, "resource", nil, false)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestNilContext_PrepareQueryCommon(t *testing.T) {
+	_, _, err := prepareQueryCommon(nil, "resource", nil, false)
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestNilContext_ReleaseCommon(t *testing.T) {
+	p := &permitBase{}
+	initPermitBase(p, "test-id", "resource", "tenant", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+	err := p.releaseCommon(nil, nil, SemaphoreTypeLocal, nil, func(ctx context.Context) error {
+		return nil
+	})
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestNilContext_ExtendCommon(t *testing.T) {
+	p := &permitBase{}
+	initPermitBase(p, "test-id", "resource", "tenant", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+	err := p.extendCommon(nil, nil, SemaphoreTypeLocal, func(ctx context.Context, _ time.Time) error {
+		return nil
+	})
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestNilContext_NoopPermitRelease(t *testing.T) {
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, defaultOptions())
+	require.NoError(t, err)
+	assert.ErrorIs(t, p.Release(nil), ErrNilContext)
+}
+
+func TestNilContext_NoopPermitExtend(t *testing.T) {
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, defaultOptions())
+	require.NoError(t, err)
+	assert.ErrorIs(t, p.Extend(nil), ErrNilContext)
+}
+
+// =============================================================================
+// noopPermit logExtendFailed 测试
+// =============================================================================
+
+func TestNoopPermit_LogExtendFailed(t *testing.T) {
+	t.Run("with logger", func(t *testing.T) {
+		logger := &testLogger{}
+		opts := defaultOptions()
+		opts.logger = logger
+		p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+		require.NoError(t, err)
+		p.logExtendFailed(context.Background(), p.ID(), "resource", errors.New("test error"))
+		assert.True(t, logger.warnCalled, "expected Warn to be called")
+	})
+
+	t.Run("without logger", func(t *testing.T) {
+		opts := defaultOptions()
+		opts.logger = nil
+		p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+		require.NoError(t, err)
+		// Should not panic
+		p.logExtendFailed(context.Background(), p.ID(), "resource", errors.New("test error"))
+	})
+}
+
+// =============================================================================
+// newNoopPermit ID 生成失败测试
+// =============================================================================
+
+func TestNewNoopPermit_IDGenerationFailure(t *testing.T) {
+	opts := defaultOptions()
+	opts.idGenerator = func(_ context.Context) (string, error) {
+		return "", errors.New("id gen failed")
+	}
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+	assert.Nil(t, p)
+	assert.ErrorIs(t, err, ErrIDGenerationFailed)
+}
+
+// =============================================================================
+// Sentinel error wrapping 测试
+// =============================================================================
+
+func TestOptions_Validate_SentinelErrors(t *testing.T) {
+	t.Run("invalid pod count wraps ErrInvalidPodCount", func(t *testing.T) {
+		opts := defaultOptions()
+		opts.podCount = -1
+		err := opts.validate()
+		assert.ErrorIs(t, err, ErrInvalidPodCount)
+	})
+
+	t.Run("invalid fallback strategy wraps ErrInvalidFallbackStrategy", func(t *testing.T) {
+		opts := defaultOptions()
+		opts.fallback = FallbackStrategy("invalid")
+		err := opts.validate()
+		assert.ErrorIs(t, err, ErrInvalidFallbackStrategy)
+	})
+}
+
+// =============================================================================
+// convertScriptResult 测试（FG-M4 覆盖率修复）
+// =============================================================================
+
+func TestConvertScriptResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  []int64
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:     "int64 elements",
+			input:    []any{int64(1), int64(2), int64(3)},
+			expected: []int64{1, 2, 3},
+		},
+		{
+			name:     "int elements",
+			input:    []any{int(10), int(20)},
+			expected: []int64{10, 20},
+		},
+		{
+			name:     "float64 integer values",
+			input:    []any{float64(42), float64(100)},
+			expected: []int64{42, 100},
+		},
+		{
+			name:     "mixed numeric types",
+			input:    []any{int64(1), int(2), float64(3)},
+			expected: []int64{1, 2, 3},
+		},
+		{
+			name:     "empty array",
+			input:    []any{},
+			expected: []int64{},
+		},
+		{
+			name:      "non-array input",
+			input:     "not an array",
+			wantErr:   true,
+			errSubstr: "expected array",
+		},
+		{
+			name:      "nil input",
+			input:     nil,
+			wantErr:   true,
+			errSubstr: "expected array",
+		},
+		{
+			name:      "float64 non-integer value",
+			input:     []any{float64(3.14)},
+			wantErr:   true,
+			errSubstr: "non-integer float64",
+		},
+		{
+			name:      "float64 non-integer negative",
+			input:     []any{float64(-2.5)},
+			wantErr:   true,
+			errSubstr: "non-integer float64",
+		},
+		{
+			name:      "unknown type string",
+			input:     []any{"not a number"},
+			wantErr:   true,
+			errSubstr: "expected number",
+		},
+		{
+			name:      "unknown type bool",
+			input:     []any{true},
+			wantErr:   true,
+			errSubstr: "expected number",
+		},
+		{
+			name:      "mixed with unknown type in middle",
+			input:     []any{int64(1), "bad", int64(3)},
+			wantErr:   true,
+			errSubstr: "element 1 is string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := convertScriptResult(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, errUnexpectedScriptResult)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// =============================================================================
+// releasePermit / extendPermit default 分支测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_ReleasePermit_UnknownStatus(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			// 返回未知状态码 99
+			release: redis.NewScript(`return {99, 0}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+	assert.Contains(t, err.Error(), "release returned status 99")
+}
+
+func TestRedisSemaphore_ReleasePermit_UnknownStatus_WithTenant(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			release: redis.NewScript(`return {99, 0}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "tenant-1", time.Now().Add(5*time.Minute), 5*time.Minute, true, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+}
+
+func TestRedisSemaphore_ExtendPermit_UnknownStatus(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			// 返回未知状态码 99
+			extend: redis.NewScript(`return {99}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+	assert.Contains(t, err.Error(), "extend returned status 99")
+}
+
+func TestRedisSemaphore_ExtendPermit_UnknownStatus_WithTenant(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			extend: redis.NewScript(`return {99}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "tenant-1", time.Now().Add(5*time.Minute), 5*time.Minute, true, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownScriptStatus)
+}
+
+// =============================================================================
+// recordAcquireMetrics 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_Acquire_WithMetrics(t *testing.T) {
+	_, client := setupRedis(t)
+
+	mp := noop.NewMeterProvider()
+	sem, err := New(client, WithMeterProvider(mp))
+	require.NoError(t, err)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 成功路径：recordAcquireMetrics 在 Acquire 中被调用
+	permit, err := sem.Acquire(ctx, "test-resource",
+		WithCapacity(10),
+		WithMaxRetries(3),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, permit)
+	releasePermit(t, ctx, permit)
+
+	// 失败路径：容量满时 Acquire 重试耗尽
+	// 先占满容量
+	permits := make([]Permit, 2)
+	for i := range permits {
+		p, err := sem.TryAcquire(ctx, "full-resource", WithCapacity(2))
+		require.NoError(t, err)
+		require.NotNil(t, p)
+		permits[i] = p
+	}
+
+	// Acquire 应失败
+	_, err = sem.Acquire(ctx, "full-resource",
+		WithCapacity(2),
+		WithMaxRetries(2),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.ErrorIs(t, err, ErrAcquireFailed)
+
+	for _, p := range permits {
+		releasePermit(t, ctx, p)
+	}
+}
+
+// =============================================================================
+// localSemaphore Acquire + Extend 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestLocalSemaphore_Acquire_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 成功路径
+	permit, err := sem.Acquire(ctx, "test-resource",
+		WithCapacity(10),
+		WithMaxRetries(3),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, permit)
+
+	// Extend 路径（测试 recordExtendMetrics with non-nil metrics）
+	err = permit.Extend(ctx)
+	require.NoError(t, err)
+
+	err = permit.Release(ctx)
+	assert.NoError(t, err)
+}
+
+func TestLocalSemaphore_Acquire_Exhausted_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	ctx := context.Background()
+
+	// 占满容量
+	p, err := sem.TryAcquire(ctx, "full-resource", WithCapacity(1))
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	defer releasePermit(t, ctx, p)
+
+	// Acquire 失败路径
+	_, err = sem.Acquire(ctx, "full-resource",
+		WithCapacity(1),
+		WithMaxRetries(2),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.ErrorIs(t, err, ErrAcquireFailed)
+}
+
+// =============================================================================
+// recordFallbackObservability 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRecordFallbackObservability_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	logger := &testLogger{}
+	opts := &options{
+		metrics:  metrics,
+		logger:   logger,
+		fallback: FallbackLocal,
+	}
+
+	f := &fallbackSemaphore{
+		strategy: FallbackLocal,
+		opts:     opts,
+	}
+
+	f.recordFallbackObservability(context.Background(), "resource", ErrRedisUnavailable)
+
+	assert.True(t, logger.warnCalled, "expected logger.Warn to be called")
+}
+
+// =============================================================================
+// Health 关闭状态路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_Health_Closed(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+	}
+	sem.closed.Store(true)
+
+	err := sem.Health(context.Background())
+	assert.ErrorIs(t, err, ErrSemaphoreClosed)
+}
+
+func TestLocalSemaphore_Health_Closed(t *testing.T) {
+	opts := defaultOptions()
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	_ = sem.Close(context.Background())
+
+	err := sem.Health(context.Background())
+	assert.ErrorIs(t, err, ErrSemaphoreClosed)
+}
+
+func TestRedisSemaphore_Health_NilContext(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+	}
+
+	err := sem.Health(nil) //nolint:staticcheck // 测试 nil context 路径
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+func TestLocalSemaphore_Health_NilContext(t *testing.T) {
+	opts := defaultOptions()
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	err := sem.Health(nil) //nolint:staticcheck // 测试 nil context 路径
+	assert.ErrorIs(t, err, ErrNilContext)
+}
+
+// =============================================================================
+// extendPermit NotHeld 路径带 metrics 测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_ExtendPermit_NotHeld_WithMetrics(t *testing.T) {
+	_, client := setupRedis(t)
+
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   opts,
+		scripts: &scripts{
+			// scriptStatusNotHeld = 3
+			extend: redis.NewScript(`return {3}`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err = sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	assert.ErrorIs(t, err, ErrPermitNotHeld)
+}
+
+func TestRedisSemaphore_ExtendPermit_ScriptError(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			extend: redis.NewScript(`return redis.error_reply("test error")`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.extendPermit(context.Background(), p, time.Now().Add(10*time.Minute))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "extend script failed")
+}
+
+func TestRedisSemaphore_ReleasePermit_ScriptError(t *testing.T) {
+	_, client := setupRedis(t)
+
+	sem := &redisSemaphore{
+		client: client,
+		opts:   defaultOptions(),
+		scripts: &scripts{
+			release: redis.NewScript(`return redis.error_reply("test error")`),
+		},
+	}
+
+	p := &redisPermit{sem: sem}
+	initPermitBase(&p.permitBase, "test-permit", "test-resource", "", time.Now().Add(5*time.Minute), 5*time.Minute, false, nil)
+
+	err := sem.releasePermit(context.Background(), p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release script failed")
+}
+
+// =============================================================================
+// noopPermit Release/Extend 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestNoopPermit_Release_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+	require.NoError(t, err)
+
+	err = p.Release(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestNoopPermit_Extend_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	p, err := newNoopPermit(context.Background(), "resource", "tenant", 5*time.Minute, nil, opts)
+	require.NoError(t, err)
+
+	err = p.Extend(context.Background())
+	assert.NoError(t, err)
+}
+
+// =============================================================================
+// handleQueryError 带 metrics 路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestRedisSemaphore_HandleQueryError_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+
+	sem := &redisSemaphore{opts: opts}
+
+	// 模拟 nil span（从 Background context 获取）
+	ctx := context.Background()
+	_, span := startSpan(ctx, nil, "test")
+	defer span.End()
+
+	resultErr := sem.handleQueryError(ctx, span, "resource", time.Now(), errors.New("test error"))
+	require.Error(t, resultErr)
+	assert.Contains(t, resultErr.Error(), "query script failed")
+}
+
+// =============================================================================
+// local.Acquire context 取消路径测试（FG-M3/M4 覆盖率修复）
+// =============================================================================
+
+func TestLocalSemaphore_Acquire_ContextCanceled_WithMetrics(t *testing.T) {
+	mp := noop.NewMeterProvider()
+	metrics, err := NewMetrics(mp)
+	require.NoError(t, err)
+
+	opts := defaultOptions()
+	opts.metrics = metrics
+	opts.podCount = 1
+	sem := newLocalSemaphore(opts)
+	defer closeSemaphore(t, sem)
+
+	// 占满容量
+	p, err := sem.TryAcquire(context.Background(), "resource", WithCapacity(1))
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	defer releasePermit(t, context.Background(), p)
+
+	// 已取消的 context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = sem.Acquire(ctx, "resource",
+		WithCapacity(1),
+		WithMaxRetries(5),
+		WithRetryDelay(10*time.Millisecond),
+	)
+	assert.Error(t, err)
 }

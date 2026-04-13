@@ -55,8 +55,10 @@ func (l *xlogger) logWithSkip(ctx context.Context, level slog.Level, msg string,
 	var pc uintptr
 	if l.addSource {
 		var pcs [1]uintptr
-		// skip=3: runtime.Callers -> logWithSkip -> log/Debug/Info/... -> 业务代码
-		// extraSkip: 额外跳过的栈帧（如全局函数调用时需要 +1）
+		// 基础 skip=3: Callers(0) → logWithSkip(1) → 直接调用方(2) → 跳到(3)
+		// extraSkip 用于跳过额外的中间帧：
+		//   实例路径 log() 传 1：Callers → logWithSkip → log → Debug → 业务代码(3+1=4)
+		//   全局路径 globalLog 传 1：Callers → logWithSkip → globalLog → xlog.Info → 业务代码(3+1=4)
 		runtime.Callers(3+extraSkip, pcs[:])
 		pc = pcs[0]
 	}
@@ -71,16 +73,22 @@ func (l *xlogger) logWithSkip(ctx context.Context, level slog.Level, msg string,
 
 // log 通用日志方法，正确捕获调用者位置
 // 用于实例方法调用（如 logger.Info()）
+// extraSkip=1：跳过 log 自身这一帧（调用链 业务代码 → Debug/Info/… → log → logWithSkip）
 //
 //go:noinline
 func (l *xlogger) log(ctx context.Context, level slog.Level, msg string, attrs []slog.Attr) {
-	l.logWithSkip(ctx, level, msg, attrs, 0)
+	l.logWithSkip(ctx, level, msg, attrs, 1)
 }
 
 // handleError 处理内部错误（Handler.Handle 失败）
-// 内置递归保护：如果 onError 回调内部触发日志错误，不会导致无限递归
+// 内置递归保护：如果 onError 回调内部触发日志错误，不会导致无限递归。
+// 内置 panic 隔离：回调 panic 不会扩散到业务调用链。
 // 递归保护通过 inErrorHandler 指针在派生 logger 间共享，确保 With/WithGroup 创建的
 // 派生 logger 也受到保护。
+//
+// 设计决策: CAS 保护导致并发期间部分错误跳过 onError 回调，这是有意为之。
+// errorCount 仍计入所有错误（用于监控），onError 回调定位为 best-effort 通知。
+// 异步队列方案会增加复杂度且不符合日志库轻量定位。
 func (l *xlogger) handleError(err error) {
 	if l.errorCount != nil {
 		l.errorCount.Add(1)
@@ -89,9 +97,25 @@ func (l *xlogger) handleError(err error) {
 		// 递归保护：如果已在 onError 回调中，跳过
 		if l.inErrorHandler.CompareAndSwap(false, true) {
 			defer l.inErrorHandler.Store(false)
-			l.onError(err)
+			l.safeOnError(err)
 		}
 	}
+}
+
+// safeOnError 安全执行 onError 回调，隔离 panic 防止扩散到业务代码
+//
+// 设计决策: 日志子系统遵循"失败不扩散"原则——回调 panic 被捕获并计入错误计数，
+// 不会中断业务调用链。
+func (l *xlogger) safeOnError(err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// 回调 panic 计入错误计数，便于监控发现
+			if l.errorCount != nil {
+				l.errorCount.Add(1)
+			}
+		}
+	}()
+	l.onError(err)
 }
 
 // Debug 记录 Debug 级别日志
@@ -118,6 +142,14 @@ func (l *xlogger) Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 //
 //go:noinline
 func (l *xlogger) Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
+	l.stackWithSkip(ctx, msg, attrs, 0)
+}
+
+// stackWithSkip 记录带完整堆栈的错误日志，支持额外的栈帧跳过
+// extraSkip: 额外需要跳过的栈帧数（用于全局函数等间接调用场景）
+//
+//go:noinline
+func (l *xlogger) stackWithSkip(ctx context.Context, msg string, attrs []slog.Attr, extraSkip int) {
 	if !l.handler.Enabled(ctx, slog.LevelError) {
 		return
 	}
@@ -125,11 +157,11 @@ func (l *xlogger) Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
 	// 从池中获取初始缓冲区
 	bufp, ok := stackPool.Get().(*[]byte)
 	if !ok {
-		// 类型断言失败，创建新缓冲区（不应发生）
+		// 设计决策: 防御性分支——sync.Pool.New 固定返回 *[]byte，此分支正常不可达。
+		// 保留此分支是为了遵循 Go 最佳实践（不信任 interface{} 类型断言的隐含假设）。
 		buf := make([]byte, initialStackSize)
 		bufp = &buf
 	}
-	defer stackPool.Put(bufp)
 
 	// 获取堆栈，如果被截断则自动扩展缓冲区
 	buf := *bufp
@@ -138,21 +170,30 @@ func (l *xlogger) Stack(ctx context.Context, msg string, attrs ...slog.Attr) {
 	// 如果堆栈填满了缓冲区，可能被截断，尝试扩展
 	for n == len(buf) && len(buf) < maxStackSize {
 		// 扩展缓冲区（翻倍但不超过上限）
-		newSize := len(buf) * 2
-		if newSize > maxStackSize {
-			newSize = maxStackSize
-		}
+		newSize := min(len(buf)*2, maxStackSize)
 		buf = make([]byte, newSize)
 		n = runtime.Stack(buf, false)
 	}
 
+	// 先将堆栈转为不可变 string，再归还缓冲区。
+	// 设计决策: 必须在 Put 前完成 string(buf[:n]) 拷贝，否则未扩展场景下
+	// buf 与 *bufp 共享底层数组，另一个 goroutine 的 Get+Stack 会覆盖数据。
+	// bufp 始终指向 Get 获取的 initialStackSize 缓冲区，扩展后的大缓冲区
+	// (buf) 交给 GC 回收，避免池中积累大量内存。
 	stackAttr := slog.String(KeyStack, string(buf[:n]))
+	stackPool.Put(bufp)
 
-	// 捕获调用者位置
-	var pcs [1]uintptr
-	runtime.Callers(2, pcs[:])
+	// 仅在启用 AddSource 时才捕获调用者位置（与 logWithSkip 行为一致）
+	var pc uintptr
+	if l.addSource {
+		var pcs [1]uintptr
+		// skip=3: runtime.Callers -> stackWithSkip -> Stack -> 业务代码
+		// extraSkip: 额外跳过的栈帧（如全局函数调用时需要 +1）
+		runtime.Callers(3+extraSkip, pcs[:])
+		pc = pcs[0]
+	}
 
-	r := slog.NewRecord(time.Now(), slog.LevelError, msg, pcs[0])
+	r := slog.NewRecord(time.Now(), slog.LevelError, msg, pc)
 	r.AddAttrs(attrs...)
 	r.AddAttrs(stackAttr)
 

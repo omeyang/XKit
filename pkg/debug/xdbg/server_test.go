@@ -4,6 +4,8 @@ package xdbg
 
 import (
 	"context"
+	"errors"
+	"net"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -252,7 +254,7 @@ func TestServer_RegisterCommand(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	cmd := NewCommandFunc("test", "test command", func(_ context.Context, _ []string) (string, error) {
+	cmd := mustNewCommandFunc(t, "test", "test command", func(_ context.Context, _ []string) (string, error) {
 		return "test output", nil
 	})
 
@@ -455,8 +457,7 @@ func TestServer_WatchTrigger(t *testing.T) {
 	srv.cancel = cancel
 
 	// 启动 watchTrigger
-	srv.wg.Add(1)
-	go srv.watchTrigger()
+	srv.wg.Go(srv.watchTrigger)
 
 	// 发送 Enable 事件
 	mockTrig.Send(TriggerEventEnable)
@@ -697,6 +698,287 @@ func TestServer_AuditLogging(t *testing.T) {
 		t.Error("should have logged ServerStop event")
 	}
 }
+
+func TestServer_StartNilContext(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	//nolint:staticcheck // 测试 nil context 防护
+	err = srv.Start(nil)
+	if err != ErrNilContext {
+		t.Errorf("Start(nil) error = %v, want ErrNilContext", err)
+	}
+
+	// 确认服务器状态未变更（仍为 Created）
+	if srv.State() != ServerStateCreated {
+		t.Errorf("State() = %v, want %v after Start(nil)", srv.State(), ServerStateCreated)
+	}
+}
+
+func TestServer_StopWithoutStart(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Stop on Created state should not error
+	err = srv.Stop()
+	if err != nil {
+		t.Errorf("Stop() on unstarted server error = %v", err)
+	}
+}
+
+func TestServer_StartWithSignalMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithAuditLogger(NewNoopAuditLogger()),
+		// BackgroundMode defaults to false, so signal trigger is used
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	err = srv.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// Server should have a trigger set
+	if srv.trigger == nil {
+		t.Error("trigger should be set in signal mode")
+	}
+
+	err = srv.Stop()
+	if err != nil {
+		t.Errorf("Stop() error = %v", err)
+	}
+}
+
+func TestServer_EnableAfterStopped(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	// Enable after Stop should return error
+	err = srv.Enable()
+	if err == nil {
+		t.Error("Enable() after Stop should return error")
+	}
+}
+
+func TestServer_DisableAfterStopped(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	if err := srv.Enable(); err != nil {
+		t.Fatalf("Enable() error = %v", err)
+	}
+
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	// Disable after Stop should return error
+	err = srv.Disable()
+	if err == nil {
+		t.Error("Disable() after Stop should return error")
+	}
+}
+
+func TestServer_EnableIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAutoShutdown(0),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	//nolint:errcheck // test cleanup
+	defer func() { _ = srv.Stop() }()
+
+	// First Enable
+	if err := srv.Enable(); err != nil {
+		t.Fatalf("first Enable() error = %v", err)
+	}
+
+	// Second Enable should be idempotent (no error)
+	err = srv.Enable()
+	if err != nil {
+		t.Errorf("second Enable() should be idempotent, got error = %v", err)
+	}
+}
+
+func TestAcceptBackoff(t *testing.T) {
+	b := newAcceptBackoff()
+
+	// Initial value
+	d := b.next()
+	if d != 5*time.Millisecond {
+		t.Errorf("first next() = %v, want 5ms", d)
+	}
+
+	// Doubles
+	d = b.next()
+	if d != 10*time.Millisecond {
+		t.Errorf("second next() = %v, want 10ms", d)
+	}
+
+	// Reset
+	b.reset()
+	d = b.next()
+	if d != 5*time.Millisecond {
+		t.Errorf("after reset next() = %v, want 5ms", d)
+	}
+
+	// Verify max
+	for range 20 {
+		b.next()
+	}
+	d = b.next()
+	if d > 1*time.Second {
+		t.Errorf("next() should not exceed 1s, got %v", d)
+	}
+}
+
+func TestServer_AuditWithSanitizer(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	auditLogs := make([]AuditEvent, 0)
+	customAudit := &testAuditLogger{
+		logs: &auditLogs,
+	}
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAutoShutdown(0),
+		WithAuditLogger(customAudit),
+		WithAuditSanitizer(func(command string, args []string) []string {
+			return SanitizeArgs(args)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	//nolint:errcheck // test cleanup
+	defer func() { _ = srv.Stop() }()
+
+	// Call audit with args to exercise sanitizer path
+	srv.audit(AuditEventCommand, nil, "test", []string{"secret"}, 0, nil)
+}
+
+func TestServer_AuditNilLogger(t *testing.T) {
+	srv := &Server{
+		opts: &options{AuditLogger: nil},
+	}
+
+	// Should not panic with nil logger
+	srv.audit(AuditEventCommand, nil, "test", nil, 0, nil)
+}
+
+// FG-M3: 验证 Stop 返回 transport/trigger 关闭错误。
+func TestServer_Stop_ReturnsTransportCloseError(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	srv, err := New(
+		WithSocketPath(socketPath),
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// 替换 transport 为一个 Close 会失败的 mock
+	srv.transportMu.Lock()
+	srv.transport = &failCloseTransport{}
+	srv.transportMu.Unlock()
+
+	err = srv.Stop()
+	if err == nil {
+		t.Error("Stop() should return error when transport close fails")
+	}
+}
+
+// failCloseTransport Close 返回错误的 mock 传输层。
+type failCloseTransport struct{}
+
+func (t *failCloseTransport) Listen(_ context.Context) error { return nil }
+
+func (t *failCloseTransport) Accept() (net.Conn, *PeerIdentity, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (t *failCloseTransport) Close() error {
+	return errors.New("mock transport close error")
+}
+
+func (t *failCloseTransport) Addr() string { return "" }
 
 // testAuditLogger 用于测试的审计日志器。
 type testAuditLogger struct {

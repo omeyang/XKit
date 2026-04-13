@@ -9,8 +9,9 @@ import (
 
 func BenchmarkTraceID(b *testing.B) {
 	ctx, _ := xctx.WithTraceID(context.Background(), "trace-123")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.TraceID(ctx)
 	}
 }
@@ -19,28 +20,32 @@ func BenchmarkGetTrace(b *testing.B) {
 	ctx, _ := xctx.WithTraceID(context.Background(), "t1")
 	ctx, _ = xctx.WithSpanID(ctx, "s1")
 	ctx, _ = xctx.WithRequestID(ctx, "r1")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.GetTrace(ctx)
 	}
 }
 
 func BenchmarkGenerateTraceID(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = xctx.GenerateTraceID()
 	}
 }
 
 func BenchmarkGenerateSpanID(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	b.ReportAllocs()
+	for b.Loop() {
 		_ = xctx.GenerateSpanID()
 	}
 }
 
 func BenchmarkEnsureTrace(b *testing.B) {
 	ctx := context.Background()
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.EnsureTrace(ctx)
 	}
 }
@@ -49,8 +54,9 @@ func BenchmarkEnsureTrace_AlreadySet(b *testing.B) {
 	ctx, _ := xctx.WithTraceID(context.Background(), "t1")
 	ctx, _ = xctx.WithSpanID(ctx, "s1")
 	ctx, _ = xctx.WithRequestID(ctx, "r1")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.EnsureTrace(ctx)
 	}
 }
@@ -58,8 +64,9 @@ func BenchmarkEnsureTrace_AlreadySet(b *testing.B) {
 func BenchmarkEnsureTrace_PartialSet(b *testing.B) {
 	// 仅 TraceID 已设置，需要生成 SpanID 和 RequestID
 	ctx, _ := xctx.WithTraceID(context.Background(), "t1")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.EnsureTrace(ctx)
 	}
 }

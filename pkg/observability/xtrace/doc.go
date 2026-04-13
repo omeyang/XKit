@@ -5,6 +5,10 @@
 // xtrace 包负责 HTTP/gRPC 通信中链路追踪信息的提取和注入。
 // 底层存储使用 xctx 包，xtrace 只做传输层适配，不维护状态。
 //
+// 设计决策: xtrace 不创建/管理 OTel Span（无 tracer.Start/span.End），
+// Span 生命周期管理由 OTel SDK 的 otelhttp/otelgrpc 中间件负责。
+// xtrace 与 OTel 中间件可组合使用：xtrace 负责自定义头透传，OTel 负责 Span。
+//
 // 支持以下追踪标识：
 //   - TraceID: 链路追踪 ID（16字节，符合 W3C Trace Context）
 //   - SpanID: 跨度 ID（8字节，符合 W3C Trace Context）
@@ -29,9 +33,19 @@
 //
 // # 使用方式
 //
-// HTTP：使用 HTTPMiddleware() 服务端中间件，InjectToRequest() 客户端注入。
-// gRPC：使用 GRPCUnaryServerInterceptor() 服务端拦截器，
+// HTTP：使用 HTTPMiddleware(...Option) 服务端中间件，InjectToRequest() 客户端注入。
+// gRPC：使用 GRPCUnaryServerInterceptor(...Option) 服务端拦截器，
 // GRPCUnaryClientInterceptor() 客户端拦截器。
+// HTTP 和 gRPC 共用同一套 Option 类型（如 WithAutoGenerate）。
+// 使用 TraceInfoFromContext() 从 context 提取完整追踪信息（与 ExtractFromHTTPHeader 对称）。
+//
+// # 注入 API 命名约定
+//
+// 本包提供两组注入函数，命名约定如下：
+//   - InjectTo*（如 InjectToRequest、InjectToOutgoingContext）：
+//     从 context 隐式获取追踪信息，适用于中间件/拦截器自动传播场景
+//   - InjectTraceTo*（如 InjectTraceToHeader、InjectTraceToMetadata）：
+//     接受显式 TraceInfo 参数，适用于手动构造追踪信息的场景（如测试、网关透传）
 //
 // # W3C Trace Context
 //
@@ -41,8 +55,9 @@
 //
 // 版本兼容性：
 //   - 支持 W3C 前向兼容规则：未知版本（> "00"）按 version-00 格式解析
-//   - 版本 "ff" 保留，始终视为无效
-//   - 未来版本可能包含额外字段，解析时自动忽略
+//   - 版本 "ff" 保留，始终视为无效（大小写不敏感，"FF"/"Ff" 同样无效）
+//   - 未来版本可能包含额外字段（必须以 "-" 分隔），解析时自动忽略
+//   - InjectTraceToHeader/InjectTraceToMetadata 始终以 v00 格式重新生成 traceparent
 //
 // 解析优先级：
 //  1. 优先使用 traceparent 头（W3C 标准）
@@ -56,6 +71,10 @@
 //   - 存储：tracestate 不自动存入 context（需手动处理）
 //   - 传播：InjectToRequest/InjectToOutgoingContext 不自动传播 tracestate
 //   - 手动透传：可通过 InjectTraceToHeader/InjectTraceToMetadata 手动设置
+//
+// W3C 规范要求：tracestate 不得在无有效 traceparent 时发送。
+// InjectTraceToHeader/InjectTraceToMetadata 会自动遵守此约束：
+// 仅当 traceparent 成功写入时才注入 tracestate。
 //
 // 设计理由：tracestate 内容与厂商相关，中间服务盲目传递可能导致问题。
 // 如需完整 tracestate 支持，建议使用 OpenTelemetry SDK。
@@ -78,7 +97,7 @@
 // # W3C traceparent 大小写处理
 //
 // W3C Trace Context 规范要求 trace-id、parent-id、trace-flags 必须是小写十六进制。
-// 本包在生成 traceparent（InjectToRequest/InjectToOutgoingContext）时会自动转换为小写，
+// 本包在生成或透传 traceparent 时会自动规范化为小写，
 // 确保输出符合 W3C 规范，避免被严格实现拒绝。
 //
 // 解析时（ExtractFromHTTPHeader/ExtractFromMetadata）同时接受大写和小写输入，

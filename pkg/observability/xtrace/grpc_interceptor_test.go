@@ -94,12 +94,12 @@ func TestGRPCUnaryServerInterceptor(t *testing.T) {
 	})
 }
 
-func TestGRPCUnaryServerInterceptorWithOptions(t *testing.T) {
-	t.Run("WithGRPCAutoGenerate(false)不自动生成", func(t *testing.T) {
+func TestGRPCUnaryServerInterceptor_WithOptions(t *testing.T) {
+	t.Run("WithAutoGenerate(false)不自动生成", func(t *testing.T) {
 		var capturedTraceID string
 
-		interceptor := xtrace.GRPCUnaryServerInterceptorWithOptions(
-			xtrace.WithGRPCAutoGenerate(false),
+		interceptor := xtrace.GRPCUnaryServerInterceptor(
+			xtrace.WithAutoGenerate(false),
 		)
 
 		ctx := context.Background()
@@ -119,11 +119,11 @@ func TestGRPCUnaryServerInterceptorWithOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithGRPCAutoGenerate(true)自动生成", func(t *testing.T) {
+	t.Run("WithAutoGenerate(true)自动生成", func(t *testing.T) {
 		var capturedTraceID string
 
-		interceptor := xtrace.GRPCUnaryServerInterceptorWithOptions(
-			xtrace.WithGRPCAutoGenerate(true),
+		interceptor := xtrace.GRPCUnaryServerInterceptor(
+			xtrace.WithAutoGenerate(true),
 		)
 
 		ctx := context.Background()
@@ -202,12 +202,12 @@ func TestGRPCStreamServerInterceptor(t *testing.T) {
 	})
 }
 
-func TestGRPCStreamServerInterceptorWithOptions(t *testing.T) {
-	t.Run("WithGRPCAutoGenerate(false)不自动生成", func(t *testing.T) {
+func TestGRPCStreamServerInterceptor_WithOptions(t *testing.T) {
+	t.Run("WithAutoGenerate(false)不自动生成", func(t *testing.T) {
 		var capturedTraceID string
 
-		interceptor := xtrace.GRPCStreamServerInterceptorWithOptions(
-			xtrace.WithGRPCAutoGenerate(false),
+		interceptor := xtrace.GRPCStreamServerInterceptor(
+			xtrace.WithAutoGenerate(false),
 		)
 
 		ctx := context.Background()

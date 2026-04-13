@@ -7,12 +7,6 @@ import (
 	"time"
 )
 
-type fuzzStringer string
-
-func (s fuzzStringer) String() string {
-	return string(s)
-}
-
 func FuzzAttrBuilders(f *testing.F) {
 	f.Add("component", "operation", "user", "/path", int64(1), 200)
 
@@ -23,7 +17,7 @@ func FuzzAttrBuilders(f *testing.F) {
 		_ = Path(path)
 		_ = Count(count)
 		_ = StatusCode(status)
-		_ = Duration(fuzzStringer(path))
+		_ = Duration(time.Duration(count))
 
 		resolveAttr(t, Lazy("any", func() any { return component }))
 		resolveAttr(t, LazyString("str", func() string { return operation }))

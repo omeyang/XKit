@@ -63,6 +63,16 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "duplicate rule names",
+			config: Config{
+				Rules: []Rule{
+					TenantRule("same-name", 100, time.Minute),
+					TenantRule("same-name", 200, time.Minute),
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -187,5 +197,108 @@ func TestConfig_Clone(t *testing.T) {
 	}
 	if len(original.Rules) == 0 {
 		t.Error("Clone should not affect original Rules")
+	}
+}
+
+func TestOverride_Validate(t *testing.T) {
+	tests := []struct {
+		name     string
+		override Override
+		wantErr  bool
+	}{
+		{
+			name:     "valid override",
+			override: Override{Match: "tenant:vip", Limit: 1000},
+			wantErr:  false,
+		},
+		{
+			name:     "valid with window and burst",
+			override: Override{Match: "tenant:vip", Limit: 1000, Window: time.Minute, Burst: 200},
+			wantErr:  false,
+		},
+		{
+			name:     "zero window is valid (use rule default)",
+			override: Override{Match: "tenant:vip", Limit: 1000, Window: 0},
+			wantErr:  false,
+		},
+		{
+			name:     "zero burst is valid (use limit as burst)",
+			override: Override{Match: "tenant:vip", Limit: 1000, Burst: 0},
+			wantErr:  false,
+		},
+		{
+			name:     "empty match",
+			override: Override{Limit: 100},
+			wantErr:  true,
+		},
+		{
+			name:     "zero limit",
+			override: Override{Match: "tenant:vip", Limit: 0},
+			wantErr:  true,
+		},
+		{
+			name:     "negative limit",
+			override: Override{Match: "tenant:vip", Limit: -1},
+			wantErr:  true,
+		},
+		{
+			name:     "negative window",
+			override: Override{Match: "tenant:vip", Limit: 100, Window: -time.Second},
+			wantErr:  true,
+		},
+		{
+			name:     "negative burst",
+			override: Override{Match: "tenant:vip", Limit: 100, Burst: -1},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.override.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Override.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfig_Validate_OverrideNegativeWindow(t *testing.T) {
+	config := Config{
+		Rules: []Rule{
+			{
+				Name:        "test",
+				KeyTemplate: "tenant:${tenant_id}",
+				Limit:       100,
+				Window:      time.Minute,
+				Overrides: []Override{
+					{Match: "tenant:vip", Limit: 200, Window: -time.Second},
+				},
+			},
+		},
+	}
+	err := config.Validate()
+	if err == nil {
+		t.Error("Config.Validate() should reject override with negative window")
+	}
+}
+
+func TestConfig_Validate_OverrideNegativeBurst(t *testing.T) {
+	config := Config{
+		Rules: []Rule{
+			{
+				Name:        "test",
+				KeyTemplate: "tenant:${tenant_id}",
+				Limit:       100,
+				Window:      time.Minute,
+				Overrides: []Override{
+					{Match: "tenant:vip", Limit: 200, Burst: -1},
+				},
+			},
+		},
+	}
+	err := config.Validate()
+	if err == nil {
+		t.Error("Config.Validate() should reject override with negative burst")
 	}
 }

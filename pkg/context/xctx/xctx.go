@@ -6,7 +6,10 @@ import "errors"
 // Context Key 类型定义
 // =============================================================================
 
-// contextKey 使用字符串类型，提高可读性和调试体验
+// 设计决策: contextKey 使用 string 而非 int+iota，理由如下：
+//   - 作为包私有类型，不会与其他包的 context key 冲突（Go context 比较包含类型信息）
+//   - 字符串值在调试/日志中可读性高，便于排查 context 传播问题
+//   - 性能差异可忽略（WithPlatformID ~36ns/op），不构成瓶颈
 type contextKey string
 
 // =============================================================================
@@ -34,6 +37,21 @@ var (
 )
 
 // =============================================================================
+// Trace 相关错误
+// =============================================================================
+
+var (
+	// ErrMissingTraceID trace_id 缺失
+	ErrMissingTraceID = errors.New("xctx: missing trace_id")
+
+	// ErrMissingSpanID span_id 缺失
+	ErrMissingSpanID = errors.New("xctx: missing span_id")
+
+	// ErrMissingRequestID request_id 缺失
+	ErrMissingRequestID = errors.New("xctx: missing request_id")
+)
+
+// =============================================================================
 // DeploymentType 相关错误
 // =============================================================================
 
@@ -48,6 +66,10 @@ var (
 	ErrInvalidDeploymentType = errors.New("xctx: invalid deployment_type")
 
 	// ErrMissingDeploymentTypeEnv 环境变量 DEPLOYMENT_TYPE 缺失/为空
+	//
+	// 设计决策: 此错误定义在 xctx 而非 xenv，因为 deployment_type 是 xctx 管理的核心概念。
+	// xlog 包直接引用此错误来判断环境未配置时的降级策略。
+	// 迁移到 xenv 会引入 xlog -> xenv 的依赖且破坏现有 API。
 	ErrMissingDeploymentTypeEnv = errors.New("xctx: missing DEPLOYMENT_TYPE env var")
 )
 

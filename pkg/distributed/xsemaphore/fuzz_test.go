@@ -22,6 +22,25 @@ func releasePermitF(_ *testing.T, ctx context.Context, p Permit) {
 }
 
 // =============================================================================
+// 模糊测试辅助：输入过滤与选项构建
+// =============================================================================
+
+// isInvalidAcquireInput 检查模糊测试输入是否在有效范围外。
+// 返回 true 表示输入无效，调用方应跳过本次测试。
+func isInvalidAcquireInput(capacity, tenantQuota int) bool {
+	return capacity <= 0 || capacity > 10000 ||
+		tenantQuota < 0 || tenantQuota > capacity
+}
+
+// buildTenantOpts 根据租户 ID 和配额构建可选的租户选项。
+func buildTenantOpts(tenantID string, tenantQuota int) []AcquireOption {
+	if tenantID != "" && tenantQuota > 0 {
+		return []AcquireOption{WithTenantID(tenantID), WithTenantQuota(tenantQuota)}
+	}
+	return nil
+}
+
+// =============================================================================
 // 模糊测试
 // =============================================================================
 
@@ -36,14 +55,7 @@ func FuzzTryAcquire(f *testing.F) {
 	f.Add("resource.with.dots", 5, 2, "tenant.id", int64(30000))
 
 	f.Fuzz(func(t *testing.T, resource string, capacity int, tenantQuota int, tenantID string, ttlMs int64) {
-		// 跳过无效输入
-		if capacity <= 0 || capacity > 10000 {
-			return
-		}
-		if tenantQuota < 0 || tenantQuota > capacity {
-			return
-		}
-		if ttlMs <= 0 || ttlMs > 600000 {
+		if isInvalidAcquireInput(capacity, tenantQuota) || ttlMs <= 0 || ttlMs > 600000 {
 			return
 		}
 
@@ -65,14 +77,12 @@ func FuzzTryAcquire(f *testing.F) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		opts := []AcquireOption{
+		opts := make([]AcquireOption, 0, 4)
+		opts = append(opts,
 			WithCapacity(capacity),
-			WithTTL(time.Duration(ttlMs) * time.Millisecond),
-		}
-
-		if tenantID != "" && tenantQuota > 0 {
-			opts = append(opts, WithTenantID(tenantID), WithTenantQuota(tenantQuota))
-		}
+			WithTTL(time.Duration(ttlMs)*time.Millisecond),
+		)
+		opts = append(opts, buildTenantOpts(tenantID, tenantQuota)...)
 
 		permit, err := sem.TryAcquire(ctx, resource, opts...)
 		// 不应 panic
@@ -93,13 +103,7 @@ func FuzzLocalSemaphore(f *testing.F) {
 	f.Add("资源名称", 1, 1, "租户", 3)
 
 	f.Fuzz(func(t *testing.T, resource string, capacity int, tenantQuota int, tenantID string, podCount int) {
-		if capacity <= 0 || capacity > 10000 {
-			return
-		}
-		if tenantQuota < 0 || tenantQuota > capacity {
-			return
-		}
-		if podCount <= 0 || podCount > 100 {
+		if isInvalidAcquireInput(capacity, tenantQuota) || podCount <= 0 || podCount > 100 {
 			return
 		}
 
@@ -110,14 +114,12 @@ func FuzzLocalSemaphore(f *testing.F) {
 
 		ctx := context.Background()
 
-		acquireOpts := []AcquireOption{
+		acquireOpts := make([]AcquireOption, 0, 4)
+		acquireOpts = append(acquireOpts,
 			WithCapacity(capacity),
 			WithTTL(time.Minute),
-		}
-
-		if tenantID != "" && tenantQuota > 0 {
-			acquireOpts = append(acquireOpts, WithTenantID(tenantID), WithTenantQuota(tenantQuota))
-		}
+		)
+		acquireOpts = append(acquireOpts, buildTenantOpts(tenantID, tenantQuota)...)
 
 		permit, err := sem.TryAcquire(ctx, resource, acquireOpts...)
 		// 不应 panic

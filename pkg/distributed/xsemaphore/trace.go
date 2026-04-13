@@ -64,13 +64,11 @@ func getTracer(tp trace.TracerProvider) trace.Tracer {
 
 // startSpan 创建新的 span
 // 如果 tracer 为 nil，使用全局 tracer（可能是 noop tracer）
-//
-//nolint:unparam // opts 参数保留用于未来扩展（如设置 span kind、attributes）
-func startSpan(ctx context.Context, tracer trace.Tracer, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+func startSpan(ctx context.Context, tracer trace.Tracer, name string) (context.Context, trace.Span) {
 	if tracer == nil {
 		tracer = otel.GetTracerProvider().Tracer(tracerName)
 	}
-	return tracer.Start(ctx, name, opts...)
+	return tracer.Start(ctx, name)
 }
 
 // setSpanError 设置 span 错误状态
@@ -109,6 +107,10 @@ func acquireSpanAttributes(semType, resource, tenantID string, capacity, tenantQ
 }
 
 // releaseSpanAttributes 构建 release 操作的 span 属性
+//
+// 设计决策: releaseSpanAttributes 和 extendSpanAttributes 当前实现相同，
+// 但保留为两个独立函数。Release 和 Extend 是不同的语义操作，
+// 未来 Extend 可能需要额外属性（如 newTTL），分开有利于独立演进。
 func releaseSpanAttributes(semType, resource, tenantID, permitID string) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String(attrSemType, semType),

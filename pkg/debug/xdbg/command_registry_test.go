@@ -154,6 +154,17 @@ func TestCommandRegistry_Whitelist(t *testing.T) {
 	}
 }
 
+func TestCommandRegistry_RegisterNil(t *testing.T) {
+	registry := NewCommandRegistry()
+
+	// nil 命令应该被静默忽略，不 panic
+	registry.Register(nil)
+
+	if registry.Count() != 0 {
+		t.Errorf("Count() = %d, want 0 after registering nil", registry.Count())
+	}
+}
+
 func TestCommandRegistry_OverwriteCommand(t *testing.T) {
 	registry := NewCommandRegistry()
 
@@ -171,7 +182,7 @@ func TestCommandRegistry_OverwriteCommand(t *testing.T) {
 
 func TestCommandFunc(t *testing.T) {
 	executed := false
-	cmd := NewCommandFunc("test", "test command", func(_ context.Context, args []string) (string, error) {
+	cmd := mustNewCommandFunc(t, "test", "test command", func(_ context.Context, args []string) (string, error) {
 		executed = true
 		return "output: " + args[0], nil
 	})
@@ -195,6 +206,22 @@ func TestCommandFunc(t *testing.T) {
 
 	if output != "output: arg1" {
 		t.Errorf("Execute() output = %q, want %q", output, "output: arg1")
+	}
+}
+
+func TestNewCommandFunc_EmptyName_Error(t *testing.T) {
+	_, err := NewCommandFunc("", "help", func(_ context.Context, _ []string) (string, error) {
+		return "", nil
+	})
+	if err != ErrEmptyCommandName {
+		t.Errorf("NewCommandFunc with empty name error = %v, want ErrEmptyCommandName", err)
+	}
+}
+
+func TestNewCommandFunc_NilFn_Error(t *testing.T) {
+	_, err := NewCommandFunc("test", "help", nil)
+	if err != ErrNilCommandFunc {
+		t.Errorf("NewCommandFunc with nil fn error = %v, want ErrNilCommandFunc", err)
 	}
 }
 
@@ -233,8 +260,9 @@ func TestCommandRegistry_EssentialCommandsWithEmptyWhitelist(t *testing.T) {
 
 	registry.Register(&mockCommand{name: "help", help: "h"})
 	registry.Register(&mockCommand{name: "exit", help: "e"})
+	registry.Register(&mockCommand{name: "setlog", help: "s"})
 
-	// 设置空白名单（禁止所有命令）
+	// 设置空白名单（仅允许必要命令）
 	registry.SetWhitelist([]string{})
 
 	// 必要命令应该仍然被允许
@@ -243,5 +271,33 @@ func TestCommandRegistry_EssentialCommandsWithEmptyWhitelist(t *testing.T) {
 	}
 	if !registry.IsAllowed("exit") {
 		t.Error("expected 'exit' to be allowed even with empty whitelist")
+	}
+
+	// 非必要命令应该被禁止
+	if registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be forbidden with empty whitelist")
+	}
+}
+
+func TestCommandRegistry_NilVsEmptyWhitelist(t *testing.T) {
+	registry := NewCommandRegistry()
+	registry.Register(&mockCommand{name: "setlog", help: "s"})
+
+	// nil 白名单: 允许所有
+	registry.SetWhitelist(nil)
+	if !registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be allowed with nil whitelist")
+	}
+
+	// 空切片白名单: 仅必要命令
+	registry.SetWhitelist([]string{})
+	if registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be forbidden with empty whitelist")
+	}
+
+	// 恢复 nil
+	registry.SetWhitelist(nil)
+	if !registry.IsAllowed("setlog") {
+		t.Error("expected 'setlog' to be allowed after restoring nil whitelist")
 	}
 }

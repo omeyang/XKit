@@ -1,6 +1,7 @@
 package xconf
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -48,7 +49,7 @@ func TestWatch_Success(t *testing.T) {
 
 	// 异步启动监视
 	w.StartAsync()
-	defer func() { _ = w.Stop() }() //nolint:errcheck // 测试清理
+	defer func() { _ = w.Stop() }()
 
 	// 等待监视器启动
 	time.Sleep(50 * time.Millisecond)
@@ -83,8 +84,7 @@ func TestWatch_FromBytes_Error(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = Watch(cfg, func(c Config, err error) {})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot watch config created from bytes")
+	assert.ErrorIs(t, err, ErrNotFromFile)
 }
 
 func TestWatch_Stop(t *testing.T) {
@@ -131,12 +131,12 @@ func TestWatch_WithDebounce(t *testing.T) {
 	require.NoError(t, err)
 
 	w.StartAsync()
-	defer func() { _ = w.Stop() }() //nolint:errcheck // 测试清理
+	defer func() { _ = w.Stop() }()
 
 	time.Sleep(30 * time.Millisecond)
 
 	// 快速连续修改多次
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		content := []byte("app:\n  name: test" + string(rune('0'+i)) + "\n")
 		err = os.WriteFile(configPath, content, 0600)
 		require.NoError(t, err)
@@ -151,6 +151,55 @@ func TestWatch_WithDebounce(t *testing.T) {
 	count := reloadCount
 	mu.Unlock()
 	assert.Less(t, count, 5, "debounce should reduce callback count")
+}
+
+func TestWatch_NilCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	_, err = Watch(cfg, nil)
+	assert.ErrorIs(t, err, ErrNilCallback)
+}
+
+func TestWatch_NilWatchOption(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	_, err = Watch(cfg, func(c Config, err error) {}, nil)
+	assert.ErrorIs(t, err, ErrNilWatchOption)
+}
+
+func TestWatch_InvalidDebounce(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	// 零值防抖
+	_, err = Watch(cfg, func(c Config, err error) {}, WithDebounce(0))
+	assert.ErrorIs(t, err, ErrInvalidDebounce)
+
+	// 负值防抖
+	_, err = Watch(cfg, func(c Config, err error) {}, WithDebounce(-time.Second))
+	assert.ErrorIs(t, err, ErrInvalidDebounce)
+
+	// 超过上界
+	_, err = Watch(cfg, func(c Config, err error) {}, WithDebounce(2*time.Minute))
+	assert.ErrorIs(t, err, ErrInvalidDebounce)
+	assert.Contains(t, err.Error(), "exceeds maximum")
 }
 
 func TestWatchConfig_Interface(t *testing.T) {
@@ -169,7 +218,7 @@ func TestWatchConfig_Interface(t *testing.T) {
 	// 通过接口创建监视器
 	w, err := watchCfg.Watch(func(c Config, err error) {})
 	require.NoError(t, err)
-	defer func() { _ = w.Stop() }() //nolint:errcheck // 测试清理
+	defer func() { _ = w.Stop() }()
 }
 
 // =============================================================================
@@ -234,7 +283,7 @@ func TestWatcher_StartAsyncStopRace(t *testing.T) {
 	require.NoError(t, err)
 
 	// 多次测试以增加暴露竞态的机会
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		// 创建 watcher
 		w, err := Watch(cfg, func(c Config, err error) {})
 		require.NoError(t, err)
@@ -269,7 +318,7 @@ func TestWatcher_RenameEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	w.StartAsync()
-	defer func() { _ = w.Stop() }() //nolint:errcheck // 测试清理
+	defer func() { _ = w.Stop() }()
 
 	time.Sleep(30 * time.Millisecond)
 
@@ -292,4 +341,354 @@ func TestWatcher_RenameEvent(t *testing.T) {
 
 	// 验证配置已更新
 	assert.Equal(t, "renamed", cfg.Client().String("app.name"))
+}
+
+// =============================================================================
+// 覆盖率补全测试
+// =============================================================================
+
+// TestWatch_EmptyPath 验证空路径时返回 ErrEmptyPath
+func TestWatch_EmptyPath(t *testing.T) {
+	// 手工构造一个 path 为空的 koanfConfig
+	cfg := &koanfConfig{path: ""}
+	_, err := Watch(cfg, func(c Config, err error) {})
+	assert.ErrorIs(t, err, ErrEmptyPath)
+}
+
+// TestWatch_UnsupportedConfigType 验证非 koanfConfig 类型
+func TestWatch_UnsupportedConfigType(t *testing.T) {
+	// 传入 nil 接口
+	_, err := Watch(nil, func(c Config, err error) {})
+	assert.ErrorIs(t, err, ErrWatchFailed)
+}
+
+// TestWatcher_StartBlocking 验证 Start() 的阻塞行为
+func TestWatcher_StartBlocking(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	w, err := Watch(cfg, func(c Config, err error) {})
+	require.NoError(t, err)
+
+	// 在 goroutine 中调用 Start，验证其阻塞直到 Stop
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		close(started)
+		w.Start()
+		close(done)
+	}()
+
+	<-started
+	time.Sleep(20 * time.Millisecond)
+
+	// Stop 应解除 Start 的阻塞
+	err = w.Stop()
+	require.NoError(t, err)
+
+	select {
+	case <-done:
+		// Start 已返回 — 正常
+	case <-time.After(time.Second):
+		t.Fatal("Start() 未在 Stop() 后返回")
+	}
+}
+
+// TestWatcher_DoubleStartAsync 验证重复调用 StartAsync 只启动一次
+func TestWatcher_DoubleStartAsync(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	w, err := Watch(cfg, func(c Config, err error) {})
+	require.NoError(t, err)
+	defer func() { _ = w.Stop() }()
+
+	w.StartAsync()
+	// 第二次调用应直接返回（覆盖 running=true 分支）
+	w.StartAsync()
+}
+
+// TestWatcher_DoubleStart 验证重复调用 Start 只启动一次
+func TestWatcher_DoubleStart(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	w, err := Watch(cfg, func(c Config, err error) {})
+	require.NoError(t, err)
+
+	// 先用 StartAsync 设置 running=true
+	w.StartAsync()
+	defer func() { _ = w.Stop() }()
+
+	// 第二次调用 Start 应立即返回（覆盖 running=true 分支）
+	done := make(chan struct{})
+	go func() {
+		w.Start()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// 正常：Start 因 running=true 直接返回
+	case <-time.After(time.Second):
+		t.Fatal("Start() 应立即返回（已在运行）")
+	}
+}
+
+// TestWatcher_CallbackPanic 验证用户回调 panic 不崩溃进程
+func TestWatcher_CallbackPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	callbackCalled := make(chan struct{}, 1)
+
+	// 回调故意 panic
+	w, err := Watch(cfg, func(c Config, err error) {
+		select {
+		case callbackCalled <- struct{}{}:
+		default:
+		}
+		panic("intentional panic in callback")
+	}, WithDebounce(20*time.Millisecond))
+	require.NoError(t, err)
+
+	w.StartAsync()
+	defer func() { _ = w.Stop() }()
+
+	time.Sleep(30 * time.Millisecond)
+
+	// 触发文件变更
+	err = os.WriteFile(configPath, []byte("app:\n  name: updated\n"), 0600)
+	require.NoError(t, err)
+
+	// 等待回调被调用
+	select {
+	case <-callbackCalled:
+		// 回调被调用且 panic 被恢复 — 正常
+	case <-time.After(time.Second):
+		t.Fatal("回调未被调用")
+	}
+
+	// 进程没有崩溃即验证通过
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestWatcher_StopWithoutStart 验证未启动的 Watcher 调用 Stop 也能释放 fsnotify 资源
+func TestWatcher_StopWithoutStart(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	w, err := Watch(cfg, func(c Config, err error) {})
+	require.NoError(t, err)
+
+	// 不调用 Start/StartAsync，直接 Stop 应释放 fsnotify 资源
+	err = w.Stop()
+	assert.NoError(t, err)
+
+	// 再次 Stop 应幂等返回 nil
+	err = w.Stop()
+	assert.NoError(t, err)
+}
+
+// TestWatcher_HandleError 验证 fsnotify 错误通过回调传递（包含文件路径）
+func TestWatcher_HandleError(t *testing.T) {
+	// 直接测试 handleError 方法
+	errCh := make(chan error, 1)
+	w := &Watcher{
+		cfg:     &koanfConfig{path: "/etc/app/config.yaml"},
+		running: true,
+		callback: func(c Config, err error) {
+			errCh <- err
+		},
+	}
+
+	testErr := fmt.Errorf("test fsnotify error")
+	w.handleError(testErr)
+
+	select {
+	case err := <-errCh:
+		assert.Contains(t, err.Error(), "watch error")
+		assert.Contains(t, err.Error(), "/etc/app/config.yaml")
+		assert.ErrorIs(t, err, testErr)
+	case <-time.After(time.Second):
+		t.Fatal("handleError 回调未被调用")
+	}
+}
+
+// TestWatcher_HandleErrorNotRunning 验证 running=false 时 handleError 不调用回调
+func TestWatcher_HandleErrorNotRunning(t *testing.T) {
+	callbackCalled := false
+	w := &Watcher{
+		cfg:     &koanfConfig{path: "/etc/app/config.yaml"},
+		running: false,
+		callback: func(c Config, err error) {
+			callbackCalled = true
+		},
+	}
+
+	w.handleError(fmt.Errorf("test error"))
+	assert.False(t, callbackCalled, "handleError 在 running=false 时不应调用回调")
+}
+
+// TestWatch_DirectoryDeletedBeforeWatch 验证 Watch 在目录不存在时返回 ErrWatchFailed
+// 覆盖 fsnotify.Add 失败 + errors.Join 路径
+func TestWatch_DirectoryDeletedBeforeWatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	// 先通过 New 加载（此时目录存在）
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	// 删除目录，使 fsnotify.Add 失败
+	err = os.RemoveAll(tmpDir)
+	require.NoError(t, err)
+
+	_, err = Watch(cfg, func(c Config, err error) {})
+	assert.ErrorIs(t, err, ErrWatchFailed)
+	assert.Contains(t, err.Error(), "failed to watch directory")
+}
+
+// TestWatcher_HandleErrorNilCallback 验证无回调时 handleError 不 panic
+func TestWatcher_HandleErrorNilCallback(t *testing.T) {
+	w := &Watcher{
+		cfg:      &koanfConfig{},
+		running:  true,
+		callback: nil,
+	}
+
+	// 不应 panic
+	assert.NotPanics(t, func() {
+		w.handleError(fmt.Errorf("test error"))
+	})
+}
+
+// TestWatcher_StopFromCallback 验证在回调内调用 Stop() 不会死锁
+// 修复问题 FG-S1：防抖回调 goroutine 先 callbackWg.Add(1)，若用户在回调中
+// 调用 Stop()，Stop() 会 callbackWg.Wait() 等待当前回调结束，形成自锁死锁。
+func TestWatcher_StopFromCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	stopDone := make(chan error, 1)
+
+	w, err := Watch(cfg, func(c Config, cbErr error) {
+		// 在回调中调用 Stop() — 修复前会死锁
+		// 这里使用闭包引用外层 w，因为回调在 Watch 返回后才会执行
+	}, WithDebounce(20*time.Millisecond))
+	require.NoError(t, err)
+
+	// 重新设置回调（需要引用 w）
+	w.callback = func(c Config, cbErr error) {
+		stopDone <- w.Stop()
+	}
+
+	w.StartAsync()
+	time.Sleep(30 * time.Millisecond)
+
+	// 触发文件变更
+	err = os.WriteFile(configPath, []byte("app:\n  name: updated\n"), 0600)
+	require.NoError(t, err)
+
+	// 等待 Stop 完成（设超时防止死锁导致测试挂起）
+	select {
+	case stopErr := <-stopDone:
+		assert.NoError(t, stopErr, "Stop() 在回调内调用不应返回错误")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop() 在回调内调用导致死锁（超时 3 秒）")
+	}
+}
+
+// TestWatcher_StopFromErrorCallback 验证在错误回调内调用 Stop() 不会死锁
+// 回归测试 FG-S1：handleError 在 run() goroutine 内执行 safeCallback，
+// 若用户在回调中调用 Stop()，修复前 Stop() 的 runWg.Wait() 会等待 run()
+// 自身退出，形成死锁。修复后通过 runGID 检测重入并跳过 runWg.Wait()。
+func TestWatcher_StopFromErrorCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte("app:\n  name: test\n"), 0600)
+	require.NoError(t, err)
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	stopDone := make(chan error, 1)
+
+	w, err := Watch(cfg, func(c Config, cbErr error) {
+		// 占位回调
+	})
+	require.NoError(t, err)
+
+	// 重新设置回调：在错误回调中调用 Stop()
+	w.callback = func(c Config, cbErr error) {
+		if cbErr != nil {
+			stopDone <- w.Stop()
+		}
+	}
+
+	w.StartAsync()
+	time.Sleep(30 * time.Millisecond)
+
+	// 模拟 fsnotify 错误：handleError 在 run() goroutine 中被调用
+	// 由于无法直接注入 fsnotify 错误通道，我们通过删除监视目录触发错误
+	// 注意：此测试同时验证了 handleError 的 running 检查
+	err = os.RemoveAll(tmpDir)
+	require.NoError(t, err)
+
+	// 等待 Stop 完成或超时
+	select {
+	case stopErr := <-stopDone:
+		assert.NoError(t, stopErr, "Stop() 在错误回调内调用不应返回错误")
+	case <-time.After(3 * time.Second):
+		// fsnotify 可能未产生错误（平台差异），正常停止
+		err = w.Stop()
+		assert.NoError(t, err)
+	}
+}
+
+// TestGoid 验证 goid() 返回有效的 goroutine ID
+func TestGoid(t *testing.T) {
+	id := goid()
+	assert.Greater(t, id, int64(0), "goid() 应返回正整数")
+
+	// 不同 goroutine 应有不同 ID
+	ch := make(chan int64, 1)
+	go func() {
+		ch <- goid()
+	}()
+	otherId := <-ch
+	assert.Greater(t, otherId, int64(0))
+	assert.NotEqual(t, id, otherId, "不同 goroutine 应有不同 ID")
 }

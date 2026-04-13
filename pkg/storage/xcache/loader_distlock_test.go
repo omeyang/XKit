@@ -31,15 +31,17 @@ func TestLoader_Load_WithDistributedLock_AcquiresLock(t *testing.T) {
 	// 创建无 lock 前缀的缓存，便于测试验证
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("loader:lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		// 在加载过程中，锁应该存在
@@ -64,9 +66,10 @@ func TestLoader_Load_WithTimeout_CancelsOnTimeout(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithLoadTimeout(50*time.Millisecond),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		select {
@@ -78,7 +81,7 @@ func TestLoader_Load_WithTimeout_CancelsOnTimeout(t *testing.T) {
 	}
 
 	// When
-	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "mykey", loadFn, time.Hour)
 
 	// Then
 	assert.Error(t, err)
@@ -170,10 +173,11 @@ func TestLoader_Load_WithNegativeTimeout_UsesDefault(t *testing.T) {
 	ctx := context.Background()
 
 	// 使用负数超时
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithLoadTimeout(-1*time.Second),
 		WithSingleflight(false),
 	)
+	require.NoError(t, err)
 
 	var loadCtxDeadline time.Time
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -182,7 +186,7 @@ func TestLoader_Load_WithNegativeTimeout_UsesDefault(t *testing.T) {
 	}
 
 	// When
-	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "mykey", loadFn, time.Hour)
 
 	// Then
 	require.NoError(t, err)
@@ -197,10 +201,11 @@ func TestLoader_Load_WithZeroTimeout_NoDeadline(t *testing.T) {
 	ctx := context.Background()
 
 	// 使用零超时
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithLoadTimeout(0),
 		WithSingleflight(false),
 	)
+	require.NoError(t, err)
 
 	var hasDeadline bool
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -209,7 +214,7 @@ func TestLoader_Load_WithZeroTimeout_NoDeadline(t *testing.T) {
 	}
 
 	// When
-	_, err := loader.Load(ctx, "mykey", loadFn, time.Hour)
+	_, err = loader.Load(ctx, "mykey", loadFn, time.Hour)
 
 	// Then
 	require.NoError(t, err)
@@ -231,16 +236,18 @@ func TestLoader_Load_WithDistributedLock_WhenLockFails_WaitsAndRetries(t *testin
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	// 预先占用锁
 	mr.Set("lock:testkey", "occupied")
@@ -276,16 +283,18 @@ func TestLoader_Load_WithDistributedLock_DoubleCheckAfterLock(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	var loadCount int32
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -299,11 +308,10 @@ func TestLoader_Load_WithDistributedLock_DoubleCheckAfterLock(t *testing.T) {
 	errs := make([]error, 5)
 
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx], errs[idx] = loader.Load(ctx, "dcheck_key", loadFn, time.Hour)
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -327,15 +335,17 @@ func TestLoader_LoadHash_WithDistributedLock_AcquiresLock(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		// 在加载过程中，锁应该存在
@@ -363,16 +373,18 @@ func TestLoader_LoadHash_WithDistributedLock_WhenLockFails_WaitsAndRetries(t *te
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	// 预先占用锁（使用 hashFieldKey 生成一致的锁 key）
 	lockKey := "hlock:" + hashFieldKey("myhash", "myfield")
@@ -409,18 +421,20 @@ func TestLoader_Load_WithDistributedLock_WhenContextCancelled_ReturnsError(t *te
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁，让 waitAndRetry 被触发
 	mr.Set("lock:ctxkey", "occupied")
 	mr.SetTTL("lock:ctxkey", 10*time.Second)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -441,14 +455,15 @@ func TestLoader_LoadHash_WhenBackendFails_ReturnsError(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	require.NoError(t, err)
 	expectedErr := errors.New("backend error")
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return nil, expectedErr
 	}
 
 	// When
-	_, err := loader.LoadHash(ctx, "myhash", "field1", loadFn, time.Hour)
+	_, err = loader.LoadHash(ctx, "myhash", "field1", loadFn, time.Hour)
 
 	// Then
 	assert.ErrorIs(t, err, expectedErr)
@@ -459,9 +474,10 @@ func TestLoader_LoadHash_WithTimeout_CancelsOnTimeout(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithLoadTimeout(50*time.Millisecond),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		select {
@@ -473,7 +489,7 @@ func TestLoader_LoadHash_WithTimeout_CancelsOnTimeout(t *testing.T) {
 	}
 
 	// When
-	_, err := loader.LoadHash(ctx, "myhash", "field1", loadFn, time.Hour)
+	_, err = loader.LoadHash(ctx, "myhash", "field1", loadFn, time.Hour)
 
 	// Then
 	assert.Error(t, err)
@@ -491,7 +507,7 @@ func TestLoader_LoadHash_WithDistributedLock_WhenContextCancelled_ReturnsError(t
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁，让 waitAndRetryHGet 被触发
 	// 使用 hashFieldKey 生成一致的锁 key
@@ -499,12 +515,14 @@ func TestLoader_LoadHash_WithDistributedLock_WhenContextCancelled_ReturnsError(t
 	mr.Set(hashLockKey, "occupied")
 	mr.SetTTL(hashLockKey, 10*time.Second)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(10*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -531,18 +549,20 @@ func TestLoader_Load_WithDistributedLock_WhenCacheStillEmpty_LoadsFromBackend(t 
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁，但不设置缓存值，让 waitAndRetryGet 等待后仍找不到值
 	mr.Set("lock:emptykey", "occupied")
 	mr.SetTTL("lock:emptykey", 150*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(200*time.Millisecond),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	called := false
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -570,7 +590,7 @@ func TestLoader_LoadHash_WithDistributedLock_WhenCacheStillEmpty_LoadsFromBacken
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁，但不设置 hash field，让 waitAndRetryHGet 等待后仍找不到值
 	// 使用 hashFieldKey 生成一致的锁 key
@@ -578,12 +598,14 @@ func TestLoader_LoadHash_WithDistributedLock_WhenCacheStillEmpty_LoadsFromBacken
 	mr.Set(emptyLockKey, "occupied")
 	mr.SetTTL(emptyLockKey, 150*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(200*time.Millisecond),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	called := false
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -615,16 +637,18 @@ func TestLoader_Load_WithDistributedLock_CacheHitAfterLockAcquired(t *testing.T)
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false), // 禁用 singleflight 以便多个请求独立处理
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	var loadCount int32
 	var phase int32 // 0: 初始, 1: 第一个请求获得锁, 2: 第一个请求已写入缓存
@@ -641,27 +665,23 @@ func TestLoader_Load_WithDistributedLock_CacheHitAfterLockAcquired(t *testing.T)
 	errs := make([]error, 2)
 
 	// 第一个请求：获取锁并加载数据
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		atomic.StoreInt32(&phase, 1)
 		results[0], errs[0] = loader.Load(ctx, "race_key", loadFn, time.Hour)
 		atomic.StoreInt32(&phase, 2)
-	}()
+	})
 
 	// 等待第一个请求开始执行
 	time.Sleep(10 * time.Millisecond)
 
 	// 第二个请求：等待锁释放，然后应该在 double-check 时发现缓存已有值
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		// 等待第一个请求写入缓存
 		for atomic.LoadInt32(&phase) < 2 {
 			time.Sleep(5 * time.Millisecond)
 		}
 		results[1], errs[1] = loader.Load(ctx, "race_key", loadFn, time.Hour)
-	}()
+	})
 
 	wg.Wait()
 
@@ -684,16 +704,18 @@ func TestLoader_LoadHash_WithDistributedLock_CacheHitAfterLockAcquired(t *testin
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	var loadCount int32
 	var phase int32
@@ -708,24 +730,20 @@ func TestLoader_LoadHash_WithDistributedLock_CacheHitAfterLockAcquired(t *testin
 	results := make([][]byte, 2)
 	errs := make([]error, 2)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		atomic.StoreInt32(&phase, 1)
 		results[0], errs[0] = loader.LoadHash(ctx, "race_hash", "field1", loadFn, time.Hour)
 		atomic.StoreInt32(&phase, 2)
-	}()
+	})
 
 	time.Sleep(10 * time.Millisecond)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for atomic.LoadInt32(&phase) < 2 {
 			time.Sleep(5 * time.Millisecond)
 		}
 		results[1], errs[1] = loader.LoadHash(ctx, "race_hash", "field1", loadFn, time.Hour)
-	}()
+	})
 
 	wg.Wait()
 
@@ -751,18 +769,20 @@ func TestLoader_Load_WithDistributedLock_WhenDeadlineVeryShort(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁
 	mr.Set("lock:shortkey", "occupied")
 	mr.SetTTL("lock:shortkey", 10*time.Millisecond) // 非常短的 TTL
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(50*time.Millisecond), // 很短的等待时间
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("loaded"), nil
@@ -787,19 +807,21 @@ func TestLoader_LoadHash_WithDistributedLock_WhenDeadlineVeryShort(t *testing.T)
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 使用 hashFieldKey 生成一致的锁 key
 	shortLockKey := "hlock:" + hashFieldKey("shorthash", "field")
 	mr.Set(shortLockKey, "occupied")
 	mr.SetTTL(shortLockKey, 10*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(50*time.Millisecond),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("hash_loaded"), nil
@@ -823,23 +845,16 @@ func TestLoader_Load_WithDistributedLock_WhenLockTTLZero(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
-	loader := NewLoader(cache,
+	_, err = NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(0), // TTL 为 0 是配置错误
 		WithDistributedLockKeyPrefix("lock:"),
 	)
 
-	loadFn := func(ctx context.Context) ([]byte, error) {
-		return []byte("zero_loaded"), nil
-	}
-
-	// When
-	_, err = loader.Load(context.Background(), "zerokey", loadFn, time.Hour)
-
-	// Then - 应该返回配置错误，而不是静默降级
+	// Then - NewLoader 应该返回配置错误
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 	assert.ErrorIs(t, err, ErrInvalidLockTTL)
 }
@@ -860,15 +875,16 @@ func TestLoader_Load_WithDistLock_FirstDoubleCheckHit(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("lock:"),
 	)
+	require.NoError(t, err)
 
 	// 预先占用锁，迫使第一个请求进入 waitAndRetryGet
 	mr.Set("lock:race_first_check", "occupied")
@@ -905,15 +921,16 @@ func TestLoader_LoadHash_WithDistLock_FirstDoubleCheckHit(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("hlock:"),
 	)
+	require.NoError(t, err)
 
 	// 预先占用锁
 	// 使用 hashFieldKey 生成一致的锁 key
@@ -955,18 +972,20 @@ func TestLoader_Load_WithDistLock_WaitTimeAdjusted(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁
 	mr.Set("lock:waitadjust", "occupied")
 	mr.SetTTL("lock:waitadjust", 50*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(80*time.Millisecond), // 短于 100ms，会触发 wait 时间调整
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("adjusted"), nil
@@ -991,19 +1010,21 @@ func TestLoader_LoadHash_WithDistLock_WaitTimeAdjusted(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 使用 hashFieldKey 生成一致的锁 key
 	waitLockKey := "hlock:" + hashFieldKey("waitadjust", "field")
 	mr.Set(waitLockKey, "occupied")
 	mr.SetTTL(waitLockKey, 50*time.Millisecond)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(80*time.Millisecond),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("hash_adjusted"), nil
@@ -1031,18 +1052,20 @@ func TestLoader_Load_WithDistLock_WaitRetry_ContextCancelledAtLoopStart(t *testi
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 预先占用锁，迫使请求进入 waitAndRetryGet
 	mr.Set("lock:ctx_at_start", "occupied")
 	mr.SetTTL("lock:ctx_at_start", 10*time.Second) // 长时间占用
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	// 创建一个非常短的超时 context
 	// 这会让 Get 操作返回 redis.Nil 后，在下一次循环开始时 context 已经过期
@@ -1075,19 +1098,21 @@ func TestLoader_LoadHash_WithDistLock_WaitRetry_ContextCancelledAtLoopStart(t *t
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	// 使用 hashFieldKey 生成一致的锁 key
 	ctxLockKey := "hlock:" + hashFieldKey("ctx_at_start", "field")
 	mr.Set(ctxLockKey, "occupied")
 	mr.SetTTL(ctxLockKey, 10*time.Second)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
@@ -1115,12 +1140,14 @@ func TestLoader_Load_WithDistLock_UnlockError(t *testing.T) {
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadCalled := false
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -1155,12 +1182,14 @@ func TestLoader_LoadHash_WithDistLock_UnlockError(t *testing.T) {
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(false),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(5*time.Second),
 		WithDistributedLockKeyPrefix("hlock:"),
+		WithLoadTimeout(0),
 	)
+	require.NoError(t, err)
 
 	loadCalled := false
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -1186,6 +1215,43 @@ func TestLoader_LoadHash_WithDistLock_UnlockError(t *testing.T) {
 // 外部锁 (ExternalLock) 测试
 // =============================================================================
 
+func TestLoader_Load_WithExternalLock_NilUnlocker_ReturnsConfigError(t *testing.T) {
+	// Given - 外部锁返回 (nil, nil)，应该返回配置错误而非 panic
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { mr.Close() })
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client, WithLockKeyPrefix(""))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
+
+	// 模拟错误的外部锁实现：返回 nil unlocker 但无 error
+	buggyLock := func(_ context.Context, _ string, _ time.Duration) (Unlocker, error) {
+		return nil, nil
+	}
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithDistributedLock(true),
+		WithDistributedLockTTL(5*time.Second),
+		WithExternalLock(buggyLock),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(_ context.Context) ([]byte, error) {
+		return []byte("value"), nil
+	}
+
+	// When - 不应 panic，应返回配置错误后降级重试
+	_, err = loader.Load(context.Background(), "nilunlock", loadFn, time.Hour)
+
+	// Then - handleLockError 将 ErrInvalidConfig 直接返回（不降级）
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 func TestWithExternalLock_SetsOption(t *testing.T) {
 	opts := defaultLoaderOptions()
 	assert.Nil(t, opts.ExternalLock)
@@ -1196,6 +1262,24 @@ func TestWithExternalLock_SetsOption(t *testing.T) {
 	WithExternalLock(fn)(opts)
 
 	assert.NotNil(t, opts.ExternalLock)
+	assert.True(t, opts.EnableDistributedLock)
+}
+
+func TestWithExternalLock_Nil_OnlyClearsFunction(t *testing.T) {
+	opts := defaultLoaderOptions()
+
+	// 先设置外部锁
+	fn := func(ctx context.Context, key string, ttl time.Duration) (Unlocker, error) {
+		return func(ctx context.Context) error { return nil }, nil
+	}
+	WithExternalLock(fn)(opts)
+	assert.True(t, opts.EnableDistributedLock)
+
+	// 设计决策: 传入 nil 仅清除外部锁函数，不修改 EnableDistributedLock 标志，
+	// 避免 WithDistributedLock(true) + WithExternalLock(nil) 意外禁用分布式锁。
+	WithExternalLock(nil)(opts)
+	assert.Nil(t, opts.ExternalLock)
+	assert.True(t, opts.EnableDistributedLock) // 分布式锁标志不受影响
 }
 
 func TestLoader_Load_WithExternalLock_UsesExternalLock(t *testing.T) {
@@ -1209,7 +1293,7 @@ func TestLoader_Load_WithExternalLock_UsesExternalLock(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
@@ -1228,12 +1312,14 @@ func TestLoader_Load_WithExternalLock_UsesExternalLock(t *testing.T) {
 		}, nil
 	}
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithDistributedLockTTL(15*time.Second),
 		WithDistributedLockKeyPrefix("ext:lock:"),
+		WithLoadTimeout(0),
 		WithExternalLock(externalLock),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("external_value"), nil
@@ -1262,7 +1348,7 @@ func TestLoader_LoadHash_WithExternalLock_UsesExternalLock(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
@@ -1275,11 +1361,12 @@ func TestLoader_LoadHash_WithExternalLock_UsesExternalLock(t *testing.T) {
 		return func(ctx context.Context) error { return nil }, nil
 	}
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("ext:hlock:"),
 		WithExternalLock(externalLock),
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("hash_external"), nil
@@ -1307,7 +1394,7 @@ func TestLoader_Load_WithExternalLock_WhenLockFails_WaitsAndRetries(t *testing.T
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
@@ -1316,12 +1403,14 @@ func TestLoader_Load_WithExternalLock_WhenLockFails_WaitsAndRetries(t *testing.T
 		return nil, errors.New("external lock failed")
 	}
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true),
 		WithDistributedLock(true),
 		WithDistributedLockTTL(100*time.Millisecond),
+		WithLoadTimeout(0),
 		WithExternalLock(externalLock),
 	)
+	require.NoError(t, err)
 
 	// 在后台设置缓存值
 	go func() {
@@ -1353,7 +1442,7 @@ func TestLoader_Load_WithExternalLock_UnlockError_LogsWarning(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
@@ -1364,11 +1453,12 @@ func TestLoader_Load_WithExternalLock_UnlockError_LogsWarning(t *testing.T) {
 		}, nil
 	}
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithExternalLock(externalLock),
 		WithLogger(nil), // 禁用日志避免测试输出
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("value"), nil
@@ -1393,15 +1483,16 @@ func TestLoader_Load_WithoutExternalLock_UsesBuiltinLock(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithDistributedLock(true),
 		WithDistributedLockKeyPrefix("builtin:"),
 		// 不设置 ExternalLock
 	)
+	require.NoError(t, err)
 
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		// 验证内置锁存在
@@ -1417,6 +1508,40 @@ func TestLoader_Load_WithoutExternalLock_UsesBuiltinLock(t *testing.T) {
 	assert.Equal(t, []byte("builtin_value"), value)
 }
 
+func TestLoader_Load_WithDistLock_UnlockExpired_LogsInfo(t *testing.T) {
+	// Given - 锁在 Redis 中过期后再 unlock，应走 logInfo 路径（ErrLockExpired）
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { mr.Close() })
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cache, err := NewRedis(client, WithLockKeyPrefix(""))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
+
+	loader, err := NewLoader(cache,
+		WithSingleflight(false),
+		WithDistributedLock(true),
+		WithDistributedLockTTL(5*time.Second), // 足够长，unlock context 不会超时
+		WithDistributedLockKeyPrefix("lock:"),
+		WithLoadTimeout(0),
+	)
+	require.NoError(t, err)
+
+	loadFn := func(ctx context.Context) ([]byte, error) {
+		// 在 loadFn 内让 miniredis 使锁 key 过期
+		mr.FastForward(6 * time.Second)
+		return []byte("value"), nil
+	}
+
+	// When - unlock 时锁已在 Redis 中过期（Lua 脚本返回 0），触发 ErrLockExpired
+	value, err := loader.Load(context.Background(), "expirekey", loadFn, time.Hour)
+
+	// Then - 数据仍应成功返回
+	require.NoError(t, err)
+	assert.Equal(t, []byte("value"), value)
+}
+
 func TestLoader_Load_WithExternalLock_Concurrent(t *testing.T) {
 	// Given - 并发场景下外部锁的正确性
 	mr, err := miniredis.Run()
@@ -1428,7 +1553,7 @@ func TestLoader_Load_WithExternalLock_Concurrent(t *testing.T) {
 	})
 	cache, err := NewRedis(client, WithLockKeyPrefix(""))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = cache.Close() })
+	t.Cleanup(func() { _ = cache.Close(context.Background()) })
 
 	ctx := context.Background()
 
@@ -1446,11 +1571,12 @@ func TestLoader_Load_WithExternalLock_Concurrent(t *testing.T) {
 		}, nil
 	}
 
-	loader := NewLoader(cache,
+	loader, err := NewLoader(cache,
 		WithSingleflight(true), // 启用 singleflight
 		WithDistributedLock(true),
 		WithExternalLock(externalLock),
 	)
+	require.NoError(t, err)
 
 	var loadCount int32
 	loadFn := func(ctx context.Context) ([]byte, error) {
@@ -1465,11 +1591,10 @@ func TestLoader_Load_WithExternalLock_Concurrent(t *testing.T) {
 	errs := make([]error, 10)
 
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			results[idx], errs[idx] = loader.Load(ctx, "concurrentkey", loadFn, time.Hour)
-		}(i)
+		})
 	}
 	wg.Wait()
 

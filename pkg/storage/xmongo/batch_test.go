@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestBulkWrite_NilCollection(t *testing.T) {
+func TestBulkInsert_NilCollection(t *testing.T) {
 	w := &mongoWrapper{
 		client:  nil,
 		options: defaultOptions(),
@@ -18,19 +18,12 @@ func TestBulkWrite_NilCollection(t *testing.T) {
 		map[string]any{"name": "test2"},
 	}
 
-	result, err := w.BulkWrite(context.Background(), nil, docs, BulkOptions{})
+	result, err := w.BulkInsert(context.Background(), nil, docs, BulkOptions{})
 
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrNilCollection)
 }
 
-func TestBulkWrite_EmptyDocs(t *testing.T) {
-	// 注意：由于参数验证顺序的问题（先验证 collection 是否为 nil），
-	// 这个测试需要 mock collection，在短模式下跳过
-	if testing.Short() {
-		t.Skip("skipping test that requires mock collection in short mode")
-	}
-}
 
 func TestBulkOptions_Defaults(t *testing.T) {
 	opts := BulkOptions{}
@@ -87,25 +80,3 @@ func TestBatchCalculation(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 集成测试 - 需要真实 MongoDB
-// =============================================================================
-
-func TestBulkWrite_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	// 需要真实 MongoDB 实例
-}
-
-func TestBulkWrite_Ordered_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}
-
-func TestBulkWrite_LargeBatch_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}

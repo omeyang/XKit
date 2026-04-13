@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/resilience/xbreaker"
@@ -113,9 +114,14 @@ func ExampleNewCompositePolicy() {
 
 // ExampleWithOnStateChange 演示状态变化回调
 func ExampleWithOnStateChange() {
+	// 回调异步执行，使用 WaitGroup 等待完成
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	breaker := xbreaker.NewBreaker("monitored-service",
 		xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(1)),
 		xbreaker.WithOnStateChange(func(name string, from, to xbreaker.State) {
+			defer wg.Done()
 			fmt.Printf("熔断器 %s: %s -> %s\n", name, from, to)
 		}),
 	)
@@ -126,6 +132,9 @@ func ExampleWithOnStateChange() {
 	_ = breaker.Do(ctx, func() error {
 		return errors.New("service unavailable")
 	})
+
+	// 等待异步回调完成
+	wg.Wait()
 
 	// Output: 熔断器 monitored-service: closed -> open
 }
@@ -144,11 +153,15 @@ func ExampleNewBreakerRetryer() {
 	)
 
 	// 组合熔断器和重试器
-	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
+	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	var attempts int
-	err := combo.DoWithRetry(ctx, func(_ context.Context) error {
+	err = combo.DoWithRetry(ctx, func(_ context.Context) error {
 		attempts++
 		if attempts < 2 {
 			return errors.New("temporary failure")
@@ -171,7 +184,11 @@ func ExampleExecuteWithRetry() {
 		xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
 		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
 	)
-	combo := xbreaker.NewBreakerRetryer(breaker, retryer)
+	combo, err := xbreaker.NewBreakerRetryer(breaker, retryer)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	result, err := xbreaker.ExecuteWithRetry(ctx, combo, func() (int, error) {
@@ -186,18 +203,21 @@ func ExampleExecuteWithRetry() {
 	// Output: 结果: 42
 }
 
-// ExampleNewRetryThenBreak 演示先重试后熔断模式
-func ExampleNewRetryThenBreak() {
+// ExampleNewRetryThenBreakWithConfig 演示先重试后熔断模式（推荐方式）
+func ExampleNewRetryThenBreakWithConfig() {
 	// 先重试后熔断：重试期间的失败不影响熔断器计数
 	retryer := xretry.NewRetryer(
 		xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
 		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
 	)
-	breaker := xbreaker.NewBreaker("external-api",
+
+	rtb, err := xbreaker.NewRetryThenBreakWithConfig("external-api", retryer,
 		xbreaker.WithTripPolicy(xbreaker.NewConsecutiveFailures(2)),
 	)
-
-	rtb := xbreaker.NewRetryThenBreak(retryer, breaker)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 	ctx := context.Background()
 
 	// 第一次调用：重试3次都失败 -> 熔断器记录1次失败
@@ -205,8 +225,6 @@ func ExampleNewRetryThenBreak() {
 		return errors.New("always fail")
 	})
 
-	// 注意：使用 rtb.State() 和 rtb.Counts() 获取状态
-	// 传入的 breaker 仅用于配置，状态由 rtb 内部维护
 	fmt.Println("第一次调用后状态:", rtb.State())
 	fmt.Println("总失败数:", rtb.Counts().TotalFailures)
 	// Output:
@@ -220,7 +238,11 @@ func ExampleNewManagedBreaker() {
 	breaker := xbreaker.NewBreaker("typed-service")
 
 	// 包装为特定类型的托管熔断器
-	managed := xbreaker.NewManagedBreaker[string](breaker)
+	managed, err := xbreaker.NewManagedBreaker[string](breaker)
+	if err != nil {
+		fmt.Println("错误:", err)
+		return
+	}
 
 	// 直接执行，无需传入 context
 	result, err := managed.Execute(func() (string, error) {
@@ -283,13 +305,9 @@ func ExampleIsOpen() {
 	if xbreaker.IsBreakerError(err) {
 		fmt.Println("这是熔断器错误")
 	}
-	if xbreaker.IsRecoverable(err) {
-		fmt.Println("错误可恢复，稍后重试")
-	}
 	// Output:
 	// 熔断器已打开
 	// 这是熔断器错误
-	// 错误可恢复，稍后重试
 }
 
 // ExampleBreaker_Counts 演示获取熔断器计数

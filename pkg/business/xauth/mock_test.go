@@ -3,8 +3,15 @@ package xauth
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 )
+
+// testHandlerMaxBodyBytes 限制测试 mock server 解析的请求体大小。
+// 用法：在 mock handler 入口处显式调用 r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
+// 之所以不用 wrapper helper，是因为 gosec G120 不跟踪跨函数的 MaxBytesReader 调用，
+// 必须在 FormValue/ParseForm 同一个函数体内出现。
+const testHandlerMaxBodyBytes = 1 << 20 // 1 MiB
 
 // =============================================================================
 // Mock CacheStore
@@ -94,11 +101,30 @@ func (m *mockCacheStore) SetPlatformData(_ context.Context, tenantID string, fie
 	return nil
 }
 
+func (m *mockCacheStore) DeleteToken(_ context.Context, tenantID string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.tokens, tenantID)
+	return nil
+}
+
+func (m *mockCacheStore) DeletePlatformData(_ context.Context, tenantID string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.platformData, tenantID)
+	return nil
+}
+
 func (m *mockCacheStore) Delete(_ context.Context, tenantID string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.tokens, tenantID)
@@ -207,7 +233,15 @@ func (m *mockClient) Request(_ context.Context, _ *AuthRequest) error {
 	return m.requestErr
 }
 
-func (m *mockClient) Close() error {
+func (m *mockClient) InvalidateToken(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockClient) InvalidatePlatformCache(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockClient) Close(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true
@@ -217,6 +251,43 @@ func (m *mockClient) Close() error {
 // =============================================================================
 // Test Helpers
 // =============================================================================
+
+// mustNewTokenManager 创建 TokenManager，失败时终止测试。
+func mustNewTokenManager(t *testing.T, cfg TokenManagerConfig) *TokenManager {
+	t.Helper()
+	mgr, err := NewTokenManager(cfg)
+	if err != nil {
+		t.Fatalf("NewTokenManager failed: %v", err)
+	}
+	return mgr
+}
+
+// mustNewPlatformManager 创建 PlatformManager，失败时终止测试。
+// 如果 TokenMgr 为 nil，自动创建一个 stub（仅用于不涉及 API 调用的测试）。
+func mustNewPlatformManager(t *testing.T, cfg PlatformManagerConfig) *PlatformManager {
+	t.Helper()
+	if cfg.TokenMgr == nil {
+		cfg.TokenMgr = stubTokenMgr(t, cfg.HTTP)
+	}
+	mgr, err := NewPlatformManager(cfg)
+	if err != nil {
+		t.Fatalf("NewPlatformManager failed: %v", err)
+	}
+	return mgr
+}
+
+// stubTokenMgr 创建一个最小的 TokenManager stub（用于不涉及 Token API 调用的测试）。
+func stubTokenMgr(t *testing.T, httpClient *HTTPClient) *TokenManager {
+	t.Helper()
+	if httpClient == nil {
+		httpClient = NewHTTPClient(HTTPClientConfig{BaseURL: "https://stub.test"})
+	}
+	return mustNewTokenManager(t, TokenManagerConfig{
+		Config: testConfig(),
+		HTTP:   httpClient,
+		Cache:  NewTokenCache(TokenCacheConfig{}),
+	})
+}
 
 // testToken 创建测试用的 TokenInfo。
 func testToken(accessToken string, expiresIn int64) *TokenInfo {
@@ -235,6 +306,7 @@ func testToken(accessToken string, expiresIn int64) *TokenInfo {
 func testConfig() *Config {
 	return &Config{
 		Host:                  "https://auth.test.com",
+		AllowInsecure:         true, // 测试使用 httptest（HTTP），需要允许非加密连接
 		ClientID:              "test-client",
 		ClientSecret:          "test-secret",
 		Timeout:               5 * time.Second,

@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omeyang/xkit/internal/storageopt"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // =============================================================================
@@ -57,16 +59,19 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 		captured = info
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 模拟慢查询触发
@@ -84,16 +89,19 @@ func TestWrapper_SlowQueryHook(t *testing.T) {
 }
 
 func TestWrapper_SlowQueryHook_NilHook(t *testing.T) {
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      nil, // 无钩子
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	info := SlowQueryInfo{
@@ -111,16 +119,19 @@ func TestWrapper_SlowQueryHook_BelowThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时低于阈值
@@ -139,15 +150,19 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
+
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时高于阈值
@@ -166,15 +181,19 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		HealthTimeout:      5 * time.Second,
 		SlowQueryThreshold: 0, // 禁用
 		SlowQueryHook:      hook,
 	}
+
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	info := SlowQueryInfo{
@@ -184,6 +203,47 @@ func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 	triggered := w.maybeSlowQuery(context.Background(), info)
 	assert.False(t, called)
 	assert.False(t, triggered)
+}
+
+func TestNewSlowQueryDetector_WithAsyncHook(t *testing.T) {
+	opts := &options{
+		SlowQueryThreshold:      100 * time.Millisecond,
+		AsyncSlowQueryHook:      func(_ SlowQueryInfo) {},
+		AsyncSlowQueryWorkers:   5,
+		AsyncSlowQueryQueueSize: 100,
+	}
+
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+	assert.NotNil(t, detector)
+	detector.Close()
+}
+
+func TestNewSlowQueryDetector_WithBothHooks(t *testing.T) {
+	var syncCalled bool
+	opts := &options{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook: func(_ context.Context, _ SlowQueryInfo) {
+			syncCalled = true
+		},
+		AsyncSlowQueryHook:      func(_ SlowQueryInfo) {},
+		AsyncSlowQueryWorkers:   2,
+		AsyncSlowQueryQueueSize: 10,
+	}
+
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+	assert.NotNil(t, detector)
+
+	w := &clickhouseWrapper{
+		conn:              nil,
+		options:           opts,
+		slowQueryDetector: detector,
+	}
+
+	w.maybeSlowQuery(context.Background(), SlowQueryInfo{Duration: 200 * time.Millisecond})
+	assert.True(t, syncCalled)
+	detector.Close()
 }
 
 func TestWrapper_Close_NilConn(t *testing.T) {
@@ -197,14 +257,33 @@ func TestWrapper_Close_NilConn(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestWrapper_Conn_NilConn(t *testing.T) {
+func TestWrapper_Close_Idempotent(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	// 第一次关闭成功
+	err := w.Close()
+	assert.NoError(t, err)
+
+	// 第二次关闭返回 ErrClosed
+	err = w.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+
+	// 第三次也返回 ErrClosed
+	err = w.Close()
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+func TestWrapper_Client_NilConn(t *testing.T) {
 	w := &clickhouseWrapper{
 		conn:    nil,
 		options: defaultOptions(),
 	}
 
 	// 返回 nil conn
-	assert.Nil(t, w.Conn())
+	assert.Nil(t, w.Client())
 }
 
 func TestWrapper_Stats_Pool_NilConn(t *testing.T) {
@@ -262,15 +341,18 @@ func TestWrapper_SlowQueryCounter(t *testing.T) {
 		callCount++
 	}
 
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 触发多次慢查询
@@ -290,15 +372,18 @@ func TestWrapper_SlowQueryHook_ExactThreshold(t *testing.T) {
 		called = true
 	}
 
-	opts := &Options{
+	opts := &options{
 		SlowQueryThreshold: 100 * time.Millisecond,
 		SlowQueryHook:      hook,
 	}
 
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
 	w := &clickhouseWrapper{
 		conn:              nil,
 		options:           opts,
-		slowQueryDetector: newSlowQueryDetector(opts),
+		slowQueryDetector: detector,
 	}
 
 	// 耗时等于阈值也应该触发
@@ -364,6 +449,51 @@ func TestBatchInsert_EmptyTable(t *testing.T) {
 
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrEmptyTable)
+}
+
+func TestBatchInsert_InvalidTableName(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.BatchInsert(context.Background(), "table; DROP TABLE--", []any{1}, BatchOptions{})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrInvalidTableName)
+}
+
+func TestValidateTableName(t *testing.T) {
+	tests := []struct {
+		name    string
+		table   string
+		wantErr error
+	}{
+		{"空表名", "", ErrEmptyTable},
+		{"简单表名", "users", nil},
+		{"带数据库前缀", "mydb.users", nil},
+		{"下划线表名", "_temp_table", nil},
+		{"反引号表名", "`my table`", nil},
+		{"反引号带数据库", "`my db`.`my table`", nil},
+		{"SQL 注入", "table; DROP TABLE--", ErrInvalidTableName},
+		{"特殊字符", "table@name", ErrInvalidTableName},
+		{"反引号含换行", "`table\nname`", ErrInvalidTableName},
+		{"反引号含回车", "`table\rname`", ErrInvalidTableName},
+		{"反引号含空字节", "`table\x00name`", ErrInvalidTableName},
+		{"反引号含制表符", "`table\tname`", ErrInvalidTableName},
+		{"数字开头", "123table", ErrInvalidTableName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTableName(tt.table)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestBatchInsert_EmptyRows(t *testing.T) {
@@ -454,15 +584,32 @@ func TestValidateQuerySyntax(t *testing.T) {
 		{"带分号的正常查询", "SELECT * FROM users;", nil, "SELECT * FROM users"},
 		{"空查询", "", ErrEmptyQuery, ""},
 		{"只有空白", "   ", ErrEmptyQuery, ""},
+		// FORMAT 子句检测（末尾锚定）
 		{"包含 FORMAT", "SELECT * FROM users FORMAT JSON", ErrQueryContainsFormat, ""},
 		{"包含小写 format", "SELECT * FROM users format TabSeparated", ErrQueryContainsFormat, ""},
+		{"FORMAT 末尾带空格", "SELECT * FROM users FORMAT CSV  ", ErrQueryContainsFormat, ""},
+		{"FORMAT 函数不误判", "SELECT FORMAT(date, '%Y') FROM t", nil, "SELECT FORMAT(date, '%Y') FROM t"},
+		{"FORMAT 在 LIKE 中不误判", "SELECT * FROM users WHERE name LIKE '%FORMAT%'", nil, "SELECT * FROM users WHERE name LIKE '%FORMAT%'"},
+		{"FORMAT 在字符串常量中不误判", "SELECT * FROM users WHERE type = 'FORMAT'", nil, "SELECT * FROM users WHERE type = 'FORMAT'"},
+		{"FORMATTER 不匹配", "SELECT * FROM users WHERE type = 'FORMATTER'", nil, "SELECT * FROM users WHERE type = 'FORMATTER'"},
+		// SETTINGS 子句检测（key=value 模式）
 		{"包含 SETTINGS", "SELECT * FROM users SETTINGS max_threads=4", ErrQueryContainsSettings, ""},
 		{"包含小写 settings", "SELECT * FROM users settings enable_optimize=1", ErrQueryContainsSettings, ""},
-		// 已知限制：正则使用 \b 单词边界，无法区分 SQL 关键字和字符串常量中的同名词
-		// 实际使用中很少在字符串常量中使用 FORMAT/SETTINGS 作为关键字
-		{"FORMAT 在字符串中", "SELECT * FROM users WHERE name LIKE '%FORMAT%'", ErrQueryContainsFormat, ""},
-		{"FORMATTER 不匹配", "SELECT * FROM users WHERE type = 'FORMATTER'", nil, "SELECT * FROM users WHERE type = 'FORMATTER'"},
+		{"SETTINGS 带空格等号", "SELECT * FROM users SETTINGS max_threads = 4", ErrQueryContainsSettings, ""},
 		{"SETTINGS_KEY 不匹配", "SELECT SETTINGS_KEY FROM config", nil, "SELECT SETTINGS_KEY FROM config"},
+		// LIMIT/OFFSET 末尾检测
+		{"末尾 LIMIT", "SELECT * FROM users LIMIT 10", ErrQueryContainsLimitOffset, ""},
+		{"末尾 LIMIT OFFSET", "SELECT * FROM users LIMIT 10 OFFSET 5", ErrQueryContainsLimitOffset, ""},
+		{"末尾小写 limit", "SELECT * FROM users limit 100", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 问号", "SELECT * FROM users LIMIT ?", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 命名参数", "SELECT * FROM users LIMIT {n:UInt64}", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT OFFSET 命名参数", "SELECT * FROM users LIMIT {n:UInt64} OFFSET {off:UInt64}", ErrQueryContainsLimitOffset, ""},
+		{"参数化 LIMIT 位置参数", "SELECT * FROM users LIMIT $1", ErrQueryContainsLimitOffset, ""},
+		{"子查询中 LIMIT 不拦截", "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0", nil, "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0"},
+		// ClickHouse LIMIT 语法变体
+		{"末尾 LIMIT n,m", "SELECT * FROM users LIMIT 5, 10", ErrQueryContainsLimitOffset, ""},
+		{"末尾 LIMIT BY", "SELECT * FROM users LIMIT 1 BY user_id", ErrQueryContainsLimitOffset, ""},
+		{"末尾 LIMIT WITH TIES", "SELECT * FROM users ORDER BY id LIMIT 10 WITH TIES", ErrQueryContainsLimitOffset, ""},
 	}
 
 	for _, tt := range tests {
@@ -477,6 +624,70 @@ func TestValidateQuerySyntax(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueryPage_PageSizeTooLarge(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize + 1,
+	})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrPageSizeTooLarge)
+}
+
+func TestQueryPage_PageSizeAtMax(t *testing.T) {
+	// MaxPageSize 正好等于限制值时应该通过（会在后续查询时失败，但分页验证通过）
+	_, _, err := validatePageOptions("SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: MaxPageSize,
+	})
+	assert.NoError(t, err)
+}
+
+func TestQueryPage_ContainsLimitOffset(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(),
+		"SELECT * FROM users LIMIT 10",
+		PageOptions{Page: 1, PageSize: 10})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrQueryContainsLimitOffset)
+}
+
+func TestQueryPage_OffsetTooLarge(t *testing.T) {
+	w := &clickhouseWrapper{
+		conn:    nil,
+		options: defaultOptions(),
+	}
+
+	// Page=10002, PageSize=10 → offset = 100010 > MaxOffset (100000)
+	result, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     10002,
+		PageSize: 10,
+	})
+
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrOffsetTooLarge)
+}
+
+func TestQueryPage_OffsetAtMax(t *testing.T) {
+	// offset 正好等于 MaxOffset 时应该通过
+	// Page=10001, PageSize=10 → offset = 100000 = MaxOffset
+	_, _, err := validatePageOptions("SELECT * FROM users", PageOptions{
+		Page:     10001,
+		PageSize: 10,
+	})
+	assert.NoError(t, err)
 }
 
 func TestQueryPage_ContainsFormat(t *testing.T) {
@@ -537,7 +748,7 @@ func TestCalculateTotalPages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateTotalPages(tt.total, tt.pageSize)
+			result := storageopt.CalculateTotalPages(tt.total, tt.pageSize)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

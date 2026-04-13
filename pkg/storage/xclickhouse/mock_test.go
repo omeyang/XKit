@@ -31,6 +31,7 @@ type mockConn struct {
 	queryFunc       func(ctx context.Context, query string, args ...any) (driver.Rows, error)
 	prepareBatchErr error
 	batchFunc       func(ctx context.Context, query string) driver.Batch
+	stats           driver.Stats
 }
 
 func (m *mockConn) Contributors() []string {
@@ -83,7 +84,7 @@ func (m *mockConn) Ping(_ context.Context) error {
 }
 
 func (m *mockConn) Stats() driver.Stats {
-	return driver.Stats{}
+	return m.stats
 }
 
 func (m *mockConn) Close() error {
@@ -194,7 +195,7 @@ func (m *mockColumnType) ScanType() reflect.Type {
 	if m.scanType != nil {
 		return m.scanType
 	}
-	return reflect.TypeOf((*any)(nil)).Elem()
+	return reflect.TypeFor[any]()
 }
 
 func (m *mockColumnType) DatabaseTypeName() string {
@@ -216,12 +217,13 @@ func (m *mockBatchColumn) AppendRow(_ any) error {
 type mockBatch struct {
 	appendErr error
 	sendErr   error
+	abortErr  error
 	sent      bool
 	rows      int
 }
 
 func (m *mockBatch) Abort() error {
-	return nil
+	return m.abortErr
 }
 
 func (m *mockBatch) Append(_ ...any) error {
@@ -271,6 +273,34 @@ func (m *mockBatch) Columns() []column.Interface {
 func (m *mockBatch) Close() error {
 	return nil
 }
+
+// cancelOnAppendBatch 在指定行数后取消 context 的 mock batch。
+// 用于测试 append 成功后、send 前 context 被取消的场景。
+type cancelOnAppendBatch struct {
+	cancel          context.CancelFunc
+	cancelAfterRows int
+	appendCount     *int
+}
+
+func (b *cancelOnAppendBatch) Abort() error                    { return nil }
+func (b *cancelOnAppendBatch) Send() error                     { return nil }
+func (b *cancelOnAppendBatch) Flush() error                    { return nil }
+func (b *cancelOnAppendBatch) IsSent() bool                    { return false }
+func (b *cancelOnAppendBatch) Rows() int                       { return *b.appendCount }
+func (b *cancelOnAppendBatch) Columns() []column.Interface     { return nil }
+func (b *cancelOnAppendBatch) Column(_ int) driver.BatchColumn { return &mockBatchColumn{} }
+func (b *cancelOnAppendBatch) Append(_ ...any) error           { return nil }
+func (b *cancelOnAppendBatch) Close() error                    { return nil }
+
+func (b *cancelOnAppendBatch) AppendStruct(_ any) error {
+	*b.appendCount++
+	if *b.appendCount >= b.cancelAfterRows {
+		b.cancel()
+	}
+	return nil
+}
+
+func (b *cancelOnAppendBatch) ScanStruct(_ any) error { return nil }
 
 // =============================================================================
 // 辅助构造函数

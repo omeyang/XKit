@@ -2,9 +2,11 @@ package xsemaphore
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,11 @@ func TestWarmupScripts(t *testing.T) {
 
 	ctx := context.Background()
 
+	t.Run("nil context returns error", func(t *testing.T) {
+		err := WarmupScripts(nil, client) //nolint:staticcheck // 测试 nil context 校验
+		assert.ErrorIs(t, err, ErrNilContext)
+	})
+
 	t.Run("nil client returns error", func(t *testing.T) {
 		err := WarmupScripts(ctx, nil)
 		assert.ErrorIs(t, err, ErrNilClient)
@@ -51,6 +58,29 @@ func TestWarmupScripts(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	})
+}
+
+func TestWarmupScripts_CompatMode(t *testing.T) {
+	// 模拟 Redis 代理不支持 EVAL 的场景
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+
+	// 拦截 EVAL 命令，返回代理权限拒绝错误
+	mr.Server().SetPreHook(func(p *server.Peer, cmd string, _ ...string) bool {
+		if strings.EqualFold(cmd, "EVAL") || strings.EqualFold(cmd, "EVALSHA") {
+			p.WriteError("ERR auth permission deny")
+			return true
+		}
+		return false
+	})
+
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	// WarmupScripts 应探测到 compat 模式并返回 nil
+	err = WarmupScripts(context.Background(), client)
+	assert.NoError(t, err)
 }
 
 func TestLuaScripts_Embedded(t *testing.T) {

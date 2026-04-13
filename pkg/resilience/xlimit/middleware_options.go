@@ -34,8 +34,11 @@ func defaultMiddlewareOptions() *MiddlewareOptions {
 }
 
 // defaultDenyHandler 默认的拒绝处理器
-func defaultDenyHandler(w http.ResponseWriter, _ *http.Request, result *Result) {
-	result.SetHeaders(w)
+//
+// 设计决策: 不在拒绝处理器中设置限流头。限流头由 HTTPMiddleware
+// 根据 EnableHeaders 选项统一控制（允许和拒绝路径一致）。
+// 自定义拒绝处理器如需额外头信息，可通过 result.Headers() 自行设置。
+func defaultDenyHandler(w http.ResponseWriter, _ *http.Request, _ *Result) {
 	w.WriteHeader(http.StatusTooManyRequests)
 	writeResponse(w, []byte("Too Many Requests"))
 }
@@ -47,6 +50,16 @@ func writeResponse(w http.ResponseWriter, data []byte) {
 		// 写入失败通常表示客户端已断开连接
 		// 此时无法采取补救措施，显式处理错误以满足 errcheck
 		return
+	}
+}
+
+// sanitize 防御性回退：用户可能通过选项将关键字段置为 nil
+func (m *MiddlewareOptions) sanitize() {
+	if m.KeyExtractor == nil {
+		m.KeyExtractor = DefaultHTTPKeyExtractor()
+	}
+	if m.DenyHandler == nil {
+		m.DenyHandler = defaultDenyHandler
 	}
 }
 

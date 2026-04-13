@@ -15,8 +15,9 @@ import (
 func newTestClient(t *testing.T, mockClient *MocketcdClient) *Client {
 	t.Helper()
 	return &Client{
-		client: mockClient,
-		config: &Config{Endpoints: []string{"localhost:2379"}},
+		client:  mockClient,
+		config:  &Config{Endpoints: []string{"localhost:2379"}},
+		closeCh: make(chan struct{}),
 	}
 }
 
@@ -322,6 +323,36 @@ func TestKV_PutWithTTL_SmallTTL(t *testing.T) {
 	// 500ms 会被转换为 1 秒
 	mockClient.EXPECT().
 		Grant(ctx, int64(1)).
+		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
+
+	mockClient.EXPECT().
+		Put(ctx, key, string(value), gomock.Any()).
+		Return(&clientv3.PutResponse{}, nil)
+
+	err := c.PutWithTTL(ctx, key, value, ttl)
+	if err != nil {
+		t.Fatalf("PutWithTTL() error = %v, want nil", err)
+	}
+}
+
+// TestKV_PutWithTTL_CeilRounding 测试 PutWithTTL 使用向上取整（ceil）。
+// 1.5 秒应被转换为 2 秒，而非向下取整为 1 秒。
+func TestKV_PutWithTTL_CeilRounding(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	ttl := 1500 * time.Millisecond // 1.5 秒，向上取整为 2 秒
+	leaseID := clientv3.LeaseID(123456)
+
+	// ceil(1.5) = 2
+	mockClient.EXPECT().
+		Grant(ctx, int64(2)).
 		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
 
 	mockClient.EXPECT().
@@ -714,6 +745,117 @@ func TestKV_Count_Error(t *testing.T) {
 	}
 }
 
+// TestKV_PutWithTTL_PutError_RevokeError 测试 PutWithTTL 写入失败且租约撤销也失败时，错误被优雅忽略。
+func TestKV_PutWithTTL_PutError_RevokeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMocketcdClient(ctrl)
+	c := newTestClient(t, mockClient)
+
+	ctx := context.Background()
+	key := "test-key"
+	value := []byte("test-value")
+	ttl := 10 * time.Second
+	leaseID := clientv3.LeaseID(123456)
+
+	mockClient.EXPECT().
+		Grant(ctx, int64(10)).
+		Return(&clientv3.LeaseGrantResponse{ID: leaseID}, nil)
+
+	mockClient.EXPECT().
+		Put(ctx, key, string(value), gomock.Any()).
+		Return(nil, errors.New("put failed"))
+
+	// Revoke 也失败，tryRevokeLease 应优雅处理
+	mockClient.EXPECT().
+		Revoke(gomock.Any(), leaseID).
+		Return(nil, errors.New("revoke failed"))
+
+	err := c.PutWithTTL(ctx, key, value, ttl)
+	if err == nil {
+		t.Fatal("PutWithTTL() error = nil, want error")
+	}
+}
+
+// TestKV_NilContext 测试所有 KV 方法在 ctx 为 nil 时返回 ErrNilContext。
+func TestKV_NilContext(t *testing.T) {
+	c := &Client{
+		config:  &Config{Endpoints: []string{"localhost:2379"}},
+		closeCh: make(chan struct{}),
+	}
+
+	t.Run("Get", func(t *testing.T) {
+		_, err := c.Get(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Get(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("GetWithRevision", func(t *testing.T) {
+		_, _, err := c.GetWithRevision(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("GetWithRevision(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Put", func(t *testing.T) {
+		err := c.Put(nil, "key", []byte("value")) //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Put(nil, key, value) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("PutWithTTL", func(t *testing.T) {
+		err := c.PutWithTTL(nil, "key", []byte("value"), time.Second) //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("PutWithTTL(nil, ...) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		err := c.Delete(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Delete(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("DeleteWithPrefix", func(t *testing.T) {
+		_, err := c.DeleteWithPrefix(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("DeleteWithPrefix(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		_, err := c.List(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("List(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("ListKeys", func(t *testing.T) {
+		_, err := c.ListKeys(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("ListKeys(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Exists", func(t *testing.T) {
+		_, err := c.Exists(nil, "key") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Exists(nil, key) = %v, want %v", err, ErrNilContext)
+		}
+	})
+
+	t.Run("Count", func(t *testing.T) {
+		_, err := c.Count(nil, "prefix") //nolint:staticcheck // 测试 nil ctx 防御
+		if err != ErrNilContext {
+			t.Errorf("Count(nil, prefix) = %v, want %v", err, ErrNilContext)
+		}
+	})
+}
+
 // TestClient_RawClient 测试 RawClient 返回 nil（使用 mock 时）。
 func TestClient_RawClient(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -740,7 +882,7 @@ func TestClient_Close_Success(t *testing.T) {
 		Close().
 		Return(nil)
 
-	err := c.Close()
+	err := c.Close(context.Background())
 	if err != nil {
 		t.Fatalf("Close() error = %v, want nil", err)
 	}
@@ -751,7 +893,7 @@ func TestClient_Close_Success(t *testing.T) {
 	}
 
 	// 第二次关闭不应该调用底层 Close
-	err = c.Close()
+	err = c.Close(context.Background())
 	if err != nil {
 		t.Fatalf("second Close() error = %v, want nil", err)
 	}
@@ -770,7 +912,7 @@ func TestClient_Close_Error(t *testing.T) {
 		Close().
 		Return(expectedErr)
 
-	err := c.Close()
+	err := c.Close(context.Background())
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("Close() error = %v, want %v", err, expectedErr)
 	}

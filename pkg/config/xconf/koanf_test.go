@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,6 +150,64 @@ func TestNew_InvalidJSON(t *testing.T) {
 	assert.ErrorIs(t, err, ErrParseFailed)
 }
 
+func TestNew_EmptyDelim(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNew_EmptyTag(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
+func TestNewFromBytes_EmptyDelim(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNewFromBytes_EmptyTag(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
+func TestNew_NilOption(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewFromBytes_NilOption(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNew_RelativePathAbsolutized(t *testing.T) {
+	// 验证相对路径被转换为绝对路径
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(testYAMLContent), 0600)
+	require.NoError(t, err)
+
+	// 使用相对路径创建配置（构造一个相对于 tmpDir 的路径）
+	relPath := filepath.Join(tmpDir, ".", "config.yaml")
+	cfg, err := New(relPath)
+	require.NoError(t, err)
+
+	// Path() 应返回绝对路径
+	assert.True(t, filepath.IsAbs(cfg.Path()), "Path() should return absolute path, got: %s", cfg.Path())
+}
+
 func TestNew_WithOptions(t *testing.T) {
 	content := `
 app:
@@ -248,6 +307,13 @@ func TestNewFromBytes_UnsupportedFormat(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnsupportedFormat)
 }
 
+func TestNewFromBytes_InvalidData(t *testing.T) {
+	// 非空但格式错误的数据应返回 ErrParseFailed
+	cfg, err := NewFromBytes([]byte("{invalid json}"), FormatJSON)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrParseFailed)
+}
+
 // =============================================================================
 // Unmarshal 测试
 // =============================================================================
@@ -284,6 +350,19 @@ func TestUnmarshal_Partial(t *testing.T) {
 	assert.True(t, app.Debug)
 }
 
+func TestUnmarshal_TypeMismatch(t *testing.T) {
+	// 将标量值反序列化到结构体指针会触发底层 mapstructure 错误
+	cfg, err := NewFromBytes([]byte(`key: just_a_string`), FormatYAML)
+	require.NoError(t, err)
+
+	type S struct {
+		Name string `koanf:"name"`
+	}
+	var s S
+	err = cfg.Unmarshal("key", &s)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+}
+
 func TestUnmarshal_NonexistentPath(t *testing.T) {
 	path := createTempFile(t, "config.yaml", testYAMLContent)
 
@@ -305,7 +384,7 @@ func TestMustUnmarshal_Success(t *testing.T) {
 
 	var appCfg AppConfig
 	assert.NotPanics(t, func() {
-		cfg.MustUnmarshal("", &appCfg)
+		MustUnmarshal(cfg, "", &appCfg)
 	})
 
 	assert.Equal(t, "test-app", appCfg.App.Name)
@@ -320,8 +399,46 @@ func TestMustUnmarshal_Panic(t *testing.T) {
 	// 传入非指针会导致反序列化失败
 	var appCfg AppConfig
 	assert.Panics(t, func() {
-		cfg.MustUnmarshal("", appCfg) // 注意：没有 &
+		MustUnmarshal(cfg, "", appCfg) // 注意：没有 &
 	})
+}
+
+func TestMustUnmarshal_NilConfig(t *testing.T) {
+	var target AppConfig
+	assert.PanicsWithValue(t, "xconf: MustUnmarshal called with nil Config", func() {
+		MustUnmarshal(nil, "", &target)
+	})
+}
+
+func TestUnmarshal_NilTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	err = cfg.Unmarshal("", nil)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NonPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// 非指针 target 应被 xconf 自身拦截（而非下层 mapstructure 报错）
+	var appCfg AppConfig
+	err = cfg.Unmarshal("", appCfg) // 注意：没有 &
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NilPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// nil 指针 target 应被拦截
+	var appCfg *AppConfig
+	err = cfg.Unmarshal("", appCfg)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
 }
 
 // =============================================================================
@@ -365,8 +482,45 @@ func TestReload_FromBytes_Error(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cfg.Reload()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot reload config created from bytes")
+	assert.ErrorIs(t, err, ErrNotFromFile)
+}
+
+func TestReload_InvalidContent(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	// 写入无效内容
+	err = os.WriteFile(path, []byte("invalid: yaml: content: ::::"), 0600)
+	require.NoError(t, err)
+
+	// 重载应失败但保留旧配置
+	err = cfg.Reload()
+	assert.ErrorIs(t, err, ErrParseFailed)
+
+	// 旧配置仍可访问
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+}
+
+func TestReload_EmptyFile(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+
+	// 文件被清空（模拟截断场景）
+	err = os.WriteFile(path, []byte{}, 0600)
+	require.NoError(t, err)
+
+	// Reload 应成功，配置变为空（与 New 对空文件的行为一致）
+	err = cfg.Reload()
+	require.NoError(t, err)
+
+	// 配置现在为空
+	assert.Empty(t, cfg.Client().String("app.name"))
 }
 
 func TestReload_FileDeleted(t *testing.T) {
@@ -394,25 +548,21 @@ func TestReload_Concurrent(t *testing.T) {
 	const goroutines = 10
 
 	// 并发读取和重载
-	for i := 0; i < goroutines; i++ {
-		wg.Add(2)
-
+	for range goroutines {
 		// 读取 goroutine
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+		wg.Go(func() {
+			for range 100 {
 				_ = cfg.Client().String("app.name")
 			}
-		}()
+		})
 
 		// 重载 goroutine
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 10; j++ {
+		wg.Go(func() {
+			for range 10 {
 				// 忽略重载错误，仅测试并发安全性
 				_ = cfg.Reload() //nolint:errcheck
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -453,6 +603,14 @@ func TestDetectFormat(t *testing.T) {
 	}
 }
 
+func TestLoadData_InvalidFormat_Panics(t *testing.T) {
+	k := koanf.New(".")
+	assert.Panics(t, func() {
+		err := loadData(k, []byte("key: value"), Format("toml"))
+		t.Errorf("expected panic, got: %v", err)
+	})
+}
+
 func TestIsValidFormat(t *testing.T) {
 	assert.True(t, isValidFormat(FormatYAML))
 	assert.True(t, isValidFormat(FormatJSON))
@@ -473,6 +631,44 @@ func TestEmptyConfigFile(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyConfigFile_JSON(t *testing.T) {
+	// 空 JSON 文件也应该可以加载（与 NewFromBytes 行为一致）
+	path := createTempFile(t, "config.json", "")
+
+	cfg, err := New(path)
+	require.NoError(t, err, "New(empty.json) should succeed like NewFromBytes(empty, JSON)")
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyData_ConsistentBehavior(t *testing.T) {
+	// 契约测试：New 和 NewFromBytes 对空数据的行为必须一致（包括 JSON 格式）
+	for _, format := range []struct {
+		name string
+		ext  string
+		fmt  Format
+	}{
+		{"YAML", "yaml", FormatYAML},
+		{"JSON", "json", FormatJSON},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			// New: 空文件
+			path := createTempFile(t, "empty."+format.ext, "")
+			cfgFile, err := New(path)
+			require.NoError(t, err, "New(empty.%s) should succeed", format.ext)
+
+			// NewFromBytes: 空数据
+			cfgBytes, err := NewFromBytes([]byte{}, format.fmt)
+			require.NoError(t, err, "NewFromBytes(empty, %s) should succeed", format.name)
+
+			// 两者都返回空配置
+			assert.Empty(t, cfgFile.Client().String("any.key"))
+			assert.Empty(t, cfgBytes.Client().String("any.key"))
+		})
+	}
 }
 
 func TestNestedConfig(t *testing.T) {

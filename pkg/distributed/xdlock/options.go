@@ -2,8 +2,46 @@ package xdlock
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"github.com/omeyang/xkit/internal/rediscompat"
 )
+
+// maxKeyLength 锁 key 的最大长度（字节）。
+const maxKeyLength = 512
+
+// unlockTimeout 解锁操作的清理超时时间。
+// 当调用方的 context 已取消/超时时，使用此超时确保解锁操作能尽力完成，
+// 避免锁残留到 TTL/Lease 到期。
+const unlockTimeout = 5 * time.Second
+
+// validateKey 验证锁 key 是否有效。
+//
+// 注意：此函数验证的是用户提供的原始 key，不包含 WithKeyPrefix 拼接的前缀。
+// Redis key 实际上限为 512MB，etcd key 推荐 ≤1.5MB。maxKeyLength（512 字节）
+// 是对用户 key 的合理约束，前缀拼接后的总长度远低于两种后端的限制。
+func validateKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return ErrEmptyKey
+	}
+	if len(key) > maxKeyLength {
+		return ErrKeyTooLong
+	}
+	return nil
+}
+
+// resolveFullKey 应用 MutexOption 并返回完整 key（prefix + key）。
+// 用于 etcd 后端在创建 Mutex 前解析最终 key，消除 TryLock/Lock 的选项解析重复。
+func resolveFullKey(key string, opts ...MutexOption) string {
+	options := defaultMutexOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(options)
+		}
+	}
+	return options.KeyPrefix + key
+}
 
 // =============================================================================
 // etcd 工厂选项
@@ -97,6 +135,10 @@ func defaultMutexOptions() *mutexOptions {
 // 最终 key = prefix + key。
 // 默认值："lock:"。
 //
+// 注意：传入空字符串 "" 会移除默认前缀，导致最终 key 等于原始 key。
+// 在多模块或多租户场景中，空前缀可能导致不同业务使用相同 key 时发生冲突。
+// 确保在去掉前缀时，key 本身已包含足够的命名空间隔离。
+//
 // 示例：
 //
 //	handle, _ := factory.TryLock(ctx, "my-resource", xdlock.WithKeyPrefix("myapp:"))
@@ -165,10 +207,10 @@ func WithRetryDelayFunc(fn func(tries int) time.Duration) MutexOption {
 
 // WithDriftFactor 设置时钟漂移因子。
 // 用于 Redlock 算法中补偿时钟漂移。
-// 默认值：0.01。
+// 默认值：0.01。值必须 > 0，0.0 会破坏 Redlock 时钟漂移补偿。
 func WithDriftFactor(f float64) MutexOption {
 	return func(o *mutexOptions) {
-		if f >= 0 {
+		if f > 0 {
 			o.DriftFactor = f
 		}
 	}
@@ -176,10 +218,10 @@ func WithDriftFactor(f float64) MutexOption {
 
 // WithTimeoutFactor 设置超时因子。
 // 用于计算单个节点的超时时间。
-// 默认值：0.05。
+// 默认值：0.05。值必须 > 0，0.0 会导致节点超时立即触发。
 func WithTimeoutFactor(f float64) MutexOption {
 	return func(o *mutexOptions) {
-		if f >= 0 {
+		if f > 0 {
 			o.TimeoutFactor = f
 		}
 	}
@@ -225,5 +267,27 @@ func WithShufflePools(b bool) MutexOption {
 func WithSetNXOnExtend(b bool) MutexOption {
 	return func(o *mutexOptions) {
 		o.SetNXOnExtend = b
+	}
+}
+
+// =============================================================================
+// Redis 工厂选项
+// =============================================================================
+
+// RedisFactoryOption 定义 Redis 锁工厂的配置选项。
+type RedisFactoryOption func(*redisFactoryConfig)
+
+// redisFactoryConfig Redis 工厂配置。
+type redisFactoryConfig struct {
+	ScriptMode rediscompat.ScriptMode
+}
+
+// WithRedisScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，NewRedisFactoryWithOpts() 会在构造时探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+func WithRedisScriptMode(mode rediscompat.ScriptMode) RedisFactoryOption {
+	return func(c *redisFactoryConfig) {
+		c.ScriptMode = mode
 	}
 }

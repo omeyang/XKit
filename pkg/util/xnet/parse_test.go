@@ -195,6 +195,50 @@ func TestParseRangeWhitespace(t *testing.T) {
 	assert.Equal(t, "192.168.1.1", r.From().String())
 }
 
+func TestParseRangeWhitespaceAroundSlash(t *testing.T) {
+	// 与 "-" 分隔符一致，"/" 分隔符两侧的空白也应被处理
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "CIDR 斜杠前后有空白",
+			input:     "192.168.1.0 / 24",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "掩码格式斜杠前后有空白",
+			input:     "192.168.1.0 / 255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "CIDR 斜杠前有空白",
+			input:     "10.0.0.0 /8",
+			wantStart: "10.0.0.0",
+			wantEnd:   "10.255.255.255",
+		},
+		{
+			name:      "CIDR 斜杠后有空白",
+			input:     "172.16.0.0/ 16",
+			wantStart: "172.16.0.0",
+			wantEnd:   "172.16.255.255",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
 func TestParseRangeIPv6Range(t *testing.T) {
 	r, err := ParseRange("::1-::ff")
 	require.NoError(t, err)
@@ -226,6 +270,12 @@ func TestParseRangeInvalidRangeEnd(t *testing.T) {
 func TestParseRangeInvertedRange(t *testing.T) {
 	// start > end
 	_, err := ParseRange("10.0.0.100-10.0.0.1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+}
+
+func TestParseRangeBothSidesInvalid(t *testing.T) {
+	// 两侧都不是合法 IP 地址，回退到 CIDR/单 IP 分支后仍然失败
+	_, err := ParseRange("abc-def")
 	assert.ErrorIs(t, err, ErrInvalidRange)
 }
 
@@ -278,10 +328,152 @@ func TestParseRangeMixedAddressFamilies(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidRange)
 }
 
+func TestParseRangeIPv6ZoneRejected(t *testing.T) {
+	// 设计决策: 拒绝 IPv6 zone 地址（如 fe80::1%eth0），因为 netipx.IPRange/IPSet
+	// 会静默丢弃 zone 信息，导致后续规则匹配失败。
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"zone without dash", "fe80::1%eth0"},
+		{"zone with single dash", "fe80::1%eth-0"},
+		{"zone with multiple dashes", "fe80::1%br-lan-0"},
+		{"zone with garbage suffix", "fe80::1%eth-0-garbage"},
+		{"zone with multi-segment dash", "fe80::1%br-lan-0-test"},
+		{"zone in CIDR notation", "fe80::1%eth0/64"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseRange(tt.input)
+			assert.ErrorIs(t, err, ErrInvalidRange)
+			assert.Contains(t, err.Error(), "zone")
+		})
+	}
+}
+
+func TestParseRangeIPv6ZoneInvalidEnd(t *testing.T) {
+	// start 有效、end 无效、且整体也无法解析为单地址 → 应返回错误
+	_, err := ParseRange("fe80::1-not_an_ip")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "invalid range end")
+}
+
 func TestParseRangeIPv4MappedMask(t *testing.T) {
 	// IPv4-mapped IPv6 掩码也应该能工作
 	r, err := ParseRange("192.168.1.0/::ffff:255.255.255.0")
 	require.NoError(t, err)
 	assert.Equal(t, "192.168.1.0", r.From().String())
 	assert.Equal(t, "192.168.1.255", r.To().String())
+}
+
+func TestParseRangeIPv4MappedCIDR(t *testing.T) {
+	// IPv4-mapped IPv6 + CIDR 应统一转为纯 IPv4 范围（与掩码路径行为一致）。
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+		wantErr   bool
+	}{
+		{
+			name:      "mapped /120 等同 IPv4 /24",
+			input:     "::ffff:192.168.1.0/120",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "mapped /128 等同 IPv4 /32",
+			input:     "::ffff:10.0.0.1/128",
+			wantStart: "10.0.0.1",
+			wantEnd:   "10.0.0.1",
+		},
+		{
+			name:      "mapped /96 等同 IPv4 /0 全范围",
+			input:     "::ffff:0.0.0.0/96",
+			wantStart: "0.0.0.0",
+			wantEnd:   "255.255.255.255",
+		},
+		{
+			name:    "mapped /24 小于 96 应拒绝",
+			input:   "::ffff:192.168.1.0/24",
+			wantErr: true,
+		},
+		{
+			name:    "mapped /64 小于 96 应拒绝",
+			input:   "::ffff:10.0.0.0/64",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidRange)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+		})
+	}
+}
+
+func TestParseRangeMappedNormalizationConsistency(t *testing.T) {
+	// FG-M1/FG-L2: 验证所有 ParseRange 语法对 IPv4-mapped IPv6 的归一化行为一致。
+	// 四种语法应产生相同的纯 IPv4 范围，不保留 IPv4-mapped IPv6 形式。
+	tests := []struct {
+		name      string
+		input     string
+		wantStart string
+		wantEnd   string
+	}{
+		{
+			name:      "单 IP: mapped 归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+		{
+			name:      "CIDR: mapped /128 归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1/128",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.1",
+		},
+		{
+			name:      "掩码: mapped 地址归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.0/255.255.255.0",
+			wantStart: "192.168.1.0",
+			wantEnd:   "192.168.1.255",
+		},
+		{
+			name:      "显式范围: mapped 地址归一化为纯 IPv4",
+			input:     "::ffff:192.168.1.1-::ffff:192.168.1.100",
+			wantStart: "192.168.1.1",
+			wantEnd:   "192.168.1.100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := ParseRange(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStart, r.From().String())
+			assert.Equal(t, tt.wantEnd, r.To().String())
+
+			// 验证结果与纯 IPv4 输入一致
+			pureV4, err := ParseRange(tt.wantStart + "-" + tt.wantEnd)
+			require.NoError(t, err)
+			assert.Equal(t, pureV4.From(), r.From(), "mapped 和纯 IPv4 应产生相同 From")
+			assert.Equal(t, pureV4.To(), r.To(), "mapped 和纯 IPv4 应产生相同 To")
+		})
+	}
+}
+
+func TestParseRangesErrorIndex(t *testing.T) {
+	// ParseRanges 错误信息应包含元素索引
+	_, err := ParseRanges([]string{"10.0.0.1", "invalid", "192.168.1.0/24"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "[1]")
 }

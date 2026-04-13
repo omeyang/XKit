@@ -16,3 +16,22 @@ func ExampleIf() {
 	// Alice
 	// 80
 }
+
+func ExampleIf_zeroValue() {
+	// 零值也是有效结果——与 cmp.Or（零值判定）不同，
+	// If 基于布尔条件选择，不会跳过零值。
+	result := xutil.If(false, "hello", "")
+	fmt.Printf("%q\n", result)
+	// Output:
+	// ""
+}
+
+func ExampleIf_nilSafety() {
+	// nil 值可安全传递——If 仅做值传递，不解引用指针。
+	var missing *string
+	fallback := "default"
+	result := xutil.If(false, missing, &fallback)
+	fmt.Println(*result)
+	// Output:
+	// default
+}

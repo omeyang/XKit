@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 )
@@ -52,7 +55,7 @@ func NewClient(cfg *Config, opts ...Option) (Client, error) {
 	}
 
 	// 构建并返回客户端
-	return buildClient(cfg, options, httpClient), nil
+	return buildClient(cfg, options, httpClient)
 }
 
 // prepareConfig 验证并准备配置。
@@ -110,71 +113,93 @@ func createHTTPClient(cfg *Config, options *Options) (*HTTPClient, error) {
 	}), nil
 }
 
+// resolvedDefaults 保存从 Options/Config 解析后的运行时默认值。
+type resolvedDefaults struct {
+	logger           *slog.Logger
+	observer         xmetrics.Observer
+	cache            CacheStore
+	refreshThreshold time.Duration
+	platformDataTTL  time.Duration
+	localCacheTTL    time.Duration
+}
+
+// resolveDefaults 从 Options 和 Config 解析运行时默认值。
+func resolveDefaults(cfg *Config, options *Options) resolvedDefaults {
+	d := resolvedDefaults{
+		logger:           options.Logger,
+		observer:         options.Observer,
+		cache:            options.Cache,
+		refreshThreshold: options.TokenRefreshThreshold,
+		platformDataTTL:  options.PlatformDataCacheTTL,
+		localCacheTTL:    options.LocalCacheTTL,
+	}
+	if d.logger == nil {
+		d.logger = slog.Default()
+	}
+	if d.observer == nil {
+		d.observer = xmetrics.NoopObserver{}
+	}
+	if d.cache == nil {
+		d.cache = NoopCacheStore{}
+	}
+	if d.refreshThreshold <= 0 {
+		d.refreshThreshold = cfg.TokenRefreshThreshold
+	}
+	if d.platformDataTTL <= 0 {
+		d.platformDataTTL = cfg.PlatformDataCacheTTL
+	}
+	if d.localCacheTTL <= 0 {
+		d.localCacheTTL = d.platformDataTTL
+	}
+	return d
+}
+
 // buildClient 构建完整的客户端实例。
-func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client {
-	// 设置日志和观测器
-	logger := options.Logger
-	if logger == nil {
-		logger = slog.Default()
+func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) (*client, error) {
+	d := resolveDefaults(cfg, options)
+
+	// 设计决策: ClientSecret == ClientID 是认证服务的内部约定（见 Config.ApplyDefaults），
+	// 但如果这是非预期的配置遗漏，日志警告有助于排查。
+	if cfg.ClientSecret == cfg.ClientID {
+		d.logger.Warn("xauth: client_secret equals client_id; if this is unintended, set Config.ClientSecret explicitly")
 	}
 
-	observer := options.Observer
-	if observer == nil {
-		observer = xmetrics.NoopObserver{}
-	}
-
-	// 设置缓存
-	cache := options.Cache
-	if cache == nil {
-		cache = NoopCacheStore{}
-	}
-
-	// 计算配置值
-	refreshThreshold := options.TokenRefreshThreshold
-	if refreshThreshold <= 0 {
-		refreshThreshold = cfg.TokenRefreshThreshold
-	}
-
-	platformDataTTL := options.PlatformDataCacheTTL
-	if platformDataTTL <= 0 {
-		platformDataTTL = cfg.PlatformDataCacheTTL
-	}
-
-	// 创建 Token 缓存
 	tokenCache := NewTokenCache(TokenCacheConfig{
-		Remote:             cache,
+		Remote:             d.cache,
 		EnableLocal:        options.EnableLocalCache,
 		MaxLocalSize:       options.LocalCacheMaxSize,
-		RefreshThreshold:   refreshThreshold,
+		RefreshThreshold:   d.refreshThreshold,
 		EnableSingleflight: options.EnableSingleflight,
 	})
 
-	// 创建 Token 管理器
-	tokenMgr := NewTokenManager(TokenManagerConfig{
+	tokenMgr, err := NewTokenManager(TokenManagerConfig{
 		Config:                  cfg,
 		HTTP:                    httpClient,
 		Cache:                   tokenCache,
-		Logger:                  logger,
-		Observer:                observer,
-		RefreshThreshold:        refreshThreshold,
+		Logger:                  d.logger,
+		Observer:                d.observer,
+		RefreshThreshold:        d.refreshThreshold,
 		EnableBackgroundRefresh: options.EnableBackgroundRefresh,
 	})
-
-	// 创建平台信息管理器
-	localCacheTTL := options.LocalCacheTTL
-	if localCacheTTL <= 0 {
-		localCacheTTL = platformDataTTL
+	if err != nil {
+		return nil, fmt.Errorf("xauth: create token manager: %w", err)
 	}
-	platformMgr := NewPlatformManager(PlatformManagerConfig{
+
+	enableLocal := options.EnableLocalCache
+	platformMgr, err := NewPlatformManager(PlatformManagerConfig{
 		HTTP:           httpClient,
-		Cache:          cache,
+		Cache:          d.cache,
 		TokenMgr:       tokenMgr,
-		Logger:         logger,
-		Observer:       observer,
-		CacheTTL:       platformDataTTL,
+		Logger:         d.logger,
+		Observer:       d.observer,
+		CacheTTL:       d.platformDataTTL,
+		EnableLocal:    &enableLocal,
 		LocalCacheSize: options.LocalCacheMaxSize,
-		LocalCacheTTL:  localCacheTTL,
+		LocalCacheTTL:  d.localCacheTTL,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("xauth: create platform manager: %w", err)
+	}
 
 	return &client{
 		config:      cfg,
@@ -183,18 +208,16 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) *client 
 		tokenMgr:    tokenMgr,
 		platformMgr: platformMgr,
 		tokenCache:  tokenCache,
-		logger:      logger,
-		observer:    observer,
-	}
+		logger:      d.logger,
+		observer:    d.observer,
+	}, nil
 }
 
 // defaultTLSConfig 返回默认 TLS 配置。
-// 默认跳过证书验证，生产环境建议通过 Config.TLS 配置安全的 TLS 选项。
+// 默认启用证书验证（安全优先），开发环境可通过 Config.TLS 配置跳过验证。
 func defaultTLSConfig() *tls.Config {
-	//nolint:gosec // G402: 默认跳过证书验证以简化开发环境配置，生产环境应配置 TLS
 	return &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
+		MinVersion: tls.VersionTLS12,
 	}
 }
 
@@ -273,7 +296,7 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 	}
 
 	if req == nil {
-		return fmt.Errorf("xauth: nil request")
+		return ErrNilRequest
 	}
 
 	tenantID := c.resolveTenantID(req.TenantID)
@@ -288,7 +311,12 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 		c.logger.Debug("401 received, clearing token cache and retrying",
 			slog.String("tenant_id", tenantID),
 		)
-		_ = c.tokenCache.Delete(ctx, tenantID) //nolint:errcheck // 缓存删除失败不影响重试逻辑
+		if delErr := c.tokenCache.Delete(ctx, tenantID); delErr != nil {
+			c.logger.Warn("401 retry: token cache delete failed, retrying with potentially stale cache",
+				slog.String("tenant_id", tenantID),
+				slog.String("error", delErr.Error()),
+			)
+		}
 		return c.doAuthRequest(ctx, tenantID, req)
 	}
 
@@ -297,20 +325,28 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 
 // doAuthRequest 执行带认证的 HTTP 请求。
 func (c *client) doAuthRequest(ctx context.Context, tenantID string, req *AuthRequest) error {
+	// 设计决策: 绝对 URL 必须使用 HTTPS（除非 AllowInsecure=true），
+	// 防止 Bearer Token 通过明文 HTTP 泄露到非安全通道。
+	// 绝对 HTTPS URL 允许跨主机——同一认证域内的服务可能部署在不同主机上，
+	// 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
+	// 不做主机白名单限制，因为 xauth 作为基础库不了解业务拓扑。
+	if !c.config.AllowInsecure && len(req.URL) >= 7 && strings.EqualFold(req.URL[:7], "http://") {
+		return fmt.Errorf("%w: request URL must use https:// when carrying Bearer token", ErrInsecureHost)
+	}
+
 	// 获取 Token
 	token, err := c.tokenMgr.GetToken(ctx, tenantID)
 	if err != nil {
 		return fmt.Errorf("xauth: get token failed: %w", err)
 	}
 
-	// 构建请求
-	if req.Headers == nil {
-		req.Headers = make(map[string]string)
-	}
-	req.Headers["Authorization"] = "Bearer " + token
+	// 克隆 Headers，避免修改调用方的原始 map
+	headers := make(map[string]string, len(req.Headers)+1)
+	maps.Copy(headers, req.Headers)
+	headers["Authorization"] = "Bearer " + token
 
 	// 发送请求
-	return c.httpClient.request(ctx, req.Method, req.URL, req.Headers, req.Body, req.Response)
+	return c.httpClient.request(ctx, req.Method, req.URL, headers, req.Body, req.Response)
 }
 
 // isUnauthorizedError 检查是否是 401 未授权错误。
@@ -325,9 +361,36 @@ func isUnauthorizedError(err error) bool {
 	return errors.Is(err, ErrUnauthorized)
 }
 
+// InvalidateToken 主动使指定租户的 Token 缓存失效。
+func (c *client) InvalidateToken(ctx context.Context, tenantID string) error {
+	if c.closed.Load() {
+		return ErrClientClosed
+	}
+	tenantID = c.resolveTenantID(tenantID)
+	if tenantID == "" {
+		return ErrMissingTenantID
+	}
+	return c.tokenMgr.InvalidateToken(ctx, tenantID)
+}
+
+// InvalidatePlatformCache 主动使指定租户的平台数据缓存失效。
+// 用于平台信息变更后强制重新获取，避免等待 TTL 过期。
+func (c *client) InvalidatePlatformCache(ctx context.Context, tenantID string) error {
+	if c.closed.Load() {
+		return ErrClientClosed
+	}
+	tenantID = c.resolveTenantID(tenantID)
+	if tenantID == "" {
+		return ErrMissingTenantID
+	}
+	return c.platformMgr.InvalidateCache(ctx, tenantID)
+}
+
 // Close 关闭客户端。
 // 这会停止后台刷新任务并清理所有本地缓存。
-func (c *client) Close() error {
+// 设计决策: ctx 参数当前未使用，保留是为了符合项目约定 D-02（统一生命周期接口），
+// 并为将来带超时的优雅关闭预留扩展空间。
+func (c *client) Close(_ context.Context) error {
 	if c.closed.Swap(true) {
 		return nil // 已关闭
 	}
@@ -351,18 +414,4 @@ func (c *client) resolveTenantID(tenantID string) string {
 		return tenantID
 	}
 	return GetTenantIDFromEnv()
-}
-
-// =============================================================================
-// 便捷函数
-// =============================================================================
-
-// MustNewClient 创建客户端，失败时 panic。
-// 用于初始化全局客户端。
-func MustNewClient(cfg *Config, opts ...Option) Client {
-	c, err := NewClient(cfg, opts...)
-	if err != nil {
-		panic(fmt.Sprintf("xauth: create client failed: %v", err))
-	}
-	return c
 }

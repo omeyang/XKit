@@ -36,9 +36,14 @@ func TestWithHealthTimeout(t *testing.T) {
 			expected: 30 * time.Second,
 		},
 		{
-			name:     "设置零值应保持原值",
+			name:     "设置零值应保持默认值",
 			timeout:  0,
-			expected: 0,
+			expected: 5 * time.Second,
+		},
+		{
+			name:     "设置负值应保持默认值",
+			timeout:  -1 * time.Second,
+			expected: 5 * time.Second,
 		},
 	}
 
@@ -71,6 +76,11 @@ func TestWithSlowQueryThreshold(t *testing.T) {
 			name:      "设置零值禁用慢查询",
 			threshold: 0,
 			expected:  0,
+		},
+		{
+			name:      "负值被忽略保持默认值",
+			threshold: -100 * time.Millisecond,
+			expected:  0, // 默认值为 0
 		},
 	}
 

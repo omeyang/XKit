@@ -8,12 +8,10 @@ import (
 // RetryPolicy 定义重试策略接口
 // 判断是否应该继续重试
 //
-// 注意：当通过 Retryer 使用时，由于底层 retry-go 库的限制：
-//   - MaxAttempts() 会被正确使用
-//   - ShouldRetry() 的 ctx 和 attempt 参数无法传递（retry-go 的 RetryIf 不提供）
-//   - 错误判断通过 IsRetryable() 和 IsRecoverable() 函数实现
-//
-// 如需基于 ctx/attempt 的复杂重试逻辑，建议直接使用 retry-go 的原生 API。
+// 通过 Retryer 使用时：
+//   - MaxAttempts() 设置 retry-go 的 Attempts 上限
+//   - ShouldRetry() 在每次失败后被调用，可实现自定义的重试判断逻辑
+//   - Unrecoverable 错误会在 ShouldRetry 之前被短路拦截
 type RetryPolicy interface {
 	// MaxAttempts 返回最大尝试次数（包含首次尝试）
 	// 返回 0 表示无限重试
@@ -21,11 +19,8 @@ type RetryPolicy interface {
 
 	// ShouldRetry 判断是否应该重试
 	//
-	// 注意：通过 Retryer 使用时，此方法不会被直接调用。
-	// 错误判断改为使用 IsRetryable()/IsRecoverable() 函数。
-	// 此方法主要用于直接使用 RetryPolicy 接口的场景。
-	//
-	// ctx: 上下文，可用于取消
+	// ctx: 上下文（供自定义实现读取 context 值；内置策略不检查 ctx.Err()，
+	//       context 取消由 retry-go 的 Context(ctx) 选项在 sleep 阶段统一处理）
 	// attempt: 当前尝试次数（从 1 开始）
 	// err: 上次执行的错误
 	ShouldRetry(ctx context.Context, attempt int, err error) bool
@@ -39,8 +34,24 @@ type BackoffPolicy interface {
 	NextDelay(attempt int) time.Duration
 }
 
-// ResettableBackoff 可重置的退避策略
+// ResettableBackoff 可重置的退避策略接口。
+// 实现此接口的 BackoffPolicy 可通过 Reset() 重置内部状态。
+//
+// 消费方: internal/mqcore 在消费成功后通过类型断言调用 Reset() 重置退避状态。
+//
+// 设计决策: Retryer 当前不自动调用 Reset()，因为内置实现
+// ExponentialBackoff.Reset() 是空操作（crypto/rand 无状态）。
+// 此接口供有状态的自定义 BackoffPolicy 实现，用于在成功后重置内部状态。
 type ResettableBackoff interface {
 	BackoffPolicy
 	Reset()
+}
+
+// Executor 重试执行器接口
+//
+// 设计决策: NewRetryer 返回 *Retryer 而非 Executor 接口，因为泛型函数
+// DoWithResult 需要访问 *Retryer 的内部方法。调用方如需 mock 重试执行器，
+// 可在自身代码中使用此接口作为函数参数类型。
+type Executor interface {
+	Do(ctx context.Context, fn func(ctx context.Context) error) error
 }

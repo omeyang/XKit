@@ -14,12 +14,15 @@ import (
 
 // ClickHouse 定义 ClickHouse 包装器接口。
 type ClickHouse interface {
-	// Conn 返回底层 ClickHouse 连接。
+	// Client 返回底层 ClickHouse 连接。
 	// 可用于执行任意 ClickHouse 操作。
-	Conn() driver.Conn
+	// 关闭后仍可调用，但底层连接操作会返回驱动层错误。
+	// 方法名与 xmongo.Mongo.Client()、xcache.Redis.Client() 保持一致。
+	Client() driver.Conn
 
 	// Health 执行健康检查。
 	// 通过 Ping 检测连接状态。
+	// 关闭后调用返回 ErrClosed。
 	Health(ctx context.Context) error
 
 	// Stats 返回统计信息。
@@ -30,24 +33,35 @@ type ClickHouse interface {
 	Close() error
 
 	// QueryPage 分页查询。
+	// 设计决策: 方法名 QueryPage（而非 FindPage）遵循 SQL 领域惯用语。
+	// xmongo 使用 FindPage 是 MongoDB 惯用语（find）。各存储包遵循自身领域命名，
+	// 而非强制统一，以降低领域切换的认知负担。BatchInsert 同理（ClickHouse 使用 Batch 概念）。
+	//
 	// query 是 SQL 查询语句（不含 LIMIT/OFFSET），opts 指定分页参数。
 	//
 	// 注意事项：
 	//   - 查询需要支持 COUNT(*) 以获取总数。
+	//   - ⚠️ 稳定分页前置条件: 顶层查询必须包含稳定的 ORDER BY 子句，
+	//     否则 ClickHouse 在 MergeTree/并发写入/聚合等场景下返回顺序不保证，
+	//     跨页可能出现行重复或遗漏。QueryPage 不会自动校验 ORDER BY 的存在性，
+	//     由调用方负责保证；无法提供稳定排序的场景应改用游标分页（通过 Client()）。
 	//   - 此方法执行两次查询（COUNT + 数据查询），
 	//     在高并发写入场景下，Total 与实际返回数据可能不完全一致。
 	//     如需强一致性，请考虑游标分页或在应用层处理。
+	//   - COUNT 结果使用 UInt64 扫描，超过 int64 最大值时返回 ErrCountOverflow。
 	//
 	// 性能说明：
 	//   - COUNT 查询使用子查询包装方式（SELECT COUNT(*) FROM (原查询) AS _count_subquery）
 	//   - 这种方式能正确处理复杂 SQL（子查询、CTE、UNION、DISTINCT 等）
 	//   - 对于简单查询可能比直接改写 SELECT 列表性能略差
-	//   - 性能敏感场景建议直接使用 Conn() 执行优化的 COUNT 语句
+	//   - 性能敏感场景建议直接使用 Client() 执行优化的 COUNT 语句
 	//   - Stats().QueryCount 会 +2（COUNT 和分页各计一次）
+	//   - 关闭后调用返回 ErrClosed
 	QueryPage(ctx context.Context, query string, opts PageOptions, args ...any) (*PageResult, error)
 
 	// BatchInsert 批量插入。
 	// table 是目标表名，rows 是待插入的数据切片。
+	// 关闭后调用返回 ErrClosed。
 	BatchInsert(ctx context.Context, table string, rows []any, opts BatchOptions) (*BatchResult, error)
 }
 
@@ -56,11 +70,14 @@ type ClickHouse interface {
 // =============================================================================
 
 // PageOptions 分页查询选项。
+// 零值不可用：Page 和 PageSize 必须为正数，
+// 否则返回 ErrInvalidPage 或 ErrInvalidPageSize。
 type PageOptions struct {
-	// Page 是页码，从 1 开始。
+	// Page 是页码，从 1 开始。必须为正数，零值返回 ErrInvalidPage。
 	Page int64
 
-	// PageSize 是每页大小。
+	// PageSize 是每页大小。必须为正数，零值返回 ErrInvalidPageSize。
+	// 不得超过 MaxPageSize（默认 10000），否则返回 ErrPageSizeTooLarge。
 	PageSize int64
 }
 
@@ -92,7 +109,8 @@ type PageResult struct {
 // BatchOptions 批量操作选项。
 type BatchOptions struct {
 	// BatchSize 是每批大小。
-	// 如果为 0，使用默认值 10000。
+	// 如果为 0 或负值，使用默认值 DefaultBatchSize（10000）。
+	// 不得超过 MaxBatchSize（100000），否则返回 ErrBatchSizeTooLarge。
 	BatchSize int
 }
 
@@ -104,8 +122,10 @@ type BatchOptions struct {
 // 原子性说明：
 // ClickHouse 的每个批次（Batch）是原子的：要么全部成功，要么全部失败。
 // InsertedCount 只反映成功发送的批次中的记录数。
-// 如果某批次 Send() 失败，该批次的所有记录都不会被插入。
-// 这与 MongoDB 的部分成功行为不同。
+// 任何 AppendStruct 错误或 Send 错误都会导致该批次被 Abort，
+// 该批次内所有记录均不写入。这与 MongoDB 的部分成功行为不同。
+// 跨批次之间可能部分成功：若第 N 批成功 Send、第 N+1 批失败，
+// InsertedCount 会等于前 N 批的总行数。
 //
 // 示例：
 //
@@ -116,9 +136,9 @@ type BatchOptions struct {
 //	}
 type BatchResult struct {
 	// InsertedCount 是成功插入的记录数。
-	// 仅统计成功发送（Send）的批次中的记录。
-	// 如果 AppendStruct 失败，该记录不计入；如果 Send 失败，整批次不计入。
-	// 即使 err != nil，InsertedCount 也可能 > 0，表示部分成功。
+	// 仅统计成功 Send 的批次行数。任何 AppendStruct 或 Send 错误都会
+	// Abort 该批次，整批 0 行计入。跨批次之间可部分成功。
+	// 即使 err != nil，InsertedCount 也可能 > 0，表示部分批次成功。
 	InsertedCount int64
 
 	// Errors 是发生的错误列表。
@@ -131,7 +151,8 @@ type BatchResult struct {
 // =============================================================================
 
 // New 创建 ClickHouse 包装器。
-// conn 是已创建的 ClickHouse 连接，opts 是可选配置。
+// client 是已创建的 ClickHouse 连接，opts 是可选配置。
+// 参数名 client 而非 conn，与 Client() 方法及 ErrNilClient 命名保持一致。
 //
 // 示例：
 //
@@ -147,9 +168,9 @@ type BatchResult struct {
 //	    log.Fatal(err)
 //	}
 //	defer ch.Close()
-func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
-	if conn == nil {
-		return nil, ErrNilConn
+func New(client driver.Conn, opts ...Option) (ClickHouse, error) {
+	if client == nil {
+		return nil, ErrNilClient
 	}
 
 	options := defaultOptions()
@@ -158,17 +179,20 @@ func New(conn driver.Conn, opts ...Option) (ClickHouse, error) {
 	}
 
 	// 创建慢查询检测器
-	detector := newSlowQueryDetector(options)
+	detector, err := newSlowQueryDetector(options)
+	if err != nil {
+		return nil, err
+	}
 
 	return &clickhouseWrapper{
-		conn:              conn,
+		conn:              client,
 		options:           options,
 		slowQueryDetector: detector,
 	}, nil
 }
 
 // newSlowQueryDetector 创建慢查询检测器。
-func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQueryInfo] {
+func newSlowQueryDetector(opts *options) (*storageopt.SlowQueryDetector[SlowQueryInfo], error) {
 	// 构建 storageopt 的慢查询选项
 	sqOpts := storageopt.SlowQueryOptions[SlowQueryInfo]{
 		Threshold:           opts.SlowQueryThreshold,
@@ -176,14 +200,13 @@ func newSlowQueryDetector(opts *Options) *storageopt.SlowQueryDetector[SlowQuery
 		AsyncQueueSize:      opts.AsyncSlowQueryQueueSize,
 	}
 
-	// 适配同步钩子
+	// 设计决策: 使用闭包适配而非直接赋值，因为 SlowQueryHook 和
+	// storageopt.SlowQueryHook[SlowQueryInfo] 是不同的命名类型（Go 不允许直接赋值）。
 	if opts.SlowQueryHook != nil {
 		sqOpts.SyncHook = func(ctx context.Context, info SlowQueryInfo) {
 			opts.SlowQueryHook(ctx, info)
 		}
 	}
-
-	// 适配异步钩子
 	if opts.AsyncSlowQueryHook != nil {
 		sqOpts.AsyncHook = func(info SlowQueryInfo) {
 			opts.AsyncSlowQueryHook(info)

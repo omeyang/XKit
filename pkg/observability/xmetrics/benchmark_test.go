@@ -5,7 +5,29 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+// newBenchmarkTracerProvider 创建用于基准测试的 TracerProvider（无导出器，最小开销）。
+func newBenchmarkTracerProvider() *sdktrace.TracerProvider {
+	return sdktrace.NewTracerProvider()
+}
+
+// newBenchmarkMeterProvider 创建用于基准测试的 MeterProvider（无导出器，最小开销）。
+func newBenchmarkMeterProvider() *sdkmetric.MeterProvider {
+	return sdkmetric.NewMeterProvider()
+}
+
+// sinkAttr 防止编译器死代码消除（DCE）优化掉基准测试中的函数调用。
+var sinkAttr Attr
+
+// sinkOpts 防止 SpanOptions 创建被 DCE 消除。
+var sinkOpts SpanOptions
+
+// sinkResult 防止 Result 创建被 DCE 消除。
+var sinkResult Result
 
 // ============================================================================
 // Attr 创建基准测试
@@ -13,50 +35,50 @@ import (
 
 func BenchmarkString(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = String("key", "value")
+	for b.Loop() {
+		sinkAttr = String("key", "value")
 	}
 }
 
 func BenchmarkInt(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Int("key", 42)
+	for b.Loop() {
+		sinkAttr = Int("key", 42)
 	}
 }
 
 func BenchmarkInt64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Int64("key", 42)
+	for b.Loop() {
+		sinkAttr = Int64("key", 42)
 	}
 }
 
 func BenchmarkUint64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Uint64("key", 42)
+	for b.Loop() {
+		sinkAttr = Uint64("key", 42)
 	}
 }
 
 func BenchmarkFloat64(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Float64("key", 3.14)
+	for b.Loop() {
+		sinkAttr = Float64("key", 3.14)
 	}
 }
 
 func BenchmarkBool(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Bool("key", true)
+	for b.Loop() {
+		sinkAttr = Bool("key", true)
 	}
 }
 
 func BenchmarkDuration(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = Duration("key", 100*time.Millisecond)
+	for b.Loop() {
+		sinkAttr = Duration("key", 100*time.Millisecond)
 	}
 }
 
@@ -66,8 +88,8 @@ func BenchmarkAny(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = Any("key", val)
+	for b.Loop() {
+		sinkAttr = Any("key", val)
 	}
 }
 
@@ -87,7 +109,7 @@ func BenchmarkNoopObserver_Start(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := observer.Start(ctx, opts)
 		span.End(Result{})
 	}
@@ -110,7 +132,7 @@ func BenchmarkNoopObserver_StartWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := observer.Start(ctx, opts)
 		span.End(Result{Status: StatusOK})
 	}
@@ -123,7 +145,7 @@ func BenchmarkNoopSpan_End(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -136,7 +158,7 @@ func BenchmarkNoopSpan_EndWithError(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -154,7 +176,7 @@ func BenchmarkNoopSpan_EndWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		span.End(result)
 	}
 }
@@ -173,7 +195,7 @@ func BenchmarkStart_NilObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := Start(ctx, nil, opts)
 		span.End(Result{})
 	}
@@ -190,7 +212,7 @@ func BenchmarkStart_NoopObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, span := Start(ctx, observer, opts)
 		span.End(Result{})
 	}
@@ -238,14 +260,116 @@ func BenchmarkStart_NilObserverParallel(b *testing.B) {
 }
 
 // ============================================================================
+// OTel Observer 基准测试
+// ============================================================================
+
+func BenchmarkOTelObserver_StartEnd(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_test",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, span := obs.Start(ctx, opts)
+		span.End(Result{})
+	}
+}
+
+func BenchmarkOTelObserver_StartEndWithAttrs(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_attrs",
+		Kind:      KindClient,
+		Attrs: []Attr{
+			String("db.system", "redis"),
+			Int("db.port", 6379),
+			Bool("db.tls", true),
+		},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, span := obs.Start(ctx, opts)
+		span.End(Result{
+			Status: StatusOK,
+			Attrs:  []Attr{String("cache", "hit")},
+		})
+	}
+}
+
+func BenchmarkOTelObserver_StartEndParallel(b *testing.B) {
+	tp := newBenchmarkTracerProvider()
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	mp := newBenchmarkMeterProvider()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	obs, err := NewOTelObserver(
+		WithTracerProvider(tp),
+		WithMeterProvider(mp),
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	opts := SpanOptions{
+		Component: "benchmark",
+		Operation: "otel_parallel",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, span := obs.Start(ctx, opts)
+			span.End(Result{})
+		}
+	})
+}
+
+// ============================================================================
 // SpanOptions 和 Result 创建基准测试
 // ============================================================================
 
 func BenchmarkSpanOptions_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		_ = SpanOptions{
+	for b.Loop() {
+		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
 			Kind:      KindServer,
@@ -256,8 +380,8 @@ func BenchmarkSpanOptions_Create(b *testing.B) {
 func BenchmarkSpanOptions_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		_ = SpanOptions{
+	for b.Loop() {
+		sinkOpts = SpanOptions{
 			Component: "test",
 			Operation: "benchmark",
 			Kind:      KindServer,
@@ -273,16 +397,16 @@ func BenchmarkSpanOptions_CreateWithAttrs(b *testing.B) {
 func BenchmarkResult_Create(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		_ = Result{Status: StatusOK}
+	for b.Loop() {
+		sinkResult = Result{Status: StatusOK}
 	}
 }
 
 func BenchmarkResult_CreateWithAttrs(b *testing.B) {
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		_ = Result{
+	for b.Loop() {
+		sinkResult = Result{
 			Status: StatusOK,
 			Attrs: []Attr{
 				{Key: "key1", Value: "value1"},

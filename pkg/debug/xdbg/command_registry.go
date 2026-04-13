@@ -28,7 +28,11 @@ func NewCommandRegistry() *CommandRegistry {
 
 // Register 注册命令。
 // 如果命令名已存在，将覆盖原有命令。
+// nil 命令会被静默忽略。
 func (r *CommandRegistry) Register(cmd Command) {
+	if cmd == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.commands[cmd.Name()] = cmd
@@ -89,12 +93,15 @@ func (r *CommandRegistry) Commands() []Command {
 }
 
 // SetWhitelist 设置命令白名单。
-// 如果 whitelist 为 nil 或空，则禁用白名单（允许所有命令）。
+//
+// 设计决策: nil 与空切片语义不同。nil 表示"不启用白名单，允许所有命令"，
+// 空切片 ([]string{}) 表示"仅允许必要命令 (help, exit)"。
+// 这避免了 WithCommandWhitelist([]string{}) 意外授予全部访问权限的安全歧义。
 func (r *CommandRegistry) SetWhitelist(whitelist []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if len(whitelist) == 0 {
+	if whitelist == nil {
 		r.whitelist = nil
 		return
 	}

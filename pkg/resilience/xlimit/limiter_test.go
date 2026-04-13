@@ -14,6 +14,20 @@ func testContext() context.Context {
 	return context.Background()
 }
 
+func TestNew_NilRedisClient(t *testing.T) {
+	_, err := New(nil, WithRules(TenantRule("test", 100, time.Minute)))
+	if err != ErrNilClient {
+		t.Fatalf("expected ErrNilClient, got %v", err)
+	}
+}
+
+func TestNewWithFallback_NilRedisClient(t *testing.T) {
+	_, err := NewWithFallback(nil, WithRules(TenantRule("test", 100, time.Minute)))
+	if err != ErrNilClient {
+		t.Fatalf("expected ErrNilClient, got %v", err)
+	}
+}
+
 func TestNew_Validation(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -36,7 +50,7 @@ func TestNew_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 	})
 
 	t.Run("invalid rule - empty name", func(t *testing.T) {
@@ -78,7 +92,7 @@ func TestNew_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 	})
 }
 
@@ -93,7 +107,7 @@ func TestNewLocal_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 	})
 
 	t.Run("invalid rule", func(t *testing.T) {
@@ -121,7 +135,7 @@ func TestNewLocal_Validation(t *testing.T) {
 		if limiter == nil {
 			t.Fatal("expected non-nil limiter")
 		}
-		defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+		defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 	})
 }
 
@@ -151,7 +165,7 @@ func TestNew_WithCallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test"}
@@ -200,7 +214,7 @@ func TestNew_WithKeyPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test"}
@@ -253,7 +267,7 @@ func TestNew_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := testContext()
 	key := Key{Tenant: "test", Method: "POST", Path: "/v1/orders"}

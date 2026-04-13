@@ -66,6 +66,26 @@ func TestStats_RecordSkip(t *testing.T) {
 	assert.Equal(t, int64(2), stats.SkipCount())
 }
 
+func TestStats_RecordLockError(t *testing.T) {
+	stats := newStats()
+
+	stats.recordLockError("test-job")
+	stats.recordLockError("test-job")
+	stats.recordLockError("") // 无名任务
+
+	// 锁异常不计入执行统计
+	assert.Equal(t, int64(0), stats.TotalExecutions())
+	assert.Equal(t, int64(0), stats.FailureCount())
+	assert.Equal(t, int64(0), stats.SkipCount())
+	assert.Equal(t, int64(3), stats.LockErrorCount())
+
+	// 验证任务级统计
+	js := stats.JobStats("test-job")
+	require.NotNil(t, js)
+	assert.Equal(t, int64(0), js.TotalExecutions())
+	assert.Equal(t, int64(2), js.LockErrorCount())
+}
+
 func TestStats_JobStats(t *testing.T) {
 	stats := newStats()
 
@@ -145,24 +165,21 @@ func TestStats_Concurrent(t *testing.T) {
 
 	// 并发记录
 	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
+		n := i
+		wg.Go(func() {
 			var err error
 			if n%3 == 0 {
 				err = errors.New("error")
 			}
 			stats.recordExecution("concurrent-job", time.Duration(n)*time.Millisecond, err)
-		}(i)
+		})
 	}
 
 	// 并发跳过
 	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			stats.recordSkip("concurrent-job")
-		}()
+		})
 	}
 
 	wg.Wait()

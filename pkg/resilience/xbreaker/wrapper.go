@@ -8,6 +8,12 @@ import (
 // 用户可以直接使用这些类型，无需导入 gobreaker 包
 
 type (
+	// CircuitBreaker 泛型熔断器类型别名
+	CircuitBreaker[T any] = gobreaker.CircuitBreaker[T]
+
+	// TwoStepCircuitBreaker 两阶段泛型熔断器类型别名
+	TwoStepCircuitBreaker[T any] = gobreaker.TwoStepCircuitBreaker[T]
+
 	// Settings 熔断器配置
 	Settings = gobreaker.Settings
 
@@ -16,13 +22,6 @@ type (
 
 	// State 熔断器状态
 	State = gobreaker.State
-
-	// CircuitBreaker 泛型熔断器
-	CircuitBreaker[T any] = gobreaker.CircuitBreaker[T]
-
-	// TwoStepCircuitBreaker 两阶段熔断器
-	// 用于需要手动报告成功/失败的场景
-	TwoStepCircuitBreaker[T any] = gobreaker.TwoStepCircuitBreaker[T]
 )
 
 // 熔断器状态常量
@@ -92,13 +91,16 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 //	// 执行操作
 //	result, err := doAsyncOperation()
 //
-//	// 第二阶段：报告结果
-//	done(err == nil)
+//	// 第二阶段：报告结果（nil 表示成功，非 nil 表示失败）
+//	done(err)
 func NewTwoStepCircuitBreaker[T any](st Settings) *TwoStepCircuitBreaker[T] {
 	return gobreaker.NewTwoStepCircuitBreaker[T](st)
 }
 
 // StateString 返回状态的字符串表示
+//
+// 设计决策: 虽然 State 类型自身有 String() 方法，此函数保留用于
+// Go 模板（text/template）等不能直接调用方法的场景。
 func StateString(s State) string {
 	return s.String()
 }

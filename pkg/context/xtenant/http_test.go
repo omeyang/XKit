@@ -9,6 +9,7 @@ import (
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/context/xplatform"
 	"github.com/omeyang/xkit/pkg/context/xtenant"
+	"github.com/stretchr/testify/assert"
 )
 
 // =============================================================================
@@ -74,6 +75,28 @@ func TestExtractFromHTTPHeader(t *testing.T) {
 				t.Errorf("ExtractFromHTTPHeader() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestExtractFromHTTPHeader_MultiValue 验证多值 Header 取首值的契约（FG-L1 回归测试）。
+//
+// doc.go:31 定义了"单值字段，多值时取第一个"的语义。
+func TestExtractFromHTTPHeader_MultiValue(t *testing.T) {
+	h := make(http.Header)
+	// http.Header.Add 追加多值
+	h.Add(xtenant.HeaderTenantID, "first-tenant")
+	h.Add(xtenant.HeaderTenantID, "second-tenant")
+	h.Add(xtenant.HeaderTenantName, "first-name")
+	h.Add(xtenant.HeaderTenantName, "second-name")
+
+	info := xtenant.ExtractFromHTTPHeader(h)
+
+	// 应取第一个值
+	if info.TenantID != "first-tenant" {
+		t.Errorf("TenantID = %q, want %q (should take first value)", info.TenantID, "first-tenant")
+	}
+	if info.TenantName != "first-name" {
+		t.Errorf("TenantName = %q, want %q (should take first value)", info.TenantName, "first-name")
 	}
 }
 
@@ -195,7 +218,7 @@ func TestHTTPMiddlewareWithOptions_RequireTenant(t *testing.T) {
 
 func TestInjectToRequest(t *testing.T) {
 	t.Run("nil request不panic", func(t *testing.T) {
-		ctx, err := xctx.WithTenantID(t.Context(), "t1")
+		ctx, err := xctx.WithTenantID(context.Background(), "t1")
 		if err != nil {
 			t.Fatalf("xctx.WithTenantID() error = %v", err)
 		}
@@ -203,7 +226,7 @@ func TestInjectToRequest(t *testing.T) {
 	})
 
 	t.Run("注入租户信息", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := context.Background()
 		ctx, err := xctx.WithTenantID(ctx, "tenant-123")
 		if err != nil {
 			t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -256,6 +279,64 @@ func TestInjectTenantToHeader(t *testing.T) {
 			t.Errorf("HeaderTenantName should be empty, got %q", got)
 		}
 	})
+
+	t.Run("TrimSpace归一化（FG-M4回归测试）", func(t *testing.T) {
+		h := make(http.Header)
+		info := xtenant.TenantInfo{
+			TenantID:   "  t1  ",
+			TenantName: "  n1  ",
+		}
+		xtenant.InjectTenantToHeader(h, info)
+
+		if got := h.Get(xtenant.HeaderTenantID); got != "t1" {
+			t.Errorf("HeaderTenantID = %q, want %q (should TrimSpace)", got, "t1")
+		}
+		if got := h.Get(xtenant.HeaderTenantName); got != "n1" {
+			t.Errorf("HeaderTenantName = %q, want %q (should TrimSpace)", got, "n1")
+		}
+	})
+
+	t.Run("纯空白值不注入（FG-M4回归测试）", func(t *testing.T) {
+		h := make(http.Header)
+		info := xtenant.TenantInfo{
+			TenantID:   "   ",
+			TenantName: "  \t",
+		}
+		xtenant.InjectTenantToHeader(h, info)
+
+		if got := h.Get(xtenant.HeaderTenantID); got != "" {
+			t.Errorf("HeaderTenantID should be empty for whitespace-only, got %q", got)
+		}
+		if got := h.Get(xtenant.HeaderTenantName); got != "" {
+			t.Errorf("HeaderTenantName should be empty for whitespace-only, got %q", got)
+		}
+	})
+}
+
+// =============================================================================
+// nil 选项守卫测试（FG-L3 回归测试）
+// =============================================================================
+
+func TestHTTPMiddlewareWithOptions_NilOption(t *testing.T) {
+	// nil 选项不应该 panic
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrapped := xtenant.HTTPMiddlewareWithOptions(
+		nil, // nil 选项
+		xtenant.WithRequireTenantID(),
+		nil, // 另一个 nil 选项
+	)(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.Header.Set(xtenant.HeaderTenantID, "t1")
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
 }
 
 // =============================================================================
@@ -317,7 +398,7 @@ func TestHTTPMiddlewareWithOptions_OnlyTenantName(t *testing.T) {
 }
 
 func TestInjectToRequest_OnlyTenantID(t *testing.T) {
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantID(ctx, "tenant-only")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -337,7 +418,7 @@ func TestInjectToRequest_OnlyTenantID(t *testing.T) {
 }
 
 func TestInjectToRequest_OnlyTenantName(t *testing.T) {
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantName(ctx, "name-only")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantName() error = %v", err)
@@ -395,7 +476,7 @@ func TestInjectToRequest_WithPlatformInitialized(t *testing.T) {
 	t.Cleanup(xplatform.Reset)
 
 	// 设置租户信息
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err = xctx.WithTenantID(ctx, "tenant-123")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -440,7 +521,7 @@ func TestInjectToRequest_WithPlatformNoParent(t *testing.T) {
 	}
 	t.Cleanup(xplatform.Reset)
 
-	ctx := t.Context()
+	ctx := context.Background()
 	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
 	xtenant.InjectToRequest(ctx, req)
 
@@ -458,7 +539,7 @@ func TestInjectToRequest_WithPlatformNotInitialized(t *testing.T) {
 	// 确保 xplatform 未初始化
 	xplatform.Reset()
 
-	ctx := t.Context()
+	ctx := context.Background()
 	ctx, err := xctx.WithTenantID(ctx, "tenant-123")
 	if err != nil {
 		t.Fatalf("xctx.WithTenantID() error = %v", err)
@@ -491,7 +572,7 @@ func TestInjectTraceHeaders_EmptyTrace(t *testing.T) {
 	// 测试空 context 时 trace headers 不被设置
 	xplatform.Reset() // 确保平台未初始化，避免干扰
 
-	ctx := t.Context()
+	ctx := context.Background()
 	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
 	xtenant.InjectToRequest(ctx, req)
 
@@ -525,7 +606,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "只有TraceID",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceID(t.Context(), "trace-001")
+				ctx, err := xctx.WithTraceID(context.Background(), "trace-001")
 				if err != nil {
 					t.Fatalf("WithTraceID error: %v", err)
 				}
@@ -539,7 +620,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "TraceID和SpanID",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceID(t.Context(), "trace-002")
+				ctx, err := xctx.WithTraceID(context.Background(), "trace-002")
 				if err != nil {
 					t.Fatalf("WithTraceID error: %v", err)
 				}
@@ -557,7 +638,7 @@ func TestInjectTraceHeaders_PartialTrace(t *testing.T) {
 		{
 			name: "只有TraceFlags",
 			setupCtx: func(t *testing.T) context.Context {
-				ctx, err := xctx.WithTraceFlags(t.Context(), "01")
+				ctx, err := xctx.WithTraceFlags(context.Background(), "01")
 				if err != nil {
 					t.Fatalf("WithTraceFlags error: %v", err)
 				}
@@ -596,7 +677,7 @@ func TestInjectTraceHeaders_FullTrace(t *testing.T) {
 	// 测试完整 trace 字段时的行为
 	xplatform.Reset()
 
-	ctx := t.Context()
+	ctx := context.Background()
 	var err error
 
 	ctx, err = xctx.WithTraceID(ctx, "0af7651916cd43dd8448eb211c80319c")
@@ -822,6 +903,22 @@ func TestHTTPMiddlewareWithOptions_RequireTenantID(t *testing.T) {
 // WithEnsureTrace 选项测试
 // =============================================================================
 
+// assertHTTPTraceFieldsGenerated 验证 HTTP 中间件中追踪字段均被自动生成（非空）。
+func assertHTTPTraceFieldsGenerated(t *testing.T, traceID, spanID, requestID string) {
+	t.Helper()
+	assert.NotEmpty(t, traceID, "TraceID should be auto-generated")
+	assert.NotEmpty(t, spanID, "SpanID should be auto-generated")
+	assert.NotEmpty(t, requestID, "RequestID should be auto-generated")
+}
+
+// assertHTTPTraceFieldsEmpty 验证 HTTP 中间件中追踪字段均为空。
+func assertHTTPTraceFieldsEmpty(t *testing.T, traceID, spanID, requestID string) {
+	t.Helper()
+	assert.Empty(t, traceID, "TraceID should be empty without EnsureTrace")
+	assert.Empty(t, spanID, "SpanID should be empty without EnsureTrace")
+	assert.Empty(t, requestID, "RequestID should be empty without EnsureTrace")
+}
+
 func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 	t.Run("启用EnsureTrace自动生成追踪信息", func(t *testing.T) {
 		var capturedTraceID, capturedSpanID, capturedRequestID string
@@ -838,24 +935,11 @@ func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 		)(handler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-		// 不设置任何 trace header
 		rr := httptest.NewRecorder()
 		wrapped.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusOK {
-			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
-		}
-
-		// 应该自动生成追踪信息
-		if capturedTraceID == "" {
-			t.Error("TraceID should be auto-generated, got empty")
-		}
-		if capturedSpanID == "" {
-			t.Error("SpanID should be auto-generated, got empty")
-		}
-		if capturedRequestID == "" {
-			t.Error("RequestID should be auto-generated, got empty")
-		}
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assertHTTPTraceFieldsGenerated(t, capturedTraceID, capturedSpanID, capturedRequestID)
 	})
 
 	t.Run("启用EnsureTrace但上游已有trace则保留", func(t *testing.T) {
@@ -876,14 +960,8 @@ func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 		rr := httptest.NewRecorder()
 		wrapped.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusOK {
-			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
-		}
-
-		// 应该保留上游传来的 TraceID
-		if capturedTraceID != existingTraceID {
-			t.Errorf("TraceID = %q, want %q (should preserve upstream value)", capturedTraceID, existingTraceID)
-		}
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, existingTraceID, capturedTraceID, "should preserve upstream TraceID")
 	})
 
 	t.Run("默认不启用EnsureTrace则不自动生成", func(t *testing.T) {
@@ -896,28 +974,14 @@ func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		// 默认中间件，不启用 EnsureTrace
 		wrapped := xtenant.HTTPMiddleware()(handler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-		// 不设置任何 trace header
 		rr := httptest.NewRecorder()
 		wrapped.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusOK {
-			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
-		}
-
-		// 默认行为：不自动生成
-		if capturedTraceID != "" {
-			t.Errorf("TraceID should be empty without EnsureTrace, got %q", capturedTraceID)
-		}
-		if capturedSpanID != "" {
-			t.Errorf("SpanID should be empty without EnsureTrace, got %q", capturedSpanID)
-		}
-		if capturedRequestID != "" {
-			t.Errorf("RequestID should be empty without EnsureTrace, got %q", capturedRequestID)
-		}
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assertHTTPTraceFieldsEmpty(t, capturedTraceID, capturedSpanID, capturedRequestID)
 	})
 
 	t.Run("上游传递trace则正常传播", func(t *testing.T) {
@@ -937,7 +1001,6 @@ func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		// 默认中间件，不启用 EnsureTrace
 		wrapped := xtenant.HTTPMiddleware()(handler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
@@ -949,23 +1012,11 @@ func TestHTTPMiddlewareWithOptions_EnsureTrace(t *testing.T) {
 		rr := httptest.NewRecorder()
 		wrapped.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusOK {
-			t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
-		}
-
-		// 应该正确传播上游的追踪信息
-		if capturedTraceID != existingTraceID {
-			t.Errorf("TraceID = %q, want %q", capturedTraceID, existingTraceID)
-		}
-		if capturedSpanID != existingSpanID {
-			t.Errorf("SpanID = %q, want %q", capturedSpanID, existingSpanID)
-		}
-		if capturedRequestID != existingRequestID {
-			t.Errorf("RequestID = %q, want %q", capturedRequestID, existingRequestID)
-		}
-		if capturedTraceFlags != existingTraceFlags {
-			t.Errorf("TraceFlags = %q, want %q", capturedTraceFlags, existingTraceFlags)
-		}
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, existingTraceID, capturedTraceID)
+		assert.Equal(t, existingSpanID, capturedSpanID)
+		assert.Equal(t, existingRequestID, capturedRequestID)
+		assert.Equal(t, existingTraceFlags, capturedTraceFlags)
 	})
 }
 
@@ -1031,5 +1082,94 @@ func TestHTTPMiddlewareWithOptions_Combined(t *testing.T) {
 		if handlerCalled {
 			t.Error("handler should not be called when tenant validation fails")
 		}
+	})
+}
+
+// =============================================================================
+// FG-S2: 出站传播清理旧租户键测试
+// =============================================================================
+
+func TestInjectToRequest_ClearsStalePlatformHeaders(t *testing.T) {
+	// FG-S1 回归测试：xplatform 未初始化时清除旧平台 Header
+	xplatform.Reset()
+	err := xplatform.Init(xplatform.Config{
+		PlatformID:      "plat-001",
+		HasParent:       true,
+		UnclassRegionID: "region-001",
+	})
+	if err != nil {
+		t.Fatalf("xplatform.Init() error = %v", err)
+	}
+
+	ctx := context.Background()
+	req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
+	xtenant.InjectToRequest(ctx, req)
+
+	// 验证平台信息已注入
+	assert.Equal(t, "plat-001", req.Header.Get(xtenant.HeaderPlatformID))
+	assert.Equal(t, "true", req.Header.Get(xtenant.HeaderHasParent))
+	assert.Equal(t, "region-001", req.Header.Get(xtenant.HeaderUnclassRegionID))
+
+	// Reset xplatform，模拟请求对象复用但平台未初始化的场景
+	xplatform.Reset()
+	xtenant.InjectToRequest(ctx, req)
+
+	assert.Empty(t, req.Header.Get(xtenant.HeaderPlatformID), "stale PlatformID should be cleared")
+	assert.Empty(t, req.Header.Get(xtenant.HeaderHasParent), "stale HasParent should be cleared")
+	assert.Empty(t, req.Header.Get(xtenant.HeaderUnclassRegionID), "stale UnclassRegionID should be cleared")
+}
+
+func TestInjectToRequest_ClearsStaleHeaders(t *testing.T) {
+	xplatform.Reset()
+
+	t.Run("清除旧租户Header", func(t *testing.T) {
+		// 第一次调用: 注入租户信息
+		ctx1 := context.Background()
+		var err error
+		ctx1, err = xctx.WithTenantID(ctx1, "tenant-old")
+		if err != nil {
+			t.Fatalf("WithTenantID() error = %v", err)
+		}
+		ctx1, err = xctx.WithTenantName(ctx1, "OldTenant")
+		if err != nil {
+			t.Fatalf("WithTenantName() error = %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
+		xtenant.InjectToRequest(ctx1, req)
+
+		// 验证第一次注入
+		assert.Equal(t, "tenant-old", req.Header.Get(xtenant.HeaderTenantID))
+		assert.Equal(t, "OldTenant", req.Header.Get(xtenant.HeaderTenantName))
+
+		// 第二次调用: context 无租户信息，旧 Header 应被清除
+		ctx2 := context.Background()
+		xtenant.InjectToRequest(ctx2, req)
+
+		assert.Empty(t, req.Header.Get(xtenant.HeaderTenantID), "stale TenantID should be cleared")
+		assert.Empty(t, req.Header.Get(xtenant.HeaderTenantName), "stale TenantName should be cleared")
+	})
+
+	t.Run("清除旧Trace Header", func(t *testing.T) {
+		ctx1 := context.Background()
+		var err error
+		ctx1, err = xctx.WithTraceID(ctx1, "trace-old")
+		if err != nil {
+			t.Fatalf("WithTraceID() error = %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
+		xtenant.InjectToRequest(ctx1, req)
+
+		assert.Equal(t, "trace-old", req.Header.Get(xtenant.HeaderTraceID))
+
+		// 第二次调用: context 无 trace 信息
+		ctx2 := context.Background()
+		xtenant.InjectToRequest(ctx2, req)
+
+		assert.Empty(t, req.Header.Get(xtenant.HeaderTraceID), "stale TraceID should be cleared")
+		assert.Empty(t, req.Header.Get(xtenant.HeaderSpanID), "stale SpanID should be cleared")
+		assert.Empty(t, req.Header.Get(xtenant.HeaderRequestID), "stale RequestID should be cleared")
+		assert.Empty(t, req.Header.Get(xtenant.HeaderTraceFlags), "stale TraceFlags should be cleared")
 	})
 }

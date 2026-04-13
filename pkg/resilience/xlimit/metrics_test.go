@@ -5,19 +5,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
+// assertMetricExists 验证指定名称的指标已记录。
+func assertMetricExists(t *testing.T, rm metricdata.ResourceMetrics, name string) {
+	t.Helper()
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == name {
+				return
+			}
+		}
+	}
+
+	t.Errorf("expected metric %q to be recorded", name)
+}
+
 func TestNewMetrics(t *testing.T) {
 	t.Run("nil meter provider returns nil", func(t *testing.T) {
 		m, err := NewMetrics(nil)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if m != nil {
-			t.Error("expected nil metrics")
-		}
+		require.NoError(t, err)
+		assert.Nil(t, m)
 	})
 
 	t.Run("valid meter provider creates metrics", func(t *testing.T) {
@@ -26,12 +39,8 @@ func TestNewMetrics(t *testing.T) {
 		defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 		m, err := NewMetrics(provider)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if m == nil {
-			t.Error("expected metrics to be created")
-		}
+		require.NoError(t, err)
+		assert.NotNil(t, m)
 	})
 }
 
@@ -41,9 +50,7 @@ func TestMetrics_RecordAllow(t *testing.T) {
 	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
-	if err != nil {
-		t.Fatalf("failed to create metrics: %v", err)
-	}
+	require.NoError(t, err, "failed to create metrics")
 
 	ctx := context.Background()
 
@@ -51,44 +58,18 @@ func TestMetrics_RecordAllow(t *testing.T) {
 		m.RecordAllow(ctx, "distributed", "test-rule", true, 100*time.Microsecond)
 
 		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(ctx, &rm); err != nil {
-			t.Fatalf("failed to collect metrics: %v", err)
-		}
+		require.NoError(t, reader.Collect(ctx, &rm), "failed to collect metrics")
 
-		// 验证指标已记录
-		found := false
-		for _, sm := range rm.ScopeMetrics {
-			for _, metric := range sm.Metrics {
-				if metric.Name == metricNameRequestsTotal {
-					found = true
-				}
-			}
-		}
-		if !found {
-			t.Error("expected requests_total metric to be recorded")
-		}
+		assertMetricExists(t, rm, metricNameRequestsTotal)
 	})
 
 	t.Run("record denied request", func(t *testing.T) {
 		m.RecordAllow(ctx, "local", "test-rule", false, 50*time.Microsecond)
 
 		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(ctx, &rm); err != nil {
-			t.Fatalf("failed to collect metrics: %v", err)
-		}
+		require.NoError(t, reader.Collect(ctx, &rm), "failed to collect metrics")
 
-		// 验证 denied 指标已记录
-		found := false
-		for _, sm := range rm.ScopeMetrics {
-			for _, metric := range sm.Metrics {
-				if metric.Name == metricNameDeniedTotal {
-					found = true
-				}
-			}
-		}
-		if !found {
-			t.Error("expected denied_total metric to be recorded")
-		}
+		assertMetricExists(t, rm, metricNameDeniedTotal)
 	})
 }
 
@@ -98,31 +79,16 @@ func TestMetrics_RecordFallback(t *testing.T) {
 	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
-	if err != nil {
-		t.Fatalf("failed to create metrics: %v", err)
-	}
+	require.NoError(t, err, "failed to create metrics")
 
 	ctx := context.Background()
 
 	m.RecordFallback(ctx, FallbackLocal, "connection refused")
 
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(ctx, &rm); err != nil {
-		t.Fatalf("failed to collect metrics: %v", err)
-	}
+	require.NoError(t, reader.Collect(ctx, &rm), "failed to collect metrics")
 
-	// 验证 fallback 指标已记录
-	found := false
-	for _, sm := range rm.ScopeMetrics {
-		for _, metric := range sm.Metrics {
-			if metric.Name == metricNameFallbackTotal {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Error("expected fallback_total metric to be recorded")
-	}
+	assertMetricExists(t, rm, metricNameFallbackTotal)
 }
 
 func TestMetrics_NilSafe(t *testing.T) {
@@ -142,9 +108,7 @@ func TestMetrics_CanceledContext(t *testing.T) {
 	defer func() { _ = provider.Shutdown(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	m, err := NewMetrics(provider)
-	if err != nil {
-		t.Fatalf("failed to create metrics: %v", err)
-	}
+	require.NoError(t, err, "failed to create metrics")
 
 	// 创建已取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,19 +119,7 @@ func TestMetrics_CanceledContext(t *testing.T) {
 
 	// 验证指标已记录
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("failed to collect metrics: %v", err)
-	}
+	require.NoError(t, reader.Collect(context.Background(), &rm), "failed to collect metrics")
 
-	found := false
-	for _, sm := range rm.ScopeMetrics {
-		for _, metric := range sm.Metrics {
-			if metric.Name == metricNameRequestsTotal {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Error("expected metrics to be recorded even with canceled context")
-	}
+	assertMetricExists(t, rm, metricNameRequestsTotal)
 }

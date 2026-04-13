@@ -1,6 +1,7 @@
 package xlimit
 
 import (
+	"strings"
 	"time"
 )
 
@@ -43,6 +44,10 @@ func newRuleMatcher(rules []Rule) *ruleMatcher {
 
 // FindRule 实现 RuleProvider 接口
 // 根据 Key 查找第一个适用的规则
+//
+// 设计决策: 无匹配时返回 (Rule{}, false)，不静默回退到第一条规则。
+// 静默回退会掩盖配置错误（如 Key 缺少必要字段），调用方无法区分
+// "匹配了默认规则"和"没有规则适用"两种情况。
 func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 	for _, name := range rm.ruleNames {
 		rule, ok := rm.rules[name]
@@ -50,24 +55,23 @@ func (rm *ruleMatcher) FindRule(key Key) (Rule, bool) {
 			continue
 		}
 
-		// 如果规则的 KeyTemplate 可以被 Key 渲染（即 Key 包含必要的字段），则返回该规则
+		// 静态模板（无变量占位符）始终匹配——如 GlobalRule("global")
+		if !strings.Contains(rule.KeyTemplate, "${") {
+			return rule, true
+		}
+
+		// 动态模板：检查 Key 是否能渲染模板（即包含必要的字段）
 		rendered := key.Render(rule.KeyTemplate)
 		if rendered != "" && rendered != rule.KeyTemplate {
 			return rule, true
 		}
 	}
 
-	// 如果没有匹配，返回第一个规则（如果有）
-	if len(rm.ruleNames) > 0 {
-		name := rm.ruleNames[0]
-		return rm.rules[name], true
-	}
-
 	return Rule{}, false
 }
 
 // findRule 根据规则名称查找规则（内部使用）
-func (rm *ruleMatcher) findRule(_ Key, ruleName string) (Rule, bool) {
+func (rm *ruleMatcher) findRule(ruleName string) (Rule, bool) {
 	rule, ok := rm.rules[ruleName]
 	if !ok {
 		return Rule{}, false
@@ -76,9 +80,10 @@ func (rm *ruleMatcher) findRule(_ Key, ruleName string) (Rule, bool) {
 }
 
 // getEffectiveLimit 获取适用于给定键的有效限流配置
-func (rm *ruleMatcher) getEffectiveLimit(rule Rule, key Key) (int, time.Duration) {
-	renderedKey := key.Render(rule.KeyTemplate)
-
+//
+// 设计决策: renderedKey 由调用方预先计算并传入，避免在热路径上重复调用 key.Render。
+// checkRule 内 getEffectiveLimit、getEffectiveBurst、renderKey 共享同一个 renderedKey。
+func (rm *ruleMatcher) getEffectiveLimit(rule Rule, renderedKey string) (int, time.Duration) {
 	if patterns, ok := rm.matchers[rule.Name]; ok {
 		idx := matchFirst(patterns, renderedKey)
 		if idx >= 0 && idx < len(rule.Overrides) {
@@ -95,9 +100,7 @@ func (rm *ruleMatcher) getEffectiveLimit(rule Rule, key Key) (int, time.Duration
 }
 
 // getEffectiveBurst 获取适用于给定键的有效突发容量
-func (rm *ruleMatcher) getEffectiveBurst(rule Rule, key Key) int {
-	renderedKey := key.Render(rule.KeyTemplate)
-
+func (rm *ruleMatcher) getEffectiveBurst(rule Rule, renderedKey string) int {
 	if patterns, ok := rm.matchers[rule.Name]; ok {
 		idx := matchFirst(patterns, renderedKey)
 		if idx >= 0 && idx < len(rule.Overrides) {
@@ -112,9 +115,9 @@ func (rm *ruleMatcher) getEffectiveBurst(rule Rule, key Key) int {
 	return rule.EffectiveBurst()
 }
 
-// renderKey 渲染完整的 Redis 键
-func (rm *ruleMatcher) renderKey(rule Rule, key Key, prefix string) string {
-	return prefix + key.Render(rule.KeyTemplate)
+// renderKey 拼接前缀和已渲染的键
+func (rm *ruleMatcher) renderKey(renderedKey string, prefix string) string {
+	return prefix + renderedKey
 }
 
 // getAllRules 返回所有启用的规则名称

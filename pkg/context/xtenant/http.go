@@ -40,6 +40,10 @@ const (
 //
 // 所有字段都是可选的，未设置的字段保持零值。
 // Header 值会自动去除首尾空白。
+//
+// 设计决策: 本函数仅做 TrimSpace，不校验长度、字符集或控制字符。
+// 租户 ID/名称的格式因系统而异，格式校验应由中间件选项或业务层负责，
+// Extract 函数保持为无策略的薄提取层。
 func ExtractFromHTTPHeader(h http.Header) TenantInfo {
 	if h == nil {
 		return TenantInfo{}
@@ -73,16 +77,6 @@ func ExtractTraceFromHTTPHeader(h http.Header) xctx.Trace {
 	}
 }
 
-// ExtractTraceFromHTTPRequest 从 HTTP Request 提取追踪信息
-//
-// 等价于 ExtractTraceFromHTTPHeader(r.Header)。
-func ExtractTraceFromHTTPRequest(r *http.Request) xctx.Trace {
-	if r == nil {
-		return xctx.Trace{}
-	}
-	return ExtractTraceFromHTTPHeader(r.Header)
-}
-
 // ExtractFromHTTPRequest 从 HTTP Request 提取租户信息
 //
 // 等价于 ExtractFromHTTPHeader(r.Header)。
@@ -91,6 +85,16 @@ func ExtractFromHTTPRequest(r *http.Request) TenantInfo {
 		return TenantInfo{}
 	}
 	return ExtractFromHTTPHeader(r.Header)
+}
+
+// ExtractTraceFromHTTPRequest 从 HTTP Request 提取追踪信息
+//
+// 等价于 ExtractTraceFromHTTPHeader(r.Header)。
+func ExtractTraceFromHTTPRequest(r *http.Request) xctx.Trace {
+	if r == nil {
+		return xctx.Trace{}
+	}
+	return ExtractTraceFromHTTPHeader(r.Header)
 }
 
 // =============================================================================
@@ -104,6 +108,9 @@ func HTTPMiddleware() func(http.Handler) http.Handler {
 }
 
 // MiddlewareOption 中间件选项
+//
+// 设计决策: middlewareConfig 与 grpcInterceptorConfig 字段相同但独立定义，
+// 保持 HTTP 和 gRPC 协议选项的类型独立，允许各自独立演进。
 type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
@@ -158,13 +165,17 @@ func WithEnsureTrace() MiddlewareOption {
 func HTTPMiddlewareWithOptions(opts ...MiddlewareOption) func(http.Handler) http.Handler {
 	cfg := &middlewareConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, code, err := injectTenantToHTTPContext(r, cfg)
 			if err != nil {
+				// 设计决策: 500 错误在正常流程中不可达（r.Context() 始终非 nil），
+				// 这里的错误信息来自 xctx，不含敏感数据，故直接返回以便调试。
 				http.Error(w, err.Error(), code)
 				return
 			}
@@ -184,16 +195,16 @@ func injectTenantToHTTPContext(r *http.Request, cfg *middlewareConfig) (context.
 		return nil, http.StatusBadRequest, err
 	}
 
-	// 注入租户信息到 context
-	ctx, err := injectTenantInfoToContext(ctx, info)
-	if err != nil {
+	// 注入租户信息到 context（复用公开 API）
+	ctx, err := WithTenantInfo(ctx, info)
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达（r.Context() 始终非 nil）
 		return nil, http.StatusInternalServerError, err
 	}
 
 	// 处理追踪信息
 	trace := ExtractTraceFromHTTPHeader(r.Header)
 	ctx, err = injectHTTPTraceToContext(ctx, trace, cfg.ensureTrace)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, http.StatusInternalServerError, err
 	}
 
@@ -211,28 +222,10 @@ func validateHTTPTenantInfo(info TenantInfo, cfg *middlewareConfig) error {
 	return nil
 }
 
-// injectTenantInfoToContext 将租户信息注入 context
-func injectTenantInfoToContext(ctx context.Context, info TenantInfo) (context.Context, error) {
-	var err error
-	if info.TenantID != "" {
-		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if info.TenantName != "" {
-		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return ctx, nil
-}
-
 // injectHTTPTraceToContext 处理追踪信息并注入 context
 func injectHTTPTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
 	ctx, err := xctx.WithTrace(ctx, trace)
-	if err != nil {
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
 		return nil, err
 	}
 	if ensureTrace {
@@ -263,13 +256,17 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 }
 
 // injectPlatformHeaders 注入服务级平台信息
+//
+// 设计决策: 使用与租户/追踪字段一致的"以源为准"语义——
+// xplatform 未初始化时删除平台键，防止请求对象复用时旧平台信息泄漏到下游。
 func injectPlatformHeaders(h http.Header) {
 	if !xplatform.IsInitialized() {
+		h.Del(HeaderPlatformID)
+		h.Del(HeaderHasParent)
+		h.Del(HeaderUnclassRegionID)
 		return
 	}
-	if pid := xplatform.PlatformID(); pid != "" {
-		h.Set(HeaderPlatformID, pid)
-	}
+	h.Set(HeaderPlatformID, xplatform.PlatformID())
 	if xplatform.HasParent() {
 		h.Set(HeaderHasParent, "true")
 	} else {
@@ -277,47 +274,71 @@ func injectPlatformHeaders(h http.Header) {
 	}
 	if regionID := xplatform.UnclassRegionID(); regionID != "" {
 		h.Set(HeaderUnclassRegionID, regionID)
+	} else {
+		h.Del(HeaderUnclassRegionID)
 	}
 }
 
 // injectTenantHeaders 注入请求级租户信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 Del。
+// 防止请求对象复用时旧租户信息泄漏到下游。
 func injectTenantHeaders(ctx context.Context, h http.Header) {
 	if tid := TenantID(ctx); tid != "" {
 		h.Set(HeaderTenantID, tid)
+	} else {
+		h.Del(HeaderTenantID)
 	}
 	if tname := TenantName(ctx); tname != "" {
 		h.Set(HeaderTenantName, tname)
+	} else {
+		h.Del(HeaderTenantName)
 	}
 }
 
 // injectTraceHeaders 注入追踪信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 Del。
 func injectTraceHeaders(ctx context.Context, h http.Header) {
 	if tid := xctx.TraceID(ctx); tid != "" {
 		h.Set(HeaderTraceID, tid)
+	} else {
+		h.Del(HeaderTraceID)
 	}
 	if sid := xctx.SpanID(ctx); sid != "" {
 		h.Set(HeaderSpanID, sid)
+	} else {
+		h.Del(HeaderSpanID)
 	}
 	if rid := xctx.RequestID(ctx); rid != "" {
 		h.Set(HeaderRequestID, rid)
+	} else {
+		h.Del(HeaderRequestID)
 	}
 	if flags := xctx.TraceFlags(ctx); flags != "" {
 		h.Set(HeaderTraceFlags, flags)
+	} else {
+		h.Del(HeaderTraceFlags)
 	}
 }
 
 // InjectTenantToHeader 将 TenantInfo 注入 HTTP Header
 //
 // 用于手动构造 HTTP Header 的场景。
+// 采用增量写入语义：只 Set 非空字段，不清除已有的键。
+// 如需"以 context 为准"的清理语义，请使用 InjectToRequest。
+//
+// 对 TenantID/TenantName 做 TrimSpace 后再判空和 Set，
+// 与包内其他写入路径（WithTenantID、ExtractFromHTTPHeader 等）的归一化语义一致。
 func InjectTenantToHeader(h http.Header, info TenantInfo) {
 	if h == nil {
 		return
 	}
 
-	if info.TenantID != "" {
-		h.Set(HeaderTenantID, info.TenantID)
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		h.Set(HeaderTenantID, tid)
 	}
-	if info.TenantName != "" {
-		h.Set(HeaderTenantName, info.TenantName)
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		h.Set(HeaderTenantName, tname)
 	}
 }

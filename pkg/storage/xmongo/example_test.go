@@ -89,11 +89,12 @@ func ExampleMongo_FindPage() {
 	// ctx := context.Background()
 	// coll := m.Client().Database("mydb").Collection("users")
 	//
-	// // 分页查询第一页，每页 10 条，按创建时间倒序
+	// // 分页查询第一页，每页 10 条，按创建时间倒序，只返回 name 和 email 字段
 	// result, err := m.FindPage(ctx, coll, bson.M{"status": "active"}, xmongo.PageOptions{
-	//     Page:     1,
-	//     PageSize: 10,
-	//     Sort:     bson.D{{"created_at", -1}},
+	//     Page:       1,
+	//     PageSize:   10,
+	//     Sort:       bson.D{{"created_at", -1}},
+	//     Projection: bson.D{{"name", 1}, {"email", 1}}, // 可选：字段投影
 	// })
 	// if err != nil {
 	//     log.Fatal(err)
@@ -108,7 +109,7 @@ func ExampleMongo_FindPage() {
 	// Output: 分页查询示例
 }
 
-func ExampleMongo_BulkWrite() {
+func ExampleMongo_BulkInsert() {
 	// 假设 m 是已创建的 xmongo.Mongo 实例
 	// m, _ := xmongo.New(client)
 
@@ -127,8 +128,8 @@ func ExampleMongo_BulkWrite() {
 	//     }
 	// }
 	//
-	// // 批量写入，每批 100 条
-	// result, err := m.BulkWrite(ctx, coll, docs, xmongo.BulkOptions{
+	// // 批量插入，每批 100 条
+	// result, err := m.BulkInsert(ctx, coll, docs, xmongo.BulkOptions{
 	//     BatchSize: 100,
 	//     Ordered:   false, // 无序写入，性能更高
 	// })
@@ -141,8 +142,8 @@ func ExampleMongo_BulkWrite() {
 	//     fmt.Printf("发生 %d 个错误\n", len(result.Errors))
 	// }
 
-	fmt.Println("批量写入示例")
-	// Output: 批量写入示例
+	fmt.Println("批量插入示例")
+	// Output: 批量插入示例
 }
 
 func ExampleMongo_Stats() {

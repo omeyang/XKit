@@ -1,6 +1,7 @@
 package xpulsar
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -8,6 +9,9 @@ import (
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 	"github.com/omeyang/xkit/pkg/resilience/xretry"
 )
+
+// benchSink 防止编译器将基准测试结果优化掉。
+var benchSink any
 
 // =============================================================================
 // DLQBuilder Benchmarks
@@ -17,16 +21,18 @@ func BenchmarkNewDLQBuilder(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = NewDLQBuilder()
+	var sink *DLQBuilder
+	for b.Loop() {
+		sink = NewDLQBuilder()
 	}
+	benchSink = sink
 }
 
 func BenchmarkDLQBuilder_Chaining(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder := NewDLQBuilder()
 		builder.WithMaxDeliveries(5).
 			WithDeadLetterTopic("dead-letter-topic").
@@ -45,9 +51,11 @@ func BenchmarkDLQBuilder_Build(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = builder.Build()
+	var sink *pulsar.DLQPolicy
+	for b.Loop() {
+		sink = builder.Build()
 	}
+	benchSink = sink
 }
 
 func BenchmarkDLQBuilder_WithProducerOptions(b *testing.B) {
@@ -62,7 +70,7 @@ func BenchmarkDLQBuilder_WithProducerOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder.WithProducerOptions(opts)
 	}
 }
@@ -75,16 +83,17 @@ func BenchmarkDLQBuilder_FullWorkflow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		policy := NewDLQBuilder().
+	var sink *pulsar.DLQPolicy
+	for b.Loop() {
+		sink = NewDLQBuilder().
 			WithMaxDeliveries(5).
 			WithDeadLetterTopic("dead-letter-topic").
 			WithRetryLetterTopic("retry-letter-topic").
 			WithInitialSubscription("my-subscription").
 			WithProducerOptions(opts).
 			Build()
-		_ = policy
 	}
+	benchSink = sink
 }
 
 // =============================================================================
@@ -95,9 +104,11 @@ func BenchmarkToPulsarNackBackoff_Nil(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = ToPulsarNackBackoff(nil)
+	var sink pulsar.NackBackoffPolicy
+	for b.Loop() {
+		sink = ToPulsarNackBackoff(nil)
 	}
+	benchSink = sink
 }
 
 func BenchmarkToPulsarNackBackoff_WithPolicy(b *testing.B) {
@@ -109,9 +120,11 @@ func BenchmarkToPulsarNackBackoff_WithPolicy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = ToPulsarNackBackoff(policy)
+	var sink pulsar.NackBackoffPolicy
+	for b.Loop() {
+		sink = ToPulsarNackBackoff(policy)
 	}
+	benchSink = sink
 }
 
 func BenchmarkNackBackoff_Next(b *testing.B) {
@@ -124,25 +137,31 @@ func BenchmarkNackBackoff_Next(b *testing.B) {
 	b.Run("Redelivery0", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = nackBackoff.Next(0)
+		var sink time.Duration
+		for b.Loop() {
+			sink = nackBackoff.Next(0)
 		}
+		benchSink = sink
 	})
 
 	b.Run("Redelivery5", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = nackBackoff.Next(5)
+		var sink time.Duration
+		for b.Loop() {
+			sink = nackBackoff.Next(5)
 		}
+		benchSink = sink
 	})
 
 	b.Run("Redelivery10", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = nackBackoff.Next(10)
+		var sink time.Duration
+		for b.Loop() {
+			sink = nackBackoff.Next(10)
 		}
+		benchSink = sink
 	})
 }
 
@@ -154,9 +173,11 @@ func BenchmarkNewConsumerOptionsBuilder(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = NewConsumerOptionsBuilder("test-topic", "test-subscription")
+	var sink *ConsumerOptionsBuilder
+	for b.Loop() {
+		sink = NewConsumerOptionsBuilder("test-topic", "test-subscription")
 	}
+	benchSink = sink
 }
 
 func BenchmarkConsumerOptionsBuilder_Chaining(b *testing.B) {
@@ -166,7 +187,7 @@ func BenchmarkConsumerOptionsBuilder_Chaining(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder := NewConsumerOptionsBuilder("test-topic", "test-subscription")
 		builder.WithType(pulsar.Shared).
 			WithDLQ(dlq).
@@ -184,9 +205,11 @@ func BenchmarkConsumerOptionsBuilder_Build(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = builder.Build()
+	var sink pulsar.ConsumerOptions
+	for b.Loop() {
+		sink = builder.Build()
 	}
+	benchSink = sink
 }
 
 func BenchmarkConsumerOptionsBuilder_WithDLQBuilder(b *testing.B) {
@@ -198,7 +221,7 @@ func BenchmarkConsumerOptionsBuilder_WithDLQBuilder(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder.WithDLQBuilder(dlqBuilder)
 	}
 }
@@ -209,8 +232,9 @@ func BenchmarkConsumerOptionsBuilder_FullWorkflow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		opts := NewConsumerOptionsBuilder("test-topic", "test-subscription").
+	var sink pulsar.ConsumerOptions
+	for b.Loop() {
+		sink = NewConsumerOptionsBuilder("test-topic", "test-subscription").
 			WithType(pulsar.Shared).
 			WithDLQBuilder(NewDLQBuilder().
 				WithMaxDeliveries(5).
@@ -220,8 +244,8 @@ func BenchmarkConsumerOptionsBuilder_FullWorkflow(b *testing.B) {
 			WithNackRedeliveryDelay(1 * time.Second).
 			WithRetryEnable(true).
 			Build()
-		_ = opts
 	}
+	benchSink = sink
 }
 
 func BenchmarkConsumerOptionsBuilder_Options(b *testing.B) {
@@ -230,9 +254,11 @@ func BenchmarkConsumerOptionsBuilder_Options(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = builder.Options()
+	var sink *pulsar.ConsumerOptions
+	for b.Loop() {
+		sink = builder.Options()
 	}
+	benchSink = sink
 }
 
 // =============================================================================
@@ -246,9 +272,11 @@ func BenchmarkTopicFromConsumerOptions(b *testing.B) {
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = topicFromConsumerOptions(opts)
+		var sink string
+		for b.Loop() {
+			sink = topicFromConsumerOptions(opts)
 		}
+		benchSink = sink
 	})
 
 	b.Run("SingleTopicFromTopics", func(b *testing.B) {
@@ -257,9 +285,11 @@ func BenchmarkTopicFromConsumerOptions(b *testing.B) {
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = topicFromConsumerOptions(opts)
+		var sink string
+		for b.Loop() {
+			sink = topicFromConsumerOptions(opts)
 		}
+		benchSink = sink
 	})
 
 	b.Run("MultipleTopics", func(b *testing.B) {
@@ -268,18 +298,22 @@ func BenchmarkTopicFromConsumerOptions(b *testing.B) {
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = topicFromConsumerOptions(opts)
+		var sink string
+		for b.Loop() {
+			sink = topicFromConsumerOptions(opts)
 		}
+		benchSink = sink
 	})
 
 	b.Run("EmptyTopic", func(b *testing.B) {
 		opts := pulsar.ConsumerOptions{}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = topicFromConsumerOptions(opts)
+		var sink string
+		for b.Loop() {
+			sink = topicFromConsumerOptions(opts)
 		}
+		benchSink = sink
 	})
 }
 
@@ -291,17 +325,21 @@ func BenchmarkPulsarAttrs(b *testing.B) {
 	b.Run("WithTopic", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = pulsarAttrs("test-topic")
+		var sink []xmetrics.Attr
+		for b.Loop() {
+			sink = pulsarAttrs("test-topic")
 		}
+		benchSink = sink
 	})
 
 	b.Run("EmptyTopic", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_ = pulsarAttrs("")
+		var sink []xmetrics.Attr
+		for b.Loop() {
+			sink = pulsarAttrs("")
 		}
+		benchSink = sink
 	})
 }
 
@@ -313,9 +351,11 @@ func BenchmarkDefaultOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = defaultOptions()
+	var sink *clientOptions
+	for b.Loop() {
+		sink = defaultOptions()
 	}
+	benchSink = sink
 }
 
 func BenchmarkWithConnectionTimeout(b *testing.B) {
@@ -325,7 +365,7 @@ func BenchmarkWithConnectionTimeout(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -337,7 +377,7 @@ func BenchmarkWithOperationTimeout(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -349,7 +389,7 @@ func BenchmarkWithMaxConnectionsPerBroker(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -361,7 +401,7 @@ func BenchmarkWithHealthTimeout(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -374,7 +414,7 @@ func BenchmarkWithTracer(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -387,7 +427,7 @@ func BenchmarkWithObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -399,7 +439,7 @@ func BenchmarkWithTLS(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -411,7 +451,7 @@ func BenchmarkWithAuthentication(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -433,7 +473,7 @@ func BenchmarkApplyAllOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		opts := defaultOptions()
 		for _, opt := range options {
 			opt(opts)
@@ -449,13 +489,15 @@ func BenchmarkStats_Create(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = Stats{
+	var sink Stats
+	for b.Loop() {
+		sink = Stats{
 			Connected:      true,
 			ProducersCount: 5,
 			ConsumersCount: 3,
 		}
 	}
+	benchSink = sink
 }
 
 func BenchmarkStats_Copy(b *testing.B) {
@@ -468,10 +510,11 @@ func BenchmarkStats_Copy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		copyStats := stats
-		_ = copyStats
+	var sink Stats
+	for b.Loop() {
+		sink = stats
 	}
+	benchSink = sink
 }
 
 // =============================================================================
@@ -484,7 +527,7 @@ func BenchmarkNewDLQBuilder_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = NewDLQBuilder()
+			runtime.KeepAlive(NewDLQBuilder())
 		}
 	})
 }
@@ -498,7 +541,7 @@ func BenchmarkDLQBuilder_Build_Parallel(b *testing.B) {
 			builder := NewDLQBuilder().
 				WithMaxDeliveries(5).
 				WithDeadLetterTopic("dead-letter-topic")
-			_ = builder.Build()
+			runtime.KeepAlive(builder.Build())
 		}
 	})
 }
@@ -509,7 +552,7 @@ func BenchmarkNewConsumerOptionsBuilder_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = NewConsumerOptionsBuilder("test-topic", "test-subscription")
+			runtime.KeepAlive(NewConsumerOptionsBuilder("test-topic", "test-subscription"))
 		}
 	})
 }
@@ -522,7 +565,7 @@ func BenchmarkToPulsarNackBackoff_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = ToPulsarNackBackoff(policy)
+			runtime.KeepAlive(ToPulsarNackBackoff(policy))
 		}
 	})
 }
@@ -533,7 +576,7 @@ func BenchmarkDefaultOptions_Parallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = defaultOptions()
+			runtime.KeepAlive(defaultOptions())
 		}
 	})
 }
@@ -558,7 +601,7 @@ func BenchmarkConsumerOptionsBuilder_WithType(b *testing.B) {
 			builder := NewConsumerOptionsBuilder("test-topic", "test-subscription")
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				builder.WithType(tc.t)
 			}
 		})
@@ -573,11 +616,13 @@ func BenchmarkDLQBuilder_ZeroMaxDeliveries(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	var sink *pulsar.DLQPolicy
+	for b.Loop() {
 		builder := NewDLQBuilder()
 		builder.WithMaxDeliveries(0) // 应该不生效
-		_ = builder.Build()
+		sink = builder.Build()
 	}
+	benchSink = sink
 }
 
 func BenchmarkConsumerOptionsBuilder_NilDLQBuilder(b *testing.B) {
@@ -586,7 +631,7 @@ func BenchmarkConsumerOptionsBuilder_NilDLQBuilder(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder.WithDLQBuilder(nil)
 	}
 }
@@ -597,7 +642,7 @@ func BenchmarkConsumerOptionsBuilder_NilNackBackoff(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		builder.WithNackBackoff(nil)
 	}
 }
@@ -609,7 +654,7 @@ func BenchmarkWithTracer_Nil(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -621,7 +666,7 @@ func BenchmarkWithObserver_Nil(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -633,7 +678,7 @@ func BenchmarkWithConnectionTimeout_Zero(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -645,7 +690,7 @@ func BenchmarkWithOperationTimeout_Negative(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }
@@ -657,7 +702,7 @@ func BenchmarkWithMaxConnectionsPerBroker_Zero(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		optFn(opts)
 	}
 }

@@ -18,18 +18,40 @@ import (
 )
 
 const (
-	defaultInstrumentationName = "github.com/omeyang/xkit/xmetrics"
+	defaultInstrumentationName = "github.com/omeyang/xkit/pkg/observability/xmetrics"
 	unknownComponent           = "unknown"
 	unknownOperation           = "unknown"
 
 	metricOperationTotal    = "xkit.operation.total"
 	metricOperationDuration = "xkit.operation.duration"
+
+	// traceFlagsSampled 是 W3C TraceFlags 的 sampled 位（0x01）。
+	// 用作 ensureParentSpan 中 trace_flags 缺失时的默认值。
+	traceFlagsSampled = 0x01
+
+	// AttrKeyComponent 是 metrics/trace 中组件名称的属性键。
+	// 设计决策: 与 xlog.KeyComponent 值相同（"component"），但不共享常量引用。
+	// 两个包各自定义是为了避免 xmetrics ↔ xlog 包间循环依赖，
+	// 且这些值遵循 OTel 语义约定，实际漂移风险极低。
+	AttrKeyComponent = "component"
+	// AttrKeyOperation 是 metrics/trace 中操作名称的属性键。
+	// 设计决策: 与 xlog.KeyOperation 值相同（"operation"），理由同 AttrKeyComponent。
+	AttrKeyOperation = "operation"
+	// AttrKeyStatus 是 metrics 中操作状态的属性键。
+	AttrKeyStatus = "status"
 )
+
+// defaultDurationBuckets 定义了适用于典型 API 操作的 Histogram 桶边界（秒）。
+// 覆盖 1ms 到 10s 范围，对热路径操作（<100ms）有足够细粒度区分 P50/P95/P99。
+var defaultDurationBuckets = []float64{
+	0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+}
 
 type otelConfig struct {
 	instrumentationName string
 	tracerProvider      trace.TracerProvider
 	meterProvider       metric.MeterProvider
+	histogramBuckets    []float64
 }
 
 // Option 定义 OTel Observer 的配置选项。
@@ -62,15 +84,35 @@ func WithMeterProvider(provider metric.MeterProvider) Option {
 	}
 }
 
+// WithHistogramBuckets 设置 duration Histogram 的桶边界（单位：秒）。
+// 默认值为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]，
+// 适用于典型 API 操作（1ms ~ 10s）。
+// nil 或空切片会被忽略，保留默认桶边界。
+func WithHistogramBuckets(buckets []float64) Option {
+	return func(cfg *otelConfig) {
+		if len(buckets) > 0 {
+			cfg.histogramBuckets = buckets
+		}
+	}
+}
+
 // NewOTelObserver 创建基于 OpenTelemetry 的 Observer。
 func NewOTelObserver(opts ...Option) (Observer, error) {
 	cfg := &otelConfig{
 		instrumentationName: defaultInstrumentationName,
 		tracerProvider:      otel.GetTracerProvider(),
 		meterProvider:       otel.GetMeterProvider(),
+		histogramBuckets:    defaultDurationBuckets,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			return nil, ErrNilOption
+		}
 		opt(cfg)
+	}
+
+	if err := validateBuckets(cfg.histogramBuckets); err != nil {
+		return nil, err
 	}
 
 	tracer := cfg.tracerProvider.Tracer(cfg.instrumentationName)
@@ -79,24 +121,33 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	total, err := meter.Int64Counter(
 		metricOperationTotal,
 		metric.WithDescription("total operations"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{operation}"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("xmetrics: create counter failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateCounter, err)
+	}
+	// 设计决策: 对 nil instrument 做 fail-open 防御（即使 err==nil）。
+	// OTel API 契约保证 err==nil 时返回非 nil instrument，但自定义 MeterProvider
+	// 可能违反此约定；作为基础库，不应将观测异常升级为业务崩溃。
+	if total == nil {
+		return nil, fmt.Errorf("%w: meter returned nil counter", ErrCreateCounter)
 	}
 
 	duration, err := meter.Float64Histogram(
 		metricOperationDuration,
 		metric.WithDescription("operation duration"),
 		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(cfg.histogramBuckets...),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("xmetrics: create histogram failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrCreateHistogram, err)
+	}
+	if duration == nil {
+		return nil, fmt.Errorf("%w: meter returned nil histogram", ErrCreateHistogram)
 	}
 
 	return &otelObserver{
 		tracer:   tracer,
-		meter:    meter,
 		total:    total,
 		duration: duration,
 	}, nil
@@ -104,7 +155,6 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 
 type otelObserver struct {
 	tracer   trace.Tracer
-	meter    metric.Meter
 	total    metric.Int64Counter
 	duration metric.Float64Histogram
 }
@@ -116,6 +166,11 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 	}
 	ctx = ensureParentSpan(ctx)
 
+	// 设计决策: component/operation 不做运行时长度或模式校验。
+	// 原因：(1) 任何长度/模式检查都无法真正防止高基数（短 UUID 也会膨胀）；
+	// (2) 静默截断/降级会掩盖调用方的错误使用，比不检查更难排查；
+	// (3) 作为工具库，在热路径增加校验的性价比低，文档约束更适合。
+	// 相关文档：doc.go "component / operation 使用约束" 段落。
 	component := opts.Component
 	if component == "" {
 		component = unknownComponent
@@ -127,8 +182,8 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 
 	attrs := make([]attribute.KeyValue, 0, 2+len(opts.Attrs))
 	attrs = append(attrs,
-		attribute.String("component", component),
-		attribute.String("operation", operation),
+		attribute.String(AttrKeyComponent, component),
+		attribute.String(AttrKeyOperation, operation),
 	)
 	attrs = append(attrs, attrsToOTel(opts.Attrs)...)
 
@@ -138,6 +193,21 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 		trace.WithSpanKind(mapSpanKind(opts.Kind)),
 		trace.WithAttributes(attrs...),
 	)
+
+	// 设计决策: 对 nil/typed-nil span 做 fail-open 防御。
+	// OTel API 契约保证 Tracer.Start 返回非 nil span，但自定义 TracerProvider
+	// 可能违反此约定（包括返回 typed-nil，如 (*mySpan)(nil)）；
+	// 此时回退到 noop，确保"观测失败不影响业务"。
+	if isNilInterface(span) {
+		return ctx, &otelSpan{
+			span:      trace.SpanFromContext(ctx), // noop span（保证非 nil）
+			observer:  o,
+			ctx:       ctx,
+			component: component,
+			operation: operation,
+			start:     time.Now(),
+		}
+	}
 
 	ctx = syncXctx(ctx, span.SpanContext())
 
@@ -198,24 +268,38 @@ func (s *otelSpan) End(result Result) {
 
 		s.span.End()
 
-		if s.observer == nil {
-			return
-		}
-
 		// 使用不可取消的 context 记录指标，确保即使请求 context 已取消/超时，
 		// 指标仍能正确记录。这对于失败/超时场景的可观测性至关重要。
 		// 注意：context.WithoutCancel 会保留 context 中的 values（如 baggage）。
+		// 当前 OTel SDK 的 Add/Record 调用是同步的，metricsCtx 不会被 SDK 延迟持有，
+		// 因此 values 不存在语义过期风险。若未来 OTel SDK 行为变化需重新评估。
 		metricsCtx := context.WithoutCancel(s.ctx)
 		elapsed := time.Since(s.start).Seconds()
 		attrs := metricAttrs(s.component, s.operation, status)
 		s.observer.total.Add(metricsCtx, 1, metric.WithAttributes(attrs...))
 		s.observer.duration.Record(metricsCtx, elapsed, metric.WithAttributes(attrs...))
+
+		// 释放 context 引用，避免长生命周期 span 阻止 GC 回收 context 链上的值。
+		s.ctx = nil
 	})
 }
 
+// resolveStatus 将 Result 解析为有效的 Status。
+//
+// 设计决策: Status 收敛为 StatusOK / StatusError 两种值。
+// 若 result.Status 为未知值，按 Err 字段推导（有 Err → error，否则 → ok）。
+// 这避免了 metrics 的 status 维度出现高基数风险。
 func resolveStatus(result Result) Status {
-	if result.Status != "" {
-		return result.Status
+	switch result.Status {
+	case StatusOK:
+		return StatusOK
+	case StatusError:
+		return StatusError
+	case "":
+		// 空状态：根据 Err 推导
+	default:
+		// 设计决策: 未知 Status 值不透传到 metrics（防止高基数），
+		// 回退到 Err 推导逻辑，与空 Status 行为一致。
 	}
 	if result.Err != nil {
 		return StatusError
@@ -238,14 +322,21 @@ func mapSpanKind(kind Kind) trace.SpanKind {
 	}
 }
 
+// metricAttrs 构造 metrics 的固定三维属性。
+// 使用 [3] 数组避免 append 扩容分配（编译器会将返回的数组逃逸到堆上，
+// 此处 [3] 的价值在于避免 append 扩容而非栈分配）。
 func metricAttrs(component, operation string, status Status) []attribute.KeyValue {
 	var attrs [3]attribute.KeyValue
-	attrs[0] = attribute.String("component", component)
-	attrs[1] = attribute.String("operation", operation)
-	attrs[2] = attribute.String("status", string(status))
+	attrs[0] = attribute.String(AttrKeyComponent, component)
+	attrs[1] = attribute.String(AttrKeyOperation, operation)
+	attrs[2] = attribute.String(AttrKeyStatus, string(status))
 	return attrs[:]
 }
 
+// 设计决策: 过滤保留键（component/operation/status），防止用户自定义属性
+// 与系统属性冲突导致 trace 与 metrics 数据不一致。
+// metrics 始终使用内部存储的 component/operation/status 值，
+// 若 trace span 上出现同名用户属性则会产生覆盖，造成排障困惑。
 func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 	if len(attrs) == 0 {
 		return nil
@@ -255,9 +346,19 @@ func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 		if attr.Key == "" || attr.Value == nil {
 			continue
 		}
+		if isReservedAttrKey(attr.Key) {
+			continue
+		}
 		converted = append(converted, toKeyValue(attr))
 	}
+	if len(converted) == 0 {
+		return nil
+	}
 	return converted
+}
+
+func isReservedAttrKey(key string) bool {
+	return key == AttrKeyComponent || key == AttrKeyOperation || key == AttrKeyStatus
 }
 
 func toKeyValue(attr Attr) attribute.KeyValue {
@@ -271,6 +372,9 @@ func toKeyValue(attr Attr) attribute.KeyValue {
 	case int64:
 		return attribute.Int64(attr.Key, v)
 	case uint64:
+		// 设计决策: OTel API 不支持原生 uint64，小值用 int64 保留数值语义，
+		// 大值回退为 string。同一键在不同调用中可能产生不同类型（int64 vs string），
+		// 但 uint64 > MaxInt64 在实际业务中极少出现，且全部字符串化会丧失小值的数值查询能力。
 		if v <= math.MaxInt64 {
 			return attribute.Int64(attr.Key, int64(v))
 		}
@@ -287,8 +391,9 @@ func toKeyValue(attr Attr) attribute.KeyValue {
 }
 
 func ensureParentSpan(ctx context.Context) context.Context {
-	span := trace.SpanFromContext(ctx)
-	if span != nil && span.SpanContext().IsValid() {
+	// trace.SpanFromContext 保证返回非 nil（无 span 时返回 noopSpan），
+	// 因此只需检查 SpanContext 是否有效。
+	if trace.SpanFromContext(ctx).SpanContext().IsValid() {
 		return ctx
 	}
 
@@ -307,8 +412,12 @@ func ensureParentSpan(ctx context.Context) context.Context {
 		return ctx
 	}
 
-	// 从 xctx 解析 TraceFlags，默认为 0（未采样）
-	var traceFlags trace.TraceFlags
+	// 设计决策: trace_flags 缺失时默认为 sampled（0x01）而非 0x00。
+	// xctx 中 trace_flags 是可选字段（doc.go:21）；若缺失时默认 0x00（unsampled），
+	// 配合 Remote=true 会使 ParentBased 采样器将后续 span 当作"remote unsampled"丢弃，
+	// 导致"有 trace_id 但无导出 span"的观测盲区。
+	// 默认 sampled 确保 trace 链路不会因 flags 缺失而意外中断。
+	traceFlags := trace.TraceFlags(traceFlagsSampled)
 	if flagsStr := xctx.TraceFlags(ctx); flagsStr != "" {
 		if parsed, err := strconv.ParseUint(flagsStr, 16, 8); err == nil {
 			traceFlags = trace.TraceFlags(parsed)
@@ -325,6 +434,12 @@ func ensureParentSpan(ctx context.Context) context.Context {
 	return trace.ContextWithSpanContext(ctx, parent)
 }
 
+// syncXctx 将 OTel SpanContext 中的 trace/span ID 同步到 xctx。
+//
+// 设计决策: xctx.WithXxx 的错误被安全忽略（if err == nil 模式），因为：
+// 1. 这些函数仅在 ctx 为 nil 时返回 ErrNilContext
+// 2. 调用方 Start 已保证 ctx 非 nil（nil 已被归一化为 context.Background()）
+// 3. 即使未来 xctx 增加新校验，跳过同步不影响核心功能（仅影响 xctx 链路信息）
 func syncXctx(ctx context.Context, sc trace.SpanContext) context.Context {
 	if !sc.IsValid() {
 		return ctx
@@ -338,10 +453,47 @@ func syncXctx(ctx context.Context, sc trace.SpanContext) context.Context {
 		ctx = newCtx
 	}
 	// 同步 TraceFlags 到 xctx（格式：2位十六进制，如 "01"）
-	flagsStr := fmt.Sprintf("%02x", sc.TraceFlags())
+	flagsStr := traceFlagsToHex(sc.TraceFlags())
 	newCtx, err = xctx.WithTraceFlags(ctx, flagsStr)
 	if err == nil {
 		ctx = newCtx
 	}
 	return ctx
+}
+
+// validateBuckets 校验 Histogram 桶边界的合法性。
+// 要求：所有值必须是非负有限数（非 NaN/Inf、≥ 0），且严格递增。
+// 桶边界用于 duration Histogram（记录 time.Since 秒数，始终 ≥ 0），负值无实际意义。
+func validateBuckets(buckets []float64) error {
+	for i, b := range buckets {
+		if math.IsNaN(b) || math.IsInf(b, 0) {
+			return fmt.Errorf("%w: bucket[%d] is NaN or Inf", ErrInvalidBuckets, i)
+		}
+		if b < 0 {
+			return fmt.Errorf("%w: bucket[%d] (%g) must be non-negative", ErrInvalidBuckets, i, b)
+		}
+		if i > 0 && b <= buckets[i-1] {
+			return fmt.Errorf("%w: bucket[%d] (%g) must be greater than bucket[%d] (%g)",
+				ErrInvalidBuckets, i, b, i-1, buckets[i-1])
+		}
+	}
+	return nil
+}
+
+const hexDigits = "0123456789abcdef"
+
+// hexLookup 预计算所有 256 种 TraceFlags 值对应的 2 位十六进制字符串。
+// 查表实现在调用时零分配。
+var hexLookup = func() [256]string {
+	var t [256]string
+	for i := range t {
+		t[i] = string([]byte{hexDigits[i>>4], hexDigits[i&0x0f]})
+	}
+	return t
+}()
+
+// traceFlagsToHex 将 TraceFlags 转换为 2 位十六进制字符串。
+// 使用预计算查表实现，调用时零分配。
+func traceFlagsToHex(flags trace.TraceFlags) string {
+	return hexLookup[flags]
 }

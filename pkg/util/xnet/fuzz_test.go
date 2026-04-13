@@ -151,7 +151,7 @@ func FuzzWireRangeRoundTrip(f *testing.F) {
 		}
 
 		// WireRange 往返测试
-		w := WireRangeFrom(r)
+		w := WireRangeFromUnchecked(r)
 		restored, err := w.ToIPRange()
 		if err != nil {
 			t.Fatalf("WireRange.ToIPRange failed: %v", err)
@@ -202,6 +202,45 @@ func FuzzRangeContainsV4(f *testing.F) {
 	})
 }
 
+// parseValidIPRange 解析两个字符串为一个有效的 IP 范围。
+// 返回 ok=false 表示输入无效（解析失败、版本不匹配、from>to 或范围无效）。
+func parseValidIPRange(fromStr, toStr string) (netipx.IPRange, bool) {
+	from, err := netip.ParseAddr(fromStr)
+	if err != nil {
+		return netipx.IPRange{}, false
+	}
+	to, err := netip.ParseAddr(toStr)
+	if err != nil {
+		return netipx.IPRange{}, false
+	}
+
+	if from.Compare(to) > 0 || AddrVersion(from) != AddrVersion(to) {
+		return netipx.IPRange{}, false
+	}
+
+	r := netipx.IPRangeFrom(from, to)
+	if !r.IsValid() {
+		return netipx.IPRange{}, false
+	}
+
+	return r, true
+}
+
+// parseTwoIPRanges 解析四个字符串为两个有效的 IP 范围。
+func parseTwoIPRanges(from1, to1, from2, to2 string) (r1, r2 netipx.IPRange, ok bool) {
+	r1, ok = parseValidIPRange(from1, to1)
+	if !ok {
+		return r1, r2, false
+	}
+
+	r2, ok = parseValidIPRange(from2, to2)
+	if !ok {
+		return r1, r2, false
+	}
+
+	return r1, r2, true
+}
+
 // =============================================================================
 // IPSetFromRanges 模糊测试
 // =============================================================================
@@ -210,35 +249,8 @@ func FuzzIPSetFromRanges(f *testing.F) {
 	f.Add("192.168.1.1", "192.168.1.100", "10.0.0.1", "10.0.0.50")
 
 	f.Fuzz(func(t *testing.T, from1, to1, from2, to2 string) {
-		addr1, err := netip.ParseAddr(from1)
-		if err != nil {
-			return
-		}
-		addr2, err := netip.ParseAddr(to1)
-		if err != nil {
-			return
-		}
-		addr3, err := netip.ParseAddr(from2)
-		if err != nil {
-			return
-		}
-		addr4, err := netip.ParseAddr(to2)
-		if err != nil {
-			return
-		}
-
-		// 确保每个范围的 from <= to 且版本相同
-		if addr1.Compare(addr2) > 0 || AddrVersion(addr1) != AddrVersion(addr2) {
-			return
-		}
-		if addr3.Compare(addr4) > 0 || AddrVersion(addr3) != AddrVersion(addr4) {
-			return
-		}
-
-		r1 := netipx.IPRangeFrom(addr1, addr2)
-		r2 := netipx.IPRangeFrom(addr3, addr4)
-
-		if !r1.IsValid() || !r2.IsValid() {
+		r1, r2, ok := parseTwoIPRanges(from1, to1, from2, to2)
+		if !ok {
 			return
 		}
 
@@ -272,35 +284,8 @@ func FuzzMergeRanges(f *testing.F) {
 	f.Add("10.0.0.1", "10.0.0.100", "10.0.0.50", "10.0.0.150")
 
 	f.Fuzz(func(t *testing.T, from1, to1, from2, to2 string) {
-		addr1, err := netip.ParseAddr(from1)
-		if err != nil {
-			return
-		}
-		addr2, err := netip.ParseAddr(to1)
-		if err != nil {
-			return
-		}
-		addr3, err := netip.ParseAddr(from2)
-		if err != nil {
-			return
-		}
-		addr4, err := netip.ParseAddr(to2)
-		if err != nil {
-			return
-		}
-
-		// 确保每个范围的 from <= to 且版本相同
-		if addr1.Compare(addr2) > 0 || AddrVersion(addr1) != AddrVersion(addr2) {
-			return
-		}
-		if addr3.Compare(addr4) > 0 || AddrVersion(addr3) != AddrVersion(addr4) {
-			return
-		}
-
-		r1 := netipx.IPRangeFrom(addr1, addr2)
-		r2 := netipx.IPRangeFrom(addr3, addr4)
-
-		if !r1.IsValid() || !r2.IsValid() {
+		r1, r2, ok := parseTwoIPRanges(from1, to1, from2, to2)
+		if !ok {
 			return
 		}
 

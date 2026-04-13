@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,12 +47,12 @@ func BenchmarkNewRedisFactory(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		factory, err := xdlock.NewRedisFactory(client)
 		if err != nil {
 			b.Fatal(err)
 		}
-		_ = factory.Close()
+		_ = factory.Close(context.Background())
 	}
 }
 
@@ -65,14 +66,14 @@ func BenchmarkRedisFactory_Health(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := factory.Health(ctx); err != nil {
 			b.Fatal(err)
 		}
@@ -93,14 +94,16 @@ func BenchmarkRedisFactory_Lock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		// 每次使用不同的 key 避免锁冲突
 		handle, err := factory.Lock(ctx, fmt.Sprintf("bench-lock-%d", i), xdlock.WithTries(1))
 		if err != nil {
@@ -122,14 +125,16 @@ func BenchmarkRedisFactory_TryLock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		handle, err := factory.TryLock(ctx, fmt.Sprintf("bench-trylock-%d", i))
 		if err != nil {
 			b.Fatal(err)
@@ -153,7 +158,7 @@ func BenchmarkRedisFactory_Unlock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -190,7 +195,7 @@ func BenchmarkRedisLockHandle_Extend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -207,7 +212,7 @@ func BenchmarkRedisLockHandle_Extend(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := handle.Extend(ctx); err != nil {
 			b.Fatal(err)
 		}
@@ -224,14 +229,14 @@ func BenchmarkRedisFactory_LockUnlock_Cycle(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// 使用单个 key，模拟实际场景中的锁竞争
 		handle, err := factory.Lock(ctx, "bench-cycle",
 			xdlock.WithExpiry(time.Second),
@@ -260,19 +265,19 @@ func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
-	var counter int64
+	var counter atomic.Int64
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	b.RunParallel(func(pb *testing.PB) {
-		i := 0
 		for pb.Next() {
-			// 每个 goroutine 使用唯一 key
-			key := fmt.Sprintf("parallel-lock-%d-%d", counter, i)
+			// 每个操作使用全局唯一 key，避免跨 goroutine 冲突
+			seq := counter.Add(1)
+			key := fmt.Sprintf("parallel-lock-%d", seq)
 			handle, err := factory.TryLock(ctx, key)
 			if err != nil {
 				b.Error(err)
@@ -286,7 +291,6 @@ func BenchmarkRedisFactory_Lock_Parallel(b *testing.B) {
 				b.Error(err)
 				return
 			}
-			i++
 		}
 	})
 }
@@ -301,7 +305,7 @@ func BenchmarkRedisFactory_Lock_Contention(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -343,7 +347,7 @@ func BenchmarkRedisFactory_Health_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -368,63 +372,63 @@ func BenchmarkRedisFactory_Health_Parallel(b *testing.B) {
 func BenchmarkMutexOptions(b *testing.B) {
 	b.Run("WithKeyPrefix", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithKeyPrefix("myapp:")
 		}
 	})
 
 	b.Run("WithExpiry", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithExpiry(10 * time.Second)
 		}
 	})
 
 	b.Run("WithTries", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithTries(5)
 		}
 	})
 
 	b.Run("WithRetryDelay", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithRetryDelay(100 * time.Millisecond)
 		}
 	})
 
 	b.Run("WithDriftFactor", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithDriftFactor(0.02)
 		}
 	})
 
 	b.Run("WithTimeoutFactor", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithTimeoutFactor(0.1)
 		}
 	})
 
 	b.Run("WithFailFast", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithFailFast(true)
 		}
 	})
 
 	b.Run("WithShufflePools", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithShufflePools(true)
 		}
 	})
 
 	b.Run("AllOptions", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = xdlock.WithKeyPrefix("myapp:")
 			_ = xdlock.WithExpiry(10 * time.Second)
 			_ = xdlock.WithTries(5)
@@ -473,14 +477,16 @@ func BenchmarkRedlock_ThreeNodes(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		handle, err := factory.TryLock(ctx, fmt.Sprintf("redlock-%d", i))
 		if err != nil {
 			b.Fatal(err)
@@ -508,7 +514,7 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx := context.Background()
 	opts := []xdlock.MutexOption{
@@ -523,9 +529,8 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 	numGoroutines := 10
 
 	for g := 0; g < numGoroutines; g++ {
-		wg.Add(1)
-		go func(gid int) {
-			defer wg.Done()
+		gid := g
+		wg.Go(func() {
 			for i := 0; i < b.N/numGoroutines; i++ {
 				key := fmt.Sprintf("highvol-%d-%d", gid, i)
 				handle, err := factory.TryLock(ctx, key, opts...)
@@ -533,7 +538,7 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 					_ = handle.Unlock(ctx)
 				}
 			}
-		}(g)
+		})
 	}
 
 	wg.Wait()

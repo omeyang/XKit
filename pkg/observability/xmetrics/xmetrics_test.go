@@ -3,6 +3,7 @@ package xmetrics_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -140,7 +141,7 @@ func TestStart_WithAllKinds(t *testing.T) {
 	}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run("Kind_"+kind.String(), func(t *testing.T) {
 			ctx := context.Background()
 			_, span := xmetrics.Start(ctx, xmetrics.NoopObserver{}, xmetrics.SpanOptions{
 				Component: "test",
@@ -157,10 +158,10 @@ func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
 	var nilCtx context.Context
-	// nil context + nil observer
+	// nil context + nil observer → ctx 归一化为 context.Background()
 	newCtx, span := xmetrics.Start(nilCtx, nil, xmetrics.SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 
@@ -200,7 +201,7 @@ func TestNoopSpan_End(t *testing.T) {
 	}
 
 	for i, result := range results {
-		t.Run("Result_"+string(rune('0'+i)), func(t *testing.T) {
+		t.Run("Result_"+strconv.Itoa(i), func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				span.End(result)
 			})
@@ -330,7 +331,7 @@ func TestNewOTelObserver_AllKinds(t *testing.T) {
 	}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run("Kind_"+kind.String(), func(t *testing.T) {
 			ctx, span := obs.Start(context.Background(), xmetrics.SpanOptions{
 				Component: "test",
 				Operation: "op",
@@ -493,6 +494,28 @@ func TestUint64(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			attr := xmetrics.Uint64(tt.key, tt.value)
+			assert.Equal(t, tt.key, attr.Key)
+			assert.Equal(t, tt.value, attr.Value)
+		})
+	}
+}
+
+func TestFloat32(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		key   string
+		value float32
+	}{
+		{"positive", "ratio", 3.14},
+		{"negative", "offset", -2.5},
+		{"zero", "rate", 0.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attr := xmetrics.Float32(tt.key, tt.value)
 			assert.Equal(t, tt.key, attr.Key)
 			assert.Equal(t, tt.value, attr.Value)
 		})

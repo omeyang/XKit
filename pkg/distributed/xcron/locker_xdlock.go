@@ -3,6 +3,7 @@ package xcron
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/omeyang/xkit/pkg/distributed/xdlock"
@@ -55,14 +56,21 @@ func WithXdlockKeyPrefix(prefix string) XdlockAdapterOption {
 	}
 }
 
+// ErrNilFactory 表示 xdlock.Factory 为 nil。
+var ErrNilFactory = errors.New("xcron: xdlock factory cannot be nil")
+
 // NewXdlockAdapter 创建 xdlock 适配器。
 //
 // factory 是 xdlock 的工厂实例，可以是：
 //   - xdlock.NewEtcdFactory() 创建的 etcd 工厂
 //   - xdlock.NewRedisFactory() 创建的 Redis 工厂
 //
+// 如果 factory 为 nil，返回 [ErrNilFactory]。
 // 调用者负责在不需要时关闭 factory。
-func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) *XdlockAdapter {
+func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) (*XdlockAdapter, error) {
+	if factory == nil {
+		return nil, ErrNilFactory
+	}
 	a := &XdlockAdapter{
 		factory:   factory,
 		keyPrefix: "xcron:",
@@ -70,7 +78,7 @@ func NewXdlockAdapter(factory xdlock.Factory, opts ...XdlockAdapterOption) *Xdlo
 	for _, opt := range opts {
 		opt(a)
 	}
-	return a
+	return a, nil
 }
 
 // TryLock 尝试获取锁（非阻塞）。
@@ -93,7 +101,7 @@ func (a *XdlockAdapter) TryLock(ctx context.Context, key string, ttl time.Durati
 	// 直接使用 Factory 的 TryLock 方法
 	handle, err := a.factory.TryLock(ctx, fullKey, mutexOpts...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("xcron: xdlock try lock failed: %w", err)
 	}
 	if handle == nil {
 		return nil, nil // 锁被占用
@@ -122,10 +130,10 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 	err := h.handle.Unlock(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) {
+		if errors.Is(err, xdlock.ErrNotLocked) {
 			return ErrLockNotHeld
 		}
-		return err
+		return fmt.Errorf("xcron: xdlock unlock failed: %w", err)
 	}
 	return nil
 }
@@ -134,14 +142,17 @@ func (h *xdlockHandle) Unlock(ctx context.Context) error {
 //
 // 对于 etcd 后端，此操作返回 nil（etcd 使用 Session 自动续期）。
 // 对于 Redis 后端，调用 Extend 续期。
+//
+// 设计决策: ttl 参数被忽略，因为 xdlock.LockHandle.Extend 使用工厂创建时的 TTL 续期，
+// 不支持按次指定。若需自定义续期 TTL，请在创建 xdlock.Factory 时配置。
 func (h *xdlockHandle) Renew(ctx context.Context, _ time.Duration) error {
 	err := h.handle.Extend(ctx)
 	if err != nil {
 		// 转换 xdlock 错误为 xcron 错误
-		if errors.Is(err, xdlock.ErrLockNotHeld) || errors.Is(err, xdlock.ErrExtendFailed) {
+		if errors.Is(err, xdlock.ErrNotLocked) || errors.Is(err, xdlock.ErrExtendFailed) {
 			return ErrLockNotHeld
 		}
-		return err
+		return fmt.Errorf("xcron: xdlock renew failed: %w", err)
 	}
 	return nil
 }

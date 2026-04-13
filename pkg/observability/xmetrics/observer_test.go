@@ -3,43 +3,41 @@ package xmetrics
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// Kind 和 Status 常量测试已在外部测试文件 xmetrics_test.go 中覆盖，
+// 此处不重复（常量属于公开 API，由外部测试验证更合适）。
+
 // ============================================================================
-// Kind 和 Status 常量测试
+// Kind.String() 测试
 // ============================================================================
 
-func TestKindConstants(t *testing.T) {
+func TestKind_String(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
 		kind Kind
-		want int
+		want string
 	}{
-		{"KindInternal", KindInternal, 0},
-		{"KindServer", KindServer, 1},
-		{"KindClient", KindClient, 2},
-		{"KindProducer", KindProducer, 3},
-		{"KindConsumer", KindConsumer, 4},
+		{KindInternal, "Internal"},
+		{KindServer, "Server"},
+		{KindClient, "Client"},
+		{KindProducer, "Producer"},
+		{KindConsumer, "Consumer"},
+		{Kind(99), "Kind(99)"},
+		{Kind(-1), "Kind(-1)"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, int(tt.kind))
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.kind.String())
 		})
 	}
-}
-
-func TestStatusConstants(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, Status("ok"), StatusOK)
-	assert.Equal(t, Status("error"), StatusError)
 }
 
 // ============================================================================
@@ -163,10 +161,10 @@ func TestNoopObserver_Start_NilContext(t *testing.T) {
 	var nilCtx context.Context
 	observer := NoopObserver{}
 
-	// NoopObserver 对 nil ctx 也应该安全
+	// NoopObserver 对 nil ctx 也应该安全，返回 context.Background()
 	newCtx, span := observer.Start(nilCtx, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
 }
 
@@ -191,7 +189,7 @@ func TestNoopObserver_Start_AllKinds(t *testing.T) {
 	kinds := []Kind{KindInternal, KindServer, KindClient, KindProducer, KindConsumer}
 
 	for _, kind := range kinds {
-		t.Run("Kind_"+string(rune('0'+kind)), func(t *testing.T) {
+		t.Run(kind.String(), func(t *testing.T) {
 			_, span := observer.Start(ctx, SpanOptions{Kind: kind})
 			assert.NotNil(t, span)
 		})
@@ -229,7 +227,7 @@ func TestNoopSpan_End_WithResult(t *testing.T) {
 	}
 
 	for i, result := range results {
-		t.Run("Result_"+string(rune('0'+i)), func(t *testing.T) {
+		t.Run("Result_"+strconv.Itoa(i), func(t *testing.T) {
 			assert.NotPanics(t, func() {
 				span.End(result)
 			})
@@ -291,11 +289,172 @@ func TestStart_NilContext(t *testing.T) {
 	t.Parallel()
 
 	var nilCtx context.Context
-	// nil context + nil observer
+	// nil context + nil observer → ctx 归一化为 context.Background()
 	newCtx, span := Start(nilCtx, nil, SpanOptions{})
 
-	assert.Nil(t, newCtx)
+	assert.NotNil(t, newCtx) // nil ctx 被归一化为 context.Background()
 	assert.NotNil(t, span)
+}
+
+// nilCtxObserver 是返回 nil context 的测试用 Observer，用于验证 Start 的兜底逻辑。
+type nilCtxObserver struct{}
+
+func (nilCtxObserver) Start(_ context.Context, _ SpanOptions) (context.Context, Span) {
+	var nilCtx context.Context // 故意返回 nil context 以测试兜底逻辑
+	return nilCtx, NoopSpan{}
+}
+
+func TestStart_ObserverReturnsNilContext(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 nil context，Start 应该兜底为原始 ctx
+	ctx := context.Background()
+	newCtx, span := Start(ctx, nilCtxObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "nil-ctx-observer",
+	})
+
+	assert.NotNil(t, newCtx) // 兜底返回传入的 ctx
+	assert.NotNil(t, span)
+}
+
+// nilSpanObserver 是返回 nil span 的测试用 Observer，用于验证 Start 的兜底逻辑。
+type nilSpanObserver struct{}
+
+func (nilSpanObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	var nilSpan Span // 故意返回 nil span 以测试兜底逻辑
+	return ctx, nilSpan
+}
+
+func TestStart_ObserverReturnsNilSpan(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 nil span，Start 应该兜底为 NoopSpan
+	ctx := context.Background()
+	newCtx, span := Start(ctx, nilSpanObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "nil-span-observer",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
+// ============================================================================
+// isNilInterface 测试
+// ============================================================================
+
+// customSpan 是用于测试的自定义 Span 实现。
+type customSpan struct{}
+
+func (*customSpan) End(_ Result) {}
+
+func TestIsNilInterface(t *testing.T) {
+	t.Parallel()
+
+	t.Run("untyped_nil", func(t *testing.T) {
+		assert.True(t, isNilInterface(nil))
+	})
+
+	t.Run("nil_interface", func(t *testing.T) {
+		var span Span
+		assert.True(t, isNilInterface(span))
+	})
+
+	t.Run("typed_nil_pointer", func(t *testing.T) {
+		var s *customSpan
+		var span Span = s
+		assert.True(t, isNilInterface(span))
+	})
+
+	t.Run("non_nil_pointer", func(t *testing.T) {
+		s := &customSpan{}
+		var span Span = s
+		assert.False(t, isNilInterface(span))
+	})
+
+	t.Run("struct_value", func(t *testing.T) {
+		var span Span = NoopSpan{}
+		assert.False(t, isNilInterface(span))
+	})
+}
+
+// ============================================================================
+// FG-S1: typed-nil 防御回归测试
+// ============================================================================
+
+// typedNilSpanObserver 返回 typed-nil span（接口 type 非空但 value 为 nil），
+// 用于验证 Start 的 typed-nil 兜底逻辑。
+type typedNilSpanObserver struct{}
+
+func (typedNilSpanObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	var s *customSpan // typed-nil：接口内部 type=*customSpan, value=nil
+	return ctx, s
+}
+
+// typedNilObserver 是 typed-nil Observer，用于验证 Start 的 typed-nil observer 兜底逻辑。
+type typedNilObserver struct{}
+
+func (*typedNilObserver) Start(ctx context.Context, _ SpanOptions) (context.Context, Span) {
+	return ctx, NoopSpan{}
+}
+
+func TestStart_TypedNilObserver(t *testing.T) {
+	t.Parallel()
+
+	// typed-nil observer：接口内部 type=*typedNilObserver, value=nil
+	var obs *typedNilObserver
+	var observer Observer = obs
+
+	ctx := context.Background()
+	newCtx, span := Start(ctx, observer, SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-observer",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
+}
+
+func TestStart_TypedNilSpan(t *testing.T) {
+	t.Parallel()
+
+	// 自定义 Observer 返回 typed-nil span，Start 应兜底为 NoopSpan
+	ctx := context.Background()
+	newCtx, span := Start(ctx, typedNilSpanObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-span",
+	})
+
+	assert.NotNil(t, newCtx)
+	require.NotNil(t, span)
+
+	// span 应被兜底为 NoopSpan
+	_, ok := span.(NoopSpan)
+	assert.True(t, ok)
+
+	// End 不应 panic
+	assert.NotPanics(t, func() {
+		span.End(Result{})
+	})
 }
 
 // ============================================================================

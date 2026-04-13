@@ -1,6 +1,9 @@
 package xmac
 
-import "net"
+import (
+	"fmt"
+	"net"
+)
 
 // Addr 表示 48 位 MAC 地址（EUI-48/MAC-48）。
 //
@@ -41,6 +44,9 @@ func (a Addr) IsValid() bool {
 // Compare 比较两个 MAC 地址的字节顺序。
 // 返回值：-1 (a < b), 0 (a == b), 1 (a > b)。
 // 按网络字节序（大端）比较。
+//
+// 设计决策: 使用手动逐字节循环而非 bytes.Compare，避免切片化导致的逃逸分析开销，
+// 使比较操作保持在栈上完成（零堆分配）。
 func (a Addr) Compare(b Addr) int {
 	for i := range 6 {
 		if a.bytes[i] < b.bytes[i] {
@@ -56,17 +62,19 @@ func (a Addr) Compare(b Addr) int {
 // Next 返回下一个 MAC 地址（当前地址 +1）。
 // 如果 a 是 ff:ff:ff:ff:ff:ff，返回 [ErrOverflow]。
 func (a Addr) Next() (Addr, error) {
-	if a == Broadcast {
+	if a == broadcastAddr() {
 		return Addr{}, ErrOverflow
 	}
-	var next Addr
-	carry := uint16(1)
+	// 利用 uint8 自然回绕：从最低字节加 1，回绕到 0 时进位到上一字节
+	next := a
 	for i := 5; i >= 0; i-- {
-		sum := uint16(a.bytes[i]) + carry
-		next.bytes[i] = byte(sum)
-		carry = sum >> 8
+		next.bytes[i]++
+		if next.bytes[i] != 0 {
+			return next, nil // 无进位，完成
+		}
 	}
-	return next, nil
+	// 此分支不可达：广播地址在函数入口已拦截
+	return Addr{}, ErrOverflow
 }
 
 // Prev 返回前一个 MAC 地址（当前地址 -1）。
@@ -75,21 +83,27 @@ func (a Addr) Prev() (Addr, error) {
 	if a == (Addr{}) {
 		return Addr{}, ErrUnderflow
 	}
-	var prev Addr
-	borrow := uint16(1)
+	// 从最低字节减 1：若该字节非 0 则直接减完成；若为 0 则置为 0xff 并向上借位
+	prev := a
 	for i := 5; i >= 0; i-- {
-		// 使用 uint16 避免下溢：当 a.bytes[i] == 0 且 borrow == 1 时，
-		// 0 - 1 在 uint16 中会得到 0xFFFF，取低 8 位得 0xFF（正确的借位结果）
-		diff := uint16(a.bytes[i]) - borrow
-		prev.bytes[i] = byte(diff)
-		// 如果发生借位（原值小于借位值），设置下一轮借位
-		if a.bytes[i] < byte(borrow) {
-			borrow = 1
-		} else {
-			borrow = 0
+		if prev.bytes[i] != 0 {
+			prev.bytes[i]--
+			return prev, nil // 无借位，完成
 		}
+		prev.bytes[i] = 0xff // 借位继续
 	}
-	return prev, nil
+	// 此分支不可达：零地址在函数入口已拦截
+	return Addr{}, ErrUnderflow
+}
+
+// GoString 实现 [fmt.GoStringer]，返回 Go 语法表示。
+// 用于 %#v 格式化，输出形如 xmac.MustParse("aa:bb:cc:dd:ee:ff")。
+// 无效地址返回 xmac.Addr{}。
+func (a Addr) GoString() string {
+	if !a.IsValid() {
+		return "xmac.Addr{}"
+	}
+	return fmt.Sprintf("xmac.MustParse(%q)", a.String())
 }
 
 // HardwareAddr 返回 [net.HardwareAddr] 表示。

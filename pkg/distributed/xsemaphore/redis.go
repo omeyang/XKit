@@ -7,13 +7,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// errUnexpectedScriptResult Lua 脚本返回结果不符合预期
-var errUnexpectedScriptResult = fmt.Errorf("xsemaphore: unexpected script result")
 
 // validateScriptResult 校验 Lua 脚本返回值长度
 func validateScriptResult(result []int64, minLen int) error {
@@ -23,16 +21,11 @@ func validateScriptResult(result []int64, minLen int) error {
 	return nil
 }
 
-// evalScriptInt64Slice 执行 Lua 脚本并安全转换返回值为 []int64
-// 防止 Redis 返回非预期类型时 panic（修复 #6）
-func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis.Script, keys []string, args ...any) ([]int64, error) {
-	val, err := script.Run(ctx, s.client, keys, args...).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	// Redis Lua 脚本返回数组时，go-redis 会解析为 []interface{}
-	arr, ok := val.([]interface{})
+// convertScriptResult 将 Lua 脚本返回值安全转换为 []int64
+// 提取为纯函数，便于直接测试各种输入类型（int64、int、float64、未知类型）
+func convertScriptResult(val any) ([]int64, error) {
+	// Redis Lua 脚本返回数组时，go-redis 会解析为 []any
+	arr, ok := val.([]any)
 	if !ok {
 		return nil, fmt.Errorf("%w: expected array, got %T", errUnexpectedScriptResult, val)
 	}
@@ -57,16 +50,27 @@ func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis
 	return result, nil
 }
 
+// evalScriptInt64Slice 执行 Lua 脚本并安全转换返回值为 []int64
+// 防止 Redis 返回非预期类型时 panic（修复 #6）
+func (s *redisSemaphore) evalScriptInt64Slice(ctx context.Context, script *redis.Script, keys []string, args ...any) ([]int64, error) {
+	val, err := script.Run(ctx, s.client, keys, args...).Result()
+	if err != nil {
+		return nil, err
+	}
+	return convertScriptResult(val)
+}
+
 // =============================================================================
 // Redis 信号量实现
 // =============================================================================
 
 // redisSemaphore 实现 Semaphore 接口
 type redisSemaphore struct {
-	client  redis.UniversalClient
-	opts    *options
-	scripts *scripts
-	closed  atomic.Bool
+	client     redis.UniversalClient
+	opts       *options
+	scripts    *scripts
+	scriptMode rediscompat.ScriptMode // 已解析的脚本模式（不会是 Auto）
+	closed     atomic.Bool
 }
 
 // New 创建 Redis 信号量
@@ -106,10 +110,14 @@ func New(client redis.UniversalClient, opts ...Option) (Semaphore, error) {
 	// 初始化 tracer
 	cfg.tracer = getTracer(cfg.tracerProvider)
 
+	// 解析脚本模式
+	resolvedMode := resolveScriptMode(cfg, client)
+
 	sem := &redisSemaphore{
-		client:  client,
-		opts:    cfg,
-		scripts: getScripts(),
+		client:     client,
+		opts:       cfg,
+		scripts:    getScripts(),
+		scriptMode: resolvedMode,
 	}
 
 	// 如果配置了降级策略，包装为降级信号量
@@ -119,6 +127,21 @@ func New(client redis.UniversalClient, opts ...Option) (Semaphore, error) {
 	}
 
 	return sem, nil
+}
+
+// resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用指定模式
+func resolveScriptMode(cfg *options, client redis.UniversalClient) rediscompat.ScriptMode {
+	if cfg.scriptMode != rediscompat.ScriptModeAuto {
+		return cfg.scriptMode
+	}
+
+	detected, detectErr := rediscompat.DetectScriptMode(context.Background(), client)
+	if detectErr != nil && cfg.logger != nil {
+		cfg.logger.Warn(context.Background(), "script mode detection failed, defaulting to lua",
+			AttrError(detectErr),
+		)
+	}
+	return detected
 }
 
 // TryAcquire 非阻塞式获取许可
@@ -177,6 +200,11 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		return nil, err
 	}
 
+	// 校验重试参数（仅 Acquire 需要，TryAcquire 不使用重试）
+	if err := cfg.validateRetryParams(); err != nil {
+		return nil, err
+	}
+
 	// 创建 span
 	ctx, span := startSpan(ctx, s.opts.tracer, spanNameAcquire)
 	defer span.End()
@@ -193,6 +221,7 @@ func (s *redisSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 	if err != nil {
 		// 记录失败指标（只在最终失败时记录一次）
 		s.recordAcquireMetrics(ctx, resource, false, lastReason, totalDuration)
+		span.SetAttributes(attribute.Int(attrRetryCount, retryCount))
 		setSpanError(span, err)
 		return nil, err
 	}
@@ -242,7 +271,7 @@ func (s *redisSemaphore) acquireWithRetry(ctx context.Context, resource, tenantI
 		// 致命 Redis 错误（非 TRYAGAIN），立即返回（可能触发降级）
 		// 当前 attempt 已执行，重试次数 = attempt（attempt=0 首次尝试不算重试）
 		if redisErr != nil && !isRetryableRedisError(redisErr) {
-			return nil, reason, attempt, fmt.Errorf("acquire failed: %w", redisErr)
+			return nil, reason, attempt, redisErr
 		}
 
 		if redisErr == nil && permit != nil {
@@ -305,12 +334,19 @@ func (s *redisSemaphore) doAcquire(
 	tenantID string,
 	cfg *acquireOptions,
 ) (Permit, AcquireFailReason, error) {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.doAcquireCompat(ctx, resource, tenantID, cfg)
+	}
+
 	now := time.Now()
 	expiresAt := now.Add(cfg.ttl)
 
 	// 生成许可 ID（通过注入的生成器，默认使用 xid.NewStringWithRetry）
 	permitID, err := s.opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
+		// 消费者只需通过 errors.Is(err, ErrIDGenerationFailed) 判断，无需区分具体原因。
 		return nil, ReasonUnknown, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 
@@ -338,12 +374,12 @@ func (s *redisSemaphore) doAcquire(
 
 	result, err := s.evalScriptInt64Slice(ctx, s.scripts.acquire, keys, args...)
 	if err != nil {
-		return nil, ReasonUnknown, err
+		return nil, ReasonUnknown, fmt.Errorf("acquire script failed: %w", err)
 	}
 
 	// 验证结果长度：acquire 返回 {status, globalCount, tenantCount}
 	if err := validateScriptResult(result, 3); err != nil {
-		return nil, ReasonUnknown, err
+		return nil, ReasonUnknown, fmt.Errorf("acquire script failed: %w", err)
 	}
 
 	return s.handleAcquireResult(ctx, result, permitID, resource, tenantID, expiresAt, cfg, hasTenantQuota)
@@ -387,6 +423,11 @@ func (s *redisSemaphore) handleAcquireResult(
 // 注意：即使信号量已关闭，也允许释放许可，确保已获取的许可能完成其生命周期。
 // 这与本地信号量的行为保持一致，也符合"Close 阻止新获取，但不影响已有许可"的设计理念。
 func (s *redisSemaphore) releasePermit(ctx context.Context, p *redisPermit) error {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.releasePermitCompat(ctx, p)
+	}
+
 	globalKey := s.buildGlobalKey(p.resource)
 
 	// 动态构建 KEYS 数组（Redis Cluster 兼容）
@@ -428,6 +469,11 @@ func (s *redisSemaphore) releasePermit(ctx context.Context, p *redisPermit) erro
 // 注意：即使信号量已关闭，也允许续期许可，确保已获取的许可能完成其生命周期。
 // 这与本地信号量的行为保持一致，也符合"Close 阻止新获取，但不影响已有许可"的设计理念。
 func (s *redisSemaphore) extendPermit(ctx context.Context, p *redisPermit, newExpiresAt time.Time) error {
+	// 兼容模式分流
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		return s.extendPermitCompat(ctx, p, newExpiresAt)
+	}
+
 	globalKey := s.buildGlobalKey(p.resource)
 
 	// 动态构建 KEYS 数组（Redis Cluster 兼容）
@@ -512,20 +558,11 @@ func (s *redisSemaphore) Query(ctx context.Context, resource string, opts ...Que
 	}
 
 	now := time.Now()
-	args := []any{now.UnixMilli()}
 
-	result, err := s.evalScriptInt64Slice(ctx, s.scripts.query, keys, args...)
+	globalUsed, tenantUsed, err := s.execQuery(ctx, globalKey, keys, now)
 	if err != nil {
 		return nil, s.handleQueryError(ctx, span, resource, start, err)
 	}
-
-	// 验证结果长度：query 返回 {globalCount, tenantCount}
-	if err := validateScriptResult(result, 2); err != nil {
-		return nil, s.handleQueryError(ctx, span, resource, start, err)
-	}
-
-	globalUsed := int(result[0])
-	tenantUsed := int(result[1])
 
 	info := &ResourceInfo{
 		Resource:        resource,
@@ -553,6 +590,24 @@ func (s *redisSemaphore) Query(ctx context.Context, resource string, opts ...Que
 	return info, nil
 }
 
+// execQuery 执行查询操作，根据脚本模式分流
+func (s *redisSemaphore) execQuery(ctx context.Context, globalKey string, keys []string, now time.Time) (int, int, error) {
+	if s.scriptMode == rediscompat.ScriptModeCompat {
+		g, t, err := s.queryCompat(ctx, globalKey, keys, now)
+		return int(g), int(t), err
+	}
+
+	args := []any{now.UnixMilli()}
+	result, err := s.evalScriptInt64Slice(ctx, s.scripts.query, keys, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := validateScriptResult(result, 2); err != nil {
+		return 0, 0, err
+	}
+	return int(result[0]), int(result[1]), nil
+}
+
 // handleQueryError 处理 Query 脚本错误：记录 span 和指标
 func (s *redisSemaphore) handleQueryError(ctx context.Context, span trace.Span, resource string, start time.Time, err error) error {
 	setSpanError(span, err)
@@ -573,6 +628,9 @@ func (s *redisSemaphore) Close(_ context.Context) error {
 
 // Health 健康检查
 func (s *redisSemaphore) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if s.closed.Load() {
 		return ErrSemaphoreClosed
 	}

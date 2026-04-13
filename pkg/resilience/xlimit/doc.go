@@ -42,7 +42,9 @@
 //
 // # 配置管理
 //
-// 支持从 xconf 加载配置并支持热更新。
+// 支持通过 WithConfigProvider 从 xconf 加载配置。
+// ConfigProvider.Watch 提供配置变更通知，调用方可监听变更并重建
+// 限流器实例以应用新配置。限流器自身不自动消费 Watch 通道。
 //
 // # 可观测性
 //

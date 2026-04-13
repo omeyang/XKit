@@ -19,6 +19,9 @@ type BackoffPolicy = xretry.BackoffPolicy
 //   - MaxDelay: 30s
 //   - Multiplier: 2.0
 //   - Jitter: 0.1 (10%)
+//
+// 设计决策: 虽然 mqcore.DefaultBackoff() 有相同实现，但此函数是 xpulsar 的公开 API，
+// 允许用户无需了解 internal/mqcore 即可获取默认策略。
 func DefaultBackoffPolicy() BackoffPolicy {
 	return xretry.NewExponentialBackoff()
 }

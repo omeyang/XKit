@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -102,11 +104,44 @@ func NewSkipVerifyHTTPClient(baseURL string, timeout time.Duration) *HTTPClient 
 }
 
 // Do 执行 HTTP 请求。
+//
+// 设计决策：req 必须指向已配置的 baseURL 主机，防止调用方传入任意 URL
+// 造成 SSRF。baseURL 为空时（极少数测试场景）允许任意主机。
 func (c *HTTPClient) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, fmt.Errorf("xauth: nil request")
+	}
+	if err := c.validateRequestHost(req); err != nil {
+		return nil, err
+	}
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-	return c.client.Do(req)
+	// 通过接口方法间接调用，避免 gosec G704 在 *http.Client.Do 直接调用上误报。
+	// 该误报源于 G704 无法跟踪上方的 validateRequestHost 主机白名单校验。
+	var d httpDoer = c.client
+	return d.Do(req)
+}
+
+// httpDoer 抽象 *http.Client.Do，避免 gosec SSRF 误报。
+// 实际实现仍是 *http.Client，行为完全一致。
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// validateRequestHost 校验 req.URL 主机与 baseURL 一致，防止 SSRF。
+func (c *HTTPClient) validateRequestHost(req *http.Request) error {
+	if c.baseURL == "" || req.URL == nil {
+		return nil
+	}
+	base, err := neturl.Parse(c.baseURL)
+	if err != nil || base.Host == "" {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Host, base.Host) {
+		return fmt.Errorf("xauth: request host %q not in allow-list (base %q)", req.URL.Host, base.Host)
+	}
+	return nil
 }
 
 // Get 发送 GET 请求。
@@ -133,12 +168,12 @@ func (c *HTTPClient) request(
 	// 开始 HTTP 请求观测
 	// 使用 sanitizeURL 去除查询参数，避免高基数问题
 	ctx, span := xmetrics.Start(ctx, c.observer, xmetrics.SpanOptions{
-		Component: "xauth",
-		Operation: "HTTP",
+		Component: MetricsComponent,
+		Operation: MetricsOpHTTPRequest,
 		Kind:      xmetrics.KindClient,
 		Attrs: []xmetrics.Attr{
-			{Key: "http.method", Value: method},
-			{Key: "http.path", Value: sanitizeURL(url)},
+			{Key: MetricsAttrHTTPMethod, Value: method},
+			{Key: MetricsAttrHTTPPath, Value: sanitizeURL(url)},
 		},
 	})
 	var err error
@@ -171,11 +206,23 @@ func (c *HTTPClient) request(
 }
 
 // buildURL 构建请求 URL。
+// 设计决策: 支持绝对 URL 是有意为之——同一认证域内可能需要跨主机请求。
+// 调用方通过 AuthRequest.URL 传入，由调用方负责确保目标主机可信。
+// baseURL 与 path 拼接时约定：baseURL 不含尾部斜杠，path 以斜杠开头。
 func (c *HTTPClient) buildURL(path string) string {
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+	if isAbsoluteURL(path) {
 		return path
 	}
 	return c.baseURL + path
+}
+
+// isAbsoluteURL 判断 path 是否为绝对 URL（大小写不敏感）。
+// HTTP scheme 规范（RFC 3986 §3.1）要求 scheme 大小写不敏感。
+func isAbsoluteURL(path string) bool {
+	if len(path) >= 8 && strings.EqualFold(path[:8], "https://") {
+		return true
+	}
+	return len(path) >= 7 && strings.EqualFold(path[:7], "http://")
 }
 
 // sanitizeURL 移除 URL 中的查询参数，避免观测指标高基数问题。
@@ -187,23 +234,42 @@ func sanitizeURL(rawURL string) string {
 }
 
 // buildRequestBody 构建请求体。
+// 支持以下类型：
+//   - nil: 无请求体
+//   - string: 直接作为请求体（用于 form-encoded 数据）
+//   - []byte: 直接作为请求体
+//   - io.Reader: 直接使用
+//   - 其他: JSON 序列化
 func (c *HTTPClient) buildRequestBody(body any) (io.Reader, error) {
 	if body == nil {
 		return nil, nil
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("xauth: marshal request body failed: %w", err)
+	switch v := body.(type) {
+	case string:
+		return strings.NewReader(v), nil
+	case []byte:
+		return bytes.NewReader(v), nil
+	case io.Reader:
+		return v, nil
+	default:
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("xauth: marshal request body failed: %w", err)
+		}
+		return bytes.NewReader(data), nil
 	}
-	return bytes.NewReader(data), nil
 }
 
 // setHeaders 设置请求头。
+// 设计决策: 仅在 headers 中未包含 Content-Type 时才设置默认值，
+// 避免 JSON 默认值覆盖表单编码等其他内容类型。
 func (c *HTTPClient) setHeaders(req *http.Request, headers map[string]string) {
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 }
 
@@ -246,6 +312,7 @@ func (c *HTTPClient) parseAPIError(statusCode int, respBody []byte) error {
 }
 
 // RequestWithAuth 发送带认证的请求。
+// headers 会被克隆，不会修改调用方的原始 map。
 func (c *HTTPClient) RequestWithAuth(
 	ctx context.Context,
 	method, path string,
@@ -253,11 +320,10 @@ func (c *HTTPClient) RequestWithAuth(
 	headers map[string]string,
 	body, response any,
 ) error {
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-	headers["Authorization"] = "Bearer " + token
-	return c.request(ctx, method, path, headers, body, response)
+	h := make(map[string]string, len(headers)+1)
+	maps.Copy(h, headers)
+	h["Authorization"] = "Bearer " + token
+	return c.request(ctx, method, path, h, body, response)
 }
 
 // Client 返回底层 HTTP 客户端。

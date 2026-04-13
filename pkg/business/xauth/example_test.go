@@ -16,7 +16,7 @@ func ExampleNewClient() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	// 使用客户端
 	_ = client
@@ -31,7 +31,7 @@ func ExampleClient_GetToken() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -54,7 +54,7 @@ func ExampleClient_GetPlatformID() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -72,7 +72,7 @@ func ExampleClient_GetPlatformID() {
 func ExampleWithCache() {
 	// 使用 Redis 缓存（需要提供 redis.UniversalClient）
 	// redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	// cache := xauth.NewRedisCacheStore(redisClient)
+	// cache, err := xauth.NewRedisCacheStore(redisClient)
 	//
 	// client, err := xauth.NewClient(&xauth.Config{
 	//     Host: "https://auth.example.com",
@@ -95,7 +95,7 @@ func Example_withOptions() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
+	defer client.Close(context.Background())
 
 	fmt.Println("client with options created")
 	// Output: client with options created
@@ -126,7 +126,7 @@ func ExampleIsRetryable() {
 func ExampleNewRedisCacheStore() {
 	// 创建 Redis 缓存存储
 	// redisClient := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	// cache := xauth.NewRedisCacheStore(redisClient,
+	// cache, err := xauth.NewRedisCacheStore(redisClient,
 	//     xauth.WithKeyPrefix("myapp:xauth:"),
 	// )
 	//

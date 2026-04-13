@@ -19,7 +19,7 @@ func BenchmarkLocal_Allow_Single(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -40,7 +40,7 @@ func BenchmarkLocal_Allow_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -74,7 +74,7 @@ func BenchmarkDistributed_Allow_Single(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -106,7 +106,7 @@ func BenchmarkDistributed_Allow_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -163,7 +163,7 @@ func BenchmarkMultipleRulesCheck(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{
@@ -209,7 +209,7 @@ func BenchmarkWithOverridesConfig(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	keys := []Key{
@@ -222,7 +222,9 @@ func BenchmarkWithOverridesConfig(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; b.Loop(); i++ {
+	var i int
+	for b.Loop() {
+		i++
 		key := keys[i%len(keys)]
 		_, _ = limiter.Allow(ctx, key)
 	}
@@ -247,7 +249,7 @@ func BenchmarkMiddleware_HTTP(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{
@@ -283,7 +285,7 @@ func BenchmarkConcurrentMultiTenant(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -327,7 +329,7 @@ func BenchmarkFallback_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}
@@ -367,10 +369,11 @@ func BenchmarkRuleMatcherOps(b *testing.B) {
 
 	b.Run("getEffectiveLimit", func(b *testing.B) {
 		rule, _ := matcher.FindRule(key)
+		rendered := key.Render(rule.KeyTemplate)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for b.Loop() {
-			_, _ = matcher.getEffectiveLimit(rule, key)
+			_, _ = matcher.getEffectiveLimit(rule, rendered)
 		}
 	})
 
@@ -410,7 +413,7 @@ func BenchmarkAllowN_Batch(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer limiter.Close()
+	defer limiter.Close(context.Background())
 
 	ctx := context.Background()
 	key := Key{Tenant: "benchmark-tenant"}

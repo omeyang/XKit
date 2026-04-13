@@ -61,7 +61,7 @@ func BenchmarkTryAcquire_Success(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, err := sem.TryAcquire(ctx, "bench-resource",
 			WithCapacity(1000000), // 大容量确保不会满
 			WithTTL(time.Minute),
@@ -80,7 +80,7 @@ func BenchmarkTryAcquire_WithTenant(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, err := sem.TryAcquire(ctx, "bench-tenant",
 			WithCapacity(1000000),
 			WithTenantQuota(100000),
@@ -115,7 +115,7 @@ func BenchmarkTryAcquire_CapacityFull(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, err := sem.TryAcquire(ctx, "bench-full",
 			WithCapacity(10),
 		)
@@ -178,7 +178,7 @@ func BenchmarkExtend(b *testing.B) {
 	defer func() { releasePermitB(b, ctx, permit) }()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err := permit.Extend(ctx)
 		if err != nil {
 			b.Fatal(err)
@@ -208,7 +208,7 @@ func BenchmarkQuery(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := sem.Query(ctx, "bench-query",
 			QueryWithCapacity(100),
 			QueryWithTenantQuota(50),
@@ -280,7 +280,7 @@ func BenchmarkLocalSemaphore_TryAcquire(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, err := sem.TryAcquire(ctx, "bench-local",
 			WithCapacity(1000000),
 			WithTTL(time.Minute),
@@ -328,7 +328,7 @@ func BenchmarkTryAcquire_Allocs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, _ := sem.TryAcquire(ctx, "bench-allocs",
 			WithCapacity(1000000),
 			WithTTL(time.Minute),
@@ -352,13 +352,11 @@ func BenchmarkThroughput(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var wg sync.WaitGroup
-		wg.Add(goroutines)
 
 		for g := 0; g < goroutines; g++ {
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for op := 0; op < opsPerGoroutine; op++ {
 					permit, _ := sem.TryAcquire(ctx, "bench-throughput",
 						WithCapacity(10000),
@@ -368,7 +366,7 @@ func BenchmarkThroughput(b *testing.B) {
 						releasePermitB(b, ctx, permit)
 					}
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -385,7 +383,7 @@ func BenchmarkTryAcquire_WithCustomPrefix(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		permit, err := sem.TryAcquire(ctx, "custom-prefix",
 			WithCapacity(1000000),
 			WithTTL(time.Minute),

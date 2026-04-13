@@ -33,7 +33,7 @@ func TestParse(t *testing.T) {
 
 		// 特殊地址
 		{"zero", "00:00:00:00:00:00", Addr{}, nil},
-		{"broadcast", "ff:ff:ff:ff:ff:ff", Broadcast, nil},
+		{"broadcast", "ff:ff:ff:ff:ff:ff", Broadcast(), nil},
 
 		// 边界值
 		{"min_nonzero", "00:00:00:00:00:01", Addr{bytes: [6]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}, nil},
@@ -49,9 +49,11 @@ func TestParse(t *testing.T) {
 		{"only_space", "   ", Addr{}, ErrEmpty},
 		{"too_short", "aa:bb:cc", Addr{}, ErrInvalidFormat},
 		{"too_long", "aa:bb:cc:dd:ee:ff:00", Addr{}, ErrInvalidFormat},
+		{"eui64", "aa:bb:cc:dd:ee:ff:00:11", Addr{}, ErrInvalidLength}, // EUI-64 不支持
 		{"invalid_hex", "gg:hh:ii:jj:kk:ll", Addr{}, ErrInvalidFormat},
 		{"invalid_bare_hex", "gghhiijjkkll", Addr{}, ErrInvalidFormat},
 		{"partial_invalid", "aa:bb:cc:dd:ee:gg", Addr{}, ErrInvalidFormat},
+		{"dot_invalid_hex", "ggbb.ccdd.eeff", Addr{}, ErrInvalidFormat},
 		{"wrong_separator", "aa;bb;cc;dd;ee;ff", Addr{}, ErrInvalidFormat},
 		{"mixed_separator", "aa:bb-cc:dd-ee:ff", Addr{}, ErrInvalidFormat},
 		{"single_digit", "a:b:c:d:e:f", Addr{}, ErrInvalidFormat},
@@ -111,7 +113,7 @@ func TestParseBytes(t *testing.T) {
 	}{
 		{"valid", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}, Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}, nil},
 		{"zero", []byte{0, 0, 0, 0, 0, 0}, Addr{}, nil},
-		{"broadcast", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, Broadcast, nil},
+		{"broadcast", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, Broadcast(), nil},
 		{"too_short", []byte{0xaa, 0xbb, 0xcc}, Addr{}, ErrInvalidLength},
 		{"too_long", []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00}, Addr{}, ErrInvalidLength},
 		{"empty", []byte{}, Addr{}, ErrInvalidLength},
@@ -215,6 +217,33 @@ func TestParseRoundTrip(t *testing.T) {
 	})
 }
 
+// TestParseStdlib 直接测试 parseStdlib 内部函数的成功路径。
+// 通过 Parse() 调用时，所有标准 6 字节 MAC 格式都被自定义解析器拦截，
+// parseStdlib 的成功路径（net.ParseMAC 返回 6 字节）不会被覆盖。
+func TestParseStdlib(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  Addr
+	}{
+		{"colon", "aa:bb:cc:dd:ee:ff", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}},
+		{"dash", "aa-bb-cc-dd-ee-ff", Addr{bytes: [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseStdlib(tt.input)
+			if err != nil {
+				t.Errorf("parseStdlib(%q) error = %v", tt.input, err)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("parseStdlib(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestParse_ZeroAddressConsistency 验证全零 MAC 地址的一致性行为。
 // 这是有意的设计决策：Parse("00:00:00:00:00:00") 返回零值 Addr{}，
 // 其 IsValid() 返回 false，与 net/netip.Addr 的设计一致。
@@ -256,7 +285,7 @@ func TestParse_ZeroAddressConsistency(t *testing.T) {
 	}
 
 	// 验证与预定义 Zero 常量的一致性
-	if addr != Zero {
-		t.Errorf("Parse(00:00:00:00:00:00) != Zero constant")
+	if addr != Zero() {
+		t.Errorf("Parse(00:00:00:00:00:00) != Zero()")
 	}
 }

@@ -8,6 +8,9 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
+// kafkaHeadersToMap 将 Kafka 消息 Header 转换为 map。
+// 注意：Kafka 允许重复 Header Key，转换为 map 时后者覆盖前者。
+// 这对 trace propagation 是正确的行为（carrier 每个 key 只保留一个值）。
 func kafkaHeadersToMap(headers []kafka.Header) map[string]string {
 	if len(headers) == 0 {
 		return map[string]string{}

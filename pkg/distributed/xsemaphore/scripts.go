@@ -3,8 +3,10 @@ package xsemaphore
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"sync"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -79,27 +81,43 @@ func getScripts() *scripts {
 //
 // 建议在应用启动时调用，避免首次执行时的编译开销。
 // 如果 Redis 不可用，返回错误但不影响后续使用（会在首次执行时重试）。
-// 如果 client 为 nil，返回 ErrNilClient。
+// 如果 ctx 为 nil，返回 [ErrNilContext]；如果 client 为 nil，返回 [ErrNilClient]。
+//
+// 当 Redis 代理不支持 Lua 脚本时（ScriptModeCompat），此函数自动检测并返回 nil（空操作）。
 func WarmupScripts(ctx context.Context, client redis.UniversalClient) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if client == nil {
 		return ErrNilClient
+	}
+
+	// 探测脚本支持：Compat 模式直接返回（不需要预热脚本）
+	mode, err := rediscompat.DetectScriptMode(ctx, client)
+	if err != nil {
+		return fmt.Errorf("detect script mode: %w", err)
+	}
+	if mode == rediscompat.ScriptModeCompat {
+		return nil
 	}
 
 	s := getScripts()
 
 	// 使用 SCRIPT LOAD 预加载脚本
 	// redis.Script.Load 会执行 SCRIPT LOAD 并缓存 SHA
+	// 设计决策: 顺序加载而非 Pipeline 批量加载。启动时一次性操作，额外 3 个 RTT（~3ms）
+	// 不影响服务启动时间，且顺序加载更易于定位失败的脚本。
 	if err := s.acquire.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load acquire script: %w", err)
 	}
 	if err := s.release.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load release script: %w", err)
 	}
 	if err := s.extend.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load extend script: %w", err)
 	}
 	if err := s.query.Load(ctx, client).Err(); err != nil {
-		return err
+		return fmt.Errorf("load query script: %w", err)
 	}
 
 	return nil

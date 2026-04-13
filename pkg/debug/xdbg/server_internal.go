@@ -3,6 +3,7 @@
 package xdbg
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -15,13 +16,16 @@ func (s *Server) cleanupPprof() {
 	}
 }
 
-// closeTransportAndTrigger 关闭传输层和触发器。
-func (s *Server) closeTransportAndTrigger() {
+// closeTransportAndTrigger 关闭传输层和触发器，返回聚合错误。
+func (s *Server) closeTransportAndTrigger() error {
+	var errs []error
+
 	// 关闭传输层
 	s.transportMu.Lock()
 	if s.transport != nil {
 		if err := s.transport.Close(); err != nil {
 			s.audit(AuditEventCommandFailed, nil, "shutdown:transport", nil, 0, err)
+			errs = append(errs, fmt.Errorf("close transport: %w", err))
 		}
 	}
 	s.transportMu.Unlock()
@@ -30,8 +34,11 @@ func (s *Server) closeTransportAndTrigger() {
 	if s.trigger != nil {
 		if err := s.trigger.Close(); err != nil {
 			s.audit(AuditEventCommandFailed, nil, "shutdown:trigger", nil, 0, err)
+			errs = append(errs, fmt.Errorf("close trigger: %w", err))
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
 // waitForGoroutines 等待所有 goroutine 完成。

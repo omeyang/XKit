@@ -1,8 +1,27 @@
 package xmac
 
 import (
+	"database/sql"
+	"database/sql/driver"
+	"encoding"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
+)
+
+// 编译期接口实现检查。
+var (
+	_ fmt.Stringer               = Addr{}
+	_ fmt.GoStringer             = Addr{}
+	_ encoding.TextMarshaler     = Addr{}
+	_ encoding.TextUnmarshaler   = (*Addr)(nil)
+	_ encoding.BinaryMarshaler   = Addr{}
+	_ encoding.BinaryUnmarshaler = (*Addr)(nil)
+	_ json.Marshaler             = Addr{}
+	_ json.Unmarshaler           = (*Addr)(nil)
+	_ driver.Valuer              = Addr{}
+	_ sql.Scanner                = (*Addr)(nil)
 )
 
 func TestAddr_IsValid(t *testing.T) {
@@ -13,7 +32,7 @@ func TestAddr_IsValid(t *testing.T) {
 	}{
 		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), true},
 		{"zero", Addr{}, false},
-		{"broadcast", Broadcast, true},
+		{"broadcast", Broadcast(), true},
 		{"min_nonzero", Addr{bytes: [6]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}, true},
 	}
 
@@ -62,8 +81,8 @@ func TestAddr_Next(t *testing.T) {
 		{"carry", MustParse("aa:bb:cc:dd:ee:ff"), MustParse("aa:bb:cc:dd:ef:00"), nil},
 		{"multi_carry", MustParse("aa:bb:cc:ff:ff:ff"), MustParse("aa:bb:cd:00:00:00"), nil},
 		{"from_zero", Addr{}, MustParse("00:00:00:00:00:01"), nil},
-		{"overflow", Broadcast, Addr{}, ErrOverflow},
-		{"before_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), Broadcast, nil},
+		{"overflow", Broadcast(), Addr{}, ErrOverflow},
+		{"before_broadcast", MustParse("ff:ff:ff:ff:ff:fe"), Broadcast(), nil},
 	}
 
 	for _, tt := range tests {
@@ -98,7 +117,7 @@ func TestAddr_Prev(t *testing.T) {
 		{"multi_borrow", MustParse("aa:bb:cd:00:00:00"), MustParse("aa:bb:cc:ff:ff:ff"), nil},
 		{"from_one", MustParse("00:00:00:00:00:01"), Addr{}, nil},
 		{"underflow", Addr{}, Addr{}, ErrUnderflow},
-		{"from_broadcast", Broadcast, MustParse("ff:ff:ff:ff:ff:fe"), nil},
+		{"from_broadcast", Broadcast(), MustParse("ff:ff:ff:ff:ff:fe"), nil},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +199,33 @@ func TestAddr_HardwareAddr(t *testing.T) {
 	invalid := Addr{}
 	if hw := invalid.HardwareAddr(); hw != nil {
 		t.Errorf("invalid.HardwareAddr() = %v, want nil", hw)
+	}
+}
+
+func TestAddr_GoString(t *testing.T) {
+	tests := []struct {
+		name string
+		addr Addr
+		want string
+	}{
+		{"valid", MustParse("aa:bb:cc:dd:ee:ff"), `xmac.MustParse("aa:bb:cc:dd:ee:ff")`},
+		{"zero", Addr{}, "xmac.Addr{}"},
+		{"broadcast", Broadcast(), `xmac.MustParse("ff:ff:ff:ff:ff:ff")`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.addr.GoString(); got != tt.want {
+				t.Errorf("GoString() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// 验证 %#v 格式化使用 GoString
+	addr := MustParse("aa:bb:cc:dd:ee:ff")
+	formatted := fmt.Sprintf("%#v", addr)
+	if formatted != `xmac.MustParse("aa:bb:cc:dd:ee:ff")` {
+		t.Errorf("%%#v = %v, want xmac.MustParse(...)", formatted)
 	}
 }
 

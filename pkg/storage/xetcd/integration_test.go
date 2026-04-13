@@ -5,6 +5,7 @@ package xetcd
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,7 @@ import (
 // 运行方式: go test -tags=integration -v ./pkg/storage/xetcd/...
 //
 // 环境变量:
-//   - ETCD_ENDPOINTS: etcd 端点，默认 "localhost:2379"
+//   - ETCD_ENDPOINTS: etcd 端点（逗号分隔），默认 "localhost:2379"
 //   - ETCD_USERNAME: etcd 用户名（可选）
 //   - ETCD_PASSWORD: etcd 密码（可选）
 
@@ -22,7 +23,7 @@ func getTestEndpoints() []string {
 	if endpoints == "" {
 		return []string{"localhost:2379"}
 	}
-	return []string{endpoints}
+	return strings.Split(endpoints, ",")
 }
 
 func getTestConfig() *Config {
@@ -41,7 +42,7 @@ func createTestClient(t *testing.T) *Client {
 		t.Skipf("Skipping integration test: cannot connect to etcd: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = client.Close()
+		_ = client.Close(context.Background())
 	})
 	return client
 }
@@ -481,7 +482,7 @@ func TestIntegration_ClientClose(t *testing.T) {
 	}
 
 	// 关闭客户端
-	if err := client.Close(); err != nil {
+	if err := client.Close(context.Background()); err != nil {
 		t.Errorf("Close() error = %v", err)
 	}
 

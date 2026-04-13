@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/omeyang/xkit/internal/rediscompat"
 	"github.com/omeyang/xkit/pkg/observability/xlog"
 	"github.com/omeyang/xkit/pkg/util/xid"
 )
@@ -69,9 +70,10 @@ type options struct {
 	fallback             FallbackStrategy
 	podCount             int
 	onFallback           func(resource string, strategy FallbackStrategy, err error)
-	disableResourceLabel bool            // 禁用 resource 标签，避免高基数问题
-	defaultTimeout       time.Duration   // 默认操作超时时间
-	idGenerator          IDGeneratorFunc // 许可 ID 生成函数，nil 时使用 xid.NewStringWithRetry
+	disableResourceLabel bool                   // 禁用 resource 标签，避免高基数问题
+	defaultTimeout       time.Duration          // 默认操作超时时间
+	idGenerator          IDGeneratorFunc        // 许可 ID 生成函数，nil 时使用 xid.NewStringWithRetry
+	scriptMode           rediscompat.ScriptMode // Redis 脚本执行模式（Auto/Lua/Compat）
 }
 
 // Option 工厂配置选项函数
@@ -195,6 +197,21 @@ func WithIDGenerator(fn IDGeneratorFunc) Option {
 	}
 }
 
+// WithScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，New() 会在构造时执行 EVAL "return 1" 0 探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+//
+// 使用场景：
+//   - 已知 Redis 代理不支持 Lua 脚本时，指定 ScriptModeCompat
+//   - 已知 Redis 直连时，指定 ScriptModeLua 跳过探测
+//   - 不确定时使用默认 ScriptModeAuto 自动探测
+func WithScriptMode(mode rediscompat.ScriptMode) Option {
+	return func(o *options) {
+		o.scriptMode = mode
+	}
+}
+
 // effectiveIDGenerator 返回有效的 ID 生成函数
 func (o *options) effectiveIDGenerator() IDGeneratorFunc {
 	if o.idGenerator != nil {
@@ -209,10 +226,13 @@ func (o *options) validate() error {
 		return err
 	}
 	if o.podCount <= 0 {
-		return fmt.Errorf("xsemaphore: pod count must be positive, got %d", o.podCount)
+		return fmt.Errorf("%w: pod count must be positive, got %d", ErrInvalidPodCount, o.podCount)
 	}
 	if o.fallback != FallbackNone && !o.fallback.IsValid() {
-		return fmt.Errorf("xsemaphore: invalid fallback strategy %q", o.fallback)
+		return fmt.Errorf("%w: %q", ErrInvalidFallbackStrategy, o.fallback)
+	}
+	if !o.scriptMode.IsValid() {
+		return fmt.Errorf("%w: %d", ErrInvalidScriptMode, o.scriptMode)
 	}
 	return nil
 }
@@ -253,7 +273,11 @@ func defaultAcquireOptions() *acquireOptions {
 	}
 }
 
-// validate 验证获取选项
+// validate 验证获取选项（TryAcquire 和 Acquire 共用的校验）
+//
+// 设计决策: maxRetries 和 retryDelay 仅对 Acquire 有意义，不在此处校验。
+// TryAcquire 不使用重试参数，不应因用户传入了 WithMaxRetries(0) 而报错。
+// Acquire 通过 validateRetryParams 单独校验重试参数。
 func (o *acquireOptions) validate() error {
 	if o.capacity <= 0 {
 		return fmt.Errorf("%w: capacity must be positive, got %d", ErrInvalidCapacity, o.capacity)
@@ -267,8 +291,16 @@ func (o *acquireOptions) validate() error {
 	if o.tenantQuota > 0 && o.tenantQuota > o.capacity {
 		return fmt.Errorf("%w: tenant quota (%d) cannot exceed capacity (%d)", ErrInvalidTenantQuota, o.tenantQuota, o.capacity)
 	}
+	return nil
+}
+
+// validateRetryParams 验证重试相关参数（仅 Acquire 调用）
+func (o *acquireOptions) validateRetryParams() error {
 	if o.maxRetries <= 0 {
 		return fmt.Errorf("%w: max retries must be positive, got %d", ErrInvalidMaxRetries, o.maxRetries)
+	}
+	if o.maxRetries > MaxMaxRetries {
+		return fmt.Errorf("%w: max retries cannot exceed %d, got %d", ErrInvalidMaxRetries, MaxMaxRetries, o.maxRetries)
 	}
 	if o.retryDelay <= 0 {
 		return fmt.Errorf("%w: retry delay must be positive, got %s", ErrInvalidRetryDelay, o.retryDelay)
@@ -319,9 +351,10 @@ func WithTTL(ttl time.Duration) AcquireOption {
 
 // WithMaxRetries 设置阻塞获取时的最大尝试次数（包含首次尝试）
 // 例如：WithMaxRetries(10) 表示首次尝试 + 9 次重试 = 共 10 次尝试
-// 默认为 10 次
+// 默认为 10 次，上限为 [MaxMaxRetries]（10000）
 // 仅对 Acquire 方法有效
-// 无效值（<= 0）会在 validate() 中返回错误
+// 无效值（<= 0 或 > MaxMaxRetries）会在 validate() 中返回错误
+// 建议配合 context timeout 使用以确保超时可控
 func WithMaxRetries(n int) AcquireOption {
 	return func(o *acquireOptions) {
 		o.maxRetries = n
@@ -386,7 +419,8 @@ func (o *queryOptions) validate() error {
 	if o.tenantQuota < 0 {
 		return fmt.Errorf("%w: tenant quota cannot be negative, got %d", ErrInvalidTenantQuota, o.tenantQuota)
 	}
-	if o.tenantQuota > 0 && o.capacity > 0 && o.tenantQuota > o.capacity {
+	// 设计决策: o.capacity > 0 条件已由上方 capacity <= 0 校验保证，此处省略。
+	if o.tenantQuota > 0 && o.tenantQuota > o.capacity {
 		return fmt.Errorf("%w: tenant quota (%d) cannot exceed capacity (%d)", ErrInvalidTenantQuota, o.tenantQuota, o.capacity)
 	}
 	return nil

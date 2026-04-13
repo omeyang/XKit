@@ -10,8 +10,6 @@ import (
 
 // acceptLoop 接受连接循环。
 func (s *Server) acceptLoop() {
-	defer s.wg.Done()
-
 	backoff := newAcceptBackoff()
 
 	for {
@@ -103,8 +101,9 @@ func (s *Server) handleAcceptError(err error, backoff *acceptBackoff) bool {
 
 // handleNewConnection 处理新连接。
 func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
-	// 使用 CAS 循环原子地检查并递增会话数，避免 Load() 和 Add() 之间的竞态
-	// 添加退避机制防止高并发下 CPU 自旋
+	// 设计决策: CAS 循环无硬性退出上限。循环必然终止——要么 CAS 成功，要么 sessionCount
+	// 达到 MaxSessions 后 reject。调试服务并发度极低（MaxSessions 默认 1），CAS 竞争
+	// 几乎不会发生。Gosched 退避防止极端情况下的 CPU 自旋。
 	const maxCASRetries = 10
 	for i := 0; ; i++ {
 		current := s.sessionCount.Load()
@@ -121,14 +120,12 @@ func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
 	}
 
 	// 创建会话
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		defer s.sessionCount.Add(-1)
 
 		session := newSession(s.ctx, conn, identity, s)
 		session.Run()
-	}()
+	})
 
 	// 重置自动关闭定时器
 	s.resetShutdownTimer()
@@ -136,6 +133,12 @@ func (s *Server) handleNewConnection(conn net.Conn, identity *PeerIdentity) {
 
 // rejectConnection 拒绝连接（会话数超限）。
 func (s *Server) rejectConnection(conn net.Conn) {
+	// 设置写超时，防止慢客户端阻塞 accept 循环
+	if s.opts.SessionWriteTimeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(s.opts.SessionWriteTimeout)); err != nil {
+			s.audit(AuditEventCommandFailed, nil, "reject:deadline", nil, 0, err)
+		}
+	}
 	codec := NewCodec()
 	errResp := NewErrorResponse(ErrTooManySessions)
 	if data, err := codec.EncodeResponse(errResp); err == nil {

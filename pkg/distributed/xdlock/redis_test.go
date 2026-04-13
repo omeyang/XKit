@@ -90,7 +90,7 @@ func TestNewRedisFactory_Success(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	assert.NotNil(t, factory.Redsync())
 }
@@ -101,7 +101,7 @@ func TestRedisFactory_Health(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -117,7 +117,7 @@ func TestRedisFactory_HealthAfterClose(t *testing.T) {
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
 
-	_ = factory.Close()
+	_ = factory.Close(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -134,8 +134,8 @@ func TestRedisFactory_CloseIdempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	// 多次关闭不应报错
-	assert.NoError(t, factory.Close())
-	assert.NoError(t, factory.Close())
+	assert.NoError(t, factory.Close(context.Background()))
+	assert.NoError(t, factory.Close(context.Background()))
 }
 
 // =============================================================================
@@ -148,7 +148,7 @@ func TestRedisFactory_LockUnlock(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -169,7 +169,7 @@ func TestRedisFactory_TryLock_Success(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -193,7 +193,7 @@ func TestRedisFactory_TryLock_LockHeld(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -216,7 +216,7 @@ func TestRedisFactory_Lock_LockHeld(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -239,7 +239,7 @@ func TestRedisLockHandle_Extend(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -263,7 +263,7 @@ func TestRedisFactory_WithKeyPrefix(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -284,7 +284,7 @@ func TestRedisFactory_Lock_ContextCanceled(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	// 第一个 handle 持有锁
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
@@ -315,7 +315,7 @@ func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	const goroutines = 10
 	var counter int64
@@ -325,10 +325,7 @@ func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 	defer cancel()
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			handle, err := factory.Lock(ctx, "concurrent-lock",
 				xdlock.WithTries(50),
 				xdlock.WithRetryDelay(100*time.Millisecond),
@@ -341,7 +338,7 @@ func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 
 			// 临界区：递增计数器
 			atomic.AddInt64(&counter, 1)
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -354,7 +351,7 @@ func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	const goroutines = 5
 	const iterations = 10
@@ -366,10 +363,7 @@ func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 	defer cancel()
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for j := 0; j < iterations; j++ {
 				handle, err := factory.Lock(ctx, "mutual-exclusion",
 					xdlock.WithTries(50),
@@ -392,7 +386,7 @@ func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 				atomic.AddInt64(&counter, -1)
 				_ = handle.Unlock(ctx)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -409,7 +403,7 @@ func TestRedisFactory_Lock_WithExpiry(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -430,7 +424,7 @@ func TestRedisFactory_Lock_WithRetryDelayFunc(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -457,7 +451,7 @@ func TestRedisFactory_Redsync(t *testing.T) {
 
 	factory, err := xdlock.NewRedisFactory(client)
 	require.NoError(t, err)
-	defer func() { _ = factory.Close() }()
+	defer func() { _ = factory.Close(context.Background()) }()
 
 	redsync := factory.Redsync()
 	assert.NotNil(t, redsync)

@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.25.x'
+  GO_VERSION: '1.25.9'
   GOLANGCI_LINT_VERSION: 'v2.8.0'
 
 jobs:
@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # 由 golangci-lint-action 管理缓存
@@ -35,7 +35,7 @@ jobs:
           sudo apt-get install -y librdkafka-dev
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
@@ -53,10 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -66,11 +66,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y librdkafka-dev
 
+      - name: Clean build cache
+        run: go clean -cache
+
       - name: Run tests with coverage
         run: go test -v -race -p 2 -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v5.5.2
         with:
           files: ./coverage.out
           flags: unit
@@ -84,10 +87,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -103,16 +106,24 @@ jobs:
       - name: Build
         run: go build -v ./...
 
+      # 跨平台编译验证：确保 !unix build tag 分支（如 xsys）持续可编译。
+      # 仅编译验证，不运行测试（Windows 下无 librdkafka 等依赖）。
+      - name: Cross-compile check (Windows)
+        run: GOOS=windows GOARCH=amd64 go build ./pkg/util/xsys/...
+
+      - name: Cross-compile check (Windows tests)
+        run: GOOS=windows GOARCH=amd64 go test -c -o /dev/null ./pkg/util/xsys/...
+
   # ==================== 安全扫描 ====================
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -134,10 +145,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false

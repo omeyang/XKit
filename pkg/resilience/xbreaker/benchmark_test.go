@@ -8,13 +8,16 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// benchSinkBool 防止编译器优化消除基准测试中的计算结果
+var benchSinkBool bool
+
 // ============================================================================
 // Breaker 创建基准测试
 // ============================================================================
 
 func BenchmarkNewBreaker_Default(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewBreaker("test")
 	}
 }
@@ -25,7 +28,7 @@ func BenchmarkNewBreaker_WithOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewBreaker("test",
 			WithTripPolicy(policy),
 			WithTimeout(30*time.Second),
@@ -46,7 +49,7 @@ func BenchmarkBreaker_Do_Success(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = breaker.Do(ctx, fn)
 	}
 }
@@ -78,7 +81,7 @@ func BenchmarkExecute_Success(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = Execute(ctx, breaker, fn)
 	}
 }
@@ -104,20 +107,26 @@ func BenchmarkExecute_SuccessParallel(b *testing.B) {
 
 func BenchmarkManagedBreaker_Execute(b *testing.B) {
 	breaker := NewBreaker("test")
-	managed := NewManagedBreaker[int](breaker)
+	managed, err := NewManagedBreaker[int](breaker)
+	if err != nil {
+		b.Fatal(err)
+	}
 	fn := func() (int, error) { return 42, nil }
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = managed.Execute(fn)
 	}
 }
 
 func BenchmarkManagedBreaker_ExecuteParallel(b *testing.B) {
 	breaker := NewBreaker("test")
-	managed := NewManagedBreaker[int](breaker)
+	managed, err := NewManagedBreaker[int](breaker)
+	if err != nil {
+		b.Fatal(err)
+	}
 	fn := func() (int, error) { return 42, nil }
 
 	b.ReportAllocs()
@@ -147,9 +156,11 @@ func BenchmarkConsecutiveFailures_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkFailureRatio_ReadyToTrip(b *testing.B) {
@@ -163,9 +174,11 @@ func BenchmarkFailureRatio_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkFailureCount_ReadyToTrip(b *testing.B) {
@@ -179,9 +192,11 @@ func BenchmarkFailureCount_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkCompositePolicy_ReadyToTrip(b *testing.B) {
@@ -200,9 +215,11 @@ func BenchmarkCompositePolicy_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkNeverTrip_ReadyToTrip(b *testing.B) {
@@ -216,9 +233,11 @@ func BenchmarkNeverTrip_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 func BenchmarkAlwaysTrip_ReadyToTrip(b *testing.B) {
@@ -231,9 +250,11 @@ func BenchmarkAlwaysTrip_ReadyToTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
-		_ = policy.ReadyToTrip(counts)
+	var result bool
+	for b.Loop() {
+		result = policy.ReadyToTrip(counts)
 	}
+	benchSinkBool = result
 }
 
 // ============================================================================
@@ -246,7 +267,7 @@ func BenchmarkBreaker_State(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = breaker.State()
 	}
 }
@@ -257,7 +278,7 @@ func BenchmarkBreaker_Counts(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = breaker.Counts()
 	}
 }
@@ -268,14 +289,14 @@ func BenchmarkBreaker_Counts(b *testing.B) {
 
 func BenchmarkNewConsecutiveFailures(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewConsecutiveFailures(5)
 	}
 }
 
 func BenchmarkNewFailureRatio(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewFailureRatio(0.5, 10)
 	}
 }
@@ -287,7 +308,7 @@ func BenchmarkNewCompositePolicy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewCompositePolicy(p1, p2)
 	}
 }

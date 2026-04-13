@@ -2,6 +2,7 @@ package xcron
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // ============================================================================
@@ -62,6 +66,32 @@ func TestNewK8sLocker(t *testing.T) {
 
 func TestK8sLocker_TryLock(t *testing.T) {
 	ctx := context.Background()
+
+	t.Run("rejects zero TTL", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		locker, err := NewK8sLocker(K8sLockerOptions{
+			Client:    fakeClient,
+			Namespace: "default",
+			Identity:  "pod-1",
+		})
+		require.NoError(t, err)
+
+		_, err = locker.TryLock(ctx, "test-job", 0)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
+
+	t.Run("rejects negative TTL", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		locker, err := NewK8sLocker(K8sLockerOptions{
+			Client:    fakeClient,
+			Namespace: "default",
+			Identity:  "pod-1",
+		})
+		require.NoError(t, err)
+
+		_, err = locker.TryLock(ctx, "test-job", -1*time.Second)
+		assert.ErrorIs(t, err, ErrInvalidTTL)
+	})
 
 	t.Run("creates lease when not exists", func(t *testing.T) {
 		fakeClient := fake.NewSimpleClientset()
@@ -455,6 +485,45 @@ func TestK8sLocker_canAcquire(t *testing.T) {
 	})
 }
 
+func TestValidateK8sPrefix(t *testing.T) {
+	t.Run("valid prefix", func(t *testing.T) {
+		assert.NoError(t, validateK8sPrefix("xcron-"))
+		assert.NoError(t, validateK8sPrefix("a"))
+		assert.NoError(t, validateK8sPrefix("my-app-lock-"))
+	})
+
+	t.Run("invalid characters", func(t *testing.T) {
+		err := validateK8sPrefix("UPPER-")
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+
+	t.Run("starts with dash", func(t *testing.T) {
+		err := validateK8sPrefix("-xcron-")
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+
+	t.Run("too long", func(t *testing.T) {
+		long := strings.Repeat("a", k8sMaxNameLen-k8sMinKeyBudget+1)
+		err := validateK8sPrefix(long)
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+		assert.Contains(t, err.Error(), "exceeds maximum")
+	})
+
+	t.Run("max allowed length", func(t *testing.T) {
+		maxLen := strings.Repeat("a", k8sMaxNameLen-k8sMinKeyBudget)
+		assert.NoError(t, validateK8sPrefix(maxLen))
+	})
+
+	t.Run("NewK8sLocker rejects invalid prefix", func(t *testing.T) {
+		fakeClient := fake.NewSimpleClientset()
+		_, err := NewK8sLocker(K8sLockerOptions{
+			Client: fakeClient,
+			Prefix: "INVALID!",
+		})
+		assert.ErrorIs(t, err, ErrInvalidK8sPrefix)
+	})
+}
+
 func TestK8sLocker_leaseName(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	locker, _ := NewK8sLocker(K8sLockerOptions{
@@ -464,22 +533,183 @@ func TestK8sLocker_leaseName(t *testing.T) {
 		Prefix:    "xcron-",
 	})
 
-	tests := []struct {
-		key      string
-		expected string
-	}{
-		{"simple-job", "xcron-simple-job"},
-		{"job.with.dots", "xcron-job-with-dots"},
-		{"JOB_WITH_UPPER", "xcron-job-with-upper"},
-		{"job/with/slashes", "xcron-job-with-slashes"},
-	}
+	t.Run("clean key unchanged", func(t *testing.T) {
+		result := locker.leaseName("simple-job")
+		assert.Equal(t, "xcron-simple-job", result)
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			result := locker.leaseName(tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	t.Run("sanitized keys get hash suffix", func(t *testing.T) {
+		// 需要字符替换的 key 添加 hash 后缀确保唯一性
+		keys := []string{"job.with.dots", "JOB_WITH_UPPER", "job/with/slashes"}
+		for _, key := range keys {
+			t.Run(key, func(t *testing.T) {
+				result := locker.leaseName(key)
+				assert.True(t, len(result) <= 63, "lease name exceeds 63 chars")
+				assert.Regexp(t, `^xcron-[a-z0-9-]+-[a-f0-9]{8}$`, result)
+			})
+		}
+	})
+
+	t.Run("different keys produce different lease names", func(t *testing.T) {
+		// 确保不同 key 不会碰撞
+		r1 := locker.leaseName("my.job")
+		r2 := locker.leaseName("my/job")
+		assert.NotEqual(t, r1, r2, "different keys should produce different lease names")
+	})
+
+	t.Run("long key with prefix stays under 63 chars", func(t *testing.T) {
+		// 58 字符的 key，加上 prefix "xcron-" (6) 如果不截断就是 64 字符
+		longKey := "abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstu"
+		result := locker.leaseName(longKey)
+		assert.LessOrEqual(t, len(result), 63,
+			"lease name must not exceed 63 chars, got %d: %s", len(result), result)
+	})
+}
+
+// ============================================================================
+// K8s API Error Path Tests
+// ============================================================================
+
+func TestK8sLocker_CreateLease_AlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	// 注入 AlreadyExists 错误：模拟并发创建场景
+	fakeClient.PrependReactor("create", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewAlreadyExists(
+			coordinationv1.Resource("leases"), "xcron-test-job")
+	})
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	assert.NoError(t, err)
+	assert.Nil(t, handle) // 并发创建时返回 nil（锁被其他实例先创建）
+}
+
+func TestK8sLocker_AcquireLease_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	// 先创建一个已过期的 Lease，使 acquireLease 路径被触发
+	pastTime := metav1.NewMicroTime(time.Now().Add(-10 * time.Minute))
+	duration := int32(60)
+	holder := "other-pod:old-uuid"
+	_, err := fakeClient.CoordinationV1().Leases("default").Create(ctx, &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "xcron-test-job",
+			Namespace: "default",
+		},
+		Spec: coordinationv1.LeaseSpec{
+			HolderIdentity:       &holder,
+			LeaseDurationSeconds: &duration,
+			AcquireTime:          &pastTime,
+			RenewTime:            &pastTime,
+		},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// 注入 Conflict 错误：模拟乐观锁冲突
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	assert.NoError(t, err)
+	assert.Nil(t, handle) // 版本冲突时返回 nil
+}
+
+func TestK8sLockHandle_Unlock_NotFound(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	// 获取锁
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 删除 Lease（模拟 Lease 被外部删除）
+	err = fakeClient.CoordinationV1().Leases("default").Delete(ctx, "xcron-test-job", metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	// Unlock 应返回 nil（Lease 已不存在，视为已释放）
+	err = handle.Unlock(ctx)
+	assert.NoError(t, err)
+}
+
+func TestK8sLockHandle_Unlock_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 注入 Conflict 错误（模拟 Unlock 时被其他实例接管）
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	err = handle.Unlock(ctx)
+	assert.Equal(t, ErrLockNotHeld, err)
+}
+
+func TestK8sLockHandle_Renew_Conflict(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset()
+
+	locker, err := NewK8sLocker(K8sLockerOptions{
+		Client:    fakeClient,
+		Namespace: "default",
+		Identity:  "pod-1",
+		Prefix:    "xcron-",
+	})
+	require.NoError(t, err)
+
+	handle, err := locker.TryLock(ctx, "test-job", 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, handle)
+
+	// 注入 Conflict 错误（模拟续期时版本冲突）
+	fakeClient.PrependReactor("update", "leases", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.NewConflict(
+			coordinationv1.Resource("leases"), "xcron-test-job", fmt.Errorf("version conflict"))
+	})
+
+	err = handle.Renew(ctx, 10*time.Minute)
+	assert.Equal(t, ErrLockNotHeld, err)
 }
 
 // ============================================================================

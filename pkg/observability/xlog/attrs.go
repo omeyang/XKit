@@ -1,6 +1,11 @@
 package xlog
 
-import "log/slog"
+import (
+	"log/slog"
+	"time"
+
+	"github.com/omeyang/xkit/pkg/context/xctx"
+)
 
 // =============================================================================
 // 常用属性 Key 常量
@@ -25,8 +30,8 @@ const (
 	// KeyUserID 用户 ID 字段的标准 key
 	KeyUserID = "user_id"
 
-	// KeyRequestID 请求 ID 字段的标准 key（等同于 xctx.KeyRequestID）
-	KeyRequestID = "request_id"
+	// KeyRequestID 请求 ID 字段的标准 key，引用 xctx 保证跨包一致
+	KeyRequestID = xctx.KeyRequestID
 
 	// KeyMethod HTTP/RPC 方法字段的标准 key
 	KeyMethod = "method"
@@ -67,12 +72,15 @@ func Err(err error) slog.Attr {
 
 // Duration 创建耗时属性
 //
+// 输出人类可读的字符串格式（如 "5s"、"1m30s"），与 LazyDuration 行为一致。
+// 如需机器解析的数值格式（如按耗时排序），使用 slog.Int64("duration_ms", d.Milliseconds())。
+//
 // 示例：
 //
 //	start := time.Now()
 //	// ... 操作 ...
 //	logger.Info(ctx, "operation completed", xlog.Duration(time.Since(start)))
-func Duration(d interface{ String() string }) slog.Attr {
+func Duration(d time.Duration) slog.Attr {
 	return slog.String(KeyDuration, d.String())
 }
 

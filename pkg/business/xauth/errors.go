@@ -10,6 +10,9 @@ import (
 // =============================================================================
 
 var (
+	// ErrNilClient 表示传入的 Client 为 nil。
+	ErrNilClient = errors.New("xauth: nil client")
+
 	// ErrNilConfig 表示传入的配置为 nil。
 	ErrNilConfig = errors.New("xauth: nil config")
 
@@ -21,6 +24,24 @@ var (
 
 	// ErrInvalidRefreshThreshold 表示 Token 刷新阈值无效。
 	ErrInvalidRefreshThreshold = errors.New("xauth: invalid refresh threshold")
+
+	// ErrInsecureHost 表示 Host 使用了非 HTTPS 协议。
+	// 认证服务传输 Bearer Token 和客户端凭据，明文 HTTP 会暴露敏感信息。
+	// 如需在开发/测试环境中使用 HTTP，请设置 Config.AllowInsecure = true。
+	ErrInsecureHost = errors.New("xauth: host must use https:// (set AllowInsecure=true for development)")
+
+	// ErrInvalidHost 表示 Host 格式无效。
+	// Host 必须包含协议和主机名，例如 "https://auth.example.com"。
+	ErrInvalidHost = errors.New("xauth: invalid host: must include scheme and host (e.g., https://auth.example.com)")
+
+	// ErrNilRedisClient 表示 Redis 客户端为 nil。
+	ErrNilRedisClient = errors.New("xauth: nil redis client")
+
+	// ErrNilHTTPClient 表示 HTTP 客户端为 nil。
+	ErrNilHTTPClient = errors.New("xauth: nil http client")
+
+	// ErrNilCache 表示缓存为 nil。
+	ErrNilCache = errors.New("xauth: nil cache")
 )
 
 // =============================================================================
@@ -28,6 +49,9 @@ var (
 // =============================================================================
 
 var (
+	// ErrNilRequest 表示传入的请求为 nil。
+	ErrNilRequest = errors.New("xauth: nil request")
+
 	// ErrMissingTenantID 表示租户 ID 未提供。
 	ErrMissingTenantID = errors.New("xauth: missing tenant_id")
 
@@ -36,9 +60,6 @@ var (
 
 	// ErrMissingAPIKey 表示 API Key 未配置。
 	ErrMissingAPIKey = errors.New("xauth: missing api_key")
-
-	// ErrMissingCredentials 表示认证凭据未配置（client_id/client_secret 或 api_key）。
-	ErrMissingCredentials = errors.New("xauth: missing credentials (client_id/client_secret or api_key)")
 )
 
 // =============================================================================
@@ -48,9 +69,6 @@ var (
 var (
 	// ErrTokenNotFound 表示缓存中未找到 Token。
 	ErrTokenNotFound = errors.New("xauth: token not found")
-
-	// ErrTokenExpired 表示 Token 已过期。
-	ErrTokenExpired = errors.New("xauth: token expired")
 
 	// ErrTokenInvalid 表示 Token 无效（验证失败）。
 	ErrTokenInvalid = errors.New("xauth: token invalid")
@@ -106,9 +124,6 @@ var (
 var (
 	// ErrCacheMiss 表示缓存未命中。
 	ErrCacheMiss = errors.New("xauth: cache miss")
-
-	// ErrCacheSetFailed 表示缓存写入失败。
-	ErrCacheSetFailed = errors.New("xauth: cache set failed")
 )
 
 // =============================================================================
@@ -182,6 +197,10 @@ func (e *PermanentError) Retryable() bool {
 }
 
 // IsRetryable 检查错误是否可重试。
+// 设计决策: 重试基础设施（IsRetryable/RetryableError/TemporaryError/PermanentError）
+// 是提供给调用方使用的构建块——调用方根据自身场景决定重试策略（最大次数、退避算法等）。
+// 库内部仅实现 401 自动重试（见 EnableAutoRetryOn401），不做通用自动重试，
+// 避免在不同业务场景下产生不合适的重试行为。
 //
 // 规则：
 //   - nil 错误：不需要重试（视为成功）
@@ -255,16 +274,18 @@ func (e *APIError) Retryable() bool {
 }
 
 // Is 实现 errors.Is 接口。
+// 设计决策: 使用直接 == 比较而非 errors.Is，因为 target 参数是调用方传入的哨兵错误，
+// 而 ErrUnauthorized 等均为 errors.New 创建的简单值，无需递归 Unwrap。
 func (e *APIError) Is(target error) bool {
 	switch {
 	case e.StatusCode == 401:
-		return errors.Is(target, ErrUnauthorized)
+		return target == ErrUnauthorized
 	case e.StatusCode == 403:
-		return errors.Is(target, ErrForbidden)
+		return target == ErrForbidden
 	case e.StatusCode == 404:
-		return errors.Is(target, ErrNotFound)
+		return target == ErrNotFound
 	case e.StatusCode >= 500:
-		return errors.Is(target, ErrServerError)
+		return target == ErrServerError
 	}
 	return false
 }

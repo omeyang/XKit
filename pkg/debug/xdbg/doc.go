@@ -11,13 +11,25 @@
 //
 // # 安全设计
 //
-// xdbg 采用安全优先设计：
+// xdbg 采用多层防御的安全模型：
 //
 //   - 仅支持 Unix Socket，不暴露网络端口
 //   - 文件权限 0600，仅 owner 可访问
-//   - 通过 SO_PEERCRED 获取调用者身份
+//   - 通过 SO_PEERCRED 获取调用者身份（用于审计记录）
 //   - 所有操作记录审计日志
 //   - 支持自动关闭（默认 5 分钟）
+//   - 命令白名单控制可用命令集（默认允许所有，生产环境建议显式配置）
+//   - 命令执行带 panic 保护，单个命令 panic 不会导致主进程崩溃
+//
+// 注意: 身份信息仅用于审计记录，不用于命令级授权。访问控制依赖
+// Unix Socket 文件权限和 Kubernetes RBAC（kubectl exec 权限）。
+// 如需命令级授权，可在自定义 Command.Execute 中检查身份。
+//
+// 安全警告: config 命令会输出 ConfigProvider.Dump() 的返回值。
+// 实现方有责任对敏感字段进行脱敏，框架层不会自动过滤。
+//
+// 注意: 默认 Socket 路径为 /var/run/xdbg.sock，需要 root 权限创建。
+// 在 non-root 容器中，请使用 WithSocketPath 指定可写路径（如 /tmp/xdbg.sock）。
 //
 // # 触发方式
 //
@@ -31,6 +43,13 @@
 //   - SIGUSR1 信号触发的是 toggle 操作，而非单纯的 enable
 //   - Socket 文件发现需要调试服务已启用（Socket 已创建）
 //   - 若服务未启用，需使用 --pid 或 --name 参数指定目标进程
+//
+// # Profile 文件生命周期
+//
+// pprof 命令生成的临时文件（CPU/heap/goroutine profile）由 Cleanup 统一管理。
+// Server.Stop() 时会自动删除所有已创建的 profile 文件。
+// 如需保留分析文件，请在 Stop 之前完成分析或将文件复制到其他位置。
+// 可通过 WithProfileDir 指定输出目录（默认使用 os.TempDir()）。
 //
 // # 自定义命令
 //

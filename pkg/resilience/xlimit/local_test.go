@@ -2,6 +2,7 @@ package xlimit
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func TestLocalLimiter_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "test-tenant"}
@@ -38,7 +39,7 @@ func TestLocalLimiter_ExhaustQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "exhaust-tenant"}
@@ -74,7 +75,7 @@ func TestLocalLimiter_AllowN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "batch-tenant"}
@@ -105,7 +106,7 @@ func TestLocalLimiter_Reset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "reset-tenant"}
@@ -157,7 +158,7 @@ func TestLocalLimiter_MultipleRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "multi-rule-tenant"}
@@ -178,7 +179,7 @@ func TestLocalLimiter_DifferentTenants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -219,7 +220,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "concurrent-tenant"}
@@ -229,9 +230,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 	var mu sync.Mutex
 
 	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			result, err := limiter.Allow(ctx, key)
 			if err != nil {
 				return
@@ -243,7 +242,7 @@ func TestLocalLimiter_Concurrent(t *testing.T) {
 				denied++
 			}
 			mu.Unlock()
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -263,7 +262,7 @@ func TestLocalLimiter_Closed(t *testing.T) {
 	}
 
 	// 关闭限流器
-	err = limiter.Close()
+	err = limiter.Close(context.Background())
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
@@ -296,7 +295,7 @@ func TestLocalLimiter_TokenRefill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "refill-tenant"}
@@ -346,7 +345,7 @@ func TestLocalLimiter_Override(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 
@@ -386,7 +385,7 @@ func TestLocalLimiter_Callback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "callback-tenant"}
@@ -410,6 +409,141 @@ func TestLocalLimiter_Callback(t *testing.T) {
 	}
 }
 
+func TestLocalBackend_UpdateParamsOnPodCountChange(t *testing.T) {
+	// FG-S3: 动态 Pod 数量变化时，存量桶参数应同步更新
+	podCount := 2
+	provider := &mockPodCountProvider{count: podCount}
+
+	backend := newLocalBackend(1, provider, nil)
+
+	ctx := context.Background()
+
+	// 初始 limit=100, podCount=2 → localLimit=50
+	res, err := backend.CheckRule(ctx, "key1", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Limit != 50 {
+		t.Errorf("expected localLimit 50, got %d", res.Limit)
+	}
+
+	// 更新 podCount 到 4 → localLimit=25
+	provider.count = 4
+
+	res, err = backend.CheckRule(ctx, "key1", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Limit != 25 {
+		t.Errorf("expected localLimit 25 after pod scale-up, got %d", res.Limit)
+	}
+}
+
+type mockPodCountProvider struct {
+	count int
+}
+
+func (m *mockPodCountProvider) GetPodCount(_ context.Context) (int, error) {
+	return m.count, nil
+}
+
+func TestTokenBucket_UpdateParams(t *testing.T) {
+	tb := &tokenBucket{
+		tokens:     100,
+		limit:      100,
+		burst:      100,
+		window:     time.Minute,
+		lastUpdate: time.Now(),
+	}
+
+	// 缩小 burst，tokens 应该被截断到新容量
+	tb.updateParams(50, 50, time.Minute)
+
+	tb.mu.Lock()
+	if tb.limit != 50 {
+		t.Errorf("expected limit 50, got %d", tb.limit)
+	}
+	if tb.burst != 50 {
+		t.Errorf("expected burst 50, got %d", tb.burst)
+	}
+	if tb.tokens != 50 {
+		t.Errorf("expected tokens truncated to 50, got %f", tb.tokens)
+	}
+	tb.mu.Unlock()
+
+	// 扩大 burst，tokens 不变
+	tb.updateParams(200, 200, time.Minute)
+	tb.mu.Lock()
+	if tb.limit != 200 {
+		t.Errorf("expected limit 200, got %d", tb.limit)
+	}
+	if tb.burst != 200 {
+		t.Errorf("expected burst 200, got %d", tb.burst)
+	}
+	if tb.tokens != 50 {
+		t.Errorf("expected tokens unchanged at 50, got %f", tb.tokens)
+	}
+	tb.mu.Unlock()
+}
+
+func TestLocalBackend_MaxBucketsSafetyLimit(t *testing.T) {
+	backend := newLocalBackend(1, nil, nil)
+	ctx := context.Background()
+
+	// 填满到 maxBuckets
+	for i := range maxBuckets {
+		key := "key-" + strconv.Itoa(i)
+		res, err := backend.CheckRule(ctx, key, 100, 100, time.Minute, 1)
+		if err != nil {
+			t.Fatalf("CheckRule failed at key %d: %v", i, err)
+		}
+		if !res.Allowed {
+			t.Fatalf("expected allowed at key %d", i)
+		}
+	}
+
+	if backend.bucketCount.Load() != maxBuckets {
+		t.Fatalf("expected %d buckets, got %d", maxBuckets, backend.bucketCount.Load())
+	}
+
+	// 超过上限的新 key 应被拒绝（fail-close）
+	res, err := backend.CheckRule(ctx, "overflow-key", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if res.Allowed {
+		t.Error("new key should be denied when maxBuckets exceeded")
+	}
+	if res.RetryAfter <= 0 {
+		t.Error("RetryAfter should be positive for overflow denial")
+	}
+
+	// 已有 key 仍应正常工作
+	res, err = backend.CheckRule(ctx, "key-0", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule for existing key failed: %v", err)
+	}
+	if !res.Allowed {
+		t.Error("existing key should still be allowed")
+	}
+
+	// Reset 应释放桶，允许新 key
+	if err := backend.Reset(ctx, "key-0"); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+	if backend.bucketCount.Load() != maxBuckets-1 {
+		t.Fatalf("expected %d buckets after reset, got %d", maxBuckets-1, backend.bucketCount.Load())
+	}
+
+	res, err = backend.CheckRule(ctx, "new-key-after-reset", 100, 100, time.Minute, 1)
+	if err != nil {
+		t.Fatalf("CheckRule failed: %v", err)
+	}
+	if !res.Allowed {
+		t.Error("new key should be allowed after reset freed a slot")
+	}
+}
+
 func BenchmarkLocalLimiter_Allow(b *testing.B) {
 	limiter, err := NewLocal(
 		WithRules(TenantRule("tenant-limit", 1000000, time.Minute)),
@@ -417,7 +551,7 @@ func BenchmarkLocalLimiter_Allow(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create limiter: %v", err)
 	}
-	defer func() { _ = limiter.Close() }() //nolint:errcheck // defer cleanup
+	defer func() { _ = limiter.Close(context.Background()) }() //nolint:errcheck // defer cleanup
 
 	ctx := context.Background()
 	key := Key{Tenant: "bench-tenant"}

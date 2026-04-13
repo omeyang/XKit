@@ -30,8 +30,10 @@ func BenchmarkWrite(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		r.Write(data)
+	for b.Loop() {
+		if _, err := r.Write(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -55,19 +57,24 @@ func BenchmarkWriteParallel(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			r.Write(data)
+			if _, err := r.Write(data); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
 
 // BenchmarkWriteLarge 测试大数据块写入性能
 //
-// 测量写入 64KB 数据块的吞吐量
+// 测量写入 64KB 数据块的吞吐量。
+// 禁用压缩避免异步 goroutine 与 TempDir 清理竞争。
 func BenchmarkWriteLarge(b *testing.B) {
 	tmpDir := b.TempDir()
 	filename := filepath.Join(tmpDir, "bench_large.log")
 
-	r, err := NewLumberjack(filename)
+	r, err := NewLumberjack(filename,
+		WithCompress(false), // 禁用压缩，避免异步 goroutine 与 TempDir 清理竞争
+	)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -80,8 +87,10 @@ func BenchmarkWriteLarge(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(data)))
 
-	for i := 0; i < b.N; i++ {
-		r.Write(data)
+	for b.Loop() {
+		if _, err := r.Write(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -105,8 +114,10 @@ func BenchmarkWriteSmall(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(data)))
 
-	for i := 0; i < b.N; i++ {
-		r.Write(data)
+	for b.Loop() {
+		if _, err := r.Write(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -134,8 +145,10 @@ func BenchmarkWriteWithOptions(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		r.Write(data)
+	for b.Loop() {
+		if _, err := r.Write(data); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -148,13 +161,15 @@ func BenchmarkNewLumberjack(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		filename := filepath.Join(tmpDir, "bench_new.log")
 		r, err := NewLumberjack(filename)
 		if err != nil {
 			b.Fatal(err)
 		}
-		r.Close()
+		if err := r.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -165,7 +180,7 @@ func BenchmarkNewLumberjackWithOptions(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		filename := filepath.Join(tmpDir, "bench_new_opts.log")
 		r, err := NewLumberjack(filename,
 			WithMaxSize(50),
@@ -177,7 +192,9 @@ func BenchmarkNewLumberjackWithOptions(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		r.Close()
+		if err := r.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -198,12 +215,16 @@ func BenchmarkRotate(b *testing.B) {
 	defer r.Close()
 
 	// 先写入一些数据
-	r.Write([]byte("initial data\n"))
+	if _, err := r.Write([]byte("initial data\n")); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
-		r.Rotate()
+	for b.Loop() {
+		if err := r.Rotate(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -1,6 +1,15 @@
 package xnet
 
-import "net/netip"
+import (
+	"encoding/binary"
+	"net/netip"
+)
+
+// 设计决策: 以下 8 个包级函数（IsPrivate ~ IsInterfaceLocalMulticast）是对
+// netip.Addr 同名方法的薄包装，添加了 IsValid 前置检查。虽然 netip.Addr 零值
+// 对这些方法本身也返回 false（前置检查在技术上冗余），但保留它们是为了：
+//   - 与 xnet 自定义分类函数（IsRoutable, IsDocumentation 等）提供一致的包级 API
+//   - 用户可从单一包导入所有分类函数，无需混用 addr.IsXxx() 和 xnet.IsYyy()
 
 // IsPrivate 报告 addr 是否为私有地址。
 // 私有地址包括：
@@ -99,26 +108,37 @@ func IsInterfaceLocalMulticast(addr netip.Addr) bool {
 //	addr := netip.MustParseAddr("192.168.1.1")
 //	c := xnet.Classify(addr)
 //	fmt.Println(c.IsPrivate)      // true
-//	fmt.Println(c.IsGlobalUnicast) // false
+//	fmt.Println(c.IsGlobalUnicast) // true (私有地址也是全局单播)
 func Classify(addr netip.Addr) Classification {
 	if !addr.IsValid() {
 		return Classification{}
 	}
 	return Classification{
-		Version:                 AddrVersion(addr),
-		IsValid:                 true,
-		IsPrivate:               addr.IsPrivate(),
-		IsLoopback:              addr.IsLoopback(),
-		IsLinkLocalUnicast:      addr.IsLinkLocalUnicast(),
-		IsLinkLocalMulticast:    addr.IsLinkLocalMulticast(),
+		Version:                   AddrVersion(addr),
+		IsValid:                   true,
+		IsPrivate:                 addr.IsPrivate(),
+		IsLoopback:                addr.IsLoopback(),
+		IsLinkLocalUnicast:        addr.IsLinkLocalUnicast(),
+		IsLinkLocalMulticast:      addr.IsLinkLocalMulticast(),
 		IsInterfaceLocalMulticast: addr.IsInterfaceLocalMulticast(),
-		IsGlobalUnicast:         addr.IsGlobalUnicast(),
-		IsMulticast:             addr.IsMulticast(),
-		IsUnspecified:           addr.IsUnspecified(),
+		IsGlobalUnicast:           addr.IsGlobalUnicast(),
+		IsMulticast:               addr.IsMulticast(),
+		IsUnspecified:             addr.IsUnspecified(),
+		IsRoutable:                IsRoutable(addr),
+		IsDocumentation:           IsDocumentation(addr),
+		IsSharedAddress:           IsSharedAddress(addr),
+		IsBenchmark:               IsBenchmark(addr),
+		IsReserved:                IsReserved(addr),
+		IsBroadcast:               IsBroadcast(addr),
 	}
 }
 
 // Classification 包含 IP 地址的各种分类信息。
+//
+// 设计决策: 使用扁平的导出字段而非位标志或方法集，因为：
+//   - 值类型结构体在 Go 中添加字段是向后兼容的
+//   - 调用方可直接访问 c.IsPrivate，比 c.Has(FlagPrivate) 更符合 Go 惯用法
+//   - 所有字段在 Classify() 一次调用中填充，避免多次方法调用开销
 type Classification struct {
 	// Version 是 IP 版本（V4 或 V6）。
 	Version Version
@@ -149,52 +169,92 @@ type Classification struct {
 
 	// IsUnspecified 表示是否为未指定地址。
 	IsUnspecified bool
+
+	// IsRoutable 表示是否为可路由的单播地址。
+	IsRoutable bool
+
+	// IsDocumentation 表示是否为文档专用地址（TEST-NET/2001:db8::）。
+	IsDocumentation bool
+
+	// IsSharedAddress 表示是否为共享地址空间（100.64.0.0/10, CGNAT）。
+	IsSharedAddress bool
+
+	// IsBenchmark 表示是否为基准测试地址（IPv4: 198.18.0.0/15, IPv6: 2001:2::/48）。
+	IsBenchmark bool
+
+	// IsReserved 表示是否为保留地址（240.0.0.0/4, Class E，排除广播地址）。
+	IsReserved bool
+
+	// IsBroadcast 表示是否为 IPv4 有限广播地址（255.255.255.255）。
+	IsBroadcast bool
 }
 
 // String 返回分类信息的字符串表示。
+// 优先级：越特殊的分类越靠前（如 loopback > private > global-unicast）。
 func (c Classification) String() string {
 	if !c.IsValid {
 		return "invalid"
 	}
 
-	switch {
-	case c.IsLoopback:
-		return "loopback"
-	case c.IsUnspecified:
-		return "unspecified"
-	case c.IsPrivate:
-		return "private"
-	case c.IsLinkLocalUnicast:
-		return "link-local-unicast"
-	case c.IsLinkLocalMulticast:
-		return "link-local-multicast"
-	case c.IsInterfaceLocalMulticast:
-		return "interface-local-multicast"
-	case c.IsMulticast:
-		return "multicast"
-	case c.IsGlobalUnicast:
-		return "global-unicast"
-	default:
-		return "unknown"
+	// 按优先级排列，第一个匹配的即为结果
+	labels := [...]struct {
+		flag  bool
+		label string
+	}{
+		{c.IsLoopback, "loopback"},
+		{c.IsUnspecified, "unspecified"},
+		{c.IsPrivate, "private"},
+		{c.IsLinkLocalUnicast, "link-local-unicast"},
+		{c.IsLinkLocalMulticast, "link-local-multicast"},
+		{c.IsInterfaceLocalMulticast, "interface-local-multicast"},
+		{c.IsDocumentation, "documentation"},
+		{c.IsSharedAddress, "shared-address"},
+		{c.IsBenchmark, "benchmark"},
+		{c.IsReserved, "reserved"},
+		{c.IsBroadcast, "broadcast"},
+		{c.IsMulticast, "multicast"},
+		{c.IsGlobalUnicast, "global-unicast"},
 	}
+
+	for _, e := range labels {
+		if e.flag {
+			return e.label
+		}
+	}
+	// 防御性分支：Classify() 对有效地址总会设置至少一个标志（IsGlobalUnicast 兜底），
+	// 此行仅在手工构造 Classification{IsValid: true} 时触达。
+	return "unknown"
 }
 
-// IsRoutable 报告 addr 是否为可路由地址。
+// IsRoutable 报告 addr 是否为可路由的单播地址。
 // 可路由地址是指：
 //   - 有效
 //   - 非环回
-//   - 非链路本地
+//   - 非链路本地单播
 //   - 非未指定
+//   - 非多播（多播使用独立的组播路由机制，不属于常规单播路由）
+//   - 非有限广播（255.255.255.255，仅本地链路广播，不可被路由器转发）
 //
 // 注意：私有地址虽然不可在公网路由，但在局域网内可路由，
 // 因此 IsRoutable 返回 true。如需判断公网可路由，请使用 IsGlobalUnicast。
+//
+// 设计决策: IsRoutable 仅检查协议层面的路由能力（排除环回、链路本地等），
+// 不排除 RFC 策略层面禁止路由的地址（文档地址 192.0.2.0/24、基准测试地址
+// 198.18.0.0/15、保留地址 240.0.0.0/4）。这些地址在技术上可被路由器转发，
+// 但 RFC 规定不应出现在实际路由表中。如需更严格过滤，请组合使用
+// [IsDocumentation]、[IsBenchmark]、[IsReserved] 进一步排除。
 func IsRoutable(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return false
 	}
+	// 排除 IPv4 有限广播地址 (255.255.255.255)
+	if (addr.Is4() || addr.Is4In6()) && ipv4ToUint32(addr) == 0xFFFFFFFF {
+		return false
+	}
 	return !addr.IsLoopback() &&
 		!addr.IsLinkLocalUnicast() &&
-		!addr.IsUnspecified()
+		!addr.IsUnspecified() &&
+		!addr.IsMulticast()
 }
 
 // IsDocumentation 报告 addr 是否为文档专用地址。
@@ -237,22 +297,22 @@ func isIPv6Documentation(addr netip.Addr) bool {
 	return prefix == [4]byte{0x20, 0x01, 0x0d, 0xb8}
 }
 
-// inRange 检查 v 是否在 [min, max] 范围内。
-func inRange(v, min, max uint32) bool {
-	return v >= min && v <= max
+// inRange 检查 v 是否在 [lo, hi] 范围内。
+func inRange(v, lo, hi uint32) bool {
+	return v >= lo && v <= hi
 }
 
 // ipv4ToUint32 将 IPv4 地址转换为 uint32。
 // 调用前必须确保 addr.Is4() || addr.Is4In6() 为 true。
 //
-// 注意：此函数与 [AddrToUint32] 功能相似，但有以下区别：
+// 与导出的 [AddrToUint32] 功能相似，区别在于：
 //   - ipv4ToUint32 是内部函数，不做类型检查（调用方已保证类型）
 //   - AddrToUint32 是导出函数，返回 (uint32, bool) 以指示类型是否兼容
 //
-// 这种设计避免了在已知类型的热路径上重复检查，提升性能。
+// 两者都使用 binary.BigEndian.Uint32 实现以保持一致性。
 func ipv4ToUint32(addr netip.Addr) uint32 {
 	b := addr.Unmap().As4()
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+	return binary.BigEndian.Uint32(b[:])
 }
 
 // IsSharedAddress 报告 addr 是否为共享地址空间（Carrier-Grade NAT）。
@@ -270,15 +330,58 @@ func IsSharedAddress(addr netip.Addr) bool {
 }
 
 // IsBenchmark 报告 addr 是否为基准测试地址。
-// 基准测试地址：198.18.0.0/15
-// 用于网络设备基准测试，RFC 2544 定义。
+// 基准测试地址包括：
+//   - IPv4: 198.18.0.0/15 (RFC 2544)
+//   - IPv6: 2001:2::/48 (RFC 5180)
+//
+// 无效地址返回 false。
+func IsBenchmark(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	if addr.Is4() || addr.Is4In6() {
+		v := ipv4ToUint32(addr)
+		// 198.18.0.0/15 = 0xC6120000 - 0xC613FFFF
+		return v >= 0xC6120000 && v <= 0xC613FFFF
+	}
+	return isIPv6Benchmark(addr)
+}
+
+// isIPv6Benchmark 检查 IPv6 地址是否为基准测试地址 (2001:0002::/48, RFC 5180)。
+func isIPv6Benchmark(addr netip.Addr) bool {
+	b := addr.As16()
+	// 检查前 6 字节是否为 2001:0002:0000（即 /48 前缀）
+	// 使用数组切片语法确保类型安全（与 isIPv6Documentation 一致）
+	prefix := [6]byte{b[0], b[1], b[2], b[3], b[4], b[5]}
+	return prefix == [6]byte{0x20, 0x01, 0x00, 0x02, 0x00, 0x00}
+}
+
+// IsReserved 报告 addr 是否为保留地址（Class E）。
+// 保留地址：240.0.0.0/4，排除有限广播地址 255.255.255.255。
+// 保留用于未来使用，RFC 1112 定义。
+//
+// 设计决策: 255.255.255.255 虽在 240.0.0.0/4 数值范围内，但 RFC 919/922 将其
+// 定义为有限广播地址，语义不同于 Class E 保留地址。将其排除以避免调用方依据
+// IsReserved 做策略分流时把广播地址错误归入保留地址分支。
+// 如需判断广播地址，请使用 [IsBroadcast]。
 //
 // 仅适用于 IPv4，无效地址或 IPv6 地址返回 false。
-func IsBenchmark(addr netip.Addr) bool {
+func IsReserved(addr netip.Addr) bool {
 	if !addr.Is4() && !addr.Is4In6() {
 		return false
 	}
 	v := ipv4ToUint32(addr)
-	// 198.18.0.0/15 = 0xC6120000 - 0xC613FFFF
-	return v >= 0xC6120000 && v <= 0xC613FFFF
+	// 240.0.0.0/4 = 0xF0000000 - 0xFFFFFFFE（排除 0xFFFFFFFF 有限广播地址）
+	return v >= 0xF0000000 && v != 0xFFFFFFFF
+}
+
+// IsBroadcast 报告 addr 是否为 IPv4 有限广播地址（255.255.255.255）。
+// RFC 919/922 定义的有限广播地址仅在本地链路使用，不可被路由器转发。
+//
+// 仅适用于 IPv4，无效地址或 IPv6 地址返回 false。
+func IsBroadcast(addr netip.Addr) bool {
+	if !addr.Is4() && !addr.Is4In6() {
+		return false
+	}
+	return ipv4ToUint32(addr) == 0xFFFFFFFF
 }

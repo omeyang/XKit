@@ -1,13 +1,3 @@
-// Package deploy 提供部署类型的共享定义。
-//
-// 此包定义了 DeployType 类型及其方法，供 xctx 和 xenv 包共享使用。
-// 这避免了两个包中重复的类型定义和方法实现。
-//
-// 用途区分：
-//   - xctx.DeploymentType: 请求级 context 传播
-//   - xenv.DeployType: 进程级环境配置
-//
-// 两者底层使用相同的 DeployType 定义。
 package deploy
 
 import (
@@ -15,6 +5,12 @@ import (
 	"fmt"
 	"strings"
 )
+
+// EnvName 环境变量名（单一事实来源）
+//
+// xenv.EnvDeploymentType 和 xctx.EnvDeploymentType 均引用此常量，
+// 确保环境变量名变更时只需修改一处。
+const EnvName = "DEPLOYMENT_TYPE"
 
 // Type 表示部署类型
 //
@@ -74,6 +70,6 @@ func Parse(s string) (Type, error) {
 	case "":
 		return "", ErrMissingValue
 	default:
-		return "", fmt.Errorf("%w: %q", ErrInvalidType, s)
+		return "", fmt.Errorf("%w: %q (expected LOCAL or SAAS)", ErrInvalidType, s)
 	}
 }

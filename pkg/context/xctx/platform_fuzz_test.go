@@ -158,12 +158,3 @@ func FuzzRequireHasParent(f *testing.F) {
 		}
 	})
 }
-
-// truncate 截断长字符串用于错误信息显示
-func truncate(s string) string {
-	const maxLen = 32
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}

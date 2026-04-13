@@ -11,7 +11,7 @@ func BenchmarkQueryPage(b *testing.B) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 100
 				}
 				return nil
@@ -34,7 +34,7 @@ func BenchmarkQueryPage(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := w.QueryPage(context.Background(), "SELECT id FROM bench", PageOptions{
 			Page:     1,
 			PageSize: 10,
@@ -69,7 +69,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := w.BatchInsert(context.Background(), "bench_table", rows, BatchOptions{
 			BatchSize: 200,
 		}); err != nil {

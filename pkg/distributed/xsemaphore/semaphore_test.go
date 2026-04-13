@@ -18,6 +18,7 @@ import (
 // =============================================================================
 
 func setupRedis(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) {
+	t.Helper()
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	t.Cleanup(func() { mr.Close() })
@@ -33,6 +34,7 @@ func setupRedis(t *testing.T) (*miniredis.Miniredis, redis.UniversalClient) {
 }
 
 func setupSemaphore(t *testing.T, opts ...Option) (Semaphore, *miniredis.Miniredis) {
+	t.Helper()
 	mr, client := setupRedis(t)
 	sem, err := New(client, opts...)
 	require.NoError(t, err)
@@ -375,14 +377,12 @@ func TestConcurrentAcquire(t *testing.T) {
 
 	capacity := 10
 	goroutines := 50
-	var acquired atomic.Int32
+	var concurrent atomic.Int32
+	var peak atomic.Int32
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			permit, err := sem.TryAcquire(ctx, "concurrent",
 				WithCapacity(capacity),
 			)
@@ -390,18 +390,27 @@ func TestConcurrentAcquire(t *testing.T) {
 				return
 			}
 			if permit != nil {
-				acquired.Add(1)
+				cur := concurrent.Add(1)
+				// 记录峰值并发数
+				for {
+					old := peak.Load()
+					if cur <= old || peak.CompareAndSwap(old, cur) {
+						break
+					}
+				}
 				time.Sleep(10 * time.Millisecond)
+				concurrent.Add(-1)
 				_ = permit.Release(ctx) //nolint:errcheck // concurrent release may return error
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
 
-	// 由于并发，获取数量不确定，但不应超过容量
-	// 这里我们只验证没有 panic
-	t.Logf("Acquired %d permits concurrently", acquired.Load())
+	// 峰值并发持有数不应超过容量
+	t.Logf("Peak concurrent permits held: %d", peak.Load())
+	assert.LessOrEqual(t, int(peak.Load()), capacity,
+		"peak concurrent permits should not exceed capacity")
 }
 
 func TestConcurrentRelease(t *testing.T) {
@@ -417,11 +426,9 @@ func TestConcurrentRelease(t *testing.T) {
 	// 并发释放同一个许可
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = permit.Release(ctx) //nolint:errcheck // concurrent release may return error
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -641,7 +648,9 @@ func TestAcquireOptions_InvalidValues(t *testing.T) {
 	opts = defaultAcquireOptions()
 	WithMaxRetries(0)(opts)
 	assert.Equal(t, 0, opts.maxRetries)
-	assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+	// maxRetries 校验已移至 validateRetryParams（仅 Acquire 调用）
+	assert.NoError(t, opts.validate())
+	assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
 }
 
 // =============================================================================

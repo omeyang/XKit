@@ -3,6 +3,7 @@ package xnet
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 	"net/netip"
 )
@@ -104,33 +105,27 @@ func UnmapToIPv4(addr netip.Addr) netip.Addr {
 //
 // 对于 IPv4 地址，使用 uint64 快速路径（零分配）。
 // 对于 IPv6 地址，使用 big.Int 运算。
+//
+// 注意：IPv4-mapped IPv6 地址（如 ::ffff:192.168.1.1）走 IPv4 快速路径，
+// 返回结果为纯 IPv4 地址（如 192.168.1.2），不再是 IPv4-mapped 形式。
+// 如需保留 IPv4-mapped 形式，请先调用 [UnmapToIPv4] 或对结果调用 [MapToIPv6]。
 func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 	if !addr.IsValid() {
 		return netip.Addr{}, ErrInvalidAddress
 	}
 
-	// IPv4 快速路径：直接使用 uint64 运算，避免 big.Int 分配
+	// IPv4 快速路径：使用 int64 运算，零分配
 	if addr.Is4() || addr.Is4In6() {
 		v, _ := AddrToUint32(addr)
-		v64 := uint64(v)
-		var result uint64
-		if delta >= 0 {
-			// 加法：检查上溢
-			d64 := uint64(delta)
-			if d64 > uint64(^uint32(0))-v64 {
-				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
-			}
-			result = v64 + d64
-		} else {
-			// 减法：检查下溢
-			absDelta := uint64(-delta)
-			if absDelta > v64 {
-				return netip.Addr{}, fmt.Errorf("address overflow: %w", ErrInvalidBigInt)
-			}
-			result = v64 - absDelta
+		// int64(v) 安全：v 是 uint32，最大值 2^32-1 远小于 MaxInt64
+		result := int64(v) + delta
+		if result < 0 {
+			return netip.Addr{}, fmt.Errorf("IPv4 address underflow (delta=%d): %w", delta, ErrOverflow)
 		}
-		// 使用字节操作构建地址，避免 uint64->uint32 类型转换
-		return addrFrom4Bytes(result), nil
+		if result > math.MaxUint32 {
+			return netip.Addr{}, fmt.Errorf("IPv4 address overflow (delta=%d): %w", delta, ErrOverflow)
+		}
+		return AddrFromUint32(uint32(result)), nil
 	}
 
 	// IPv6 路径：使用 big.Int
@@ -139,18 +134,7 @@ func AddrAdd(addr netip.Addr, delta int64) (netip.Addr, error) {
 
 	result, err := AddrFromBigInt(bi, V6)
 	if err != nil {
-		return netip.Addr{}, fmt.Errorf("address overflow: %w", err)
+		return netip.Addr{}, fmt.Errorf("IPv6 address overflow (delta=%d): %w: %w", delta, ErrOverflow, err)
 	}
 	return result, nil
-}
-
-// addrFrom4Bytes 从 uint64 的低 32 位构建 IPv4 地址。
-// 使用字节操作避免 uint64->uint32 类型转换（避免 gosec G115）。
-func addrFrom4Bytes(v uint64) netip.Addr {
-	var b [4]byte
-	b[0] = byte(v >> 24)
-	b[1] = byte(v >> 16)
-	b[2] = byte(v >> 8)
-	b[3] = byte(v)
-	return netip.AddrFrom4(b)
 }

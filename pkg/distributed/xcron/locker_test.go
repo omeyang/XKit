@@ -83,38 +83,115 @@ func TestMockLocker(t *testing.T) {
 	})
 }
 
-func TestSanitizeK8sName(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"simple", "simple"},
-		{"with-dash", "with-dash"},
-		{"WITH_UPPER", "with-upper"},
-		{"with.dot", "with-dot"},
-		{"with/slash", "with-slash"},
-		{"with:colon", "with-colon"},
-		{"with space", "with-space"},
-		{"multiple---dashes", "multiple-dashes"},
-		{"-leading-dash", "leading-dash"},
-		{"trailing-dash-", "trailing-dash"},
-		{"", ""},
-		{"a", "a"},
-		{"a-b-c", "a-b-c"},
-		{"123", "123"},
-		{"a1b2c3", "a1b2c3"},
-		// 长名称会被截断并添加 hash 后缀确保唯一性
-		{"this-is-a-very-long-name-that-exceeds-the-maximum-length-allowed-by-kubernetes-for-resource-names", "this-is-a-very-long-name-that-exceeds-the-maximum-leng-410105ea"},
-	}
+func TestNoopLockHandle_Key(t *testing.T) {
+	locker := NoopLocker()
+	handle, err := locker.TryLock(context.Background(), "my-key", time.Minute)
+	require.NoError(t, err)
+	assert.Equal(t, "my-key", handle.Key())
+}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := sanitizeK8sName(tt.input)
-			assert.Equal(t, tt.expected, result)
-			// 验证长度不超过 63
-			assert.LessOrEqual(t, len(result), 63)
-		})
-	}
+func TestRedisLockHandle_Key(t *testing.T) {
+	h := &redisLockHandle{key: "xcron:lock:test-job"}
+	assert.Equal(t, "xcron:lock:test-job", h.Key())
+}
+
+func TestK8sLockHandle_Key(t *testing.T) {
+	h := &k8sLockHandle{key: "test-job"}
+	assert.Equal(t, "test-job", h.Key())
+}
+
+func TestSanitizeK8sName(t *testing.T) {
+	t.Run("clean names unchanged", func(t *testing.T) {
+		// 已合法的名称（小写字母、数字、'-'）不添加 hash
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{"simple", "simple"},
+			{"with-dash", "with-dash"},
+			{"", ""},
+			{"a", "a"},
+			{"a-b-c", "a-b-c"},
+			{"123", "123"},
+			{"a1b2c3", "a1b2c3"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.input, func(t *testing.T) {
+				result := sanitizeK8sName(tt.input, 0)
+				assert.Equal(t, tt.expected, result)
+				assert.LessOrEqual(t, len(result), 63)
+			})
+		}
+	})
+
+	t.Run("sanitized names get hash suffix", func(t *testing.T) {
+		// 需要字符替换/折叠/修剪的名称添加 hash 后缀确保唯一性
+		inputs := []string{
+			"WITH_UPPER",
+			"with.dot",
+			"with/slash",
+			"with:colon",
+			"with space",
+			"multiple---dashes",
+			"-leading-dash",
+			"trailing-dash-",
+		}
+
+		for _, input := range inputs {
+			t.Run(input, func(t *testing.T) {
+				result := sanitizeK8sName(input, 0)
+				assert.LessOrEqual(t, len(result), 63)
+				// 结果应包含 hash 后缀（8 个十六进制字符）
+				assert.Regexp(t, `^[a-z0-9-]+-[a-f0-9]{8}$`, result)
+			})
+		}
+	})
+
+	t.Run("long names get hash suffix", func(t *testing.T) {
+		longName := "this-is-a-very-long-name-that-exceeds-the-maximum-length-allowed-by-kubernetes-for-resource-names"
+		result := sanitizeK8sName(longName, 0)
+		assert.LessOrEqual(t, len(result), 63)
+		assert.Regexp(t, `^[a-z0-9-]+-[a-f0-9]{8}$`, result)
+	})
+
+	t.Run("respects prefix length to keep total under 63", func(t *testing.T) {
+		// 模拟 prefix="xcron-" (6 字符) 的场景
+		prefixLen := 6
+		longName := "this-is-a-very-long-clean-name-that-is-exactly-at-the-boundary"
+		result := sanitizeK8sName(longName, prefixLen)
+		// 最终名称（prefix + result）不超过 63
+		assert.LessOrEqual(t, prefixLen+len(result), 63)
+	})
+
+	t.Run("long clean name with default prefix stays under 63", func(t *testing.T) {
+		// 实际使用场景：通过 leaseName 方法测试整体约束
+		prefix := "xcron-"
+		// 57 字符的 clean key（prefix 6 + key 57 = 63，刚好满足）
+		longKey := "abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrst"
+		result := prefix + sanitizeK8sName(longKey, len(prefix))
+		assert.LessOrEqual(t, len(result), 63, "total lease name must not exceed 63 chars, got %d: %s", len(result), result)
+	})
+
+	t.Run("prevents collision from different separators", func(t *testing.T) {
+		// 不同分隔符的名称清理后都变成 "my-job"，
+		// 但 hash 后缀基于原始值，确保不同名称产生不同结果
+		names := []string{"my.job", "my/job", "my:job", "my_job", "my job"}
+		results := make(map[string]bool)
+		for _, name := range names {
+			result := sanitizeK8sName(name, 0)
+			assert.False(t, results[result],
+				"collision detected: %q produces duplicate result %q", name, result)
+			results[result] = true
+		}
+	})
+
+	t.Run("deterministic output", func(t *testing.T) {
+		// 同一输入始终产生相同输出
+		for i := 0; i < 10; i++ {
+			assert.Equal(t, sanitizeK8sName("my.job", 0), sanitizeK8sName("my.job", 0))
+		}
+	})
 }
 
 func TestDefaultIdentity(t *testing.T) {

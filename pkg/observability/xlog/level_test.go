@@ -2,6 +2,7 @@ package xlog_test
 
 import (
 	"log/slog"
+	"runtime"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/observability/xlog"
@@ -56,6 +57,10 @@ func TestParseLevel(t *testing.T) {
 		{"warning", xlog.LevelWarn, false},
 		{"WARNING", xlog.LevelWarn, false},
 
+		// TrimSpace
+		{" info ", xlog.LevelInfo, false},
+		{"\tdebug\n", xlog.LevelDebug, false},
+
 		// 无效输入
 		{"", xlog.LevelInfo, true},
 		{"invalid", xlog.LevelInfo, true},
@@ -91,7 +96,8 @@ func TestLevel_String(t *testing.T) {
 		{xlog.LevelInfo, "INFO"},
 		{xlog.LevelWarn, "WARN"},
 		{xlog.LevelError, "ERROR"},
-		{xlog.Level(-100), "LEVEL(-100)"}, // 未知级别
+		{xlog.Level(-100), "DEBUG-96"}, // 非标准级别委托 slog.Level.String()
+		{xlog.Level(2), "INFO+2"},      // 非标准级别委托 slog.Level.String()
 	}
 
 	for _, tt := range tests {
@@ -103,10 +109,84 @@ func TestLevel_String(t *testing.T) {
 	}
 }
 
+func TestLevel_MarshalText(t *testing.T) {
+	tests := []struct {
+		level xlog.Level
+		want  string
+	}{
+		{xlog.LevelDebug, "DEBUG"},
+		{xlog.LevelInfo, "INFO"},
+		{xlog.LevelWarn, "WARN"},
+		{xlog.LevelError, "ERROR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got, err := tt.level.MarshalText()
+			if err != nil {
+				t.Fatalf("MarshalText() error: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("MarshalText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLevel_UnmarshalText(t *testing.T) {
+	tests := []struct {
+		input string
+		want  xlog.Level
+		err   bool
+	}{
+		{"debug", xlog.LevelDebug, false},
+		{"INFO", xlog.LevelInfo, false},
+		{"warn", xlog.LevelWarn, false},
+		{"ERROR", xlog.LevelError, false},
+		{"invalid", xlog.LevelInfo, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			var level xlog.Level
+			err := level.UnmarshalText([]byte(tt.input))
+			if tt.err {
+				if err == nil {
+					t.Errorf("UnmarshalText(%q) should return error", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UnmarshalText(%q) error: %v", tt.input, err)
+			}
+			if level != tt.want {
+				t.Errorf("UnmarshalText(%q) = %v, want %v", tt.input, level, tt.want)
+			}
+		})
+	}
+}
+
+// TestLevel_RoundTrip 验证 MarshalText/UnmarshalText 往返一致性
+func TestLevel_RoundTrip(t *testing.T) {
+	for _, level := range []xlog.Level{xlog.LevelDebug, xlog.LevelInfo, xlog.LevelWarn, xlog.LevelError} {
+		data, err := level.MarshalText()
+		if err != nil {
+			t.Fatalf("MarshalText(%v) error: %v", level, err)
+		}
+		var got xlog.Level
+		if err := got.UnmarshalText(data); err != nil {
+			t.Fatalf("UnmarshalText(%q) error: %v", data, err)
+		}
+		if got != level {
+			t.Errorf("round trip: %v -> %q -> %v", level, data, got)
+		}
+	}
+}
+
 func BenchmarkParseLevel(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		level, err := xlog.ParseLevel("info")
-		_ = level
-		_ = err
+		runtime.KeepAlive(level)
+		runtime.KeepAlive(err)
 	}
 }

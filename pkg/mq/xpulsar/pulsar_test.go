@@ -20,6 +20,24 @@ func TestNewClient_EmptyURL(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEmptyURL)
 }
 
+func TestNewClient_NilOption(t *testing.T) {
+	client, err := NewClient("pulsar://localhost:6650", nil)
+
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewClient_NilOptionAmongValid(t *testing.T) {
+	client, err := NewClient("pulsar://localhost:6650",
+		WithConnectionTimeout(10*time.Second),
+		nil,
+		WithOperationTimeout(30*time.Second),
+	)
+
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
 func TestClientOptions_Default(t *testing.T) {
 	opts := defaultOptions()
 
@@ -233,6 +251,33 @@ func TestClientOptions_WithTLS_InsecureOnly(t *testing.T) {
 
 	assert.Equal(t, "", opts.TLSTrustCertsFilePath)
 	assert.True(t, opts.TLSAllowInsecureConnection)
+}
+
+// =============================================================================
+// WithHealthCheckTopic Tests
+// =============================================================================
+
+func TestClientOptions_WithHealthCheckTopic(t *testing.T) {
+	opts := defaultOptions()
+
+	WithHealthCheckTopic("non-persistent://my-tenant/my-ns/__health__")(opts)
+
+	assert.Equal(t, "non-persistent://my-tenant/my-ns/__health__", opts.HealthCheckTopic)
+}
+
+func TestClientOptions_WithHealthCheckTopic_Empty(t *testing.T) {
+	opts := defaultOptions()
+	original := opts.HealthCheckTopic
+
+	WithHealthCheckTopic("")(opts)
+
+	assert.Equal(t, original, opts.HealthCheckTopic, "空字符串不应覆盖默认值")
+}
+
+func TestClientOptions_WithHealthCheckTopic_Default(t *testing.T) {
+	opts := defaultOptions()
+
+	assert.Equal(t, defaultHealthCheckTopic, opts.HealthCheckTopic)
 }
 
 // =============================================================================

@@ -162,28 +162,42 @@ func Example_removeJob() {
 func Example_cronExpression() {
 	scheduler := xcron.New()
 
-	// 各种 cron 表达式示例
-	expressions := map[string]string{
-		"@every 1s":  "每秒",
-		"@every 1m":  "每分钟",
-		"@hourly":    "每小时",
-		"@daily":     "每天午夜",
-		"0 * * * *":  "每小时第 0 分钟",
-		"30 9 * * 1": "每周一上午 9:30",
-		"0 0 1 * *":  "每月 1 号午夜",
-		"0 0 1 1 *":  "每年 1 月 1 日午夜",
+	// 各种 cron 表达式示例（使用切片保证输出顺序）
+	type cronExample struct {
+		expr string
+		desc string
+	}
+	expressions := []cronExample{
+		{"@every 1s", "每秒"},
+		{"@every 1m", "每分钟"},
+		{"@hourly", "每小时"},
+		{"@daily", "每天午夜"},
+		{"0 * * * *", "每小时第 0 分钟"},
+		{"30 9 * * 1", "每周一上午 9:30"},
+		{"0 0 1 * *", "每月 1 号午夜"},
+		{"0 0 1 1 *", "每年 1 月 1 日午夜"},
 	}
 
-	for expr, desc := range expressions {
-		_, err := scheduler.AddFunc(expr, func(ctx context.Context) error {
+	for _, e := range expressions {
+		_, err := scheduler.AddFunc(e.expr, func(ctx context.Context) error {
 			return nil
 		})
 		if err != nil {
-			fmt.Printf("%s (%s): invalid\n", expr, desc)
+			fmt.Printf("%s (%s): invalid\n", e.expr, e.desc)
 		} else {
-			fmt.Printf("%s (%s): valid\n", expr, desc)
+			fmt.Printf("%s (%s): valid\n", e.expr, e.desc)
 		}
 	}
+
+	// Output:
+	// @every 1s (每秒): valid
+	// @every 1m (每分钟): valid
+	// @hourly (每小时): valid
+	// @daily (每天午夜): valid
+	// 0 * * * * (每小时第 0 分钟): valid
+	// 30 9 * * 1 (每周一上午 9:30): valid
+	// 0 0 1 * * (每月 1 号午夜): valid
+	// 0 0 1 1 * (每年 1 月 1 日午夜): valid
 }
 
 func Example_withSeconds() {

@@ -29,13 +29,14 @@ func BenchmarkRedis_Get(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	_ = cache.Client().Set(ctx, "benchmark_key", "benchmark_value", 0).Err()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().Get(ctx, "benchmark_key").Result()
 	}
 }
@@ -55,13 +56,16 @@ func BenchmarkRedis_Set(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	value := "benchmark_value"
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().Set(ctx, fmt.Sprintf("key_%d", i), value, time.Hour).Err()
 	}
 }
@@ -81,13 +85,14 @@ func BenchmarkRedis_HGet(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	_ = cache.Client().HSet(ctx, "benchmark_hash", "field", "value").Err()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().HGet(ctx, "benchmark_hash", "field").Result()
 	}
 }
@@ -107,12 +112,15 @@ func BenchmarkRedis_Lock(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		unlock, err := cache.Lock(ctx, fmt.Sprintf("lock_%d", i), time.Minute)
 		if err != nil {
 			b.Fatal(err)
@@ -130,13 +138,14 @@ func BenchmarkMemory_Get(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	cache.Client().SetWithTTL("benchmark_key", []byte("benchmark_value"), 16, 0)
 	cache.Wait()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().Get("benchmark_key")
 	}
 }
@@ -146,12 +155,15 @@ func BenchmarkMemory_Set(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	value := []byte("benchmark_value")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		cache.Client().SetWithTTL(fmt.Sprintf("key_%d", i%1000), value, int64(len(value)), time.Hour)
 	}
 }
@@ -161,13 +173,14 @@ func BenchmarkMemory_Get_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	for i := 0; i < 100; i++ {
 		cache.Client().SetWithTTL(fmt.Sprintf("key_%d", i), []byte("value"), 5, 0)
 	}
 	cache.Wait()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -197,18 +210,22 @@ func BenchmarkLoader_Load_CacheHit(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	_ = cache.Client().Set(ctx, "benchmark_key", "cached_value", 0).Err()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = loader.Load(ctx, "benchmark_key", loadFn, time.Hour)
 	}
 }
@@ -228,17 +245,23 @@ func BenchmarkLoader_Load_CacheMiss(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_, _ = loader.Load(ctx, fmt.Sprintf("key_%d", i), loadFn, time.Hour)
 	}
 }
@@ -258,18 +281,22 @@ func BenchmarkLoader_LoadHash_CacheHit(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	_ = cache.Client().HSet(ctx, "benchmark_hash", "field", "cached_value").Err()
 
-	loader := NewLoader(cache)
+	loader, err := NewLoader(cache)
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = loader.LoadHash(ctx, "benchmark_hash", "field", loadFn, time.Hour)
 	}
 }
@@ -293,13 +320,14 @@ func BenchmarkRedis_Get_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		_ = cache.Client().Set(ctx, fmt.Sprintf("key_%d", i), "value", 0).Err()
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -325,11 +353,12 @@ func BenchmarkRedis_Set_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	value := "benchmark_value"
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -371,7 +400,7 @@ func benchmarkRedisSetWithSize(b *testing.B, size int) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	value := make([]byte, size)
@@ -379,8 +408,11 @@ func benchmarkRedisSetWithSize(b *testing.B, size int) {
 		value[i] = byte(i % 256)
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().Set(ctx, fmt.Sprintf("key_%d", i%100), value, time.Hour).Err()
 	}
 }
@@ -402,15 +434,18 @@ func benchmarkMemorySetWithSize(b *testing.B, size int) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	value := make([]byte, size)
 	for i := range value {
 		value[i] = byte(i % 256)
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		cache.Client().SetWithTTL(fmt.Sprintf("key_%d", i%100), value, int64(len(value)), time.Hour)
 	}
 }
@@ -434,15 +469,19 @@ func BenchmarkLoader_Load_WithSingleflight_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -469,15 +508,19 @@ func BenchmarkLoader_LoadHash_WithSingleflight_Parallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
-	loader := NewLoader(cache, WithSingleflight(true))
+	loader, err := NewLoader(cache, WithSingleflight(true))
+	if err != nil {
+		b.Fatal(err)
+	}
 	loadFn := func(ctx context.Context) ([]byte, error) {
 		return []byte("backend_value"), nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -507,13 +550,16 @@ func BenchmarkRedis_HSet(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	value := "benchmark_value"
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	var i int
+	for b.Loop() {
+		i++
 		_ = cache.Client().HSet(ctx, "benchmark_hash", fmt.Sprintf("field_%d", i%100), value).Err()
 	}
 }
@@ -533,7 +579,7 @@ func BenchmarkRedis_HGetAll(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 	// 预设 100 个 field
@@ -541,8 +587,9 @@ func BenchmarkRedis_HGetAll(b *testing.B) {
 		_ = cache.Client().HSet(ctx, "benchmark_hash", fmt.Sprintf("field_%d", i), "value").Err()
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = cache.Client().HGetAll(ctx, "benchmark_hash").Result()
 	}
 }
@@ -562,12 +609,13 @@ func BenchmarkRedis_Del(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		_ = cache.Client().Set(ctx, "del_key", "value", 0).Err()
 		b.StartTimer()

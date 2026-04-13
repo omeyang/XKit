@@ -16,6 +16,7 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	// 设置值
 	cache.Set("user:123", 42)
@@ -44,13 +45,19 @@ func Example() {
 
 func Example_withEvictionCallback() {
 	// 创建带淘汰回调的缓存
-	cache, err := xlru.New(xlru.Config{Size: 2, TTL: time.Minute},
+	// 设计决策: 使用 TTL: 0（永不过期）使底层库不启动清理 goroutine，
+	// 避免示例函数因无法调用 Close() 而泄漏 goroutine。
+	// 此示例演示的是 LRU 容量淘汰（非 TTL 过期），TTL: 0 不影响示例语义。
+	cache, err := xlru.New(xlru.Config{Size: 2, TTL: 0},
 		xlru.WithOnEvicted(func(key string, value int) {
 			fmt.Printf("Evicted: %s=%d\n", key, value)
 		}))
 	if err != nil {
 		panic(err)
 	}
+	// 注意：此示例不调用 defer cache.Close()，
+	// 因为 Close 会 Purge 剩余条目并触发 OnEvicted 回调，干扰 Output 断言。
+	// 实际使用中务必调用 Close() 释放资源。参见 Example() 中的 defer cache.Close() 用法。
 
 	// 填满缓存
 	cache.Set("key1", 100)
@@ -80,6 +87,7 @@ func Example_pointerValues() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	// 存储指针
 	cache.Set("user:1", &UserData{Name: "Alice", Age: 30})
@@ -93,6 +101,27 @@ func Example_pointerValues() {
 	// User: Alice, Age: 30
 }
 
+func Example_peek() {
+	cache, err := xlru.New[string, int](xlru.Config{
+		Size: 10,
+		TTL:  time.Minute,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer cache.Close()
+
+	cache.Set("key1", 100)
+
+	// Peek 获取值但不更新 LRU 顺序
+	if val, ok := cache.Peek("key1"); ok {
+		fmt.Println("Peeked:", val)
+	}
+
+	// Output:
+	// Peeked: 100
+}
+
 func Example_keys() {
 	cache, err := xlru.New[string, int](xlru.Config{
 		Size: 10,
@@ -101,6 +130,7 @@ func Example_keys() {
 	if err != nil {
 		panic(err)
 	}
+	defer cache.Close()
 
 	cache.Set("a", 1)
 	cache.Set("b", 2)

@@ -16,7 +16,9 @@ const (
 	// 例如：失败率过高但调度器仍在运行。
 	HealthStatusDegraded HealthStatus = "degraded"
 	// HealthStatusUnhealthy 表示调度器不健康，可能无法正常调度任务。
-	// 例如：调度器未启动、分布式锁连接失败等。
+	// 例如：分布式锁连接失败等。
+	// 设计决策: 不检查调度器启动状态，因为 robfig/cron 未暴露启动标志，
+	// 且健康检查通常在服务启动后的探针中调用，此时调度器已启动。
 	HealthStatusUnhealthy HealthStatus = "unhealthy"
 )
 
@@ -142,6 +144,9 @@ type schedulerHealthChecker struct {
 //	    log.Printf("scheduler unhealthy: %s", result.Message)
 //	}
 func NewHealthChecker(scheduler Scheduler, opts ...HealthCheckOption) HealthChecker {
+	// 设计决策: 使用类型断言而非在 Scheduler 接口添加方法。
+	// 健康检查是可选能力，不应污染核心 Scheduler 接口。
+	// 不匹配时返回 fallback 而非 error，保持健康检查永远可用。
 	cronSched, ok := scheduler.(*cronScheduler)
 	if !ok {
 		// 返回一个始终返回 unhealthy 的检查器
@@ -209,6 +214,7 @@ func (c *schedulerHealthChecker) checkFailureRate(stats *Stats, result *HealthCh
 // addDetailStats 添加详细统计信息
 func (c *schedulerHealthChecker) addDetailStats(stats *Stats, result *HealthCheck) {
 	result.Details["skip_count"] = stats.SkipCount()
+	result.Details["lock_error_count"] = stats.LockErrorCount()
 	result.Details["min_duration"] = stats.MinDuration().String()
 	result.Details["max_duration"] = stats.MaxDuration().String()
 	result.Details["avg_duration"] = stats.AvgDuration().String()

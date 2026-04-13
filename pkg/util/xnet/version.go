@@ -7,6 +7,8 @@ type Version uint8
 
 const (
 	// V0 表示无效或未知的 IP 版本。
+	// 设计决策: 使用 V0 而非 VersionUnknown，与 V4/V6 保持简短命名一致性，
+	// 且零值语义（Version(0) == V0）符合 Go 惯用法。
 	V0 Version = 0
 	// V4 表示 IPv4。
 	V4 Version = 4

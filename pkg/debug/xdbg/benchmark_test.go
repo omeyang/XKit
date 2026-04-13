@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func BenchmarkCodec_EncodeRequest(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := codec.EncodeRequest(req)
 		if err != nil {
 			b.Fatalf("EncodeRequest error = %v", err)
@@ -40,7 +41,7 @@ func BenchmarkCodec_DecodeRequest(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := bytes.NewReader(data)
 		_, err := codec.DecodeRequest(r)
 		if err != nil {
@@ -60,7 +61,7 @@ func BenchmarkCodec_EncodeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := codec.EncodeResponse(resp)
 		if err != nil {
 			b.Fatalf("EncodeResponse error = %v", err)
@@ -80,7 +81,7 @@ func BenchmarkCodec_DecodeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r := bytes.NewReader(data)
 		_, err := codec.DecodeResponse(r)
 		if err != nil {
@@ -105,7 +106,7 @@ func BenchmarkCodec_EncodeLargeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := codec.EncodeResponse(resp)
 		if err != nil {
 			b.Fatalf("EncodeResponse error = %v", err)
@@ -120,7 +121,7 @@ func BenchmarkCommandRegistry_Get(b *testing.B) {
 	// 注册多个命令
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}
@@ -128,7 +129,7 @@ func BenchmarkCommandRegistry_Get(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = reg.Get("cmdk") // 中间的命令
 	}
 }
@@ -139,7 +140,7 @@ func BenchmarkCommandRegistry_Has(b *testing.B) {
 
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}
@@ -147,7 +148,7 @@ func BenchmarkCommandRegistry_Has(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = reg.Has("cmdk")
 	}
 }
@@ -160,7 +161,7 @@ func BenchmarkCommandRegistry_Whitelist(b *testing.B) {
 
 	for i := 0; i < 20; i++ {
 		name := "cmd" + string(rune('a'+i))
-		reg.Register(NewCommandFunc(name, "test", func(_ context.Context, _ []string) (string, error) {
+		reg.Register(mustNewCommandFunc(b, name, "test", func(_ context.Context, _ []string) (string, error) {
 			return "", nil
 		}))
 	}
@@ -168,7 +169,7 @@ func BenchmarkCommandRegistry_Whitelist(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = reg.Get("cmdc")
 	}
 }
@@ -185,7 +186,7 @@ func BenchmarkTruncateUTF8(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = TruncateUTF8(input, 1000)
 	}
 }
@@ -200,7 +201,7 @@ func BenchmarkTruncateUTF8_ASCII(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = TruncateUTF8(input, 1000)
 	}
 }
@@ -215,7 +216,7 @@ func BenchmarkJSONMarshal_Request(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := json.Marshal(req)
 		if err != nil {
 			b.Fatalf("json.Marshal error = %v", err)
@@ -234,7 +235,7 @@ func BenchmarkJSONUnmarshal_Request(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var r Request
 		err := json.Unmarshal(data, &r)
 		if err != nil {
@@ -258,14 +259,14 @@ func BenchmarkIdentityInfo_String(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = info.String()
 	}
 }
 
 // BenchmarkAuditRecord_Format 测试审计记录格式化性能。
 func BenchmarkAuditRecord_Format(b *testing.B) {
-	logger := NewDefaultAuditLogger()
+	logger := NewAuditLogger(io.Discard)
 	record := &AuditRecord{
 		Event:    AuditEventCommand,
 		Command:  "test",
@@ -285,7 +286,7 @@ func BenchmarkAuditRecord_Format(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		logger.Log(record)
 	}
 }

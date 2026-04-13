@@ -3,6 +3,18 @@
 package xdbg
 
 // ServerState 服务器状态。
+//
+// 状态转换图（所有转换通过 CAS 原子操作实现）：
+//
+//	Created ──Start()──→ Started ──Enable()──→ Listening
+//	                         ↑                    │
+//	                         └───Disable()────────┘
+//	                         │                    │
+//	                         └───Stop()──→ Stopped ←──Stop()──┘
+//
+//	Created ──Stop()──→ Stopped
+//
+// 注意: Stopped 是终态，不可转换到其他状态。
 type ServerState int32
 
 const (

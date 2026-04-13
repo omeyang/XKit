@@ -19,7 +19,7 @@
 //
 // # 任务选项
 //
-//   - WithName: 任务名（用作锁 key，必须唯一）
+//   - WithName: 任务名（用作锁 key，必须唯一；使用分布式锁时必须设置）
 //   - WithJobLocker: 任务级分布式锁
 //   - WithLockTTL: 锁超时时间（默认 5 分钟）
 //   - WithTimeout: 任务执行超时
@@ -39,6 +39,30 @@
 //
 // 提供"尽力互斥"（best-effort mutual exclusion）语义。
 // 如需强一致性互斥，请使用 xdlock 包的 etcd 后端。
+//
+// # Redis 代理兼容模式
+//
+// RedisLocker 默认使用 Lua 脚本验证锁持有者身份（Unlock/Renew）。
+// 部分 Redis 代理（如 Predixy）不支持 EVAL/EVALSHA 命令。
+// RedisLocker 通过 ScriptMode 机制自动适配：
+//
+//   - ScriptModeAuto（默认）：构造时探测一次，缓存结果，运行时零开销
+//   - ScriptModeLua：强制 Lua 脚本
+//   - ScriptModeCompat：使用 GET + DEL/PEXPIRE 基础命令替代
+//
+// 兼容模式下 Unlock 使用 GET-then-DEL（先验证 token 再删除），
+// Renew 使用 GET-then-PEXPIRE（先验证 token 再续期）。
+// GET-DEL 之间存在微秒级竞态窗口，cron 任务应保持幂等。
+//
+// 使用示例：
+//
+//	// 自动探测（默认）
+//	locker, _ := xcron.NewRedisLocker(client)
+//
+//	// 已知代理环境
+//	locker, _ := xcron.NewRedisLocker(client,
+//	    xcron.WithRedisScriptMode(rediscompat.ScriptModeCompat),
+//	)
 //
 // [robfig/cron/v3]: https://github.com/robfig/cron
 package xcron

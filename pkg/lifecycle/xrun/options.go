@@ -57,8 +57,10 @@ func WithName(name string) Option {
 //	    xrun.WithSignals([]os.Signal{syscall.SIGINT, syscall.SIGTERM}),
 //	}, myService)
 func WithSignals(signals []os.Signal) Option {
+	// 设计决策: 在创建时拷贝，避免调用方后续修改切片导致配置漂移。
+	copied := append([]os.Signal(nil), signals...)
 	return func(o *groupOptions) {
-		o.signals = signals
+		o.signals = copied
 	}
 }
 
@@ -66,6 +68,9 @@ func WithSignals(signals []os.Signal) Option {
 //
 // 使用此选项后，Run/RunWithOptions/RunServices/RunServicesWithOptions
 // 不会注册信号监听，调用方需自行管理信号处理。
+//
+// 当与 WithSignals 同时使用时，WithoutSignalHandler 优先生效，
+// WithSignals 的配置被忽略。
 //
 // 示例：
 //

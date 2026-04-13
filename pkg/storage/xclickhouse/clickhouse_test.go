@@ -10,28 +10,12 @@ func TestNew_NilConn(t *testing.T) {
 	ch, err := New(nil)
 
 	assert.Nil(t, ch)
-	assert.ErrorIs(t, err, ErrNilConn)
-}
-
-func TestNew_WithOptions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// 需要真实的 ClickHouse 连接
+	assert.ErrorIs(t, err, ErrNilClient)
 }
 
 func TestClickHouseInterface(t *testing.T) {
 	// 验证 clickhouseWrapper 实现了 ClickHouse 接口
 	var _ ClickHouse = (*clickhouseWrapper)(nil)
-}
-
-func TestOptionsApplied(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// 需要真实的 ClickHouse 连接
 }
 
 func TestOptionsAreApplied(t *testing.T) {

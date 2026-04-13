@@ -2,6 +2,7 @@ package xctx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/omeyang/xkit/internal/deploy"
@@ -16,8 +17,10 @@ import (
 // 用于区分本地/私有化部署（LOCAL）和 SaaS 云部署（SAAS）。
 // 通常从 ConfigMap 环境变量 DEPLOYMENT_TYPE 获取。
 //
-// 这是 deploy.Type 的类型别名，用于请求级 context 传播。
-// 如需进程级环境配置，请使用 xenv.DeployType。
+// 设计决策: 使用 deploy.Type 的类型别名（而非独立类型），用于请求级 context 传播。
+// internal/deploy 包是 xctx 和 xenv 共享部署类型定义的内部实现，
+// 避免了代码重复且不会暴露给外部消费者（internal 路径保护）。
+// 如需进程级环境配置，请使用 xenv.DeploymentType。
 type DeploymentType = deploy.Type
 
 const (
@@ -37,10 +40,12 @@ const (
 	KeyDeploymentType = "deployment_type"
 
 	// EnvDeploymentType 环境变量名
-	EnvDeploymentType = "DEPLOYMENT_TYPE"
+	//
+	// 引用 internal/deploy.EnvName 作为单一事实来源。
+	EnvDeploymentType = deploy.EnvName
 
-	// DeploymentFieldCount 部署字段数量（用于 slog 属性预分配）
-	DeploymentFieldCount = 1
+	// deploymentFieldCount 部署字段数量（用于 slog 属性预分配，不导出以避免脆弱的 API 契约）
+	deploymentFieldCount = 1
 )
 
 // =============================================================================
@@ -69,7 +74,7 @@ func WithDeploymentType(ctx context.Context, dt DeploymentType) (context.Context
 // 不进行验证，仅返回原始值。适用于只需读取值而不关心验证的场景。
 // 如需验证部署类型有效性，请使用 GetDeploymentType。
 //
-// 命名说明：本函数命名为 DeploymentTypeRaw 而非 DeploymentType，原因如下：
+// 设计决策: 命名为 DeploymentTypeRaw（而非 DeploymentType），理由如下：
 //   - 包内其他字段使用 Xxx(ctx) 命名模式（如 TenantID, TraceID），但这些字段无需验证
 //   - DeploymentType 需要区分"原始读取"和"验证读取"两种语义
 //   - DeploymentType 与类型别名 DeploymentType 重名，使用 Raw 后缀避免混淆
@@ -82,6 +87,8 @@ func DeploymentTypeRaw(ctx context.Context) DeploymentType {
 	case DeploymentType:
 		return v
 	case string:
+		// 设计决策: 此分支仅在外部代码通过 context.WithValue 绕过 WithDeploymentType API
+		// 直接注入 string 类型值时触发。保留作为防御性编程，已有白盒测试覆盖。
 		return DeploymentType(v)
 	default:
 		return ""
@@ -90,8 +97,8 @@ func DeploymentTypeRaw(ctx context.Context) DeploymentType {
 
 // GetDeploymentType 从 context 提取并验证部署类型（仅允许 LOCAL/SAAS）
 //
-// 注意：此函数包含验证逻辑，缺失或无效值会返回错误。
-// 命名为 GetXxx 而非 RequireXxx 是因为部署类型需要额外的格式验证。
+// 设计决策: 命名为 GetDeploymentType（而非 RequireDeploymentType），理由如下：
+// RequireXxx 仅检查"存在性"，而本函数同时验证值的"有效性"（必须为 LOCAL/SAAS）。
 // 如只需读取原始值，请使用 DeploymentTypeRaw。
 func GetDeploymentType(ctx context.Context) (DeploymentType, error) {
 	if ctx == nil {
@@ -154,11 +161,10 @@ func IsSaaS(ctx context.Context) (bool, error) {
 func ParseDeploymentType(s string) (DeploymentType, error) {
 	dt, err := deploy.Parse(s)
 	if err != nil {
-		if err == deploy.ErrMissingValue {
+		if errors.Is(err, deploy.ErrMissingValue) {
 			return "", ErrMissingDeploymentTypeValue
 		}
 		return "", fmt.Errorf("%w: %q", ErrInvalidDeploymentType, s)
 	}
 	return dt, nil
 }
-

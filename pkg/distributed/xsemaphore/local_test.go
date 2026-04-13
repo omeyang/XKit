@@ -366,9 +366,7 @@ func TestLocalSemaphore_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			permit, err := sem.TryAcquire(ctx, "concurrent-local",
 				WithCapacity(capacity),
 			)
@@ -380,7 +378,7 @@ func TestLocalSemaphore_Concurrent(t *testing.T) {
 				time.Sleep(5 * time.Millisecond)
 				releasePermit(t, ctx, permit)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -711,22 +709,18 @@ func TestLocalSemaphore_ConcurrentCleanupAndAcquire(t *testing.T) {
 		var acquiredPermit Permit
 		var acquireErr error
 
-		wg.Add(2)
-
 		// goroutine 1: 触发清理
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sem.cleanupAllExpired()
-		}()
+		})
 
 		// goroutine 2: 获取新许可
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			acquiredPermit, acquireErr = sem.TryAcquire(ctx, "race-test",
 				WithCapacity(10),
 				WithTTL(time.Minute),
 			)
-		}()
+		})
 
 		wg.Wait()
 
@@ -746,9 +740,7 @@ func TestLocalSemaphore_ConcurrentCleanupAndAcquire(t *testing.T) {
 
 		// 并发执行多个清理和获取操作
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for j := 0; j < iterations; j++ {
 					// 交替执行清理和获取
 					if j%2 == 0 {
@@ -764,7 +756,7 @@ func TestLocalSemaphore_ConcurrentCleanupAndAcquire(t *testing.T) {
 						}
 					}
 				}
-			}()
+			})
 		}
 
 		wg.Wait()

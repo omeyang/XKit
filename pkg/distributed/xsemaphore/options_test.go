@@ -131,6 +131,48 @@ func TestWithOnFallback(t *testing.T) {
 	assert.True(t, called)
 }
 
+func TestWithIDGenerator(t *testing.T) {
+	t.Run("custom generator", func(t *testing.T) {
+		called := false
+		gen := IDGeneratorFunc(func(_ context.Context) (string, error) {
+			called = true
+			return "custom-id", nil
+		})
+
+		opts := defaultOptions()
+		WithIDGenerator(gen)(opts)
+		assert.NotNil(t, opts.idGenerator)
+
+		id, err := opts.effectiveIDGenerator()(context.Background())
+		assert.NoError(t, err)
+		assert.Equal(t, "custom-id", id)
+		assert.True(t, called)
+	})
+
+	t.Run("nil generator keeps default", func(t *testing.T) {
+		opts := defaultOptions()
+		WithIDGenerator(nil)(opts)
+		assert.Nil(t, opts.idGenerator)
+
+		// effectiveIDGenerator 应返回 xid.NewStringWithRetry
+		id, err := opts.effectiveIDGenerator()(context.Background())
+		assert.NoError(t, err)
+		assert.NotEmpty(t, id)
+	})
+
+	t.Run("error propagation", func(t *testing.T) {
+		gen := IDGeneratorFunc(func(_ context.Context) (string, error) {
+			return "", io.ErrUnexpectedEOF
+		})
+
+		opts := defaultOptions()
+		WithIDGenerator(gen)(opts)
+
+		_, err := opts.effectiveIDGenerator()(context.Background())
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	})
+}
+
 func TestEffectivePodCount(t *testing.T) {
 	t.Run("valid count", func(t *testing.T) {
 		opts := &options{podCount: 5}
@@ -224,24 +266,14 @@ func TestAcquireOptions_Validate(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "zero max retries",
+			name:      "zero max retries is valid for validate (checked by validateRetryParams)",
 			modify:    func(o *acquireOptions) { o.maxRetries = 0 },
-			wantError: true,
+			wantError: false,
 		},
 		{
-			name:      "negative max retries",
-			modify:    func(o *acquireOptions) { o.maxRetries = -1 },
-			wantError: true,
-		},
-		{
-			name:      "zero retry delay",
+			name:      "zero retry delay is valid for validate (checked by validateRetryParams)",
 			modify:    func(o *acquireOptions) { o.retryDelay = 0 },
-			wantError: true,
-		},
-		{
-			name:      "negative retry delay",
-			modify:    func(o *acquireOptions) { o.retryDelay = -1 },
-			wantError: true,
+			wantError: false,
 		},
 	}
 
@@ -317,14 +349,23 @@ func TestAcquireOptionFunctions(t *testing.T) {
 		WithMaxRetries(5)(opts)
 		assert.Equal(t, 5, opts.maxRetries)
 
-		// 无效值直接设置，由 validate 检测
+		// 无效值直接设置，由 validateRetryParams 检测（非 validate）
 		WithMaxRetries(0)(opts)
 		assert.Equal(t, 0, opts.maxRetries)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
 
 		WithMaxRetries(-1)(opts)
 		assert.Equal(t, -1, opts.maxRetries)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidMaxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
+
+		// 超过上界
+		WithMaxRetries(MaxMaxRetries + 1)(opts)
+		assert.Equal(t, MaxMaxRetries+1, opts.maxRetries)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidMaxRetries)
+
+		// 恰好等于上界
+		WithMaxRetries(MaxMaxRetries)(opts)
+		assert.NoError(t, opts.validateRetryParams())
 	})
 
 	t.Run("WithRetryDelay", func(t *testing.T) {
@@ -332,15 +373,78 @@ func TestAcquireOptionFunctions(t *testing.T) {
 		WithRetryDelay(500 * time.Millisecond)(opts)
 		assert.Equal(t, 500*time.Millisecond, opts.retryDelay)
 
-		// 无效值直接设置，由 validate 检测
+		// 无效值直接设置，由 validateRetryParams 检测（非 validate）
 		WithRetryDelay(0)(opts)
 		assert.Equal(t, time.Duration(0), opts.retryDelay)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidRetryDelay)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidRetryDelay)
 
 		WithRetryDelay(-1)(opts)
 		assert.Equal(t, time.Duration(-1), opts.retryDelay)
-		assert.ErrorIs(t, opts.validate(), ErrInvalidRetryDelay)
+		assert.ErrorIs(t, opts.validateRetryParams(), ErrInvalidRetryDelay)
 	})
+}
+
+func TestAcquireOptions_ValidateRetryParams(t *testing.T) {
+	tests := []struct {
+		name      string
+		modify    func(*acquireOptions)
+		wantError bool
+		wantErr   error
+	}{
+		{
+			name:      "valid defaults",
+			modify:    func(o *acquireOptions) {},
+			wantError: false,
+		},
+		{
+			name:      "zero max retries",
+			modify:    func(o *acquireOptions) { o.maxRetries = 0 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "negative max retries",
+			modify:    func(o *acquireOptions) { o.maxRetries = -1 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "zero retry delay",
+			modify:    func(o *acquireOptions) { o.retryDelay = 0 },
+			wantError: true,
+			wantErr:   ErrInvalidRetryDelay,
+		},
+		{
+			name:      "negative retry delay",
+			modify:    func(o *acquireOptions) { o.retryDelay = -1 },
+			wantError: true,
+			wantErr:   ErrInvalidRetryDelay,
+		},
+		{
+			name:      "max retries exceeds upper bound",
+			modify:    func(o *acquireOptions) { o.maxRetries = MaxMaxRetries + 1 },
+			wantError: true,
+			wantErr:   ErrInvalidMaxRetries,
+		},
+		{
+			name:      "max retries at upper bound",
+			modify:    func(o *acquireOptions) { o.maxRetries = MaxMaxRetries },
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := defaultAcquireOptions()
+			tt.modify(opts)
+			err := opts.validateRetryParams()
+			if tt.wantError {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 // =============================================================================

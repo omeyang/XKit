@@ -23,22 +23,6 @@ func TestFindPage_NilCollection(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilCollection)
 }
 
-func TestFindPage_InvalidPage(t *testing.T) {
-	// 注意：由于参数验证顺序的问题（先验证 collection 是否为 nil），
-	// 这些测试需要 mock collection，在短模式下跳过
-	if testing.Short() {
-		t.Skip("skipping test that requires mock collection in short mode")
-	}
-}
-
-func TestFindPage_InvalidPageSize(t *testing.T) {
-	// 注意：由于参数验证顺序的问题（先验证 collection 是否为 nil），
-	// 这些测试需要 mock collection，在短模式下跳过
-	if testing.Short() {
-		t.Skip("skipping test that requires mock collection in short mode")
-	}
-}
-
 func TestPageOptions_Defaults(t *testing.T) {
 	opts := PageOptions{}
 
@@ -46,6 +30,18 @@ func TestPageOptions_Defaults(t *testing.T) {
 	assert.Equal(t, int64(0), opts.Page)
 	assert.Equal(t, int64(0), opts.PageSize)
 	assert.Nil(t, opts.Sort)
+	assert.Nil(t, opts.Projection)
+}
+
+func TestPageOptions_WithProjection(t *testing.T) {
+	opts := PageOptions{
+		Page:       1,
+		PageSize:   10,
+		Sort:       bson.D{{Key: "created_at", Value: -1}},
+		Projection: bson.D{{Key: "name", Value: 1}, {Key: "age", Value: 1}},
+	}
+
+	assert.Len(t, opts.Projection, 2)
 }
 
 func TestPageOptions_WithSort(t *testing.T) {
@@ -86,28 +82,5 @@ func TestPageResult_TotalPages(t *testing.T) {
 			}
 			assert.Equal(t, tt.totalPages, totalPages)
 		})
-	}
-}
-
-// =============================================================================
-// 集成测试 - 需要真实 MongoDB
-// =============================================================================
-
-func TestFindPage_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-	// 需要真实 MongoDB 实例
-}
-
-func TestFindPage_WithSort_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}
-
-func TestFindPage_EmptyResult_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
 	}
 }

@@ -199,15 +199,15 @@ func (c *TokenCache) setLocal(tenantID string, token *TokenInfo) {
 	c.local.Set(tenantID, token)
 }
 
-// Delete 删除 Token。
+// Delete 删除 Token（仅 Token，不影响平台数据缓存）。
 func (c *TokenCache) Delete(ctx context.Context, tenantID string) error {
 	// L1
 	if c.enableLocal && c.local != nil {
 		c.local.Delete(tenantID)
 	}
 
-	// L2
-	return c.remote.Delete(ctx, tenantID)
+	// L2: 仅删除 Token，不影响平台数据
+	return c.remote.DeleteToken(ctx, tenantID)
 }
 
 // GetOrLoad 获取 Token，未命中时调用 loader 加载。
@@ -230,7 +230,10 @@ func (c *TokenCache) GetOrLoad(
 		return c.loadAndSet(ctx, tenantID, loader, ttl)
 	}
 
-	// 使用 singleflight
+	// 设计决策: singleflight.Do 使用第一个调用方的 ctx 发起请求，后续共享结果。
+	// 若首个 ctx 被取消，所有等待者均收到错误。这是 singleflight 的已知限制，
+	// 但对 Token 获取场景可接受——请求超时一致，取消概率低。
+	// 与 PlatformManager.fetchWithSingleflight 采用相同策略。
 	result, err, _ := c.sf.Do(tenantID, func() (any, error) {
 		// double-check: 再次检查缓存
 		if t, _, e := c.Get(ctx, tenantID); e == nil && t != nil && !t.IsExpired() {

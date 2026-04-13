@@ -15,9 +15,9 @@ func TestPulsarAttrs_WithTopic(t *testing.T) {
 
 	assert.Len(t, attrs, 2)
 	assert.Equal(t, "messaging.system", attrs[0].Key)
-	assert.Equal(t, "pulsar", attrs[0].Value.(string)) //nolint:errcheck // 测试断言类型已知
-	assert.Equal(t, "messaging.destination", attrs[1].Key)
-	assert.Equal(t, "test-topic", attrs[1].Value.(string)) //nolint:errcheck // 测试断言类型已知
+	assert.Equal(t, "pulsar", attrs[0].Value)
+	assert.Equal(t, "messaging.destination.name", attrs[1].Key)
+	assert.Equal(t, "test-topic", attrs[1].Value)
 }
 
 func TestPulsarAttrs_EmptyTopic(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPulsarAttrs_EmptyTopic(t *testing.T) {
 
 	assert.Len(t, attrs, 1)
 	assert.Equal(t, "messaging.system", attrs[0].Key)
-	assert.Equal(t, "pulsar", attrs[0].Value.(string)) //nolint:errcheck // 测试断言类型已知
+	assert.Equal(t, "pulsar", attrs[0].Value)
 }
 
 func TestComponentName(t *testing.T) {

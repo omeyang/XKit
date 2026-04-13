@@ -30,11 +30,11 @@ type Transport interface {
 // PeerIdentity 对端身份信息。
 type PeerIdentity struct {
 	// UID 用户 ID。
-	UID uint32
+	UID uint32 `json:"uid"`
 
 	// GID 组 ID。
-	GID uint32
+	GID uint32 `json:"gid"`
 
 	// PID 进程 ID。
-	PID int32
+	PID int32 `json:"pid"`
 }

@@ -210,9 +210,8 @@ XKit 遵循 Go 语言的可见性规则：
 **基础采样器**：
 - `Always() Sampler` - 全量采样
 - `Never() Sampler` - 不采样
-- `NewRateSampler(rate float64) *RateSampler` - 固定比率采样
+- `NewRateSampler(rate float64) (*RateSampler, error)` - 固定比率采样
 - `NewCountSampler(n int) *CountSampler` - 计数采样（每 N 次采样一次）
-- `NewProbabilitySampler(probability float64) *ProbabilitySampler` - 概率采样
 
 **组合采样器**：
 - `All(samplers ...Sampler) *CompositeSampler` - AND 组合（全部通过）
@@ -220,8 +219,12 @@ XKit 遵循 Go 语言的可见性规则：
 - `NewCompositeSampler(mode CompositeMode, samplers ...Sampler) *CompositeSampler`
 
 **基于 Key 的一致性采样**：
-- `NewKeyBasedSampler(rate float64, keyFunc KeyFunc) *KeyBasedSampler`
+- `NewKeyBasedSampler(rate float64, keyFunc KeyFunc) (*KeyBasedSampler, error)`
 - `KeyFunc = func(ctx context.Context) string` - Key 提取函数
+
+**错误变量**：
+- `ErrInvalidRate` - rate 超出 [0.0, 1.0] 范围
+- `ErrNilKeyFunc` - keyFunc 为 nil
 
 ### pkg/observability/xrotate
 
@@ -430,7 +433,6 @@ XKit 遵循 Go 语言的可见性规则：
 - `Config` - 配置接口
   - `Client() *koanf.Koanf` - 获取底层 koanf 实例
   - `Unmarshal(path string, target any) error` - 反序列化
-  - `MustUnmarshal(path string, target any)` - 反序列化（失败 panic）
   - `Reload() error` - 重新加载（仅文件模式）
   - `Path() string` - 配置文件路径
   - `Format() Format` - 配置格式
@@ -441,6 +443,7 @@ XKit 遵循 Go 语言的可见性规则：
 - `New(path string, opts ...Option) (Config, error)` - 从文件创建（自动识别格式）
 - `NewFromBytes(data []byte, format Format, opts ...Option) (Config, error)` - 从字节创建
 - `Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, error)` - 创建文件监听
+- `MustUnmarshal(cfg Config, path string, target any)` - 反序列化（失败 panic）
 
 **配置格式**：
 - `FormatYAML` - YAML 格式
@@ -467,8 +470,7 @@ XKit 遵循 Go 语言的可见性规则：
 
 **工厂函数**：
 - `NewClient(cfg *Config, opts ...Option) (Client, error)`
-- `MustNewClient(cfg *Config, opts ...Option) Client`
-- `NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) *RedisCacheStore`
+- `NewRedisCacheStore(client redis.UniversalClient, opts ...RedisCacheOption) (*RedisCacheStore, error)`
 - `AsContextClient(c Client) ContextClient`
 
 ### pkg/debug/xdbg
@@ -489,7 +491,7 @@ XKit 遵循 Go 语言的可见性规则：
 - `NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context)`
 - `Run(ctx context.Context, services ...func(ctx context.Context) error) error`
 - `RunServices(ctx context.Context, services ...Service) error`
-- `HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration, opts ...Option) func(ctx context.Context) error`
+- `HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(ctx context.Context) error`
 
 ### pkg/mq/xkafka
 
@@ -531,8 +533,12 @@ XKit 遵循 Go 语言的可见性规则：
 
 ### pkg/util/xjson
 
+**错误**：
+- `ErrMarshal` - JSON 序列化失败哨兵错误，支持 `errors.Is` 判断
+
 **函数**：
-- `Pretty(v any) string` - 格式化 JSON 输出（用于日志和调试）
+- `PrettyE(v any) (string, error)` - 格式化 JSON 输出，失败时返回 `ErrMarshal` 包装的错误（业务流程用）
+- `Pretty(v any) string` - 格式化 JSON 输出（日志和调试用），失败时返回 `<marshal error: ...>` 标记字符串
 
 ### pkg/util/xkeylock
 
@@ -559,21 +565,41 @@ XKit 遵循 Go 语言的可见性规则：
 - `AddrFromUint32/AddrToUint32` - IPv4 与 uint32 互转
 - `AddrFromBigInt/AddrToBigInt` - 与 big.Int 互转
 - `FormatFullIP/ParseFullIP` - 全长格式化与解析
-- `WireRangeFrom/WireRangesToSet` - 序列化工具
+- `WireRangeFrom/WireRangeFromUnchecked/WireRangesToSet` - 序列化工具
 
 ### pkg/util/xpool
 
 **类型**：
-- `WorkerPool[T]` - 泛型 Worker Pool
+- `Pool[T]` - 泛型 Worker Pool
+- `Option` - 可选配置函数类型
 
 **工厂函数**：
-- `NewWorkerPool[T](workers, queueSize int, handler func(T)) *WorkerPool[T]`
+- `New[T](workers, queueSize int, handler func(T), opts ...Option) (*Pool[T], error)`
+
+**方法**：
+- `Submit(task T) error` - 非阻塞提交任务，队列满时返回 ErrQueueFull
+- `Close() error` - 等待所有任务完成后关闭
+- `Shutdown(ctx context.Context) error` - 带超时的优雅关闭
+- `Done() <-chan struct{}` - 所有 worker 退出后关闭的 channel
+- `Workers() int` - 返回 worker 数量
+- `QueueSize() int` - 返回队列大小
+- `QueueLen() int` - 返回当前队列中等待处理的任务数量
+
+**选项函数**：
+- `WithLogger(logger *slog.Logger) Option` - 设置自定义日志记录器
+
+**错误变量**：
+- `ErrNilHandler` - handler 参数为 nil
+- `ErrPoolStopped` - pool 已关闭
+- `ErrQueueFull` - 任务队列已满
+- `ErrInvalidWorkers` - worker 数量无效
+- `ErrInvalidQueueSize` - 队列大小无效
 
 ### pkg/util/xproc
 
 **函数**：
 - `ProcessID() int` - 返回当前进程 ID
-- `ProcessName() string` - 返回当前进程名称（不含路径）
+- `ProcessName() string` - 返回当前进程名称（不含路径），极端情况下可能返回空字符串，调用方应做兜底处理
 
 ### pkg/util/xsys
 

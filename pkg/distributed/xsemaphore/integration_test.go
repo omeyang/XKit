@@ -63,7 +63,7 @@ func TestIntegration_TryAcquire(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:integration:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -153,7 +153,7 @@ func TestIntegration_Acquire_Blocking(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:blocking:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -187,7 +187,7 @@ func TestIntegration_Extend(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:extend:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -214,7 +214,7 @@ func TestIntegration_AutoExtend(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:auto-extend:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -245,7 +245,7 @@ func TestIntegration_PermitExpiry(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:expiry:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -282,7 +282,7 @@ func TestIntegration_Query(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:query:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -326,7 +326,7 @@ func TestIntegration_HighConcurrency(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:concurrent:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -339,10 +339,8 @@ func TestIntegration_HighConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
+		id := i
+		wg.Go(func() {
 			for j := 0; j < iterations; j++ {
 				permit, err := sem.TryAcquire(ctx,
 					fmt.Sprintf("concurrent-resource-%d", id%5),
@@ -359,7 +357,7 @@ func TestIntegration_HighConcurrency(t *testing.T) {
 					}
 				}
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -372,7 +370,7 @@ func TestIntegration_ConcurrentTenants(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:tenants:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -386,10 +384,9 @@ func TestIntegration_ConcurrentTenants(t *testing.T) {
 	for i := 0; i < tenants; i++ {
 		tenantID := fmt.Sprintf("tenant-%d", i)
 		for j := 0; j < goroutinesPerTenant; j++ {
-			wg.Add(1)
-			go func(tid string, idx int) {
-				defer wg.Done()
-
+			tid := tenantID
+			idx := i
+			wg.Go(func() {
 				permit, err := sem.TryAcquire(ctx, "shared-resource",
 					WithCapacity(1000),
 					WithTenantQuota(quotaPerTenant),
@@ -403,7 +400,7 @@ func TestIntegration_ConcurrentTenants(t *testing.T) {
 					time.Sleep(5 * time.Millisecond)
 					releasePermit(t, ctx, permit)
 				}
-			}(tenantID, i)
+			})
 		}
 	}
 
@@ -433,7 +430,7 @@ func TestIntegration_Fallback(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -464,7 +461,7 @@ func TestIntegration_Health(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:health:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	err = sem.Health(context.Background())
 	assert.NoError(t, err)
@@ -478,7 +475,7 @@ func TestIntegration_TenantFromContext(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:ctx-tenant:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx, err := xtenant.WithTenantID(context.Background(), "ctx-tenant-id")
 	require.NoError(t, err)
@@ -520,7 +517,7 @@ func TestIntegration_WarmupScripts(t *testing.T) {
 	// 使用预热后的信号量
 	sem, err := New(client, WithKeyPrefix("test:warmup:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 	permit, err := sem.TryAcquire(ctx, "warmup-test", WithCapacity(10))
@@ -537,7 +534,7 @@ func TestIntegration_LongRunningTask(t *testing.T) {
 	client := setupIntegrationRedis(t)
 	sem, err := New(client, WithKeyPrefix("test:long-task:"))
 	require.NoError(t, err)
-	defer sem.Close()
+	defer sem.Close(context.Background())
 
 	ctx := context.Background()
 

@@ -4,8 +4,6 @@ package xdbg
 
 // watchTrigger 监听触发事件。
 func (s *Server) watchTrigger() {
-	defer s.wg.Done()
-
 	eventCh := s.trigger.Watch(s.ctx)
 
 	for {

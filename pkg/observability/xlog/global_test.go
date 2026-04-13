@@ -110,11 +110,10 @@ func TestDefault_ConcurrencySafety(t *testing.T) {
 	loggers := make([]xlog.LoggerWithLevel, goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Go(func() {
 			loggers[idx] = xlog.Default()
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -224,6 +223,96 @@ func TestGlobal_WithAttrs(t *testing.T) {
 }
 
 // =============================================================================
+// globalLog 回退路径测试（非 xlogger 实现）
+// =============================================================================
+
+// mockLoggerWithLevel 用于测试 globalLog 的 fallback 路径
+type mockLoggerWithLevel struct {
+	lastLevel slog.Level
+	lastMsg   string
+}
+
+func (m *mockLoggerWithLevel) Debug(_ context.Context, msg string, _ ...slog.Attr) {
+	m.lastLevel = slog.LevelDebug
+	m.lastMsg = msg
+}
+
+func (m *mockLoggerWithLevel) Info(_ context.Context, msg string, _ ...slog.Attr) {
+	m.lastLevel = slog.LevelInfo
+	m.lastMsg = msg
+}
+
+func (m *mockLoggerWithLevel) Warn(_ context.Context, msg string, _ ...slog.Attr) {
+	m.lastLevel = slog.LevelWarn
+	m.lastMsg = msg
+}
+
+func (m *mockLoggerWithLevel) Error(_ context.Context, msg string, _ ...slog.Attr) {
+	m.lastLevel = slog.LevelError
+	m.lastMsg = msg
+}
+
+func (m *mockLoggerWithLevel) Stack(_ context.Context, msg string, _ ...slog.Attr) {
+	m.lastLevel = slog.LevelError
+	m.lastMsg = msg
+}
+
+func (m *mockLoggerWithLevel) With(_ ...slog.Attr) xlog.Logger { return m }
+
+func (m *mockLoggerWithLevel) WithGroup(_ string) xlog.Logger { return m }
+
+func (m *mockLoggerWithLevel) SetLevel(_ xlog.Level) {}
+
+func (m *mockLoggerWithLevel) GetLevel() xlog.Level { return xlog.LevelDebug }
+
+func (m *mockLoggerWithLevel) Enabled(_ context.Context, _ xlog.Level) bool { return true }
+
+func TestGlobal_FallbackNonXlogger(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	mock := &mockLoggerWithLevel{}
+	xlog.SetDefault(mock)
+
+	ctx := context.Background()
+
+	// 测试所有全局便利函数通过 fallback 路径
+	xlog.Debug(ctx, "debug fallback")
+	if mock.lastLevel != slog.LevelDebug || mock.lastMsg != "debug fallback" {
+		t.Errorf("Debug fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+
+	xlog.Info(ctx, "info fallback")
+	if mock.lastLevel != slog.LevelInfo || mock.lastMsg != "info fallback" {
+		t.Errorf("Info fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+
+	xlog.Warn(ctx, "warn fallback")
+	if mock.lastLevel != slog.LevelWarn || mock.lastMsg != "warn fallback" {
+		t.Errorf("Warn fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+
+	xlog.Error(ctx, "error fallback")
+	if mock.lastLevel != slog.LevelError || mock.lastMsg != "error fallback" {
+		t.Errorf("Error fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+}
+
+func TestGlobal_Stack_FallbackNonXlogger(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	mock := &mockLoggerWithLevel{}
+	xlog.SetDefault(mock)
+
+	// 测试 Stack 通过 fallback 路径
+	xlog.Stack(context.Background(), "stack fallback")
+	if mock.lastLevel != slog.LevelError || mock.lastMsg != "stack fallback" {
+		t.Errorf("Stack fallback: got level=%v msg=%q", mock.lastLevel, mock.lastMsg)
+	}
+}
+
+// =============================================================================
 // ResetDefault 测试
 // =============================================================================
 
@@ -248,6 +337,37 @@ func TestResetDefault(t *testing.T) {
 }
 
 // =============================================================================
+// defaultLogger fallback 路径测试
+// =============================================================================
+
+func TestDefaultLogger_FallbackPath(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	// 替换构建器工厂为总是失败的版本，强制进入 fallback 路径
+	restore := xlog.SetNewBuilderForTest(func() *xlog.Builder {
+		// 返回一个已注入错误的 Builder（模拟 New().Build() 失败）
+		return xlog.New().SetOutput(nil)
+	})
+	defer restore()
+
+	// Default() 应返回 fallback logger（不为 nil）
+	logger := xlog.Default()
+	if logger == nil {
+		t.Fatal("Default() should return fallback logger, not nil")
+	}
+
+	// fallback logger 应该能正常工作（不 panic）
+	logger.Info(context.Background(), "fallback logger message")
+
+	// 验证 fallback logger 支持动态级别控制
+	logger.SetLevel(xlog.LevelDebug)
+	if logger.GetLevel() != xlog.LevelDebug {
+		t.Errorf("fallback logger GetLevel() = %v, want %v", logger.GetLevel(), xlog.LevelDebug)
+	}
+}
+
+// =============================================================================
 // 性能测试
 // =============================================================================
 
@@ -259,7 +379,7 @@ func BenchmarkDefault(b *testing.B) {
 	_ = xlog.Default()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xlog.Default()
 	}
 }
@@ -278,7 +398,7 @@ func BenchmarkGlobal_Info(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		xlog.Info(ctx, "benchmark message")
 	}
 }

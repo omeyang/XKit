@@ -8,7 +8,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// 指标名称常量
+// 设计决策: 指标前缀使用 "xsemaphore.*" 而非 "xkit.xsemaphore.*"。
+// 项目各包自治命名，与 OTel Meter scope name 保持一致（Meter("xsemaphore")），
+// 避免与 scope 名称产生冗余嵌套。如需统一命名空间，应在采集端（Prometheus relabel）处理。
 const (
 	// metricNameAcquireTotal 获取许可次数计数器
 	metricNameAcquireTotal = "xsemaphore.acquire.total"
@@ -166,6 +168,10 @@ func (m *Metrics) RecordAcquire(
 // ctx: 上下文
 // semType: 信号量类型
 // resource: 资源名称
+//
+// 设计决策: Release 和 Extend 仅记录 counter，不记录 duration histogram。
+// 这些操作是单次 Lua 脚本执行（release）或内存操作（local），耗时极短且稳定，
+// 不需要分位数分布分析。网络抖动场景可通过 trace span 耗时观测。
 func (m *Metrics) RecordRelease(ctx context.Context, semType, resource string) {
 	if m == nil {
 		return

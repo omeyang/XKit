@@ -1,8 +1,6 @@
-// Package xlog 提供基于 log/slog 的结构化日志库
+// xlog.go 定义核心接口：Logger、Leveler、LoggerWithLevel
 //
-// # 设计理念
-//
-// xlog 是 slog 的轻量封装，专注于：
+// 设计理念：
 //   - 强制 context 传递，确保追踪信息传播
 //   - 动态级别控制，支持运行时调整
 //   - Handler 装饰链，自动注入 xctx（trace/identity）字段
@@ -37,10 +35,16 @@ type Logger interface {
 	Stack(ctx context.Context, msg string, attrs ...slog.Attr)
 
 	// With 返回带额外属性的派生 Logger
+	//
+	// 设计决策: 返回 Logger 而非 LoggerWithLevel，保持接口最小化。
+	// 底层实现（xlogger）同时实现 LoggerWithLevel，可通过类型断言获取 Leveler 能力。
+	// 派生 logger 共享父级的 LevelVar，动态级别变更会同步生效。
 	With(attrs ...slog.Attr) Logger
 
 	// WithGroup 返回带分组的派生 Logger
 	// 后续 With 添加的属性会在此分组下
+	//
+	// 设计决策: 返回 Logger 而非 LoggerWithLevel，与 With 保持一致。
 	WithGroup(name string) Logger
 }
 

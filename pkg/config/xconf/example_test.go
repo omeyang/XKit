@@ -16,7 +16,7 @@ func ExampleNew() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // cleanup temp dir, error is irrelevant
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configContent := `
@@ -114,8 +114,8 @@ database:
 	// maxConns: 10
 }
 
-// ExampleConfig_MustUnmarshal 演示程序启动时的必要配置加载。
-func ExampleConfig_MustUnmarshal() {
+// ExampleMustUnmarshal 演示程序启动时的必要配置加载。
+func ExampleMustUnmarshal() {
 	configData := []byte(`
 app:
   name: critical-app
@@ -134,7 +134,7 @@ app:
 	}
 
 	var appConfig AppConfig
-	cfg.MustUnmarshal("app", &appConfig) // 失败时 panic
+	xconf.MustUnmarshal(cfg, "app", &appConfig) // 失败时 panic
 
 	fmt.Printf("name: %s\n", appConfig.Name)
 	fmt.Printf("required: %t\n", appConfig.Required)
@@ -152,7 +152,7 @@ func ExampleNew_withOptions() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // cleanup temp dir, error is irrelevant
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	configContent := `
@@ -186,7 +186,7 @@ func ExampleConfig_Reload() {
 		fmt.Printf("failed to create temp dir: %v\n", err)
 		return
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // defer cleanup
+	defer func() { _ = os.RemoveAll(tmpDir) }() //nolint:errcheck // cleanup temp dir, error is irrelevant
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	initialContent := `

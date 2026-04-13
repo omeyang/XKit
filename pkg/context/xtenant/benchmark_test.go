@@ -21,8 +21,9 @@ func BenchmarkTenantID(b *testing.B) {
 	ctx := context.Background()
 	ctx = mustCtxTenantID(b, ctx, "benchmark-tenant-id")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.TenantID(ctx)
 	}
 }
@@ -31,8 +32,9 @@ func BenchmarkTenantName(b *testing.B) {
 	ctx := context.Background()
 	ctx = mustCtxTenantName(b, ctx, "benchmark-tenant-name")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.TenantName(ctx)
 	}
 }
@@ -40,8 +42,9 @@ func BenchmarkTenantName(b *testing.B) {
 func BenchmarkWithTenantID(b *testing.B) {
 	ctx := context.Background()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := xtenant.WithTenantID(ctx, "benchmark-tenant"); err != nil {
 			b.Fatal(err)
 		}
@@ -55,8 +58,9 @@ func BenchmarkWithTenantInfo(b *testing.B) {
 		TenantName: "bench-name",
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := xtenant.WithTenantInfo(ctx, info); err != nil {
 			b.Fatal(err)
 		}
@@ -68,8 +72,9 @@ func BenchmarkGetTenantInfo(b *testing.B) {
 	ctx = mustCtxTenantID(b, ctx, "bench-id")
 	ctx = mustCtxTenantName(b, ctx, "bench-name")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.GetTenantInfo(ctx)
 	}
 }
@@ -81,8 +86,9 @@ func BenchmarkGetTenantInfo(b *testing.B) {
 func BenchmarkTenantInfo_IsEmpty(b *testing.B) {
 	info := xtenant.TenantInfo{}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = info.IsEmpty()
 	}
 }
@@ -90,8 +96,9 @@ func BenchmarkTenantInfo_IsEmpty(b *testing.B) {
 func BenchmarkTenantInfo_IsEmpty_NonEmpty(b *testing.B) {
 	info := xtenant.TenantInfo{TenantID: "t1", TenantName: "n1"}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = info.IsEmpty()
 	}
 }
@@ -99,8 +106,9 @@ func BenchmarkTenantInfo_IsEmpty_NonEmpty(b *testing.B) {
 func BenchmarkTenantInfo_Validate(b *testing.B) {
 	info := xtenant.TenantInfo{TenantID: "t1"}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := info.Validate(); err == nil {
 			b.Fatal("expected validation error")
 		}
@@ -116,8 +124,9 @@ func BenchmarkExtractFromHTTPHeader(b *testing.B) {
 	h.Set(xtenant.HeaderTenantID, "tenant-123")
 	h.Set(xtenant.HeaderTenantName, "TestTenant")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.ExtractFromHTTPHeader(h)
 	}
 }
@@ -128,8 +137,9 @@ func BenchmarkInjectToRequest(b *testing.B) {
 	ctx = mustCtxTenantName(b, ctx, "TestTenant")
 	req := httptest.NewRequest("GET", "/test", nil)
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		xtenant.InjectToRequest(ctx, req)
 	}
 }
@@ -143,8 +153,9 @@ func BenchmarkHTTPMiddleware(b *testing.B) {
 	req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
 	w := httptest.NewRecorder()
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		handler.ServeHTTP(w, req)
 	}
 }
@@ -154,6 +165,7 @@ func BenchmarkHTTPMiddleware_Parallel(b *testing.B) {
 		_ = xtenant.TenantID(r.Context())
 	}))
 
+	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.Header.Set(xtenant.HeaderTenantID, "tenant-123")
@@ -175,8 +187,9 @@ func BenchmarkExtractFromMetadata(b *testing.B) {
 		xtenant.MetaTenantName, "TestTenant",
 	)
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.ExtractFromMetadata(md)
 	}
 }
@@ -186,8 +199,9 @@ func BenchmarkInjectToOutgoingContext(b *testing.B) {
 	ctx = mustCtxTenantID(b, ctx, "tenant-123")
 	ctx = mustCtxTenantName(b, ctx, "TestTenant")
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xtenant.InjectToOutgoingContext(ctx)
 	}
 }
@@ -205,8 +219,9 @@ func BenchmarkGRPCUnaryServerInterceptor(b *testing.B) {
 		return nil, nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, handler); err != nil {
 			b.Fatal(err)
 		}
@@ -223,8 +238,9 @@ func BenchmarkGRPCUnaryClientInterceptor(b *testing.B) {
 		return nil
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := interceptor(ctx, "/test.Service/Method", nil, nil, nil, invoker); err != nil {
 			b.Fatal(err)
 		}
@@ -237,8 +253,9 @@ func BenchmarkInjectTenantToMetadata(b *testing.B) {
 		TenantName: "TestTenant",
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		md := metadata.MD{}
 		xtenant.InjectTenantToMetadata(md, info)
 	}

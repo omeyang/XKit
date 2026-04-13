@@ -9,25 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVersionString(t *testing.T) {
-	assert.Equal(t, "IPv4", V4.String())
-	assert.Equal(t, "IPv6", V6.String())
-	assert.Equal(t, "unknown", V0.String())
-	assert.Equal(t, "unknown", Version(99).String())
-}
-
-func TestAddrVersion(t *testing.T) {
-	assert.Equal(t, V4, AddrVersion(netip.MustParseAddr("192.168.1.1")))
-	assert.Equal(t, V6, AddrVersion(netip.MustParseAddr("::1")))
-	assert.Equal(t, V6, AddrVersion(netip.MustParseAddr("2001:db8::1")))
-
-	// IPv4-mapped IPv6 地址视为 V4
-	assert.Equal(t, V4, AddrVersion(netip.MustParseAddr("::ffff:192.168.1.1")))
-
-	// 无效地址返回 V0
-	assert.Equal(t, V0, AddrVersion(netip.Addr{}))
-}
-
 func TestAddrFromUint32(t *testing.T) {
 	// 192.168.1.1 = 0xC0A80101
 	addr := AddrFromUint32(0xC0A80101)
@@ -213,6 +194,9 @@ func TestAddrAdd(t *testing.T) {
 		{"IPv4 boundary", "255.255.255.254", 1, "255.255.255.255", false},
 		{"IPv6 add", "::1", 1, "::2", false},
 		{"IPv6 subtract", "::ff", -1, "::fe", false},
+		// IPv4-mapped IPv6 走 IPv4 快速路径，返回纯 IPv4（回归用例）
+		{"IPv4-mapped add", "::ffff:192.168.1.100", 1, "192.168.1.101", false},
+		{"IPv4-mapped subtract", "::ffff:10.0.0.1", -1, "10.0.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -233,12 +217,22 @@ func TestAddrAdd_Overflow(t *testing.T) {
 	// IPv4 最大值 + 1 应该溢出
 	maxV4 := netip.MustParseAddr("255.255.255.255")
 	_, err := AddrAdd(maxV4, 1)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrOverflow)
 
 	// IPv4 最小值 - 1 应该溢出
 	minV4 := netip.MustParseAddr("0.0.0.0")
 	_, err = AddrAdd(minV4, -1)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrOverflow)
+
+	// IPv6 溢出
+	maxV6 := netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
+	_, err = AddrAdd(maxV6, 1)
+	assert.ErrorIs(t, err, ErrOverflow)
+
+	// IPv6 下溢
+	minV6 := netip.MustParseAddr("::")
+	_, err = AddrAdd(minV6, -1)
+	assert.ErrorIs(t, err, ErrOverflow)
 }
 
 func TestAddrAdd_Invalid(t *testing.T) {

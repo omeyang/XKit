@@ -1,6 +1,8 @@
 package xcache
 
 import (
+	"context"
+
 	"github.com/dgraph-io/ristretto/v2"
 )
 
@@ -37,7 +39,11 @@ type Memory interface {
 	Wait()
 
 	// Close 关闭缓存。
-	Close()
+	// 重复调用 Close 会返回 ErrClosed。
+	// 关闭后 Stats() 返回零值；但 Client() 仍返回底层 ristretto 实例，
+	// 对其操作可能产生未定义行为（ristretto 关闭后不保证安全）。
+	// 设计决策: ctx 参数当前未使用，保留以保证接口统一性和未来扩展性（D-02）。
+	Close(ctx context.Context) error
 }
 
 // =============================================================================

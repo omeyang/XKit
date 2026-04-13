@@ -33,6 +33,7 @@ type localSemaphore struct {
 	cleanupOnce   sync.Once
 	cleanupDone   chan struct{}
 	cleanupTicker *time.Ticker
+	cleanupWg     sync.WaitGroup // 等待 backgroundCleanupLoop 退出
 }
 
 // resourcePermits 资源的许可集合
@@ -67,7 +68,7 @@ func newLocalSemaphore(opts *options) *localSemaphore {
 func (s *localSemaphore) startBackgroundCleanup() {
 	s.cleanupOnce.Do(func() {
 		s.cleanupTicker = time.NewTicker(localCleanupInterval)
-		go s.backgroundCleanupLoop()
+		s.cleanupWg.Go(s.backgroundCleanupLoop)
 	})
 }
 
@@ -91,8 +92,11 @@ func (s *localSemaphore) backgroundCleanupLoop() {
 // 写入的许可会进入已从 sync.Map 脱链的 bucket，导致许可丢失。
 func (s *localSemaphore) cleanupAllExpired() {
 	now := time.Now()
-	s.permits.Range(func(key, value any) bool {
-		rp := value.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	s.permits.Range(func(_, value any) bool {
+		rp, ok := value.(*resourcePermits)
+		if !ok {
+			return true // 设计决策: sync.Map 中仅存储 *resourcePermits，此分支不可达
+		}
 		rp.mu.Lock()
 		s.cleanupExpiredLocked(rp, now)
 		rp.mu.Unlock()
@@ -102,20 +106,28 @@ func (s *localSemaphore) cleanupAllExpired() {
 
 // getResourcePermits 获取或创建资源的许可集合
 func (s *localSemaphore) getResourcePermits(resource string) *resourcePermits {
-	if rp, ok := s.permits.Load(resource); ok {
-		return rp.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if v, ok := s.permits.Load(resource); ok {
+		if rp, ok := v.(*resourcePermits); ok {
+			return rp
+		}
 	}
 
 	rp := newResourcePermits()
 	actual, _ := s.permits.LoadOrStore(resource, rp)
-	return actual.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if typed, ok := actual.(*resourcePermits); ok {
+		return typed
+	}
+	// 设计决策: sync.Map 中仅存储 *resourcePermits，此路径不可达
+	return rp
 }
 
 // tryGetResourcePermits 尝试获取资源许可集合，不存在时返回 nil
 // 用于 release/extend/count 等不应创建空 bucket 的操作
 func (s *localSemaphore) tryGetResourcePermits(resource string) *resourcePermits {
-	if rp, ok := s.permits.Load(resource); ok {
-		return rp.(*resourcePermits) //nolint:errcheck // type is controlled by our code
+	if v, ok := s.permits.Load(resource); ok {
+		if rp, ok := v.(*resourcePermits); ok {
+			return rp
+		}
 	}
 	return nil
 }
@@ -166,9 +178,7 @@ func (s *localSemaphore) TryAcquire(ctx context.Context, resource string, opts .
 	}
 
 	// 记录指标
-	if s.opts.metrics != nil {
-		s.opts.metrics.RecordAcquire(ctx, SemaphoreTypeLocal, resource, permit != nil, reason, duration)
-	}
+	s.recordAcquireMetrics(ctx, resource, permit != nil, reason, duration)
 
 	return permit, err
 }
@@ -181,6 +191,11 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 
 	cfg, tenantID, err := s.prepareAcquire(ctx, resource, opts)
 	if err != nil {
+		return nil, err
+	}
+
+	// 校验重试参数（仅 Acquire 需要，TryAcquire 不使用重试）
+	if err := cfg.validateRetryParams(); err != nil {
 		return nil, err
 	}
 
@@ -198,21 +213,23 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 
 	for attempt := range cfg.maxRetries {
 		if err := ctx.Err(); err != nil {
+			s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
+			span.SetAttributes(attribute.Int(attrRetryCount, max(0, attempt-1)))
 			setSpanError(span, err)
 			return nil, err
 		}
 
 		permit, reason, err := s.tryAcquireOnce(ctx, resource, tenantID, localCapacity, localTenantQuota, cfg.ttl, cfg.metadata)
 		if err != nil {
+			s.recordAcquireMetrics(ctx, resource, false, ReasonUnknown, time.Since(start))
+			span.SetAttributes(attribute.Int(attrRetryCount, attempt))
 			setSpanError(span, err)
 			return nil, err
 		}
 		retryCount = attempt
 		if permit != nil {
 			// 记录成功指标（只在最终成功时记录一次）
-			if s.opts.metrics != nil {
-				s.opts.metrics.RecordAcquire(ctx, SemaphoreTypeLocal, resource, true, ReasonUnknown, time.Since(start))
-			}
+			s.recordAcquireMetrics(ctx, resource, true, ReasonUnknown, time.Since(start))
 			span.SetAttributes(
 				attribute.Bool(attrAcquired, true),
 				attribute.String(attrPermitID, permit.ID()),
@@ -226,6 +243,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 		// 最后一次重试不等待
 		if attempt < cfg.maxRetries-1 {
 			if err := waitForRetry(ctx, cfg.retryDelay); err != nil {
+				s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
 				setSpanError(span, err)
 				return nil, err
 			}
@@ -233,9 +251,7 @@ func (s *localSemaphore) Acquire(ctx context.Context, resource string, opts ...A
 	}
 
 	// 记录失败指标（重试耗尽，只记录一次）
-	if s.opts.metrics != nil {
-		s.opts.metrics.RecordAcquire(ctx, SemaphoreTypeLocal, resource, false, lastReason, time.Since(start))
-	}
+	s.recordAcquireMetrics(ctx, resource, false, lastReason, time.Since(start))
 	span.SetAttributes(
 		attribute.Bool(attrAcquired, false),
 		attribute.String(attrFailReason, lastReason.String()),
@@ -285,6 +301,7 @@ func (s *localSemaphore) doAcquire(
 	// 在锁外生成许可 ID，避免时钟回拨等待期间（最多 500ms）阻塞其他 goroutine
 	permitID, err := s.opts.effectiveIDGenerator()(ctx)
 	if err != nil {
+		// 设计决策: 使用 %v 而非 %w 包装内部错误，避免暴露 xid 内部错误类型给消费者。
 		return nil, ReasonUnknown, fmt.Errorf("%w: %v", ErrIDGenerationFailed, err)
 	}
 
@@ -389,6 +406,13 @@ func (s *localSemaphore) releasePermit(ctx context.Context, p *localPermit) erro
 	}
 
 	return nil
+}
+
+// recordAcquireMetrics 记录获取指标
+func (s *localSemaphore) recordAcquireMetrics(ctx context.Context, resource string, acquired bool, reason AcquireFailReason, duration time.Duration) {
+	if s.opts.metrics != nil {
+		s.opts.metrics.RecordAcquire(ctx, SemaphoreTypeLocal, resource, acquired, reason, duration)
+	}
 }
 
 // recordExtendMetrics 记录续期指标
@@ -548,14 +572,18 @@ func (s *localSemaphore) Close(_ context.Context) error {
 		return nil
 	}
 
-	// 停止后台清理
+	// 停止后台清理并等待 goroutine 退出
 	close(s.cleanupDone)
+	s.cleanupWg.Wait()
 
 	return nil
 }
 
 // Health 健康检查
-func (s *localSemaphore) Health(_ context.Context) error {
+func (s *localSemaphore) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	if s.closed.Load() {
 		return ErrSemaphoreClosed
 	}

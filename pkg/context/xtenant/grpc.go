@@ -44,6 +44,10 @@ const (
 //
 // 所有字段都是可选的，未设置的字段保持零值。
 // Metadata 值会自动去除首尾空白。
+//
+// 设计决策: 本函数仅做 TrimSpace，不校验长度、字符集或控制字符。
+// 租户 ID/名称的格式因系统而异，格式校验应由中间件选项或业务层负责，
+// Extract 函数保持为无策略的薄提取层。
 func ExtractFromMetadata(md metadata.MD) TenantInfo {
 	if md == nil {
 		return TenantInfo{}
@@ -118,6 +122,9 @@ func GRPCUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 }
 
 // GRPCInterceptorOption gRPC 拦截器选项
+//
+// 设计决策: grpcInterceptorConfig 与 middlewareConfig 字段相同但独立定义，
+// 保持 HTTP 和 gRPC 协议选项的类型独立，允许各自独立演进。
 type GRPCInterceptorOption func(*grpcInterceptorConfig)
 
 type grpcInterceptorConfig struct {
@@ -172,7 +179,9 @@ func WithGRPCEnsureTrace() GRPCInterceptorOption {
 func GRPCUnaryServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.UnaryServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -199,7 +208,9 @@ func GRPCStreamServerInterceptor() grpc.StreamServerInterceptor {
 func GRPCStreamServerInterceptorWithOptions(opts ...GRPCInterceptorOption) grpc.StreamServerInterceptor {
 	cfg := &grpcInterceptorConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
 	return func(
@@ -234,15 +245,13 @@ func (w *wrappedServerStream) Context() context.Context {
 // InjectToOutgoingContext 将租户信息注入 outgoing context。
 // 从 context 提取租户信息并设置到 outgoing metadata，用于跨服务调用时传播租户信息。
 // 同时也会注入服务级的平台信息（从 xplatform 获取）。
-// 使用 Set 语义覆盖已存在的同名 key，防止租户信息串联（tenant leakage）。
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete，防止租户信息串联（tenant leakage）。
+//
+// ctx 不能为 nil，否则会 panic（与 Go 标准库 context 行为一致）。
 func InjectToOutgoingContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	// 获取已有的 outgoing metadata（如果存在）
-	md, ok := metadata.FromOutgoingContext(ctx)
-	if !ok {
+	md, hadExisting := metadata.FromOutgoingContext(ctx)
+	if !hadExisting {
 		md = metadata.MD{}
 	} else {
 		// 复制一份，避免修改原始 metadata
@@ -253,7 +262,8 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 	injectTenantMetadata(ctx, md)
 	injectTraceMetadata(ctx, md)
 
-	if len(md) == 0 {
+	// 没有新信息且之前也没有 metadata 时，直接返回原 context
+	if len(md) == 0 && !hadExisting {
 		return ctx
 	}
 
@@ -261,13 +271,17 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 }
 
 // injectPlatformMetadata 注入服务级平台信息
+//
+// 设计决策: 使用与租户/追踪字段一致的"以源为准"语义——
+// xplatform 未初始化时删除平台键，防止 metadata 复用时旧平台信息泄漏到下游。
 func injectPlatformMetadata(md metadata.MD) {
 	if !xplatform.IsInitialized() {
+		delete(md, MetaPlatformID)
+		delete(md, MetaHasParent)
+		delete(md, MetaUnclassRegionID)
 		return
 	}
-	if pid := xplatform.PlatformID(); pid != "" {
-		md.Set(MetaPlatformID, pid)
-	}
+	md.Set(MetaPlatformID, xplatform.PlatformID())
 	if xplatform.HasParent() {
 		md.Set(MetaHasParent, "true")
 	} else {
@@ -275,48 +289,72 @@ func injectPlatformMetadata(md metadata.MD) {
 	}
 	if regionID := xplatform.UnclassRegionID(); regionID != "" {
 		md.Set(MetaUnclassRegionID, regionID)
+	} else {
+		delete(md, MetaUnclassRegionID)
 	}
 }
 
 // injectTenantMetadata 注入请求级租户信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete。
+// 防止 metadata 复用时旧租户信息泄漏到下游。
 func injectTenantMetadata(ctx context.Context, md metadata.MD) {
 	if tid := TenantID(ctx); tid != "" {
 		md.Set(MetaTenantID, tid)
+	} else {
+		delete(md, MetaTenantID)
 	}
 	if tname := TenantName(ctx); tname != "" {
 		md.Set(MetaTenantName, tname)
+	} else {
+		delete(md, MetaTenantName)
 	}
 }
 
 // injectTraceMetadata 注入追踪信息
+//
+// 使用"以 context 为准"的语义：有值则 Set，无值则 delete。
 func injectTraceMetadata(ctx context.Context, md metadata.MD) {
 	if tid := xctx.TraceID(ctx); tid != "" {
 		md.Set(MetaTraceID, tid)
+	} else {
+		delete(md, MetaTraceID)
 	}
 	if sid := xctx.SpanID(ctx); sid != "" {
 		md.Set(MetaSpanID, sid)
+	} else {
+		delete(md, MetaSpanID)
 	}
 	if rid := xctx.RequestID(ctx); rid != "" {
 		md.Set(MetaRequestID, rid)
+	} else {
+		delete(md, MetaRequestID)
 	}
 	if flags := xctx.TraceFlags(ctx); flags != "" {
 		md.Set(MetaTraceFlags, flags)
+	} else {
+		delete(md, MetaTraceFlags)
 	}
 }
 
 // InjectTenantToMetadata 将 TenantInfo 注入 Metadata
 //
 // 用于手动构造 Metadata 的场景。
+// 采用增量写入语义：只 Set 非空字段，不清除已有的键。
+// 如需"以 context 为准"的清理语义，请使用 InjectToOutgoingContext。
+//
+// 对 TenantID/TenantName 做 TrimSpace 后再判空和 Set，
+// 与包内其他写入路径（WithTenantID、ExtractFromMetadata 等）的归一化语义一致。
 func InjectTenantToMetadata(md metadata.MD, info TenantInfo) {
 	if md == nil {
 		return
 	}
 
-	if info.TenantID != "" {
-		md.Set(MetaTenantID, info.TenantID)
+	if tid := strings.TrimSpace(info.TenantID); tid != "" {
+		md.Set(MetaTenantID, tid)
 	}
-	if info.TenantName != "" {
-		md.Set(MetaTenantName, info.TenantName)
+	if tname := strings.TrimSpace(info.TenantName); tname != "" {
+		md.Set(MetaTenantName, tname)
 	}
 }
 
@@ -361,6 +399,9 @@ func GRPCStreamClientInterceptor() grpc.StreamClientInterceptor {
 // =============================================================================
 
 // getMetadataValue 获取 metadata 中的值（取第一个，去除空白）
+//
+// 设计决策: 租户字段为单值语义，多值时取第一个。
+// 多值检测/拒绝应由 API 网关层负责，不在库层面强制。
 func getMetadataValue(md metadata.MD, key string) string {
 	values := md.Get(key)
 	if len(values) == 0 {
@@ -370,24 +411,31 @@ func getMetadataValue(md metadata.MD, key string) string {
 }
 
 // injectTenantToContext 从 incoming context 提取租户信息和追踪信息并注入
+//
+// 设计决策: 一次性提取 incoming metadata，避免 ExtractFromIncomingContext 和
+// ExtractTraceFromIncomingContext 各自调用 metadata.FromIncomingContext 导致
+// 重复的 metadata map 复制开销。
 func injectTenantToContext(ctx context.Context, cfg *grpcInterceptorConfig) (context.Context, error) {
+	// 一次性提取 incoming metadata
+	md, _ := metadata.FromIncomingContext(ctx)
+
 	// 提取并验证租户信息
-	info := ExtractFromIncomingContext(ctx)
+	info := ExtractFromMetadata(md)
 	if err := validateGRPCTenantInfo(info, cfg); err != nil {
 		return nil, err
 	}
 
-	// 注入租户信息到 context
-	ctx, err := injectGRPCTenantInfoToContext(ctx, info)
-	if err != nil {
-		return nil, err
+	// 注入租户信息到 context（复用公开 API）
+	ctx, err := WithTenantInfo(ctx, info)
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	// 处理追踪信息
-	trace := ExtractTraceFromIncomingContext(ctx)
+	trace := ExtractTraceFromMetadata(md)
 	ctx, err = injectGRPCTraceToContext(ctx, trace, cfg.ensureTrace)
-	if err != nil {
-		return nil, err
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return ctx, nil
@@ -407,35 +455,18 @@ func validateGRPCTenantInfo(info TenantInfo, cfg *grpcInterceptorConfig) error {
 	return nil
 }
 
-// injectGRPCTenantInfoToContext 将租户信息注入 context
-func injectGRPCTenantInfoToContext(ctx context.Context, info TenantInfo) (context.Context, error) {
-	var err error
-	if info.TenantID != "" {
-		ctx, err = xctx.WithTenantID(ctx, info.TenantID)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-	}
-	if info.TenantName != "" {
-		ctx, err = xctx.WithTenantName(ctx, info.TenantName)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-	}
-	return ctx, nil
-}
-
 // injectGRPCTraceToContext 处理追踪信息并注入 context
+//
+// 设计决策: 返回原始 error 而非 status.Error，由调用方 injectTenantToContext
+// 统一转换为 gRPC status error。与 HTTP 路径（injectHTTPTraceToContext 返回原始
+// error，由 injectTenantToHTTPContext 统一转换为 HTTP 状态码）保持一致的错误包装策略。
 func injectGRPCTraceToContext(ctx context.Context, trace xctx.Trace, ensureTrace bool) (context.Context, error) {
 	ctx, err := xctx.WithTrace(ctx, trace)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err != nil { // 防御性处理：当前 xctx 实现下不可达
+		return nil, err
 	}
 	if ensureTrace {
-		ctx, err = xctx.EnsureTrace(ctx)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
+		return xctx.EnsureTrace(ctx)
 	}
 	return ctx, nil
 }

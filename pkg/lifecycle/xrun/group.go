@@ -16,6 +16,9 @@ import (
 //
 // 当任一服务返回错误或 context 被取消时，所有服务都会收到取消信号。
 //
+// Go、GoWithName、Cancel 可安全地从多个 goroutine 并发调用。
+// Wait 应仅调用一次。
+//
 // 使用方式：
 //
 //	g, ctx := xrun.NewGroup(ctx)
@@ -48,8 +51,20 @@ type Group struct {
 //	    xrun.WithLogger(logger),
 //	)
 func NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context) {
+	// 设计决策: nil context 归一化为 context.Background()，
+	// 防止 context.WithCancelCause(nil) panic（Go 标准库会 panic）。
+	// 不改变 API 签名（保持与 errgroup.WithContext 对齐），因此选择静默归一化。
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	options := defaultOptions()
 	for _, opt := range opts {
+		// 设计决策: 静默跳过 nil Option，与 WithLogger(nil)/WithName("") 的防御性
+		// 行为一致。不返回错误以保持与 errgroup.WithContext 对齐的 API 签名。
+		if opt == nil {
+			continue
+		}
 		opt(options)
 	}
 
@@ -83,20 +98,27 @@ func NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context) {
 // 当 fn 返回非 nil 错误时，会触发所有其他 goroutine 的取消。
 func (g *Group) Go(fn func(ctx context.Context) error) {
 	g.eg.Go(func() error {
+		if fn == nil {
+			return ErrNilFunc
+		}
 		return fn(g.ctx)
 	})
 }
 
 // GoWithName 与 Go 相同，但会在日志中记录名称。
+// name 为空字符串时仍有效，但日志中会显示 service=""，建议传入有意义的名称。
 func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 	g.eg.Go(func() error {
+		if fn == nil {
+			return ErrNilFunc
+		}
 		g.opts.logger.Debug("service starting",
 			slog.String("group", g.opts.name),
 			slog.String("service", name),
 		)
 		err := fn(g.ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			g.opts.logger.Info("service exited with error",
+			g.opts.logger.Warn("service exited with error",
 				slog.String("group", g.opts.name),
 				slog.String("service", name),
 				slog.Any("error", err),
@@ -117,14 +139,22 @@ func (g *Group) GoWithName(name string, fn func(ctx context.Context) error) {
 // 如果错误是 context.Canceled，则优先返回 context.Cause ——
 // 这样 Cancel(cause) 或信号处理设置的退出原因不会丢失。
 // 如果没有显式原因（普通的 context 取消），返回 nil。
+//
+// 即使所有服务返回 nil，Cancel(cause) 设置的退出原因仍然会被返回。
+// 这确保调用方始终能基于退出原因做分类决策。
 func (g *Group) Wait() error {
-	g.opts.logger.Info("waiting for services",
+	// 设计决策: 释放 causeCtx 的 context 资源。CancelCauseFunc 是幂等的——
+	// 若已通过 Cancel() 或信号处理调用过则为空操作。defer 确保在所有
+	// cause 检查完成后才执行，不影响返回值语义。
+	defer g.cancel(nil)
+
+	g.opts.logger.Debug("waiting for services",
 		slog.String("group", g.opts.name),
 	)
 
 	err := g.eg.Wait()
 
-	g.opts.logger.Info("all services stopped",
+	g.opts.logger.Debug("all services stopped",
 		slog.String("group", g.opts.name),
 	)
 
@@ -143,6 +173,16 @@ func (g *Group) Wait() error {
 		// causeCtx 未被取消 → context.Canceled 来自服务内部，不过滤
 		return err
 	}
+
+	// 当所有服务返回 nil 时，仍需检查是否有显式 Cancel(cause)。
+	// 例如：Cancel(customErr) 后服务返回 nil 而非 ctx.Err()，
+	// errgroup.Wait() 返回 nil，但 cause 不应丢失。
+	if err == nil && g.causeCtx.Err() != nil {
+		if cause := context.Cause(g.causeCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+			return cause
+		}
+	}
+
 	return err
 }
 
@@ -150,6 +190,10 @@ func (g *Group) Wait() error {
 //
 // cause 会作为 context 的取消原因，Wait() 会通过 context.Cause
 // 返回该原因（而非 nil）。如果 cause 为 nil，Wait() 返回 nil。
+//
+// 注意：cause 不应包装 context.Canceled（例如 fmt.Errorf("...: %w", context.Canceled)），
+// 否则 Wait() 会将其视为普通取消而过滤掉。有语义的退出原因应使用独立错误类型
+// （如 SignalError、自定义业务错误）。
 //
 // 用于主动触发关闭，比如收到信号后。
 func (g *Group) Cancel(cause error) {
@@ -178,7 +222,10 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 	// 信号处理服务（可通过 WithoutSignalHandler 禁用）
 	if !g.opts.noSignalHandler {
 		signals := g.opts.signals
-		if signals == nil {
+		// 设计决策: 空切片与 nil 等价，均使用默认信号列表。
+		// signal.Notify(ch) 无参调用会订阅所有信号，这不是用户预期行为。
+		// 如需禁用信号处理，应使用 WithoutSignalHandler()。
+		if len(signals) == 0 {
 			signals = DefaultSignals()
 		}
 
@@ -227,6 +274,9 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 //	if errors.Is(err, xrun.ErrSignal) {
 //	    log.Println("received signal, shutting down")
 //	}
+//
+// 对于 HTTP 服务器，推荐使用 [HTTPServer] 辅助函数，
+// 它封装了完整的优雅关闭和错误传播逻辑。
 func Run(ctx context.Context, services ...func(ctx context.Context) error) error {
 	return runGroup(ctx, nil, func(g *Group) {
 		for _, svc := range services {
@@ -267,6 +317,10 @@ func (f ServiceFunc) Run(ctx context.Context) error {
 
 // RunServices 运行多个 Service，监听信号并协调关闭。
 //
+// 普通函数可通过 ServiceFunc 适配为 Service 接口：
+//
+//	svc := xrun.ServiceFunc(func(ctx context.Context) error { ... })
+//
 // 示例：
 //
 //	err := xrun.RunServices(ctx,
@@ -276,9 +330,7 @@ func (f ServiceFunc) Run(ctx context.Context) error {
 //	)
 func RunServices(ctx context.Context, services ...Service) error {
 	return runGroup(ctx, nil, func(g *Group) {
-		for _, svc := range services {
-			g.Go(svc.Run)
-		}
+		addServices(g, services)
 	})
 }
 
@@ -292,10 +344,19 @@ func RunServices(ctx context.Context, services ...Service) error {
 //	}, httpServer, grpcServer)
 func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Service) error {
 	return runGroup(ctx, opts, func(g *Group) {
-		for _, svc := range services {
-			g.Go(svc.Run)
-		}
+		addServices(g, services)
 	})
+}
+
+// addServices 将服务列表注册到 Group，nil service 返回 ErrNilService。
+func addServices(g *Group, services []Service) {
+	for _, svc := range services {
+		if svc == nil {
+			g.Go(func(ctx context.Context) error { return ErrNilService })
+			continue
+		}
+		g.Go(svc.Run)
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -304,45 +365,73 @@ func RunServicesWithOptions(ctx context.Context, opts []Option, services ...Serv
 
 // HTTPServer 将 http.Server 包装为支持优雅关闭的服务函数。
 //
-// 可选 opts 用于配置日志记录器（默认使用 slog.Default()）。
+// shutdownTimeout 为 0 或负数时表示无超时限制，Shutdown 将等待所有在途请求
+// 完成后才返回。如需禁用等待，请传入一个较短的超时值。
 //
 // 示例：
 //
 //	server := &http.Server{Addr: ":8080", Handler: mux}
 //	err := xrun.Run(ctx, xrun.HTTPServer(server, 10*time.Second))
-func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration, opts ...Option) func(ctx context.Context) error {
-	options := defaultOptions()
-	for _, opt := range opts {
-		opt(options)
-	}
-
+func HTTPServer(server HTTPServerInterface, shutdownTimeout time.Duration) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		if server == nil {
+			return ErrNilServer
+		}
 		// 用 buffered channel 传递 shutdown 结果
 		shutdownErrCh := make(chan error, 1)
+		// listenDone 用于通知 shutdown goroutine: ListenAndServe 已返回，
+		// 避免在外部关闭或启动失败场景下 goroutine 永久阻塞。
+		listenDone := make(chan struct{})
 
 		// 启动关闭监听
 		go func() {
-			<-ctx.Done()
-			shutdownCtx := context.Background()
-			if shutdownTimeout > 0 {
-				var cancel context.CancelFunc
-				shutdownCtx, cancel = context.WithTimeout(shutdownCtx, shutdownTimeout)
-				defer cancel()
+			select {
+			case <-ctx.Done():
+				// 使用 WithoutCancel 派生 shutdown 专用 context：
+				// 既保留父 ctx 的请求级 value（trace id 等），又不继承已触发的取消信号，
+				// 让 server.Shutdown 有完整的 shutdownTimeout 时间窗口完成清理。
+				shutdownCtx := context.WithoutCancel(ctx)
+				if shutdownTimeout > 0 {
+					var cancel context.CancelFunc
+					shutdownCtx, cancel = context.WithTimeout(shutdownCtx, shutdownTimeout)
+					defer cancel()
+				}
+				shutdownErrCh <- server.Shutdown(shutdownCtx)
+			case <-listenDone:
+				// ListenAndServe 已返回（外部关闭或启动失败），无需 Shutdown。
 			}
-			shutdownErrCh <- server.Shutdown(shutdownCtx)
 		}()
 
 		// 启动服务器
 		err := server.ListenAndServe()
-		if err != nil && errors.Is(err, http.ErrServerClosed) {
-			// 正常关闭——等待 shutdown 结果并传播错误（如有）
-			return <-shutdownErrCh
+		if errors.Is(err, http.ErrServerClosed) {
+			// 设计决策: 通过三路 select 区分关闭来源：
+			//   1. shutdownErrCh 有值 → ctx 驱动的关闭已完成，返回 shutdown 结果
+			//   2. ctx.Done() 已关闭 → ctx 驱动的关闭进行中，等待 shutdown 结果
+			//   3. default → 外部直接调用 server.Shutdown/Close，ctx 未取消，
+			//      通知 goroutine 退出并返回 nil
+			select {
+			case shutdownErr := <-shutdownErrCh:
+				return shutdownErr
+			case <-ctx.Done():
+				return <-shutdownErrCh
+			default:
+				close(listenDone)
+				return nil
+			}
 		}
+		// 非 ErrServerClosed 错误（如端口占用），通知 goroutine 退出。
+		close(listenDone)
 		return err
 	}
 }
 
-// HTTPServerInterface 定义 HTTP 服务器接口（用于测试）。
+// HTTPServerInterface 定义 HTTP 服务器接口。
+//
+// 设计决策: 接口名使用 Interface 后缀是因为 HTTPServer 已被同名便捷函数占用。
+// 重命名函数为 ServeHTTP 会与 http.Handler.ServeHTTP 混淆，权衡后保持现状。
+//
+// *http.Server 天然满足此接口。导出此接口以支持自定义服务器实现和测试 mock。
 type HTTPServerInterface interface {
 	ListenAndServe() error
 	Shutdown(ctx context.Context) error

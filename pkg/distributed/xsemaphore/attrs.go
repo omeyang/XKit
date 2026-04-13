@@ -63,9 +63,10 @@ func AttrAvailable(available int) slog.Attr {
 }
 
 // AttrError 返回错误属性
+// 当 err 为 nil 时返回零值 slog.Attr，会被 slog handler 自动忽略
 func AttrError(err error) slog.Attr {
 	if err == nil {
-		return slog.String(attrKeyError, "")
+		return slog.Attr{}
 	}
 	return slog.String(attrKeyError, err.Error())
 }

@@ -11,8 +11,9 @@ func BenchmarkIdentityAttrs(b *testing.B) {
 	ctx, _ := xctx.WithPlatformID(context.Background(), "platform-123")
 	ctx, _ = xctx.WithTenantID(ctx, "tenant-456")
 	ctx, _ = xctx.WithTenantName(ctx, "租户名称")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.IdentityAttrs(ctx)
 	}
 }
@@ -21,8 +22,9 @@ func BenchmarkTraceAttrs(b *testing.B) {
 	ctx, _ := xctx.WithTraceID(context.Background(), "trace-123")
 	ctx, _ = xctx.WithSpanID(ctx, "span-456")
 	ctx, _ = xctx.WithRequestID(ctx, "req-789")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.TraceAttrs(ctx)
 	}
 }
@@ -38,8 +40,9 @@ func BenchmarkLogAttrs(b *testing.B) {
 	if err != nil {
 		b.Fatalf("setup WithDeploymentType failed: %v", err)
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err = xctx.LogAttrs(ctx)
 	}
 	_ = err
@@ -48,8 +51,9 @@ func BenchmarkLogAttrs(b *testing.B) {
 func BenchmarkLogAttrs_Empty(b *testing.B) {
 	ctx := context.Background()
 	var err error
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err = xctx.LogAttrs(ctx)
 	}
 	_ = err

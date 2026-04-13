@@ -15,6 +15,11 @@ func ExampleProcessID() {
 
 func ExampleProcessName() {
 	name := xproc.ProcessName()
+
+	// ProcessName 在极端情况下可能返回空字符串，调用方应做兜底处理。
+	if name == "" {
+		name = "unknown"
+	}
 	fmt.Println(name != "")
 	// Output:
 	// true

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -52,6 +53,14 @@ func setupMongo(t *testing.T) (*mongo.Client, func()) {
 }
 
 func startMongoContainer(t *testing.T) string {
+	t.Helper()
+
+	// 探测 Docker 可用性，避免 testcontainers 内部 panic
+	// （例如 $XDG_RUNTIME_DIR 检查失败等环境问题）
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not found in PATH, skipping integration test")
+	}
+
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{
 		Image:        "mongo:7.0",
@@ -364,7 +373,7 @@ func TestMongo_FindPage_Integration(t *testing.T) {
 // 批量写入测试
 // =============================================================================
 
-func TestMongo_BulkWrite_Integration(t *testing.T) {
+func TestMongo_BulkInsert_Integration(t *testing.T) {
 	client, cleanup := setupMongo(t)
 	defer cleanup()
 
@@ -387,7 +396,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			docs[i] = bson.M{"index": i, "name": fmt.Sprintf("bulk-%d", i)}
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), result.InsertedCount)
 		assert.Empty(t, result.Errors)
@@ -406,7 +415,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			docs[i] = bson.M{"index": i}
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 100})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{BatchSize: 100})
 		require.NoError(t, err)
 		assert.Equal(t, int64(250), result.InsertedCount)
 	})
@@ -423,7 +432,7 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 		}
 
 		start := time.Now()
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{BatchSize: 1000})
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{BatchSize: 1000})
 		elapsed := time.Since(start)
 
 		require.NoError(t, err)
@@ -448,15 +457,20 @@ func TestMongo_BulkWrite_Integration(t *testing.T) {
 			bson.M{"unique_field": "c"},
 		}
 
-		result, err := wrapper.BulkWrite(ctx, coll, docs, BulkOptions{
+		result, err := wrapper.BulkInsert(ctx, coll, docs, BulkOptions{
 			Ordered: false, // 无序，继续执行
 		})
-		require.NoError(t, err)
+		// 部分失败：MongoDB InsertMany 对重复键返回 BulkWriteException，
+		// xmongo 将其包装为错误并同时保留部分成功的计数。
+		// 与 BulkResult 文档契约一致：即使 err != nil，result 仍包含有效数据。
+		require.Error(t, err)
+		require.NotNil(t, result)
 		assert.Equal(t, int64(3), result.InsertedCount) // 3 条成功
+		assert.NotEmpty(t, result.Errors)
 	})
 
 	t.Run("空文档列表", func(t *testing.T) {
-		_, err := wrapper.BulkWrite(ctx, coll, []any{}, BulkOptions{})
+		_, err := wrapper.BulkInsert(ctx, coll, []any{}, BulkOptions{})
 		assert.ErrorIs(t, err, ErrEmptyDocs)
 	})
 }
@@ -777,9 +791,8 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 		var errorCount atomic.Int64
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func(page int64) {
-				defer wg.Done()
+			page := int64(i)
+			wg.Go(func() {
 				_, err := wrapper.FindPage(ctx, coll, bson.M{}, PageOptions{
 					Page:     page%10 + 1,
 					PageSize: 10,
@@ -787,7 +800,7 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 				if err != nil {
 					errorCount.Add(1)
 				}
-			}(int64(i))
+			})
 		}
 
 		wg.Wait()
@@ -806,18 +819,17 @@ func TestMongo_ConcurrentAccess_Integration(t *testing.T) {
 		var successCount atomic.Int64
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func(id int) {
-				defer wg.Done()
+			id := i
+			wg.Go(func() {
 				docs := make([]any, 10)
 				for j := 0; j < 10; j++ {
 					docs[j] = bson.M{"worker": id, "item": j}
 				}
-				result, err := wrapper.BulkWrite(ctx, writeColl, docs, BulkOptions{})
+				result, err := wrapper.BulkInsert(ctx, writeColl, docs, BulkOptions{})
 				if err == nil {
 					successCount.Add(result.InsertedCount)
 				}
-			}(i)
+			})
 		}
 
 		wg.Wait()

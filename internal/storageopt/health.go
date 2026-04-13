@@ -20,6 +20,9 @@ const (
 //	ctx, cancel := storageopt.HealthContext(ctx, timeout)
 //	defer cancel()
 func HealthContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if timeout <= 0 {
 		return ctx, func() {}
 	}

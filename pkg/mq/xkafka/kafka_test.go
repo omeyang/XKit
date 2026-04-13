@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/omeyang/xkit/pkg/observability/xmetrics"
 
 	"github.com/stretchr/testify/assert"
@@ -32,10 +33,19 @@ func TestNewConsumer_NilConfig(t *testing.T) {
 }
 
 func TestNewConsumer_EmptyTopics(t *testing.T) {
-	// 注意：由于我们使用 nil config 测试 topics 验证，
-	// 实际上 NilConfig 错误会先返回
-	// 这个测试验证错误定义正确
-	assert.NotNil(t, ErrEmptyTopics)
+	// 使用有效 config 测试空 topics 验证
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	consumer, err := NewConsumer(config, nil)
+	assert.Nil(t, consumer)
+	assert.ErrorIs(t, err, ErrEmptyTopics)
+
+	consumer, err = NewConsumer(config, []string{})
+	assert.Nil(t, consumer)
+	assert.ErrorIs(t, err, ErrEmptyTopics)
 }
 
 // =============================================================================
@@ -205,6 +215,40 @@ func TestWithConsumerHealthTimeout_Zero(t *testing.T) {
 }
 
 // =============================================================================
+// cloneConfigMap Tests
+// =============================================================================
+
+func TestCloneConfigMap(t *testing.T) {
+	original := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	cloned, err := cloneConfigMap(original)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, cloned)
+
+	// 验证值已复制
+	v, err := cloned.Get("bootstrap.servers", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "localhost:9092", v)
+
+	v, err = cloned.Get("group.id", "")
+	assert.NoError(t, err)
+	assert.Equal(t, "test-group", v)
+}
+
+func TestCloneConfigMap_Empty(t *testing.T) {
+	original := &kafka.ConfigMap{}
+
+	cloned, err := cloneConfigMap(original)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, cloned)
+}
+
+// =============================================================================
 // Stats Tests
 // =============================================================================
 
@@ -224,4 +268,37 @@ func TestConsumerStats_ZeroValues(t *testing.T) {
 	assert.Zero(t, stats.BytesConsumed)
 	assert.Zero(t, stats.Errors)
 	assert.Zero(t, stats.Lag)
+}
+
+// =============================================================================
+// extractGroupID Tests
+// =============================================================================
+
+func TestExtractGroupID_WithGroupID(t *testing.T) {
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+		"group.id":          "test-group",
+	}
+
+	groupID := extractGroupID(config)
+
+	assert.Equal(t, "test-group", groupID)
+}
+
+func TestExtractGroupID_NoGroupID(t *testing.T) {
+	config := &kafka.ConfigMap{
+		"bootstrap.servers": "localhost:9092",
+	}
+
+	groupID := extractGroupID(config)
+
+	assert.Empty(t, groupID)
+}
+
+func TestExtractGroupID_EmptyConfig(t *testing.T) {
+	config := &kafka.ConfigMap{}
+
+	groupID := extractGroupID(config)
+
+	assert.Empty(t, groupID)
 }

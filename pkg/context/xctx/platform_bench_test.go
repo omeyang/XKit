@@ -9,33 +9,37 @@ import (
 
 func BenchmarkWithHasParent(b *testing.B) {
 	ctx := context.Background()
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.WithHasParent(ctx, true)
 	}
 }
 
 func BenchmarkHasParent(b *testing.B) {
 	ctx, _ := xctx.WithHasParent(context.Background(), true)
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.HasParent(ctx)
 	}
 }
 
-func BenchmarkMustHasParent(b *testing.B) {
+func BenchmarkHasParentOrDefault(b *testing.B) {
 	ctx, _ := xctx.WithHasParent(context.Background(), true)
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = xctx.MustHasParent(ctx)
+	for b.Loop() {
+		_ = xctx.HasParentOrDefault(ctx)
 	}
 }
 
 func BenchmarkRequireHasParent(b *testing.B) {
 	ctx, _ := xctx.WithHasParent(context.Background(), true)
 	var err error
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err = xctx.RequireHasParent(ctx)
 	}
 	_ = err
@@ -43,16 +47,18 @@ func BenchmarkRequireHasParent(b *testing.B) {
 
 func BenchmarkWithUnclassRegionID(b *testing.B) {
 	ctx := context.Background()
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.WithUnclassRegionID(ctx, "region-001")
 	}
 }
 
 func BenchmarkUnclassRegionID(b *testing.B) {
 	ctx, _ := xctx.WithUnclassRegionID(context.Background(), "region-001")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.UnclassRegionID(ctx)
 	}
 }
@@ -60,8 +66,9 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 func BenchmarkGetPlatform(b *testing.B) {
 	ctx, _ := xctx.WithHasParent(context.Background(), true)
 	ctx, _ = xctx.WithUnclassRegionID(ctx, "region-001")
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = xctx.GetPlatform(ctx)
 	}
 }
@@ -72,8 +79,9 @@ func BenchmarkWithPlatform(b *testing.B) {
 		HasParent:       true,
 		UnclassRegionID: "region-001",
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = xctx.WithPlatform(ctx, p)
 	}
 }

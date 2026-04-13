@@ -109,6 +109,16 @@ func TestTopicFromConsumerOptions_MultipleTopics(t *testing.T) {
 	assert.Equal(t, "multi", topic)
 }
 
+func TestTopicFromConsumerOptions_TopicsPattern(t *testing.T) {
+	opts := pulsar.ConsumerOptions{
+		TopicsPattern: "persistent://public/default/order-.*",
+	}
+
+	topic := topicFromConsumerOptions(opts)
+
+	assert.Equal(t, "pattern", topic)
+}
+
 func TestTopicFromConsumerOptions_Empty(t *testing.T) {
 	opts := pulsar.ConsumerOptions{}
 
@@ -129,7 +139,7 @@ func TestTopicFromConsumerOptions_TopicTakesPrecedence(t *testing.T) {
 }
 
 // =============================================================================
-// mockMessage - 实现 pulsar.Message 接口用于测试
+// mockMessage - 实现 pulsar.Message 接口用于测试（共享）
 // =============================================================================
 
 type mockMessage struct {

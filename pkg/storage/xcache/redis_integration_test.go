@@ -80,7 +80,7 @@ func TestRedis_BasicOperations_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -253,7 +253,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -286,7 +286,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 		// 创建第二个 cache 实例尝试获取同一个锁
 		cache2, err := NewRedis(client)
 		require.NoError(t, err)
-		defer cache2.Close()
+		defer cache2.Close(context.Background())
 
 		// 第二个锁应该失败
 		_, err = cache2.Lock(ctx, "test:lock:mutex", 10*time.Second)
@@ -299,7 +299,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 			WithLockRetry(50*time.Millisecond, 3),
 		)
 		require.NoError(t, err)
-		defer cacheWithRetry.Close()
+		defer cacheWithRetry.Close(context.Background())
 
 		// 先获取锁
 		unlock1, err := cache.Lock(ctx, "test:lock:retry", 200*time.Millisecond)
@@ -345,7 +345,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 			WithLockKeyPrefix("myapp:lock:"),
 		)
 		require.NoError(t, err)
-		defer cacheWithPrefix.Close()
+		defer cacheWithPrefix.Close(context.Background())
 
 		unlock, err := cacheWithPrefix.Lock(ctx, "test", 10*time.Second)
 		require.NoError(t, err)
@@ -364,11 +364,9 @@ func TestRedis_Lock_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				c, _ := NewRedis(client)
-				defer c.Close()
+				defer c.Close(context.Background())
 
 				unlock, err := c.Lock(ctx, "test:lock:concurrent", 5*time.Second)
 				if err == nil {
@@ -376,7 +374,7 @@ func TestRedis_Lock_Integration(t *testing.T) {
 					time.Sleep(50 * time.Millisecond)
 					unlock(ctx)
 				}
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -395,12 +393,13 @@ func TestLoader_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
 	t.Run("Load 基本流程", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -422,7 +421,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Load TTL 过期后重新加载", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -446,7 +446,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Singleflight 并发加载", func(t *testing.T) {
-		loader := NewLoader(cache, WithSingleflight(true))
+		loader, err := NewLoader(cache, WithSingleflight(true))
+		require.NoError(t, err)
 
 		// 清理 key 确保测试干净
 		client.Del(ctx, "loader:singleflight")
@@ -464,11 +465,10 @@ func TestLoader_Integration(t *testing.T) {
 		errs := make([]error, goroutines)
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
+			idx := i
+			wg.Go(func() {
 				results[idx], errs[idx] = loader.Load(ctx, "loader:singleflight", loadFn, time.Minute)
-			}(i)
+			})
 		}
 
 		wg.Wait()
@@ -484,7 +484,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("Load 加载错误处理", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadErr := errors.New("load failed")
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -492,7 +493,7 @@ func TestLoader_Integration(t *testing.T) {
 		}
 
 		// 应该返回加载错误
-		_, err := loader.Load(ctx, "loader:error", loadFn, time.Minute)
+		_, err = loader.Load(ctx, "loader:error", loadFn, time.Minute)
 		assert.ErrorIs(t, err, loadErr)
 
 		// 缓存中不应该有值
@@ -502,7 +503,8 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("LoadHash 基本流程", func(t *testing.T) {
-		loader := NewLoader(cache)
+		loader, err := NewLoader(cache)
+		require.NoError(t, err)
 
 		loadCount := 0
 		loadFn := func(ctx context.Context) ([]byte, error) {
@@ -530,10 +532,12 @@ func TestLoader_Integration(t *testing.T) {
 	})
 
 	t.Run("分布式锁保护加载", func(t *testing.T) {
-		loader := NewLoader(cache,
+		loader, err := NewLoader(cache,
 			WithDistributedLock(true),
 			WithDistributedLockTTL(5*time.Second),
+			WithLoadTimeout(0),
 		)
+		require.NoError(t, err)
 
 		// 清理 key
 		client.Del(ctx, "loader:distlock")
@@ -549,12 +553,10 @@ func TestLoader_Integration(t *testing.T) {
 		var wg sync.WaitGroup
 
 		for i := 0; i < goroutines; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, err := loader.Load(ctx, "loader:distlock", loadFn, time.Minute)
 				assert.NoError(t, err)
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -574,7 +576,7 @@ func TestRedis_LargeData_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 
@@ -647,7 +649,7 @@ func TestRedis_ErrorHandling_Integration(t *testing.T) {
 
 	cache, err := NewRedis(client)
 	require.NoError(t, err)
-	defer cache.Close()
+	defer cache.Close(context.Background())
 
 	ctx := context.Background()
 

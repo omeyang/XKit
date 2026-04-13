@@ -36,5 +36,8 @@ func topicFromConsumerOptions(opts pulsar.ConsumerOptions) string {
 	if len(opts.Topics) > 1 {
 		return "multi"
 	}
+	if opts.TopicsPattern != "" {
+		return "pattern"
+	}
 	return ""
 }

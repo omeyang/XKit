@@ -7,6 +7,34 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// errFailedByPolicy 当 SuccessPolicy 判定 nil error 为失败时使用的占位错误。
+// 这是一个极端情况：操作未返回错误，但 SuccessPolicy 仍判定为失败。
+var errFailedByPolicy = errors.New("xbreaker: operation marked as failed by success policy")
+
+// 参数校验错误
+var (
+	// ErrNilBreaker 传入的 Breaker 为 nil
+	ErrNilBreaker = errors.New("xbreaker: breaker cannot be nil")
+
+	// ErrNilRetryer 传入的 Retryer 为 nil
+	ErrNilRetryer = errors.New("xbreaker: retryer cannot be nil")
+
+	// ErrNilBreakerRetryer 传入的 BreakerRetryer 为 nil
+	ErrNilBreakerRetryer = errors.New("xbreaker: breaker-retryer cannot be nil")
+
+	// ErrNilRetryThenBreak 传入的 RetryThenBreak 为 nil
+	ErrNilRetryThenBreak = errors.New("xbreaker: retry-then-break cannot be nil")
+
+	// ErrNilContext 传入的 context 为 nil
+	ErrNilContext = errors.New("xbreaker: context cannot be nil")
+
+	// ErrNilFunc 传入的操作函数为 nil
+	ErrNilFunc = errors.New("xbreaker: function cannot be nil")
+
+	// ErrNilManagedBreaker 传入的 ManagedBreaker 为 nil
+	ErrNilManagedBreaker = errors.New("xbreaker: managed breaker cannot be nil")
+)
+
 // BreakerError 熔断器错误包装类型
 //
 // 包装 gobreaker 的错误（ErrOpenState、ErrTooManyRequests），
@@ -14,6 +42,9 @@ import (
 //
 // 这解决了熔断器打开时，重试器仍然会继续退避重试的问题。
 // 熔断器错误应该立即返回（快速失败），而不是继续重试。
+// 设计决策: Err/Name/State 保留为导出字段，便于调用方在日志和监控中直接读取。
+// 与 xretry 的未导出字段风格不同，是因为 BreakerError 通常用于外部诊断（日志/告警），
+// 而 xretry 的错误主要用于内部错误链传递。
 type BreakerError struct {
 	Err   error  // 原始错误（ErrOpenState 或 ErrTooManyRequests）
 	Name  string // 熔断器名称（可选，用于日志）
@@ -61,7 +92,12 @@ func newBreakerError(err error, name string, state State) *BreakerError {
 //
 // 如果错误已经是 BreakerError，则保留原始错误不再包装，
 // 以保持正确的错误来源信息。
-func wrapBreakerError(err error, name string, state State) error {
+//
+// 设计决策: 从错误类型推导状态（ErrOpenState→StateOpen, ErrTooManyRequests→StateHalfOpen），
+// 而非依赖调用方传入的实时 State() 查询。这避免了 TOCTOU 竞态——
+// cb.Execute 返回后到调用 State() 之间，其他 goroutine 可能触发状态变化，
+// 导致 BreakerError.State 字段与错误发生时的实际状态不一致。
+func wrapBreakerError(err error, name string) error {
 	if err == nil {
 		return nil
 	}
@@ -75,8 +111,11 @@ func wrapBreakerError(err error, name string, state State) error {
 
 	// 只检查直接的 sentinel error，不使用 errors.Is
 	// 这避免了将错误链中的熔断器错误错误地归因到当前熔断器
-	if err == gobreaker.ErrOpenState || err == gobreaker.ErrTooManyRequests {
-		return newBreakerError(err, name, state)
+	if err == gobreaker.ErrOpenState {
+		return newBreakerError(err, name, StateOpen)
+	}
+	if err == gobreaker.ErrTooManyRequests {
+		return newBreakerError(err, name, StateHalfOpen)
 	}
 
 	return err
@@ -132,18 +171,4 @@ func IsTooManyRequests(err error) bool {
 //	}
 func IsBreakerError(err error) bool {
 	return IsOpen(err) || IsTooManyRequests(err)
-}
-
-// IsRecoverable 检查错误是否可恢复（可重试）
-//
-// 熔断器相关错误通常是可恢复的，因为它们只是暂时性的保护措施。
-// 业务逻辑可以根据此函数决定是否进行重试。
-//
-// 注意：这与 xretry.IsRetryable 的语义不同。
-// xretry.IsRetryable 判断的是业务错误是否应该重试，
-// 而 IsRecoverable 判断的是熔断器错误是否可恢复。
-func IsRecoverable(err error) bool {
-	// 熔断器错误通常是可恢复的
-	// 但需要等待一段时间后重试
-	return IsBreakerError(err)
 }

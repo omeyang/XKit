@@ -35,8 +35,22 @@ var (
 	ErrConnectionClosed = errors.New("xdbg: connection closed")
 
 	// ErrOutputTruncated 表示输出被截断。
+	// 设计决策: 此错误供客户端代码使用（如 xdbgctl 判断响应是否被截断），
+	// 服务端通过 Response.Truncated 布尔字段传递截断状态，不直接使用此错误。
 	ErrOutputTruncated = errors.New("xdbg: output truncated")
 
 	// ErrInvalidState 表示服务器状态无效，无法执行此操作。
 	ErrInvalidState = errors.New("xdbg: invalid server state for this operation")
+
+	// ErrNilContext 表示传入的 context 为 nil。
+	ErrNilContext = errors.New("xdbg: context must not be nil")
+
+	// ErrEmptyCommandName 表示命令名不能为空。
+	ErrEmptyCommandName = errors.New("xdbg: command name must not be empty")
+
+	// ErrNilCommandFunc 表示命令函数不能为 nil。
+	ErrNilCommandFunc = errors.New("xdbg: command function must not be nil")
+
+	// ErrNilCommand 表示命令不能为 nil。
+	ErrNilCommand = errors.New("xdbg: command must not be nil")
 )

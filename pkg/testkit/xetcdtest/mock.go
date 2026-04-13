@@ -128,6 +128,12 @@ func tryStart() (_ *Mock, retErr error) {
 
 	select {
 	case <-e.Server.ReadyNotify():
+	case err := <-e.Err():
+		// embed.Etcd 在 ready 前异步退出（如后台 WAL/监听失败），立即清理并返回错误，
+		// 避免白等 startTimeout。
+		e.Close()
+		removeDir(dir)
+		return nil, fmt.Errorf("xetcdtest: etcd async error before ready: %w", err)
 	case <-time.After(startTimeout):
 		e.Close()
 		removeDir(dir)

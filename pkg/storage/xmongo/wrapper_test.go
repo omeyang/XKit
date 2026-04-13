@@ -1137,7 +1137,7 @@ func TestWrapper_ExecuteSingleBatch_UnorderedContextCancel(t *testing.T) {
 	cancel()
 
 	insertOpts := options.InsertMany().SetOrdered(false)
-	count, err, shouldStop := w.executeSingleBatch(ctx, mock, []any{bson.M{"a": 1}}, insertOpts, false)
+	count, err, shouldStop := w.executeSingleBatch(ctx, mock, []any{bson.M{"a": 1}}, insertOpts, false, 0, 0)
 	assert.Equal(t, int64(0), count)
 	assert.Error(t, err)
 	assert.True(t, shouldStop)

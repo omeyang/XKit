@@ -87,6 +87,20 @@ func TestClose_IsIdempotent(t *testing.T) {
 	m.Close() // 第二次 Close 不应 panic
 }
 
+func TestAddr_AfterCloseNoPanic(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := m.Addr()
+	m.Close()
+	// miniredis.Close 会将内部 srv 置 nil；Addr 必须使用缓存，不能 panic。
+	if got := m.Addr(); got != want {
+		t.Errorf("Addr after Close = %q, want %q", got, want)
+	}
+}
+
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {

@@ -52,6 +52,12 @@ const (
 	// 防止调用方传入超大 PageSize 导致 cursor.All 一次性载入大量数据引发 OOM。
 	// 此值对外导出，便于调用方在参数校验中引用。
 	MaxPageSize int64 = 10000
+
+	// MaxSkip 分页查询 skip 上限。
+	// 防止 Page*PageSize 过大导致 MongoDB 服务端扫描/丢弃海量文档，
+	// 拖垮连接池和服务端 CPU（超时仅能兜底失败，无法阻止昂贵请求到达服务端）。
+	// 超过此值时返回 ErrSkipTooLarge，调用方应改用游标分页（基于 _id 或 created_at seek）。
+	MaxSkip int64 = 1_000_000
 )
 
 // Client 返回底层 MongoDB 客户端。
@@ -235,6 +241,11 @@ func validatePageOptions(opts PageOptions) (int64, error) {
 	skip, err := storageopt.ValidatePagination(opts.Page, opts.PageSize)
 	if err != nil {
 		return 0, convertPaginationError(err)
+	}
+	// 设计决策: 拒绝超大 skip 查询。大 skip 会让 MongoDB 服务端扫描/丢弃大量文档，
+	// 即使兜底超时命中也已造成服务端资源浪费（且可能堆积慢查询）。调用方应改用游标分页。
+	if skip > MaxSkip {
+		return 0, ErrSkipTooLarge
 	}
 	return skip, nil
 }
@@ -431,16 +442,21 @@ func (w *mongoWrapper) executeBatches(ctx context.Context, coll collectionOperat
 
 	// 分批插入
 	for i := 0; i < len(docs); i += batchSize {
+		batchIdx := i / batchSize
 		// 每批次开始前检查 context 是否已取消，避免无效工作
 		if err := ctx.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("context canceled before batch %d: %w", i/batchSize, err))
+			end := min(i+batchSize, len(docs))
+			errs = append(errs, &BulkBatchError{
+				BatchIndex: batchIdx, BatchOffset: i, BatchSize: end - i,
+				Err: fmt.Errorf("context canceled before batch: %w", err),
+			})
 			break
 		}
 
 		end := min(i+batchSize, len(docs))
 		batch := docs[i:end]
 
-		count, batchErr, shouldStop := w.executeSingleBatch(ctx, coll, batch, insertOpts, ordered)
+		count, batchErr, shouldStop := w.executeSingleBatch(ctx, coll, batch, insertOpts, ordered, batchIdx, i)
 		insertedCount += count
 		if batchErr != nil {
 			errs = append(errs, batchErr)
@@ -454,7 +470,9 @@ func (w *mongoWrapper) executeBatches(ctx context.Context, coll collectionOperat
 }
 
 // executeSingleBatch 执行单个批次的插入，返回 (插入数量, 错误, 是否应停止)。
-func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOperations, batch []any, insertOpts *options.InsertManyOptionsBuilder, ordered bool) (int64, error, bool) {
+// batchIdx 为批次序号，batchOffset 为本批在原始 docs 中的起始下标；
+// 错误被包装为 *BulkBatchError，调用方可通过 errors.As 获取局部 WriteError.Index 对应的全局位置。
+func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOperations, batch []any, insertOpts *options.InsertManyOptionsBuilder, ordered bool, batchIdx, batchOffset int) (int64, error, bool) {
 	result, err := coll.InsertMany(ctx, batch, insertOpts)
 	if err == nil {
 		return int64(len(result.InsertedIDs)), nil, false
@@ -466,7 +484,9 @@ func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOp
 		insertedCount = int64(len(result.InsertedIDs))
 	}
 
-	wrappedErr := fmt.Errorf("xmongo bulk_insert: %w", err)
+	wrappedErr := &BulkBatchError{
+		BatchIndex: batchIdx, BatchOffset: batchOffset, BatchSize: len(batch), Err: err,
+	}
 
 	if ordered {
 		// 有序模式下遇到错误停止
@@ -475,7 +495,10 @@ func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOp
 
 	// 无序模式下检查 context，避免继续无效工作
 	if ctx.Err() != nil {
-		return insertedCount, fmt.Errorf("xmongo bulk_insert context canceled: %w", ctx.Err()), true
+		return insertedCount, &BulkBatchError{
+			BatchIndex: batchIdx, BatchOffset: batchOffset, BatchSize: len(batch),
+			Err: fmt.Errorf("context canceled: %w", ctx.Err()),
+		}, true
 	}
 
 	return insertedCount, wrappedErr, false

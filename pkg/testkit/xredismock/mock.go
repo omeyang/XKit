@@ -15,6 +15,8 @@ import (
 type Mock struct {
 	server *miniredis.Miniredis
 	client *redis.Client
+	// addr 在 New 时缓存，避免 Close 后访问 miniredis 内部 srv（置 nil）导致 panic。
+	addr string
 
 	mu     sync.Mutex
 	closed bool
@@ -26,12 +28,13 @@ func New() (*Mock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xredismock: start miniredis: %w", err)
 	}
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	return &Mock{server: server, client: client}, nil
+	addr := server.Addr()
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	return &Mock{server: server, client: client, addr: addr}, nil
 }
 
-// Addr 返回 mock 监听地址。
-func (m *Mock) Addr() string { return m.server.Addr() }
+// Addr 返回 mock 监听地址。Close 后仍可安全调用，返回原监听地址字符串。
+func (m *Mock) Addr() string { return m.addr }
 
 // Client 返回连接到 mock 的 *redis.Client。
 func (m *Mock) Client() *redis.Client { return m.client }

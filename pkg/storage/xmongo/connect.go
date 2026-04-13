@@ -22,6 +22,12 @@ const cleanupDisconnectTimeout = 5 * time.Second
 // opts 参数仅控制 xmongo 增值功能（慢查询检测、超时兜底、OTel 等），
 // 与 New() 的 opts 完全一致。
 //
+// ⚠️ 调用顺序限制: configFn 在 ApplyURI(uri) 之后执行，因此 configFn 中的 setter
+// 会覆盖 URI 中的同名配置。但 mongo-driver v2 中 ApplyURI 会消费部分 pre-URI 状态
+// （例如 SRVMaxHosts、SRVServiceName），此类选项必须在 ApplyURI 之前设置才能生效。
+// 如需这些 pre-URI 选项，请直接使用 options.Client() + mongo.Connect() + xmongo.New()
+// 三段式构造。
+//
 // 用法:
 //
 //	m, err := xmongo.Connect(ctx, "mongodb://localhost:27017",

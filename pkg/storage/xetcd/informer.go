@@ -119,6 +119,10 @@ func (inf *Informer) Run(ctx context.Context) error {
 }
 
 // list 全量拉取前缀下所有 key-value 并替换 Store；返回 revision。
+// 设计决策：re-list 需向 Handler 保证增量契约——
+// 对 List 快照中不再存在（即 Watch 断连期间被删除）的旧 key 发 Delete 事件，
+// 避免下游状态型消费者漏删。新增/变更的 key 发 Put（值未变的 key 仍发 Put，
+// 因为无法可靠判定"是否 re-list 期间发生过短暂变更又还原"，保守重放是安全默认）。
 func (inf *Informer) list(ctx context.Context) (int64, error) {
 	resp, err := inf.client.Get(ctx, inf.prefix, clientv3.WithPrefix())
 	if err != nil {
@@ -129,9 +133,25 @@ func (inf *Informer) list(ctx context.Context) (int64, error) {
 		items[string(kv.Key)] = kv.Value
 	}
 	rev := resp.Header.Revision
+
+	// 在 replace 前捕获旧快照，用于 diff 出 Delete 事件（re-list 语义修正）。
+	// 首次 List 时 prev 为空，不会发出 Delete。
+	var missing []string
+	if inf.handler != nil {
+		prev := inf.store.List()
+		for k := range prev {
+			if _, ok := items[k]; !ok {
+				missing = append(missing, k)
+			}
+		}
+	}
+
 	inf.store.replace(items, rev)
 
 	if inf.handler != nil {
+		for _, k := range missing {
+			inf.safeHandle(ctx, InformerEventDelete, k, nil)
+		}
 		for k, v := range items {
 			inf.safeHandle(ctx, InformerEventPut, k, v)
 		}
@@ -139,6 +159,7 @@ func (inf *Informer) list(ctx context.Context) (int64, error) {
 	inf.logger.Info(ctx, "xetcd informer listed",
 		slog.String("prefix", inf.prefix),
 		slog.Int("count", len(items)),
+		slog.Int("deleted_since_last_list", len(missing)),
 		slog.Int64("rev", rev))
 	return rev, nil
 }

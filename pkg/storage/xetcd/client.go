@@ -23,6 +23,28 @@ type Client struct {
 	closed    atomic.Bool
 	closeCh   chan struct{}  // 关闭信号通道，用于通知 Watch goroutine 退出
 	watchWg   sync.WaitGroup // 追踪活跃的 Watch goroutine，确保 Close 时等待退出
+	// lifecycleMu 保护 "检查 closed + watchWg.Add(Go)" 临界区，
+	// 防止 Close() 正在执行 watchWg.Wait() 时并发 Watch 触发 WaitGroup panic（Add/Wait 竞态）
+	// 或让已关闭的 Client 泄漏新的 watch goroutine。
+	// 读锁：Watch/WatchWithRetry 注册 goroutine；写锁：Close 关闭窗口。
+	lifecycleMu sync.RWMutex
+}
+
+// registerWatchGoroutine 在生命周期锁保护下注册并启动 watch goroutine。
+// 返回 error 表示 Client 已关闭，调用方应停止 Watch 创建流程。
+// 设计决策：读锁允许多个 Watch 并发注册；Close 通过写锁确保注册结束后才 Wait。
+func (c *Client) registerWatchGoroutine(fn func()) error {
+	c.lifecycleMu.RLock()
+	defer c.lifecycleMu.RUnlock()
+	if c.isClosed() {
+		return ErrClientClosed
+	}
+	c.watchWg.Add(1)
+	go func() {
+		defer c.watchWg.Done()
+		fn()
+	}()
+	return nil
 }
 
 // NewClient 创建 etcd 客户端。
@@ -138,12 +160,17 @@ func (c *Client) RawClient() *clientv3.Client {
 // 未来可用于控制关闭超时（如等待 Watch goroutine 退出）。
 // nil ctx 不会导致错误，内部会替换为 context.Background()。
 func (c *Client) Close(_ context.Context) error {
+	// 生命周期写锁确保所有正在执行的 Watch 注册流程完成后再推进 Close。
+	// 避免 Close 进入 watchWg.Wait() 的同时 Watch 调用 watchWg.Add() → panic。
+	c.lifecycleMu.Lock()
 	if c.closed.Swap(true) {
+		c.lifecycleMu.Unlock()
 		return nil // 已经关闭
 	}
 	if c.closeCh != nil {
 		close(c.closeCh)
 	}
+	c.lifecycleMu.Unlock()
 	// 设计决策: 先等待所有 Watch goroutine 退出，再关闭底层连接。
 	// 这确保 goroutine 不会在关闭后继续使用已关闭的 etcd 客户端，
 	// 避免高频创建/销毁场景下的资源泄漏与停机抖动。

@@ -206,10 +206,13 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-
 	// 创建事件通道
 	eventCh := make(chan Event, o.bufferSize)
 
-	// 启动 watch goroutine
-	c.watchWg.Go(func() {
+	// 启动 watch goroutine（生命周期锁内检查 closed 后注册，避免 Close 并发 panic）
+	if err := c.registerWatchGoroutine(func() {
 		c.runWatchLoop(ctx, key, etcdOpts, eventCh)
-	})
+	}); err != nil {
+		close(eventCh)
+		return nil, err
+	}
 
 	return eventCh, nil
 }
@@ -430,10 +433,13 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	}
 	eventCh := make(chan Event, o.bufferSize)
 
-	// 启动带重试的 watch goroutine
-	c.watchWg.Go(func() {
+	// 启动带重试的 watch goroutine（生命周期锁内注册，与 Close 互斥）
+	if err := c.registerWatchGoroutine(func() {
 		c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
-	})
+	}); err != nil {
+		close(eventCh)
+		return nil, err
+	}
 
 	return eventCh, nil
 }

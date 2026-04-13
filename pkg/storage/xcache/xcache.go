@@ -56,13 +56,20 @@ func NewRedis(client redis.UniversalClient, opts ...RedisOption) (Redis, error) 
 	}, nil
 }
 
+// scriptDetectTimeout 是构造期探测 Redis 脚本支持的有界超时。
+// 防止 Redis 地址黑洞或客户端未配置读写超时时 NewRedis 构造函数无限阻塞。
+const scriptDetectTimeout = 5 * time.Second
+
 // resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
 func resolveScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
 	if mode != rediscompat.ScriptModeAuto {
 		return mode
 	}
-	// 网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）
-	detected, err := rediscompat.DetectScriptMode(context.Background(), client)
+	// 设计决策: 探测使用有界超时，Redis 黑洞/未配置 DialTimeout 场景下不阻塞构造函数。
+	// 超时或网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）。
+	ctx, cancel := context.WithTimeout(context.Background(), scriptDetectTimeout)
+	defer cancel()
+	detected, err := rediscompat.DetectScriptMode(ctx, client)
 	if err != nil {
 		return rediscompat.ScriptModeLua
 	}

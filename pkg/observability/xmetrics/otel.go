@@ -115,8 +115,17 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 		return nil, err
 	}
 
+	// 设计决策: 对自定义 TracerProvider/MeterProvider 可能返回的 nil/typed-nil
+	// tracer/meter 做契约防御。OTel API 契约保证返回非 nil，但自定义实现可能违反，
+	// 作为基础库，在初始化阶段返回明确错误优于运行时 panic。
 	tracer := cfg.tracerProvider.Tracer(cfg.instrumentationName)
+	if isNilInterface(tracer) {
+		return nil, ErrNilTracer
+	}
 	meter := cfg.meterProvider.Meter(cfg.instrumentationName)
+	if isNilInterface(meter) {
+		return nil, ErrNilMeter
+	}
 
 	total, err := meter.Int64Counter(
 		metricOperationTotal,
@@ -126,10 +135,11 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateCounter, err)
 	}
-	// 设计决策: 对 nil instrument 做 fail-open 防御（即使 err==nil）。
+	// 设计决策: 对 nil / typed-nil instrument 做 fail-open 防御（即使 err==nil）。
 	// OTel API 契约保证 err==nil 时返回非 nil instrument，但自定义 MeterProvider
-	// 可能违反此约定；作为基础库，不应将观测异常升级为业务崩溃。
-	if total == nil {
+	// 可能返回 typed-nil（如 (*customCounter)(nil)），仅 == nil 检查会漏检，
+	// 导致 End 时调用 Add/Record panic。
+	if isNilInterface(total) {
 		return nil, fmt.Errorf("%w: meter returned nil counter", ErrCreateCounter)
 	}
 
@@ -142,7 +152,7 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateHistogram, err)
 	}
-	if duration == nil {
+	if isNilInterface(duration) {
 		return nil, fmt.Errorf("%w: meter returned nil histogram", ErrCreateHistogram)
 	}
 

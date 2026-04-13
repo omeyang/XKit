@@ -1285,3 +1285,88 @@ func TestNewOTelObserver_NilHistogramFromMeter(t *testing.T) {
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrCreateHistogram)
 }
+
+// ============================================================================
+// typed-nil Tracer/Meter/Instrument 防御测试（OTel API 契约缺口）
+// ============================================================================
+
+// typedNilTracer 是实现 trace.Tracer 的具体类型，用于构造 typed-nil 返回值。
+type typedNilTracer struct{ trace.Tracer }
+
+type typedNilTracerProvider struct{ trace.TracerProvider }
+
+func (typedNilTracerProvider) Tracer(string, ...trace.TracerOption) trace.Tracer {
+	var t *typedNilTracer
+	return t // typed-nil
+}
+
+func TestNewOTelObserver_TypedNilTracer(t *testing.T) {
+	obs, err := NewOTelObserver(WithTracerProvider(typedNilTracerProvider{}))
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrNilTracer)
+}
+
+// typedNilMeterProvider 返回 typed-nil meter。
+type typedNilMeter struct{ metric.Meter }
+
+type typedNilMeterProvider struct{ metric.MeterProvider }
+
+func (typedNilMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	var m *typedNilMeter
+	return m // typed-nil
+}
+
+func TestNewOTelObserver_TypedNilMeter(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(typedNilMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrNilMeter)
+}
+
+// typedNilCounterMeterProvider 返回 typed-nil counter。
+type typedNilCounter struct{ metric.Int64Counter }
+
+type typedNilCounterMeter struct{ metric.Meter }
+
+func (typedNilCounterMeter) Int64Counter(string, ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	var c *typedNilCounter
+	return c, nil // typed-nil, no error
+}
+
+type typedNilCounterMeterProvider struct{ metric.MeterProvider }
+
+func (typedNilCounterMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return typedNilCounterMeter{}
+}
+
+func TestNewOTelObserver_TypedNilCounter(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(typedNilCounterMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrCreateCounter)
+}
+
+// typedNilHistogramMeter 返回有效 counter 但 typed-nil histogram。
+type typedNilHistogram struct{ metric.Float64Histogram }
+
+type typedNilHistogramMeter struct{ metric.Meter }
+
+func (typedNilHistogramMeter) Int64Counter(name string, _ ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	mp, _ := newTestMeterProvider()
+	return mp.Meter("test").Int64Counter(name)
+}
+
+func (typedNilHistogramMeter) Float64Histogram(string, ...metric.Float64HistogramOption) (metric.Float64Histogram, error) {
+	var h *typedNilHistogram
+	return h, nil // typed-nil, no error
+}
+
+type typedNilHistogramMeterProvider struct{ metric.MeterProvider }
+
+func (typedNilHistogramMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return typedNilHistogramMeter{}
+}
+
+func TestNewOTelObserver_TypedNilHistogram(t *testing.T) {
+	obs, err := NewOTelObserver(WithMeterProvider(typedNilHistogramMeterProvider{}))
+	assert.Nil(t, obs)
+	assert.ErrorIs(t, err, ErrCreateHistogram)
+}

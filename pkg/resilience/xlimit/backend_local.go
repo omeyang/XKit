@@ -73,7 +73,9 @@ func (b *localBackend) CheckRule(ctx context.Context, key string, limit, burst i
 			RetryAfter: window,
 		}, nil
 	}
-	allowed, remaining, retryAfter := bucket.take(n)
+	// take 内部会先按旧参数补令牌到 now，再切换到新参数，避免参数变更
+	// retroactive 应用于过去区间导致的过放/欠放（FG-M2 fix）。
+	allowed, remaining, retryAfter := bucket.takeWithParams(localLimit, localBurst, window, n)
 
 	return CheckResult{
 		Allowed:    allowed,
@@ -99,6 +101,10 @@ func (b *localBackend) Reset(_ context.Context, key string) error {
 // 与新创建桶的初始令牌数（burst）语义对齐。
 func (b *localBackend) Query(ctx context.Context, key string, limit, burst int, window time.Duration) (
 	effectiveLimit, remaining int, resetAt time.Time, err error) {
+	// 与 CheckRule 的 ctx 契约一致（FG-M4 fix）
+	if cerr := ctx.Err(); cerr != nil {
+		return 0, 0, time.Time{}, cerr
+	}
 	// 获取当前 Pod 数量
 	podCount := b.getPodCount(ctx)
 	localLimit := max(limit/podCount, 1)
@@ -136,20 +142,29 @@ func (b *localBackend) getPodCount(ctx context.Context) int {
 
 // getOrCreateBucket 获取或创建令牌桶
 //
-// 设计决策: 复用已有桶时刷新参数，确保动态 Pod 数量变化后
-// 存量桶的补令牌速率和容量与新计算的 localLimit/localBurst 一致。
+// 设计决策: 复用已有桶时由 takeWithParams 在桶锁内刷新参数，
+// 确保动态 Pod 数量变化后存量桶的补令牌速率和容量按旧参数补齐到 now 再切换新参数
+// （FG-M2 fix，避免 retroactive 应用）。
 // 当桶数量超过 maxBuckets 时返回 nil，由调用方执行 fail-close。
+//
+// maxBuckets 使用 CAS 预留名额保证并发下限制严格生效（FG-M3 fix）：
+// 先 CAS 自增 bucketCount，若超限则回退并返回 nil；LoadOrStore 命中已有 key 时释放预留。
 func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window time.Duration) *tokenBucket {
 	if val, ok := b.buckets.Load(key); ok {
 		if bucket, ok := val.(*tokenBucket); ok {
-			bucket.updateParams(limit, burst, window)
 			return bucket
 		}
 	}
 
-	// 安全阀：超过桶数量上限时拒绝创建新桶
-	if b.bucketCount.Load() >= maxBuckets {
-		return nil
+	// CAS 预留桶名额
+	for {
+		cur := b.bucketCount.Load()
+		if cur >= maxBuckets {
+			return nil
+		}
+		if b.bucketCount.CompareAndSwap(cur, cur+1) {
+			break
+		}
 	}
 
 	bucket := &tokenBucket{
@@ -161,8 +176,9 @@ func (b *localBackend) getOrCreateBucket(key string, limit, burst int, window ti
 	}
 
 	actual, loaded := b.buckets.LoadOrStore(key, bucket)
-	if !loaded {
-		b.bucketCount.Add(1)
+	if loaded {
+		// 已有他人创建，释放预留名额
+		b.bucketCount.Add(-1)
 	}
 	if tb, ok := actual.(*tokenBucket); ok {
 		return tb
@@ -181,19 +197,51 @@ type tokenBucket struct {
 	lastUpdate time.Time
 }
 
-// updateParams 原子刷新桶参数，使动态 Pod 数量变化对存量桶生效。
-// 若 burst 缩小导致当前 tokens 超过新容量，截断到新容量。
-func (tb *tokenBucket) updateParams(limit, burst int, window time.Duration) {
+// takeWithParams 在桶锁内：先按旧参数补令牌到 now，再切换新参数（截断到新 burst），
+// 最后尝试消耗 n 个令牌。确保参数变更（Pod 数/规则覆盖）不会 retroactive 地
+// 用新速率重新计算过去时段（FG-M2 fix）。
+func (tb *tokenBucket) takeWithParams(limit, burst int, window time.Duration, n int) (
+	allowed bool, remaining int, retryAfter time.Duration) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
+	now := time.Now()
+	elapsed := now.Sub(tb.lastUpdate)
+	if elapsed < 0 {
+		// 时钟回拨防御：不补令牌，仅推进 lastUpdate
+		elapsed = 0
+	}
+	// 先按旧参数补令牌
+	if tb.window > 0 {
+		oldRate := float64(tb.limit) / tb.window.Seconds()
+		tb.tokens += oldRate * elapsed.Seconds()
+	}
+	if tb.tokens > float64(tb.burst) {
+		tb.tokens = float64(tb.burst)
+	}
+	tb.lastUpdate = now
+
+	// 切换到新参数并按新 burst 截断
 	tb.limit = limit
 	tb.burst = burst
 	tb.window = window
-
 	if tb.tokens > float64(burst) {
 		tb.tokens = float64(burst)
 	}
+
+	if float64(n) <= tb.tokens {
+		tb.tokens -= float64(n)
+		return true, int(tb.tokens), 0
+	}
+
+	// 令牌不足
+	if window <= 0 || limit <= 0 {
+		return false, 0, 0
+	}
+	rate := float64(limit) / window.Seconds()
+	deficit := float64(n) - tb.tokens
+	waitTime := time.Duration(deficit / rate * float64(time.Second))
+	return false, 0, waitTime
 }
 
 // currentTokens 返回当前令牌数（只读查询，不修改桶状态）
@@ -203,6 +251,12 @@ func (tb *tokenBucket) currentTokens(limit, burst int, window time.Duration) int
 	defer tb.mu.Unlock()
 
 	elapsed := time.Since(tb.lastUpdate)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	if window <= 0 {
+		return int(tb.tokens)
+	}
 	rate := float64(limit) / window.Seconds()
 	tokens := tb.tokens + rate*elapsed.Seconds()
 
@@ -210,37 +264,6 @@ func (tb *tokenBucket) currentTokens(limit, burst int, window time.Duration) int
 		tokens = float64(burst)
 	}
 	return int(tokens)
-}
-
-// take 尝试从令牌桶获取 n 个令牌
-func (tb *tokenBucket) take(n int) (allowed bool, remaining int, retryAfter time.Duration) {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-
-	now := time.Now()
-	elapsed := now.Sub(tb.lastUpdate)
-	tb.lastUpdate = now
-
-	// 计算新增的令牌数（速率 = limit / window）
-	rate := float64(tb.limit) / tb.window.Seconds()
-	tb.tokens += rate * elapsed.Seconds()
-
-	// 令牌数不超过桶容量（burst）
-	if tb.tokens > float64(tb.burst) {
-		tb.tokens = float64(tb.burst)
-	}
-
-	// 检查是否有足够的令牌
-	if tb.tokens >= float64(n) {
-		tb.tokens -= float64(n)
-		return true, int(tb.tokens), 0
-	}
-
-	// 令牌不足，计算需要等待的时间
-	deficit := float64(n) - tb.tokens
-	waitTime := time.Duration(deficit / rate * float64(time.Second))
-
-	return false, 0, waitTime
 }
 
 // 确保 localBackend 实现了 Backend 接口

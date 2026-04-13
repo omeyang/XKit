@@ -733,6 +733,58 @@ func TestBuilder_Build_AlreadyBuilt(t *testing.T) {
 	}
 }
 
+// TestBuilder_Build_AlreadyBuilt_RotatorNotClosed 回归：第二次 Build() 不得关闭
+// 第一次 Build() 已转交 cleanup 的 rotator，否则第一次 logger 写入将失败。
+func TestBuilder_Build_AlreadyBuilt_RotatorNotClosed(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/regress.log"
+
+	b := xlog.New().SetRotation(file)
+	logger, cleanup, err := b.Build()
+	if err != nil {
+		t.Fatalf("first Build() error: %v", err)
+	}
+
+	// 第二次 Build 应返回错误但不应关闭第一次 logger 的 rotator
+	if _, _, err2 := b.Build(); err2 == nil {
+		t.Fatal("second Build() should return error")
+	}
+
+	logger.Info(context.Background(), "still alive after second build")
+
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		t.Errorf("cleanup() error: %v", cleanupErr)
+	}
+
+	data, readErr := os.ReadFile(file)
+	if readErr != nil {
+		t.Fatalf("ReadFile error: %v", readErr)
+	}
+	if !strings.Contains(string(data), "still alive after second build") {
+		t.Errorf("log file missing message after second Build()\ncontent: %s", string(data))
+	}
+}
+
+// TestBuilder_SetOutput_ClosesPreviousRotator 回归：SetOutput 覆盖 SetRotation
+// 时应关闭并清空 rotator，避免隐藏文件句柄泄漏到 cleanup。
+func TestBuilder_SetOutput_ClosesPreviousRotator(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/rot-then-output.log"
+
+	var buf bytes.Buffer
+	_, cleanup, err := xlog.New().
+		SetRotation(file).
+		SetOutput(&buf).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	// cleanup 应是 no-op（rotator 已在 SetOutput 中被关闭并清空）
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		t.Errorf("cleanup() should not error, got: %v", cleanupErr)
+	}
+}
+
 // =============================================================================
 // DeploymentType 固定属性测试
 // =============================================================================

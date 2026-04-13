@@ -315,6 +315,31 @@ func isValidTraceFlags(flags string) bool {
 	return len(flags) == 2 && isValidHex(flags)
 }
 
+// normalizeV00TraceFlags 将 v00 trace-flags 归一化为仅保留 sampled 位（bit 0）。
+// 输入已通过 isValidTraceFlags 校验。保证返回 "00" 或 "01"。
+//
+// 背景：OTel propagation.TraceContext 在 v00 下拒绝 opts[0]>0x02，且 Inject 时
+// 强制 flags & FlagsSampled。为保持下游 SDK 互通，生成端同样归一化。
+func normalizeV00TraceFlags(flags string) string {
+	// 解析 2 位 hex → byte；调用方已保证 len==2 且字符合法。
+	hexVal := func(c byte) byte {
+		switch {
+		case c >= '0' && c <= '9':
+			return c - '0'
+		case c >= 'a' && c <= 'f':
+			return c - 'a' + 10
+		case c >= 'A' && c <= 'F':
+			return c - 'A' + 10
+		}
+		return 0
+	}
+	b := hexVal(flags[0])<<4 | hexVal(flags[1])
+	if b&0x01 != 0 {
+		return "01"
+	}
+	return "00"
+}
+
 // isValidHex 验证字符串是否为有效的十六进制。
 // 解析端容错：同时接受大写和小写，确保与不同实现的互操作性。
 // 输出端（formatTraceparent）会统一转换为小写，确保符合 W3C 规范。
@@ -377,6 +402,11 @@ func formatTraceparent(traceID, spanID, traceFlags string) string {
 	if traceFlags == "" || !isValidTraceFlags(traceFlags) {
 		traceFlags = "00"
 	}
+	// W3C v00 规范 & OTel propagation.TraceContext.Inject 行为：
+	// 输出 v00 traceparent 时，仅保留已采样位（bit 0），其他 flag 位清零。
+	// 否则下游 OTel SDK 可能因 opts[0]>0x02 拒绝该 traceparent（见 otel/propagation
+	// trace_context.go extract: `version == 0 && opts[0] > 2` 直接 invalid）。
+	traceFlags = normalizeV00TraceFlags(traceFlags)
 
 	// traceparent 格式：00-{trace-id}-{span-id}-{trace-flags}
 	// 使用 copy 将各部分写入固定大小的缓冲区

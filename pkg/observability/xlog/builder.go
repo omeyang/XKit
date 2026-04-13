@@ -76,6 +76,15 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 		b.err = fmt.Errorf("xlog: output writer is nil")
 		return b
 	}
+	// last-wins：若之前通过 SetRotation 创建过 rotator，此处将其关闭并清空，
+	// 避免隐藏的文件句柄被带入 cleanup（用户已显式切换到新的 writer）。
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			b.err = fmt.Errorf("xlog: failed to close previous rotator: %w", closeErr)
+			return b
+		}
+		b.rotator = nil
+	}
 	b.output = w
 	return b
 }
@@ -356,6 +365,8 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 
 	// 创建 cleanup 函数
 	cleanup := b.createCleanup()
+	// 资源所有权已转移到 cleanup，清空 builder 指针避免重复 Build() 误关闭。
+	b.rotator = nil
 
 	return logger, cleanup, nil
 }

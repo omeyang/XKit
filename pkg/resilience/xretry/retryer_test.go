@@ -696,3 +696,60 @@ func TestNilRetryer_Accessors(t *testing.T) {
 		assert.Nil(t, r.BackoffPolicy(), "nil Retryer should return nil BackoffPolicy")
 	})
 }
+
+// alwaysRetryPolicyCustom 用于验证 RetryIf 在 MaxAttempts 处硬截断，
+// ShouldRetry 始终返回 true 时 OnRetry 不应在最后一次失败后再触发。
+type alwaysRetryPolicyCustom struct{ max int }
+
+func (p *alwaysRetryPolicyCustom) MaxAttempts() int                          { return p.max }
+func (p *alwaysRetryPolicyCustom) ShouldRetry(_ context.Context, _ int, _ error) bool { return true }
+
+// 回归: MaxAttempts 截断——OnRetry 触发次数应为 maxAttempts-1，不应多触发。
+func TestRetryer_OnRetryNotInvokedAtMaxAttempts(t *testing.T) {
+	const maxN = 3
+	var onRetryCount atomic.Int64
+	var callCount atomic.Int64
+	r := NewRetryer(
+		WithRetryPolicy(&alwaysRetryPolicyCustom{max: maxN}),
+		WithBackoffPolicy(NewNoBackoff()),
+		WithOnRetry(func(_ int, _ error) { onRetryCount.Add(1) }),
+	)
+	err := r.Do(context.Background(), func(_ context.Context) error {
+		callCount.Add(1)
+		return errors.New("boom")
+	})
+	assert.Error(t, err)
+	assert.Equal(t, int64(maxN), callCount.Load(), "fn called maxAttempts times")
+	assert.Equal(t, int64(maxN-1), onRetryCount.Load(), "OnRetry should not fire after final failure")
+}
+
+// 回归: ctx 已取消 + 0 延迟，fn 不应在取消后再次被调用。
+func TestRetryer_CtxCancelWithZeroDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var count atomic.Int64
+	r := NewRetryer(
+		WithRetryPolicy(NewFixedRetry(100)),
+		WithBackoffPolicy(NewNoBackoff()),
+	)
+	err := r.Do(ctx, func(_ context.Context) error {
+		count.Add(1)
+		cancel() // 第一次调用后取消 ctx
+		return errors.New("transient")
+	})
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled), "error should be context.Canceled, got %v", err)
+	// 修复前在竞争下 count 可能 > 1；修复后每次重试前都会检查 ctx 并退出
+	assert.Equal(t, int64(1), count.Load(), "fn must not run again after ctx cancel")
+}
+
+// 回归: nil *Retryer 的 Retrier 应应用默认 RetryIf（拦截 PermanentError）。
+func TestNilRetryer_RetrierUsesDefaults(t *testing.T) {
+	var r *Retryer
+	var count atomic.Int64
+	err := r.Retrier(context.Background()).Do(func() error {
+		count.Add(1)
+		return NewPermanentError(errors.New("fatal"))
+	})
+	assert.Error(t, err)
+	assert.Equal(t, int64(1), count.Load(), "nil Retryer.Retrier should use default RetryIf and stop on PermanentError")
+}

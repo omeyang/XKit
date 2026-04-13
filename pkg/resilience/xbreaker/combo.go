@@ -302,7 +302,10 @@ func (rtb *RetryThenBreak) State() State {
 }
 
 // Counts 返回当前统计计数
+//
+// 设计决策: 先调用 State() 触发窗口过期刷新，再读 Counts。参见 Breaker.Counts 注释。
 func (rtb *RetryThenBreak) Counts() Counts {
+	_ = rtb.tscb.State()
 	return rtb.tscb.Counts()
 }
 

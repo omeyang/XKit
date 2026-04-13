@@ -164,6 +164,13 @@ type lumberjackRotator struct {
 	onError  func(error) // 错误回调（nil 表示静默忽略）
 	mu       sync.Mutex  // 保护 ensureFileMode 的 Stat+Chmod 操作
 
+	// opMu 串行化 Write/Rotate/Close 与底层 logger 操作，
+	// 避免 Close 已完成后仍有 Write/Rotate 进入 lumberjack（lumberjack.Close 只关
+	// 闭当前 fd 不置永久关闭标志，后续 Write 会重新打开文件导致 fd 泄漏）。
+	// 使用 RWMutex：Write/Rotate 持读锁（它们之间由 lumberjack 内部锁串行化），
+	// Close 持写锁独占，确保 closed=true 后不再有底层 logger 调用。
+	opMu sync.RWMutex
+
 	closed atomic.Bool // 标记是否已关闭
 
 	// 设计决策: 使用累计写入字节数检测自动轮转，避免每次 Write 都执行 os.Stat。
@@ -277,20 +284,15 @@ func validateLumberjackPolicy(cfg *lumberjackConfig) error {
 
 // Write 实现 io.Writer 接口
 func (r *lumberjackRotator) Write(p []byte) (n int, err error) {
+	r.opMu.RLock()
 	if r.closed.Load() {
+		r.opMu.RUnlock()
 		return 0, ErrClosed
 	}
 
 	n, err = r.logger.Write(p)
+	r.opMu.RUnlock()
 	if err != nil {
-		// 设计决策: Write 与 Close 存在 TOCTOU 窗口——Write 通过 closed 前置检查后，
-		// Close 可能在 logger.Write 执行期间完成。此处后置检查确保调用者始终得到
-		// ErrClosed（而非底层 I/O 错误），保持 ErrClosed 契约的可靠性。
-		// 成功路径不做后置检查：数据已实际写入磁盘，返回 success 在语义上更准确——
-		// 返回 ErrClosed 会误导调用方认为数据丢失。
-		if r.closed.Load() {
-			return n, ErrClosed
-		}
 		return n, err
 	}
 
@@ -373,6 +375,8 @@ func (r *lumberjackRotator) reportError(err error) {
 // 如果底层 Close 返回错误，重试调用会得到 ErrClosed 而非重新尝试关闭。
 // 这确保了关闭后不会有新的写入到达底层 logger，避免了并发场景下的状态不一致。
 func (r *lumberjackRotator) Close() error {
+	r.opMu.Lock()
+	defer r.opMu.Unlock()
 	if r.closed.Swap(true) {
 		return ErrClosed
 	}
@@ -381,18 +385,15 @@ func (r *lumberjackRotator) Close() error {
 
 // Rotate 手动触发轮转
 func (r *lumberjackRotator) Rotate() error {
+	r.opMu.RLock()
 	if r.closed.Load() {
+		r.opMu.RUnlock()
 		return ErrClosed
 	}
 
-	if err := r.logger.Rotate(); err != nil {
-		// 设计决策: 与 Write 相同的 TOCTOU 后置检查（见 Write 注释）。
-		// 成功路径不做后置检查：轮转已完成，返回 success 在语义上更准确。
-		// 测试边界: 此分支需要 logger.Rotate() 执行期间 Close() 在另一 goroutine 完成，
-		// 属于精确竞态时序，当前测试通过前置检查覆盖等价逻辑。
-		if r.closed.Load() {
-			return ErrClosed
-		}
+	err := r.logger.Rotate()
+	r.opMu.RUnlock()
+	if err != nil {
 		return err
 	}
 

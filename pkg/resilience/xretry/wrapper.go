@@ -156,7 +156,14 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 	if fn == nil {
 		return ErrNilFunc
 	}
-	return retry.New(defaultOpts(ctx, opts)...).Do(fn)
+	// 0 延迟场景下，retry-go 的 select 可能在 ctx 已取消时仍命中 timer 分支，
+	// 这里在每次 fn 前检查 ctx，用 Unrecoverable 立即退出。
+	return retry.New(defaultOpts(ctx, opts)...).Do(func() error {
+		if err := ctx.Err(); err != nil {
+			return retry.Unrecoverable(err)
+		}
+		return fn()
+	})
 }
 
 // DoWithData 执行带重试的操作（有返回值）
@@ -181,7 +188,13 @@ func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option
 		var zero T
 		return zero, ErrNilFunc
 	}
-	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(fn)
+	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(func() (T, error) {
+		if err := ctx.Err(); err != nil {
+			var zero T
+			return zero, retry.Unrecoverable(err)
+		}
+		return fn()
+	})
 }
 
 // defaultOpts 构建带有默认 RetryIf 逻辑的选项列表。

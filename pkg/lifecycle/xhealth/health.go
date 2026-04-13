@@ -44,6 +44,11 @@ type Health struct {
 	stopOnce sync.Once
 	stopCh   chan struct{} // 通知异步 goroutine 停止
 	readyCh  chan struct{} // Run 中 listener 就绪后关闭
+
+	// asyncCtx/asyncCancel 用于取消异步检查中正在进行的 Check 调用,
+	// 避免停止时 wg.Wait 被尊重 ctx 的慢 Check 无界阻塞。
+	asyncCtx    context.Context
+	asyncCancel context.CancelFunc
 }
 
 // New 创建健康检查实例。
@@ -62,10 +67,13 @@ func New(opts ...Option) (*Health, error) {
 		}
 	}
 
+	asyncCtx, asyncCancel := context.WithCancel(context.Background())
 	h := &Health{
-		opts:    o,
-		stopCh:  make(chan struct{}),
-		readyCh: make(chan struct{}),
+		opts:        o,
+		stopCh:      make(chan struct{}),
+		readyCh:     make(chan struct{}),
+		asyncCtx:    asyncCtx,
+		asyncCancel: asyncCancel,
 	}
 	for i := range h.statuses {
 		h.statuses[i] = StatusUp
@@ -137,10 +145,6 @@ func (h *Health) Run(ctx context.Context) error {
 		return ErrAlreadyStarted
 	}
 
-	// 启动异步检查的后台 goroutine
-	var wg sync.WaitGroup
-	h.startAsyncChecks(&wg)
-
 	mux := http.NewServeMux()
 	h.registerHandlers(mux)
 
@@ -149,6 +153,11 @@ func (h *Health) Run(ctx context.Context) error {
 		h.started.Store(false)
 		return fmt.Errorf("%w: %v", ErrInvalidAddr, err)
 	}
+
+	// 设计决策: 先 Listen 成功后再启动异步检查,避免 Listen 失败时泄漏 goroutine。
+	// 启动异步检查的后台 goroutine
+	var wg sync.WaitGroup
+	h.startAsyncChecks(&wg)
 
 	srv := &http.Server{
 		Handler:           mux,
@@ -185,13 +194,20 @@ func (h *Health) Shutdown() {
 }
 
 // doShutdown 执行实际关闭逻辑（幂等）。
+//
+// 设计决策: 使用 opts.shutdownTimeout 限制 srv.Shutdown 的最大耗时,
+// 避免慢 handler 导致 Shutdown/Run 无界阻塞。超时后 Shutdown 返回但连接会被强制关闭。
 func (h *Health) doShutdown() {
 	h.stopOnce.Do(func() {
 		h.shutdown.Store(true)
 		close(h.stopCh)
+		h.asyncCancel() // 取消异步检查中正在进行的 Check 调用
 		if srv := h.server.Load(); srv != nil {
-			if err := srv.Shutdown(context.Background()); err != nil {
-				return
+			ctx, cancel := context.WithTimeout(context.Background(), h.opts.shutdownTimeout)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				// 超时或其它错误:强制关闭底层 listener/连接,确保 Serve 返回。
+				_ = srv.Close()
 			}
 		}
 	})
@@ -235,9 +251,30 @@ func (h *Health) check(ctx context.Context, ep endpoint) *Result {
 		return &Result{Status: StatusUp}
 	}
 
+	// 设计决策: 端点级并发执行检查,端点总耗时 ≈ max(单检查耗时) 而非 sum。
+	// 避免多依赖场景下 /readyz 阻塞 N*Timeout,被 K8s 探针超时仍占用 handler goroutine。
 	results := make(map[string]CheckResult, len(entries))
-	for _, entry := range entries {
-		results[entry.name] = h.executeCheck(ctx, entry)
+	if len(entries) == 1 {
+		results[entries[0].name] = h.executeCheck(ctx, entries[0])
+	} else {
+		type nr struct {
+			name string
+			cr   CheckResult
+		}
+		ch := make(chan nr, len(entries))
+		var cwg sync.WaitGroup
+		for _, entry := range entries {
+			cwg.Add(1)
+			go func(e *checkEntry) {
+				defer cwg.Done()
+				ch <- nr{name: e.name, cr: h.executeCheck(ctx, e)}
+			}(entry)
+		}
+		cwg.Wait()
+		close(ch)
+		for v := range ch {
+			results[v.name] = v.cr
+		}
 	}
 
 	result := aggregate(entries, results)
@@ -260,15 +297,23 @@ func (h *Health) executeCheck(ctx context.Context, entry *checkEntry) CheckResul
 		if cached, ok := entry.getCached(); ok {
 			return cached
 		}
+		// 设计决策: singleflight 防惊群,TTL 失效时只允许一个 goroutine 刷新,
+		// 其它并发探针共享同一结果,避免放大下游依赖压力。
+		v, _, _ := entry.sf.Do("", func() (any, error) {
+			if cached, ok := entry.getCached(); ok {
+				return cached, nil
+			}
+			r := entry.execute(ctx)
+			entry.setCachedWithTTL(r, h.opts.cacheTTL)
+			return r, nil
+		})
+		if cr, ok := v.(CheckResult); ok {
+			return cr
+		}
+		return entry.execute(ctx)
 	}
 
-	result := entry.execute(ctx)
-
-	if h.opts.cacheTTL > 0 {
-		entry.setCachedWithTTL(result, h.opts.cacheTTL)
-	}
-
-	return result
+	return entry.execute(ctx)
 }
 
 // startAsyncChecks 启动所有异步检查的后台 goroutine。
@@ -292,7 +337,7 @@ func (h *Health) runAsyncCheck(wg *sync.WaitGroup, entry *checkEntry) {
 	defer wg.Done()
 
 	// 立即执行一次
-	result := entry.execute(context.Background())
+	result := entry.execute(h.asyncCtx)
 	entry.setCached(result)
 
 	ticker := time.NewTicker(entry.config.Interval)
@@ -301,7 +346,7 @@ func (h *Health) runAsyncCheck(wg *sync.WaitGroup, entry *checkEntry) {
 	for {
 		select {
 		case <-ticker.C:
-			result := entry.execute(context.Background())
+			result := entry.execute(h.asyncCtx)
 			entry.setCached(result)
 		case <-h.stopCh:
 			return

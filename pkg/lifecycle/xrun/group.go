@@ -219,7 +219,13 @@ func (g *Group) Context() context.Context {
 func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 	g, _ := NewGroup(ctx, opts...)
 
-	// 信号处理服务（可通过 WithoutSignalHandler 禁用）
+	// 信号处理不加入 errgroup 等待集合，避免所有业务服务返回 nil（未触发 ctx 取消）时
+	// 信号 goroutine 永久阻塞导致 Wait 不返回。改用独立 goroutine + stopSig channel，
+	// setup/Wait 完成后关闭 stopSig 唤醒信号 goroutine 退出。
+	var (
+		stopSig chan struct{}
+		sigDone chan struct{}
+	)
 	if !g.opts.noSignalHandler {
 		signals := g.opts.signals
 		// 设计决策: 空切片与 nil 等价，均使用默认信号列表。
@@ -229,18 +235,24 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 			signals = DefaultSignals()
 		}
 
-		g.Go(func(ctx context.Context) error {
-			testc := testSigChan(ctx)
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, signals...)
+		stopSig = make(chan struct{})
+		sigDone = make(chan struct{})
+		testc := testSigChan(g.ctx)
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, signals...)
+
+		go func() {
+			defer close(sigDone)
 			defer signal.Stop(sigCh)
 
 			var sig os.Signal
 			select {
 			case sig = <-testc:
 			case sig = <-sigCh:
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-g.ctx.Done():
+				return
+			case <-stopSig:
+				return
 			}
 
 			g.opts.logger.Info("received signal",
@@ -248,12 +260,18 @@ func runGroup(ctx context.Context, opts []Option, setup func(g *Group)) error {
 				slog.String("signal", sig.String()),
 			)
 			g.cancel(&SignalError{Signal: sig})
-			return nil
-		})
+		}()
 	}
 
 	setup(g)
-	return g.Wait()
+	err := g.Wait()
+
+	// Wait 返回后确保信号 goroutine 退出，避免 goroutine 泄漏。
+	if stopSig != nil {
+		close(stopSig)
+		<-sigDone
+	}
+	return err
 }
 
 // Run 是最常用的启动模式：监听信号 + 运行服务。
@@ -311,7 +329,12 @@ type Service interface {
 type ServiceFunc func(ctx context.Context) error
 
 // Run 实现 Service 接口。
+// 设计决策: typed-nil ServiceFunc（var f ServiceFunc）会绕过 addServices 的
+// svc == nil 检查（接口非 nil 但底层函数 nil），此处显式防护避免 goroutine panic。
 func (f ServiceFunc) Run(ctx context.Context) error {
+	if f == nil {
+		return ErrNilFunc
+	}
 	return f(ctx)
 }
 

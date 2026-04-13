@@ -287,8 +287,11 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 
 	// 如果有错误排除策略
 	if b.excludePolicy != nil {
+		// 设计决策: err == nil 视为成功（不可排除），与 Breaker.IsExcluded 公开方法
+		// 及 RetryThenBreak.toResultError 的语义对齐。避免成功调用被错误地排除出统计，
+		// 导致半开状态探测成功无法推动状态机关闭。
 		st.IsExcluded = func(err error) bool {
-			return b.excludePolicy.IsExcluded(err)
+			return err != nil && b.excludePolicy.IsExcluded(err)
 		}
 	}
 
@@ -429,10 +432,15 @@ func (b *Breaker) Name() string {
 // Counts 返回当前统计计数
 //
 // 如果 b 为 nil，返回零值 Counts。
+//
+// 设计决策: 先调用 State() 触发 gobreaker 内部 currentState(now) 完成窗口过期/滚动，
+// 再读取 Counts。否则在无新请求时段调用 Counts() 会读到已过期窗口的旧计数，
+// 影响监控上报和调用方基于窗口计数的判断。
 func (b *Breaker) Counts() Counts {
 	if b == nil {
 		return Counts{}
 	}
+	_ = b.cb.State()
 	return b.cb.Counts()
 }
 
@@ -563,7 +571,10 @@ func (m *ManagedBreaker[T]) State() State {
 }
 
 // Counts 返回当前统计计数
+//
+// 设计决策: 先调用 State() 触发窗口过期刷新，再读 Counts。参见 Breaker.Counts 注释。
 func (m *ManagedBreaker[T]) Counts() Counts {
+	_ = m.cb.State()
 	return m.cb.Counts()
 }
 

@@ -17,12 +17,14 @@ type options struct {
 	cacheTTL         time.Duration
 	statusListener   StatusListenerFunc
 	detailQueryParam string
+	shutdownTimeout  time.Duration
 }
 
 const (
 	defaultAddr             = ":8080"
 	defaultCacheTTL         = time.Second
 	defaultDetailQueryParam = "full"
+	defaultShutdownTimeout  = 30 * time.Second
 )
 
 func defaultOptions() options {
@@ -30,6 +32,7 @@ func defaultOptions() options {
 		addr:             defaultAddr,
 		cacheTTL:         defaultCacheTTL,
 		detailQueryParam: defaultDetailQueryParam,
+		shutdownTimeout:  defaultShutdownTimeout,
 	}
 }
 
@@ -74,6 +77,18 @@ func WithStatusListener(fn StatusListenerFunc) Option {
 	return func(o *options) {
 		if fn != nil {
 			o.statusListener = fn
+		}
+	}
+}
+
+// WithShutdownTimeout 设置 HTTP server 优雅关闭的超时时间。
+//
+// 默认 30s。超时后将强制关闭连接，避免 Shutdown/Run 无界阻塞在慢 handler 上。
+// 设为 0 或负值将被忽略，保持默认值。
+func WithShutdownTimeout(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.shutdownTimeout = d
 		}
 	}
 }

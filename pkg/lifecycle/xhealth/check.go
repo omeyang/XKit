@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // CheckFunc 定义健康检查函数签名。
@@ -69,6 +71,10 @@ type checkEntry struct {
 	mu        sync.RWMutex
 	cached    *CheckResult
 	expiresAt time.Time // 缓存过期时间（零值表示不过期，用于异步检查）
+
+	// sf 保证同步缓存 miss/过期时同一 checkEntry 只有一个执行中的 Check,
+	// 避免 TTL 失效/冷启动时并发探针惊群放大下游依赖压力。
+	sf singleflight.Group
 }
 
 // getCached 返回缓存的检查结果（线程安全）。

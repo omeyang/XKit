@@ -11,7 +11,7 @@ func BenchmarkQueryPage(b *testing.B) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 100
 				}
 				return nil

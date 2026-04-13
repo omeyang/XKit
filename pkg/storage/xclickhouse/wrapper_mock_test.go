@@ -108,7 +108,7 @@ func TestQueryPage_Success(t *testing.T) {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
 				if len(dest) > 0 {
-					if ptr, ok := dest[0].(*int64); ok {
+					if ptr, ok := dest[0].(*uint64); ok {
 						*ptr = 100 // 总共 100 条记录
 					}
 				}
@@ -148,6 +148,32 @@ func TestQueryPage_Success(t *testing.T) {
 	assert.Len(t, result.Rows, 2)
 }
 
+func TestQueryPage_CountOverflow(t *testing.T) {
+	// COUNT(*) 返回 UInt64 超过 int64 上限应返回 ErrCountOverflow。
+	conn := newMockConn()
+	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
+		return &mockRow{
+			scanFunc: func(dest ...any) error {
+				if len(dest) > 0 {
+					if ptr, ok := dest[0].(*uint64); ok {
+						*ptr = uint64(1) << 63 // > MaxInt64
+					}
+				}
+				return nil
+			},
+		}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	result, err := w.QueryPage(context.Background(), "SELECT id FROM t", PageOptions{Page: 1, PageSize: 10})
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, ErrCountOverflow)
+}
+
 func TestQueryPage_CountQueryError(t *testing.T) {
 	conn := newMockConn()
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
@@ -175,7 +201,7 @@ func TestQueryPage_DataQueryError(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 100
 				}
 				return nil
@@ -206,7 +232,7 @@ func TestQueryPage_ScanError(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 100
 				}
 				return nil
@@ -239,7 +265,7 @@ func TestQueryPage_RowsError(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 100
 				}
 				return nil
@@ -272,7 +298,7 @@ func TestQueryPage_SlowQueryHook(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 10
 				}
 				// 模拟慢查询
@@ -512,7 +538,7 @@ func TestStats_AfterOperations(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 10
 				}
 				return nil
@@ -625,7 +651,7 @@ func TestQueryPage_RowsCloseError(t *testing.T) {
 	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
 		return &mockRow{
 			scanFunc: func(dest ...any) error {
-				if ptr, ok := dest[0].(*int64); ok {
+				if ptr, ok := dest[0].(*uint64); ok {
 					*ptr = 10
 				}
 				return nil
@@ -864,7 +890,8 @@ func TestBatchInsert_ContextCanceledBeforeSend(t *testing.T) {
 	assert.Equal(t, int64(0), result.InsertedCount)
 }
 
-func TestBatchInsert_AppendErrorsCapped(t *testing.T) {
+func TestBatchInsert_AppendErrorAbortsBatch(t *testing.T) {
+	// 批次原子性: 任一 AppendStruct 错误应立即中止整批，不允许部分写入。
 	conn := newMockConn()
 	conn.batchFunc = func(_ context.Context, _ string) Batch {
 		return &mockBatch{appendErr: assert.AnError}
@@ -875,7 +902,6 @@ func TestBatchInsert_AppendErrorsCapped(t *testing.T) {
 		options: defaultOptions(),
 	}
 
-	// 创建 200 条记录（超过 maxAppendErrors=100）
 	rows := make([]any, 200)
 	for i := range rows {
 		rows[i] = struct{ ID int }{ID: i}
@@ -886,22 +912,14 @@ func TestBatchInsert_AppendErrorsCapped(t *testing.T) {
 	assert.Error(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(0), result.InsertedCount)
-	// 应包含 100 条 append 错误 + 1 条 "too many errors" + 1 条 abort 错误 = 最多 102
-	assert.LessOrEqual(t, len(result.Errors), 102)
-	assert.GreaterOrEqual(t, len(result.Errors), 101) // 至少 100 + "too many errors" 摘要
-
-	// 验证最后一条 append 相关错误是 "too many errors" 摘要
+	// 仅应包含 1 条 append 错误（遇到第一个错误即 short-circuit）
+	assert.Len(t, result.Errors, 1)
 	found := false
 	for _, e := range result.Errors {
-		if assert.ObjectsAreEqual("too many append errors", "") {
+		if e != nil && strings.Contains(e.Error(), "append struct failed") {
+			found = true
 			break
 		}
-		if e != nil && len(e.Error()) > 0 {
-			if contains := strings.Contains(e.Error(), "too many append errors"); contains {
-				found = true
-				break
-			}
-		}
 	}
-	assert.True(t, found, "应包含 'too many append errors' 摘要错误")
+	assert.True(t, found, "应包含 'append struct failed' 错误")
 }

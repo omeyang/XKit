@@ -606,6 +606,10 @@ func TestValidateQuerySyntax(t *testing.T) {
 		{"参数化 LIMIT OFFSET 命名参数", "SELECT * FROM users LIMIT {n:UInt64} OFFSET {off:UInt64}", ErrQueryContainsLimitOffset, ""},
 		{"参数化 LIMIT 位置参数", "SELECT * FROM users LIMIT $1", ErrQueryContainsLimitOffset, ""},
 		{"子查询中 LIMIT 不拦截", "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0", nil, "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub WHERE id > 0"},
+		// ClickHouse LIMIT 语法变体
+		{"末尾 LIMIT n,m", "SELECT * FROM users LIMIT 5, 10", ErrQueryContainsLimitOffset, ""},
+		{"末尾 LIMIT BY", "SELECT * FROM users LIMIT 1 BY user_id", ErrQueryContainsLimitOffset, ""},
+		{"末尾 LIMIT WITH TIES", "SELECT * FROM users ORDER BY id LIMIT 10 WITH TIES", ErrQueryContainsLimitOffset, ""},
 	}
 
 	for _, tt := range tests {

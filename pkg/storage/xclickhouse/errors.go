@@ -73,6 +73,11 @@ var (
 	// 子查询中的 LIMIT/OFFSET 不会被检测到。
 	ErrQueryContainsLimitOffset = errors.New("xclickhouse: query contains LIMIT/OFFSET clause, QueryPage manages pagination automatically")
 
+	// ErrCountOverflow 表示 COUNT 结果超过 int64 最大值。
+	// ClickHouse COUNT(*) 返回 UInt64，超出 MaxInt64 的大表需要改用
+	// 游标分页或不计总数的查询。
+	ErrCountOverflow = errors.New("xclickhouse: count exceeds int64 maximum, use cursor-based pagination via Client()")
+
 	// ErrOffsetTooLarge 表示分页偏移量超过允许的最大值。
 	// 大偏移量在 ClickHouse 中会导致扫描放大和性能下降。
 	// 如需大数据量分页，请使用 Client() 实现游标分页。

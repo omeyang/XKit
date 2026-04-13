@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
@@ -248,7 +249,7 @@ var settingsTailPattern = regexp.MustCompile(`(?i)\bSETTINGS\s+\w+\s*=`)
 //   - "SELECT * FROM users LIMIT ?" → 匹配
 //   - "SELECT * FROM users LIMIT {n:UInt64}" → 匹配
 //   - "SELECT * FROM (SELECT * FROM t LIMIT 10) AS sub" → 不匹配（不在末尾）
-var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+|\?|\$\d+|\{[^}]+\})(\s+OFFSET\s+(\d+|\?|\$\d+|\{[^}]+\}))?\s*$`)
+var limitOffsetTailPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+|\?|\$\d+|\{[^}]+\})(\s*,\s*(\d+|\?|\$\d+|\{[^}]+\}))?(\s+OFFSET\s+(\d+|\?|\$\d+|\{[^}]+\}))?(\s+WITH\s+TIES)?(\s+BY\s+.+)?\s*$`)
 
 // normalizeQuery 规范化查询语句。
 // 去除末尾的分号和空白字符。
@@ -320,15 +321,21 @@ func validatePageOptions(query string, opts PageOptions) (normalizedQuery string
 }
 
 // executeCountQuery 执行计数查询。
+// ClickHouse COUNT(*) 返回 UInt64，这里先扫描 uint64 并校验不溢出 int64，
+// 避免在超大表上扫描失败或返回不可表达的计数。
 func (w *clickhouseWrapper) executeCountQuery(ctx context.Context, query string, args ...any) (int64, error) {
 	w.queryCounter.IncQuery()
 	countQuery := buildCountQuery(query)
-	var total int64
+	var total uint64
 	if err := w.conn.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		w.queryCounter.IncQueryError()
 		return 0, fmt.Errorf("count query failed: %w", err)
 	}
-	return total, nil
+	if total > math.MaxInt64 {
+		w.queryCounter.IncQueryError()
+		return 0, fmt.Errorf("count query overflow: %w", ErrCountOverflow)
+	}
+	return int64(total), nil
 }
 
 // executePageQuery 执行分页数据查询。
@@ -529,8 +536,10 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 	// 追加所有行到批次
 	appendedCount, errs = w.appendRowsToBatch(ctx, batchObj, batch)
 
-	// 如果没有成功追加任何行，中止批次
-	if appendedCount == 0 {
+	// 原子性: 只要出现任何 append 错误或未能全部追加成功，就中止整批。
+	// 这与 BatchResult 文档中的 "Batch 原子性: 要么全部成功，要么全部失败" 一致，
+	// 避免在 schema 部分匹配场景下写入不完整的数据。
+	if len(errs) > 0 || appendedCount != int64(len(batch)) {
 		w.abortBatch(batchObj, &errs)
 		return 0, errs
 	}
@@ -556,16 +565,11 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 // appendRowsToBatch 将行追加到批次中。
 // 每 100 行检查一次 context，平衡性能和响应性。
 //
-// 设计决策: 当 AppendStruct 错误数达到 maxAppendErrors 时提前终止，
-// 避免在 schema 不匹配等场景下产生大量重复错误导致内存膨胀。
-// 典型情况下 AppendStruct 错误对同一批次的所有行是相同的（如 struct tag 不匹配），
-// 继续尝试剩余行没有实际意义。
+// 原子性: 出现任何 AppendStruct 错误即立即返回，调用方会 Abort 整批。
+// 这与 BatchResult 文档中的批次原子性契约一致（不部分写入），避免 schema 不匹配
+// 时只追加前部分行并被 Send。
 func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driver.Batch, batch []any) (appendedCount int64, errs []error) {
-	const (
-		checkInterval   = 100
-		maxAppendErrors = 100
-	)
-	var appendErrors int
+	const checkInterval = 100
 	for i, row := range batch {
 		// 定期检查 context 是否已取消
 		if i > 0 && i%checkInterval == 0 && ctx.Err() != nil {
@@ -573,16 +577,8 @@ func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driv
 			return appendedCount, errs
 		}
 		if err := batchObj.AppendStruct(row); err != nil {
-			appendErrors++
-			errs = append(errs, fmt.Errorf("append struct failed: %w", err))
-			if appendErrors >= maxAppendErrors {
-				remaining := len(batch) - i - 1
-				if remaining > 0 {
-					errs = append(errs, fmt.Errorf("too many append errors (%d), skipped remaining %d rows", appendErrors, remaining))
-				}
-				return appendedCount, errs
-			}
-			continue
+			errs = append(errs, fmt.Errorf("append struct failed at row %d: %w", i, err))
+			return appendedCount, errs
 		}
 		appendedCount++
 	}

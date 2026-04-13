@@ -41,9 +41,14 @@ type ClickHouse interface {
 	//
 	// 注意事项：
 	//   - 查询需要支持 COUNT(*) 以获取总数。
+	//   - ⚠️ 稳定分页前置条件: 顶层查询必须包含稳定的 ORDER BY 子句，
+	//     否则 ClickHouse 在 MergeTree/并发写入/聚合等场景下返回顺序不保证，
+	//     跨页可能出现行重复或遗漏。QueryPage 不会自动校验 ORDER BY 的存在性，
+	//     由调用方负责保证；无法提供稳定排序的场景应改用游标分页（通过 Client()）。
 	//   - 此方法执行两次查询（COUNT + 数据查询），
 	//     在高并发写入场景下，Total 与实际返回数据可能不完全一致。
 	//     如需强一致性，请考虑游标分页或在应用层处理。
+	//   - COUNT 结果使用 UInt64 扫描，超过 int64 最大值时返回 ErrCountOverflow。
 	//
 	// 性能说明：
 	//   - COUNT 查询使用子查询包装方式（SELECT COUNT(*) FROM (原查询) AS _count_subquery）
@@ -117,8 +122,10 @@ type BatchOptions struct {
 // 原子性说明：
 // ClickHouse 的每个批次（Batch）是原子的：要么全部成功，要么全部失败。
 // InsertedCount 只反映成功发送的批次中的记录数。
-// 如果某批次 Send() 失败，该批次的所有记录都不会被插入。
-// 这与 MongoDB 的部分成功行为不同。
+// 任何 AppendStruct 错误或 Send 错误都会导致该批次被 Abort，
+// 该批次内所有记录均不写入。这与 MongoDB 的部分成功行为不同。
+// 跨批次之间可能部分成功：若第 N 批成功 Send、第 N+1 批失败，
+// InsertedCount 会等于前 N 批的总行数。
 //
 // 示例：
 //
@@ -129,9 +136,9 @@ type BatchOptions struct {
 //	}
 type BatchResult struct {
 	// InsertedCount 是成功插入的记录数。
-	// 仅统计成功发送（Send）的批次中的记录。
-	// 如果 AppendStruct 失败，该记录不计入；如果 Send 失败，整批次不计入。
-	// 即使 err != nil，InsertedCount 也可能 > 0，表示部分成功。
+	// 仅统计成功 Send 的批次行数。任何 AppendStruct 或 Send 错误都会
+	// Abort 该批次，整批 0 行计入。跨批次之间可部分成功。
+	// 即使 err != nil，InsertedCount 也可能 > 0，表示部分批次成功。
 	InsertedCount int64
 
 	// Errors 是发生的错误列表。

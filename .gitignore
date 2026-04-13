@@ -157,6 +157,7 @@ $RECYCLE.BIN/
 .copilot/
 .tabnine/
 .sourcegraph/
+.codex
 .cospec/
 AI.md
 COSTRICT.md

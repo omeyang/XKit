@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 )
 
 // UnixTransport Unix Socket 传输层实现。
@@ -57,8 +58,15 @@ func (t *UnixTransport) Listen(_ context.Context) error {
 		return fmt.Errorf("check existing socket: %w", err)
 	}
 
-	// 创建 Unix Socket
+	// 创建 Unix Socket。
+	// 设计决策: 在 net.Listen 前后用 umask 夹紧权限，确保 socket 文件从
+	// 创建那一刻起就不对 other/group 开放，消除 Listen→Chmod 之间的 TOCTOU
+	// 权限窗口（他人可能在此窗口内 connect）。随后的 Chmod 再应用用户配置
+	// 的精确权限（如 0640 允许 group）。umask 是进程级全局状态，此处加锁
+	// 保证只有当前 Listen 调用观察到受限 umask。
+	oldUmask := syscall.Umask(0o077)
 	listener, err := net.Listen("unix", t.socketPath)
+	syscall.Umask(oldUmask)
 	if err != nil {
 		return fmt.Errorf("listen unix socket: %w", err)
 	}

@@ -149,8 +149,17 @@
 //
 // # 线程安全
 //
-// 所有导出函数都是线程安全的：
+// 线程安全语义按 API 类型分别定义：
 //
-//   - Context 操作函数可并发调用
-//   - HTTP/gRPC 中间件可并发处理请求
+//   - Context 操作函数（With*/Extract*/TenantID/TenantName 等）：线程安全，可并发调用。
+//   - HTTP/gRPC 中间件与拦截器：按请求独立处理，可并发服务多个请求。
+//   - InjectToOutgoingContext：线程安全，内部已复制出站 metadata，不修改入参。
+//
+// 原地写入类 API 的并发约束：以下函数会原地修改入参（底层 map），调用方必须独占
+// 传入的对象，禁止在共享 *http.Request/http.Header/metadata.MD 上并发调用，否则可能
+// 触发 fatal error: concurrent map writes：
+//
+//   - InjectToRequest（写 req.Header）
+//   - InjectTenantToHeader（写传入的 http.Header）
+//   - InjectTenantToMetadata（写传入的 metadata.MD）
 package xtenant

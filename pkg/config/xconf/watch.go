@@ -136,6 +136,10 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported config type %T", ErrWatchFailed, cfg)
 	}
+	// 防 typed nil：var kc *koanfConfig; var cfg Config = kc 可通过类型断言。
+	if kc == nil {
+		return nil, fmt.Errorf("%w: nil *koanfConfig", ErrWatchFailed)
+	}
 
 	if callback == nil {
 		return nil, ErrNilCallback
@@ -194,7 +198,7 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 // 此方法会阻塞，通常应在 goroutine 中调用
 func (w *Watcher) Start() {
 	w.mu.Lock()
-	if w.running {
+	if w.stopped || w.running {
 		w.mu.Unlock()
 		return
 	}
@@ -211,7 +215,7 @@ func (w *Watcher) Start() {
 // 解决与 Stop() 的竞态：先设置 running 标志再启动 goroutine
 func (w *Watcher) StartAsync() {
 	w.mu.Lock()
-	if w.running {
+	if w.stopped || w.running {
 		w.mu.Unlock()
 		return
 	}

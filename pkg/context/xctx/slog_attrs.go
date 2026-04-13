@@ -166,7 +166,9 @@ func LogAttrs(ctx context.Context) ([]slog.Attr, error) {
 	dt, err := GetDeploymentType(ctx)
 	if err != nil {
 		// 部署类型缺失/无效，尝试收集其他字段作为部分结果
-		partial := make([]slog.Attr, 0, identityFieldCount+traceFieldCount+platformFieldCount)
+		// 设计决策: 错误路径使用 nil slice 起步，仅在实际 append 时才由 Append* 触发
+		// 底层分配；空 context 错误路径保持零分配（与 LogAttrs 文档"无信息 ⇒ 零成本"一致）。
+		var partial []slog.Attr
 		partial = AppendIdentityAttrs(partial, ctx)
 		partial = AppendTraceAttrs(partial, ctx)
 		partial = AppendPlatformAttrs(partial, ctx)

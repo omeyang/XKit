@@ -180,8 +180,14 @@ func (c *stackCommand) Execute(ctx context.Context, _ []string) (string, error) 
 		}
 		buf := make([]byte, size)
 		n := runtime.Stack(buf, true) // true 表示获取所有 goroutine
-		if n < size || size >= maxSize {
+		if n < size {
 			return string(buf[:n]), nil
+		}
+		if size >= maxSize {
+			// 设计决策: runtime.Stack 在 buffer 填满时返回 n == len(buf)，
+			// 无法区分"正好填满"与"被截断"。到达 1MB 上限仍填满时明确标记截断，
+			// 避免排查死锁/泄漏时依赖误导性的尾部堆栈。
+			return string(buf[:n]) + "\n\n[TRUNCATED: goroutine stack exceeded 1MB buffer limit]\n", nil
 		}
 	}
 }
@@ -451,6 +457,34 @@ func (c *pprofCommand) trackProfileFile(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.profileFiles = append(c.profileFiles, path)
+}
+
+// StopActiveCPUProfile 停止正在运行的 CPU profile 并关闭文件，
+// 但保留 profile 文件（纳入 Cleanup 统一删除）。
+// 在 Disable/auto-shutdown 路径调用，确保调试通道关闭后全局 CPU profiling
+// 不再持续运行造成性能损耗。若无活跃 profile 则为 no-op。
+// 返回 true 表示确实停止了一个活跃的 CPU profile（调用方可用于审计）。
+func (c *pprofCommand) StopActiveCPUProfile() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.cpuActive {
+		return false
+	}
+
+	pprof.StopCPUProfile()
+	c.cpuActive = false
+
+	if c.cpuFile != nil {
+		if err := c.cpuFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "[XDBG] failed to close CPU profile file: %v\n", err)
+		}
+		c.cpuFile = nil
+	}
+	if c.cpuFilePath != "" {
+		c.profileFiles = append(c.profileFiles, c.cpuFilePath)
+	}
+	return true
 }
 
 // Cleanup 清理资源，在 Server 关闭时调用。

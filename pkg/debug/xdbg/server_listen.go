@@ -69,6 +69,14 @@ func (s *Server) stopListening() error {
 	// 停止自动关闭定时器
 	s.stopShutdownTimer()
 
+	// 停止任何正在运行的 CPU profile。
+	// 设计决策: pprof CPU profile 是全局状态，即使调试通道 Disable 后仍会持续采样
+	// 造成性能损耗。auto-shutdown 路径下客户端已无法再发 'pprof cpu stop'，
+	// 必须在 Disable 时主动停止。profile 文件保留供 Stop 时统一清理。
+	if s.pprofCmd != nil && s.pprofCmd.StopActiveCPUProfile() {
+		s.audit(AuditEventCommandFailed, nil, "disable:pprof-cpu-stop", nil, 0, nil)
+	}
+
 	// 关闭传输层（这会导致 acceptLoop 退出）
 	// 设计决策: transport.Close 错误仅写审计日志，不向调用方返回。
 	// 此时状态已从 Listening 转为 Started，新的 transport 即将创建（非自定义场景），

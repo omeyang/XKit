@@ -692,3 +692,52 @@ func TestGoid(t *testing.T) {
 	assert.Greater(t, otherId, int64(0))
 	assert.NotEqual(t, id, otherId, "不同 goroutine 应有不同 ID")
 }
+
+// TestWatch_TypedNilConfig 验证 typed nil Config 不会 panic
+func TestWatch_TypedNilConfig(t *testing.T) {
+	var kc *koanfConfig
+	var cfg Config = kc
+	_, err := Watch(cfg, func(c Config, err error) {})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWatchFailed)
+}
+
+// TestWatcher_StartAfterStopNoCallback 验证 Stop() 后再次调用 Start/StartAsync 不会触发回调
+func TestWatcher_StartAfterStopNoCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("k: v\n"), 0600))
+
+	cfg, err := New(configPath)
+	require.NoError(t, err)
+
+	var callCount int
+	var mu sync.Mutex
+	w, err := Watch(cfg.(*koanfConfig), func(c Config, err error) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, w.Stop())
+
+	// Stop 后再次 StartAsync：应为 no-op，不应触发 "channel closed" 回调
+	w.StartAsync()
+	// Start 同样应为 no-op
+	done := make(chan struct{})
+	go func() {
+		w.Start()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Start() after Stop() 应立即返回")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 0, callCount, "Stop() 后 Start/StartAsync 不应触发回调")
+}

@@ -100,6 +100,12 @@ func (c Config) Validate() error {
 	if strings.ContainsFunc(c.PlatformID, unicode.IsControl) {
 		return fmt.Errorf("%w: contains control characters", ErrInvalidPlatformID)
 	}
+	// 设计决策: 限制为 ASCII 可打印字节（0x21..0x7e）。gRPC 出站 metadata 要求普通
+	// value 为 %x20-%x7e 可打印 ASCII（imetadata.ValidatePair），非 ASCII 值会导致
+	// RPC 发送阶段 codes.Internal 错误。在 Init 时 fail-fast，优于运行时隐性失败。
+	if containsNonPrintableASCII(c.PlatformID) {
+		return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidPlatformID)
+	}
 	if len(c.PlatformID) > maxPlatformIDLen {
 		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidPlatformID, maxPlatformIDLen)
 	}
@@ -114,12 +120,30 @@ func (c Config) Validate() error {
 		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsControl) {
 			return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
 		}
+		if containsNonPrintableASCII(c.UnclassRegionID) {
+			return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidUnclassRegionID)
+		}
 		if len(c.UnclassRegionID) > maxUnclassRegionIDLen {
 			return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)
 		}
 	}
 
 	return nil
+}
+
+// containsNonPrintableASCII 判断字符串是否包含非可打印 ASCII 字节（0x80+ 或 0x00..0x20/0x7f）。
+//
+// 设计决策: 按字节逐一检查（string index 操作），避免 rune 解码开销。
+// 与 unicode.IsSpace/IsControl 的校验存在重叠（0x00..0x20 和 0x7f），但三者组合
+// 可明确拆分错误语义（空白/控制/非ASCII），便于调用方排障。
+func containsNonPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x21 || b > 0x7e {
+			return true
+		}
+	}
+	return false
 }
 
 // =============================================================================

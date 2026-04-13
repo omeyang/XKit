@@ -296,6 +296,23 @@ func TestEnsureDirWithPermEdgeCases(t *testing.T) {
 	})
 }
 
+// TestEnsureDirWithPermRejectsDirectoryPath 验证 API 契约: 拒绝以分隔符结尾的
+// 目录路径输入，避免调用方误把目录路径当文件路径传入而创建错误的祖父目录。
+func TestEnsureDirWithPermRejectsDirectoryPath(t *testing.T) {
+	cases := []string{"/tmp/somedir/", "logs/", "a\\b\\"}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			err := EnsureDirWithPerm(in, 0750)
+			if err == nil {
+				t.Fatalf("期望拒绝目录路径 %q，但通过了", in)
+			}
+			if !errors.Is(err, ErrInvalidPath) {
+				t.Errorf("期望 ErrInvalidPath，得到: %v", err)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // DefaultDirPerm 常量测试
 // =============================================================================

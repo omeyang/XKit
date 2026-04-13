@@ -729,6 +729,55 @@ func TestSafeJoinSymlinkEscape(t *testing.T) {
 	})
 }
 
+// TestSafeJoinWithOptions_DanglingSymlinkLeaf 验证 dangling symlink（目标不存在）
+// 启用 ResolveSymlinks 时必须被拒绝，否则调用方使用返回路径写文件会跟随 symlink
+// 在 base 之外创建文件，绕过包含性检查。
+func TestSafeJoinWithOptions_DanglingSymlinkLeaf(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "base")
+	if err := os.MkdirAll(baseDir, 0750); err != nil {
+		t.Fatalf("创建 base 目录失败: %v", err)
+	}
+	// dangling symlink: base/link -> /tmp/.../outside/newfile（目标不存在）
+	outsideTarget := filepath.Join(tmpDir, "outside", "newfile")
+	linkPath := filepath.Join(baseDir, "link")
+	if err := os.Symlink(outsideTarget, linkPath); err != nil {
+		t.Fatalf("创建 dangling symlink 失败: %v", err)
+	}
+
+	t.Run("dangling symlink leaf 必须被拒绝", func(t *testing.T) {
+		_, err := SafeJoinWithOptions(baseDir, "link", SafeJoinOptions{ResolveSymlinks: true})
+		if err == nil {
+			t.Fatal("期望 dangling symlink 被拒绝，但通过了")
+		}
+		if !errors.Is(err, ErrSymlinkResolution) {
+			t.Errorf("期望 ErrSymlinkResolution，得到: %v", err)
+		}
+	})
+
+	t.Run("通过 dangling symlink 拼接子路径也被拒绝", func(t *testing.T) {
+		_, err := SafeJoinWithOptions(baseDir, "link/sub", SafeJoinOptions{ResolveSymlinks: true})
+		if err == nil {
+			t.Fatal("期望 dangling symlink 子路径被拒绝，但通过了")
+		}
+		if !errors.Is(err, ErrSymlinkResolution) {
+			t.Errorf("期望 ErrSymlinkResolution，得到: %v", err)
+		}
+	})
+
+	t.Run("不存在的非symlink叶子仍允许通过", func(t *testing.T) {
+		// 普通的不存在文件（非 symlink），用于配置阶段路径构建场景
+		result, err := SafeJoinWithOptions(baseDir, "newfile.txt", SafeJoinOptions{ResolveSymlinks: true})
+		if err != nil {
+			t.Fatalf("不存在的普通叶子不应被拒绝: %v", err)
+		}
+		expected := filepath.Join(baseDir, "newfile.txt")
+		if result != expected {
+			t.Errorf("结果 = %q, 期望 %q", result, expected)
+		}
+	})
+}
+
 // =============================================================================
 // 错误类型测试（errors.Is 语义）
 // =============================================================================

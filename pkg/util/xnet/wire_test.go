@@ -144,6 +144,24 @@ func TestWireRangeFromAddrs_MixedIPv4AndMapped(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidRange)
 }
 
+func TestWireRangeFromAddrs_RejectsZoneID(t *testing.T) {
+	// 与 ToIPRange 对称：序列化入口也必须拒绝带 zone ID 的地址，
+	// 否则生成的 WireRange 无法被同包的 ToIPRange 反序列化（round-trip 破损）。
+	withZone := netip.MustParseAddr("fe80::1%eth0")
+	plain := netip.MustParseAddr("fe80::2")
+
+	_, err := WireRangeFromAddrs(withZone, plain)
+	assert.ErrorIs(t, err, ErrInvalidAddress)
+	assert.Contains(t, err.Error(), "zone")
+
+	_, err = WireRangeFromAddrs(plain, withZone)
+	assert.ErrorIs(t, err, ErrInvalidAddress)
+	assert.Contains(t, err.Error(), "zone")
+
+	_, err = WireRangeFromAddrs(withZone, withZone)
+	assert.ErrorIs(t, err, ErrInvalidAddress)
+}
+
 func TestWireRangeToIPRange(t *testing.T) {
 	w := WireRange{Start: "192.168.1.1", End: "192.168.1.100"}
 	r, err := w.ToIPRange()

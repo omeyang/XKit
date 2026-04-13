@@ -26,7 +26,12 @@ type Config struct {
 	Size int
 
 	// TTL 条目过期时间。
-	// 0 表示永不过期，不允许负值，正值不得低于 100ns。
+	// 0 表示实际上不过期（底层哨兵 TTL = 10 年，对长生命周期进程足够），
+	// 不允许负值，正值不得低于 100ns。
+	//
+	// 设计决策: 0 TTL 透传给 expirable.NewLRU，该库内部将 ttl<=0 替换为 noEvictionTTL
+	// (10 年)，并禁用后台清理 goroutine。因此 Get/Peek/Contains 对 10 年前写入的条目
+	// 仍会判定过期。对任何真实进程寿命（远小于 10 年），此行为与“永不过期”不可区分。
 	TTL time.Duration
 }
 
@@ -198,8 +203,14 @@ func (c *Cache[K, V]) Keys() []K {
 // Close 关闭缓存，释放资源。
 // 该方法是幂等的：多次调用只会执行一次清理。
 //
-// Close 会清空所有缓存条目并停止 TTL 过期清理 goroutine。
+// Close 会清空所有缓存条目并发信号停止 TTL 过期清理 goroutine。
 // Close 后所有读操作返回零值/false，写操作静默忽略。
+//
+// 设计决策: Close 通过关闭上游 done 通道请求清理 goroutine 退出，但上游
+// deleteExpired 可能正处于不监听 done 的 time.Sleep(timeToExpire) 中，
+// 最长滞留约 TTL/100。例如 TTL=1h 时，Close 返回后 goroutine 最晚
+// 约 36s 才实际退出。这不会导致资源泄漏累积（Close 幂等 + closeOnce
+// 确保 done 只关闭一次），仅表示清理 goroutine 异步退出。
 //
 // 设计决策: closed 标记与 lru 操作之间存在微小的 TOCTOU 窗口——在 closed.Load()
 // 返回 false 到实际执行 lru 方法之间，另一个 goroutine 可能调用 Close()。

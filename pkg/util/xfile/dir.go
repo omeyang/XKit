@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultDirPerm 默认目录权限
@@ -49,6 +50,12 @@ func EnsureDirWithPerm(filename string, perm os.FileMode) error {
 	}
 	if containsNullByte(filename) {
 		return fmt.Errorf("filename contains null byte: %w", ErrNullByte)
+	}
+	// API 契约: filename 必须是文件路径而非目录路径。尾随分隔符表示目录路径，
+	// 若放行会导致 filepath.Dir 把目录视为父目录，创建出错误的祖父目录（例如
+	// "/tmp/a/" -> 创建 "/tmp"），与文档契约不符。与 SanitizePath 行为保持一致。
+	if strings.HasSuffix(filename, "/") || strings.HasSuffix(filename, "\\") {
+		return fmt.Errorf("filename must be a file path, not a directory: %w", ErrInvalidPath)
 	}
 	// 设计决策: 仅校验所有者执行位（0100），不限制 world-writable 等权限位。
 	// 权限策略属于调用方职责：EnsureDir() 提供安全默认值（0750），

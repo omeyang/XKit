@@ -2,6 +2,7 @@ package xfile
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -339,6 +340,15 @@ func evalSymlinksPartial(path string) (string, error) {
 		return resolved, nil
 	}
 
+	// 安全检查: 如果整条路径中任何已存在的组件本身是 symlink，但 EvalSymlinks 失败，
+	// 说明 symlink 目标不存在（dangling symlink）。此时若按"未解析叶子"逻辑把
+	// symlink 名直接拼回去，调用方使用返回路径打开/创建文件时 OS 会跟随 symlink，
+	// 在 base 目录之外创建文件，绕过 SafeJoinWithOptions 的包含性检查。
+	// 必须在向上收集前拒绝任何 dangling symlink 组件。
+	if err := rejectDanglingSymlink(path); err != nil {
+		return "", err
+	}
+
 	// 迭代：从叶向根逐层收集不存在的路径段，找到最深的可解析祖先
 	clean := filepath.Clean(path)
 	var trail []string // 不存在的路径段（逆序收集）
@@ -371,4 +381,30 @@ func evalSymlinksPartial(path string) (string, error) {
 
 		current = dir
 	}
+}
+
+// rejectDanglingSymlink 沿路径自叶向根 Lstat 每个已存在组件，
+// 若发现任何组件本身是 symlink，则视为 dangling symlink（因为前置 EvalSymlinks 已失败），
+// 返回 ErrSymlinkResolution。这样可避免把 symlink 名拼回返回路径，
+// 防止调用方通过 dangling symlink 在 base 之外创建/写入文件。
+func rejectDanglingSymlink(path string) error {
+	clean := filepath.Clean(path)
+	current := clean
+	for i := 0; i <= maxSymlinkDepth; i++ {
+		info, lerr := os.Lstat(current)
+		if lerr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("dangling symlink at %q: %w", current, ErrSymlinkResolution)
+			}
+			// 找到第一个已存在且非 symlink 的祖先；其上层已被 OS 解析过路径名，
+			// 若中间还有 symlink，EvalSymlinks(dir) 会在调用方循环中处理或失败。
+			return nil
+		}
+		dir := filepath.Dir(current)
+		if dir == current {
+			return nil
+		}
+		current = dir
+	}
+	return ErrPathTooDeep
 }

@@ -48,6 +48,14 @@ func WireRangeFromAddrs(from, to netip.Addr) (WireRange, error) {
 	if !to.IsValid() {
 		return WireRange{}, fmt.Errorf("%w: invalid end address", ErrInvalidAddress)
 	}
+	// 拒绝 IPv6 zone ID：与 ToIPRange 对称，避免生成自身无法反序列化的 Wire 值
+	// （zone 在序列化后会随字符串保留，但 ToIPRange 明确拒绝 zone）。
+	if from.Zone() != "" {
+		return WireRange{}, fmt.Errorf("%w: IPv6 zone ID is not supported: %s", ErrInvalidAddress, from)
+	}
+	if to.Zone() != "" {
+		return WireRange{}, fmt.Errorf("%w: IPv6 zone ID is not supported: %s", ErrInvalidAddress, to)
+	}
 	if !sameWireFamily(from, to) {
 		return WireRange{}, fmt.Errorf("%w: mixed address families: %s and %s", ErrInvalidRange, from, to)
 	}

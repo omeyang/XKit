@@ -539,7 +539,20 @@ func TestMaxBackups(t *testing.T) {
 
 // TestCompress 测试压缩功能
 func TestCompress(t *testing.T) {
-	tmpDir := t.TempDir()
+	// 不用 t.TempDir(): lumberjack 的 millRun goroutine 无法被 Close 打断
+	// （见 doc.go 已知限制），Close 返回后压缩/清理仍可能写目录，
+	// 与 t.TempDir 的 RemoveAll 竞争会报 "directory not empty"。
+	// 这里手动创建目录并在 Cleanup 中吞掉 ENOTEMPTY。
+	tmpDir, err := os.MkdirTemp("", "TestCompress")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		for range 20 {
+			if err := os.RemoveAll(tmpDir); err == nil {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
 	filename := filepath.Join(tmpDir, "compress.log")
 
 	r, err := NewLumberjack(filename,

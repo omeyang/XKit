@@ -47,7 +47,10 @@ type DLQPolicy struct {
 	// DLQTopic 死信 Topic 名称（必须）
 	DLQTopic string
 
-	// RetryTopic 重试 Topic 名称（可选，空字符串表示原地重试）
+	// RetryTopic 重试 Topic 名称。
+	// 空字符串表示 requeue 到原 topic 的尾部（使用 kafka.PartitionAny，不保证回到原分区），
+	// 由同一消费者组再次拉取处理。**不保证分区内顺序**：同一 key 可能落到不同分区。
+	// 如需严格的分区内顺序重试，应显式配置独立的 RetryTopic。
 	RetryTopic string
 
 	// RetryPolicy 重试策略（必须）

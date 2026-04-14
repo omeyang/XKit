@@ -65,34 +65,7 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 	// 使用 channel 来处理 context 取消
 	done := make(chan error, 1)
 	go func() {
-		// 加锁保护对底层 consumer 的访问
-		w.mu.Lock()
-		defer w.mu.Unlock()
-
-		// 再次检查 closed，防止在等待锁期间 Close() 已执行
-		if w.closed.Load() {
-			done <- ErrClosed
-			return
-		}
-
-		// 检查是否有分配的分区
-		assignment, err := w.client.Assignment()
-		if err != nil {
-			done <- fmt.Errorf("%w: consumer get assignment: %w", ErrHealthCheckFailed, err)
-			return
-		}
-
-		// 如果没有分配分区，尝试获取元数据来验证连接
-		if len(assignment) == 0 {
-			timeoutMs := int(w.options.HealthTimeout.Milliseconds())
-			_, err := w.client.GetMetadata(nil, true, timeoutMs)
-			if err != nil {
-				done <- fmt.Errorf("%w: consumer get metadata: %w", ErrHealthCheckFailed, err)
-				return
-			}
-		}
-
-		done <- nil
+		done <- w.runHealthCheck(ctx)
 	}()
 
 	select {
@@ -101,6 +74,35 @@ func (w *consumerWrapper) Health(ctx context.Context) (err error) {
 	case err := <-done:
 		return err
 	}
+}
+
+// runHealthCheck 执行 Health 的底层检查，已抽取为独立方法以降低 Health 的圈复杂度。
+// 在加锁前后均检查 ctx 与 closed，避免 ctx 取消后仍排队等 mu 或在关闭后调用底层 client。
+func (w *consumerWrapper) runHealthCheck(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed.Load() {
+		return ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	assignment, err := w.client.Assignment()
+	if err != nil {
+		return fmt.Errorf("%w: consumer get assignment: %w", ErrHealthCheckFailed, err)
+	}
+	if len(assignment) == 0 {
+		timeoutMs := int(w.options.HealthTimeout.Milliseconds())
+		if _, err := w.client.GetMetadata(nil, true, timeoutMs); err != nil {
+			return fmt.Errorf("%w: consumer get metadata: %w", ErrHealthCheckFailed, err)
+		}
+	}
+	return nil
 }
 
 // Stats 返回消费者统计信息。
@@ -152,6 +154,9 @@ func (w *consumerWrapper) calculateLag() int64 {
 // partitionLag 计算单个分区的消费延迟。
 // 调用方必须持有 mu 锁。
 func (w *consumerWrapper) partitionLag(tp kafka.TopicPartition, timeoutMs int) int64 {
+	if tp.Topic == nil {
+		return 0
+	}
 	committed, err := w.client.Committed([]kafka.TopicPartition{tp}, timeoutMs)
 	if err != nil || len(committed) == 0 {
 		return 0

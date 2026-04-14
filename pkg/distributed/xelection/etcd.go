@@ -247,16 +247,18 @@ func (l *etcdLeader) Resign(ctx context.Context) error {
 	l.observeCancel()
 	<-l.observeDone
 
-	var resignErr error
+	// 同时保留 election.Resign 与 session.Close 错误链：任一失败都要可被 errors.Is 识别。
+	// 用 errors.Join 避免 resignErr != nil 时静默丢弃 session.Close 错误。
+	var electionErr, sessionErr error
 	if l.election != nil {
 		if err := l.election.Resign(ctx); err != nil {
-			resignErr = fmt.Errorf("xelection: resign: %w", err)
+			electionErr = fmt.Errorf("xelection: resign: %w", err)
 		}
 	}
-	if err := l.session.Close(); err != nil && resignErr == nil {
-		resignErr = fmt.Errorf("xelection: close session: %w", err)
+	if err := l.session.Close(); err != nil {
+		sessionErr = fmt.Errorf("xelection: close session: %w", err)
 	}
-	return resignErr
+	return errors.Join(electionErr, sessionErr)
 }
 
 // CandidateID 参见 Leader.CandidateID。

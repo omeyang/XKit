@@ -162,6 +162,27 @@ func TestResign_ElectionResignErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestResign_BothErrorsJoined election.Resign 与 session.Close 同时失败时，
+// 两个错误都应被 errors.Is 识别（errors.Join 保留完整错误链）。
+func TestResign_BothErrorsJoined(t *testing.T) {
+	t.Parallel()
+	ms := NewMockSession()
+	closeSentinel := errors.New("close boom")
+	ms.SetCloseErr(closeSentinel)
+	me := NewMockElection()
+	resignSentinel := errors.New("resign boom")
+	me.ResignErr = resignSentinel
+	l := NewTestLeaderWithElection(ms, me, "self", nil)
+
+	err := l.Resign(context.Background())
+	if !errors.Is(err, resignSentinel) {
+		t.Errorf("want wrapped resignSentinel, got %v", err)
+	}
+	if !errors.Is(err, closeSentinel) {
+		t.Errorf("want wrapped closeSentinel, got %v", err)
+	}
+}
+
 // TestLeader_KeyFromElection 注入的 election 应被用于 Key() 返回值。
 func TestLeader_KeyFromElection(t *testing.T) {
 	t.Parallel()

@@ -9,6 +9,11 @@
 // 注意：当前仅支持基于文件大小的轮转策略，不支持基于时间（如每日轮转）的策略。
 // 如需基于时间的轮转，建议配合外部工具（如 logrotate）使用。
 //
+// 使用外部 logrotate 的约束（重要）：
+// 进程已打开当前日志 fd，若外部工具 delete/truncate 旧文件，本进程会继续
+// 写入被删除/清空的 inode。正确做法是用 copytruncate=no 的 rename+create 方案，
+// 并通过 postrotate 发送信号让本进程调用 Rotate()（或通过 SIGHUP 等机制）。
+//
 // # 生命周期
 //
 // Close 后调用 Write 或 Rotate 将返回 [ErrClosed]，重复调用 Close 同样返回 [ErrClosed]。

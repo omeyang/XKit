@@ -285,18 +285,19 @@ func validateLumberjackPolicy(cfg *lumberjackConfig) error {
 // Write 实现 io.Writer 接口
 func (r *lumberjackRotator) Write(p []byte) (n int, err error) {
 	r.opMu.RLock()
+	defer r.opMu.RUnlock()
+
 	if r.closed.Load() {
-		r.opMu.RUnlock()
 		return 0, ErrClosed
 	}
 
 	n, err = r.logger.Write(p)
-	r.opMu.RUnlock()
 	if err != nil {
 		return n, err
 	}
 
-	// 权限调整是尽力而为，不影响日志写入的返回值
+	// 权限调整纳入 opMu 读锁区间，确保 Close 写锁能等待 chmod + onError 回调完成，
+	// 保持 "Write/Rotate/Close 串行化" 的实现契约（Codex FG-M2 修复）。
 	if r.fileMode != 0 {
 		needCheck := !r.modeApplied.Load()
 		// 设计决策: maxSizeBytes > 0 是防御性检查，当前验证保证 MaxSizeMB >= 1，
@@ -386,21 +387,18 @@ func (r *lumberjackRotator) Close() error {
 // Rotate 手动触发轮转
 func (r *lumberjackRotator) Rotate() error {
 	r.opMu.RLock()
+	defer r.opMu.RUnlock()
+
 	if r.closed.Load() {
-		r.opMu.RUnlock()
 		return ErrClosed
 	}
 
-	err := r.logger.Rotate()
-	r.opMu.RUnlock()
-	if err != nil {
+	if err := r.logger.Rotate(); err != nil {
 		return err
 	}
 
-	// 设计决策: Rotate 成功路径不做 TOCTOU 后置检查，与 Write 成功路径一致——
-	// 轮转已完成（旧文件已重命名、新文件已创建），返回 success 在语义上更准确。
-	// 如果 Close 恰好在此窗口内完成，后续 Write 或 Rotate 会得到 ErrClosed。
-
+	// 权限调整纳入 opMu 读锁区间，确保 Close 写锁等待 chmod + onError 完成。
+	// （Codex FG-M2 修复：保持 Write/Rotate/Close 线性化契约）
 	if r.fileMode != 0 {
 		// 轮转后新文件使用 lumberjack 默认权限 0600，需要重新调整
 		r.modeApplied.Store(false)

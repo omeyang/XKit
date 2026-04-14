@@ -2,6 +2,8 @@ package xlimit
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"math"
 	"strconv"
 
@@ -231,6 +233,11 @@ func handleGRPCLimit(ctx context.Context, limiter Limiter, key Key) (denied bool
 		if result != nil && !result.Allowed {
 			return true, grpcRateLimitError(ctx, result)
 		}
+		// fail-open 路径：记录告警便于运维发现配置错误或后端异常。
+		slog.WarnContext(ctx, "xlimit: gRPC interceptor fail-open due to limiter error",
+			slog.String("error", err.Error()),
+			slog.Bool("is_closed", errors.Is(err, ErrLimiterClosed)),
+		)
 		return false, nil // fail-open
 	}
 

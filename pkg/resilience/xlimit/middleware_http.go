@@ -1,6 +1,8 @@
 package xlimit
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 )
 
@@ -62,6 +64,13 @@ func handleHTTPLimit(w http.ResponseWriter, r *http.Request, limiter Limiter, mo
 			mopts.DenyHandler(w, r, result)
 			return true
 		}
+		// fail-open 路径：记录告警便于运维发现配置错误或后端异常，
+		// 避免静默吞掉 ErrLimiterClosed / 内部错误导致限流实质失效。
+		slog.Warn("xlimit: HTTP middleware fail-open due to limiter error",
+			slog.String("error", err.Error()),
+			slog.Bool("is_closed", errors.Is(err, ErrLimiterClosed)),
+			slog.String("path", r.URL.Path),
+		)
 		return false // fail-open
 	}
 

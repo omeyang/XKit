@@ -63,4 +63,19 @@
 //   - xlimit.denied.total：被拒绝请求数 (Counter)
 //   - xlimit.fallback.total：降级次数 (Counter)
 //   - xlimit.check.duration：检查延迟 (Histogram)
+//
+// # 已知限制
+//
+//   - 多规则评估非原子：evaluateRules 逐条调用 backend.CheckRule，单条 Redis
+//     Lua 脚本原子但规则间不原子。若 rule1 通过扣 1、rule2 拒绝，请求最终返回
+//     429 但 rule1 配额已减少。此限制与大多数限流库一致；对严格多维一致性要求
+//     的场景请合并规则或接受小幅配额偏差。
+//   - fallback 无熔断窗口：Redis 故障时每个请求仍先尝试 Redis，超时后再走
+//     本地/fail-open/fail-close；大量并发会形成 goroutine 堆积和延迟放大。
+//     如需熔断隔离，可在上游组合 pkg/resilience/xbreaker。
+//   - 空规则 fail-open：构造时规则为空会全量放行；构造阶段会输出 slog.Warn，
+//     请务必监听日志并验证配置路径。
+//   - 中间件 fail-open：HTTP/gRPC 中间件在限流器内部错误时 fail-open，
+//     错误路径会输出 slog.Warn。生产环境请监听该告警，必要时自行包装中间件
+//     按业务策略 fail-close。
 package xlimit

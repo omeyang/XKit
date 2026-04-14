@@ -98,7 +98,8 @@ func (m *MockElection) SendLeader(value string) {
 
 // NewTestLeaderWithElection 构造一个注入 MockElection 的 Leader，
 // 用于完整覆盖 observe 的所有分支（抢占/通道关闭/session 过期）。
-func NewTestLeaderWithElection(session *MockSession, elec electionKind, id string, logger xlog.Logger) *etcdLeader {
+// session 接受 sessionProvider 以便测试注入自定义实现（如计数型 session）。
+func NewTestLeaderWithElection(session sessionProvider, elec electionKind, id string, logger xlog.Logger) *etcdLeader {
 	l := newEtcdLeader(session, elec, id, logger)
 	l.startObserve()
 	return l
@@ -113,12 +114,15 @@ func NewTestElection(prefix string, fac func() (sessionProvider, error), opts ..
 			opt(o)
 		}
 	}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &etcdElection{
 		prefix: prefix,
 		opts:   o,
 		sessionFac: func(_ *clientv3.Client, _ int) (sessionProvider, error) {
 			return fac()
 		},
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}
 }
 

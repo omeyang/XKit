@@ -55,6 +55,12 @@ type etcdElection struct {
 	opts       *electionOptions
 	sessionFac sessionFactory
 	closed     atomic.Bool
+
+	// closeCtx 在 Close 时被 cancel，用于打断在 elec.Campaign(ctx, ...) 里
+	// 已经阻塞的 in-flight 候选者：单独的 watcher goroutine 监听 closeCtx，
+	// 一旦触发就 cancel 派生出的 campaignCtx，让 etcd concurrency 返回错误。
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
 }
 
 // NewEtcdElection 创建基于 etcd 的选举协调者。
@@ -76,11 +82,14 @@ func NewEtcdElection(client *clientv3.Client, prefix string, opts ...Option) (El
 			opt(o)
 		}
 	}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &etcdElection{
-		client:     client,
-		prefix:     prefix,
-		opts:       o,
-		sessionFac: defaultSessionFactory,
+		client:      client,
+		prefix:      prefix,
+		opts:        o,
+		sessionFac:  defaultSessionFactory,
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}, nil
 }
 
@@ -96,26 +105,21 @@ func (e *etcdElection) Campaign(ctx context.Context, candidateID string) (Leader
 		return nil, ErrElectionClosed
 	}
 
-	session, err := e.sessionFac(e.client, e.opts.ttlSeconds)
+	session, concSession, err := e.acquireSession()
 	if err != nil {
 		return nil, err
 	}
-	concSession, ok := session.(*concurrency.Session)
-	if !ok {
-		// 防御：注入的 sessionProvider 非真实 Session 时，无法创建 Election。
-		// 单元测试通过 etcdLeader 直接构造，不走此路径。
-		if closeErr := session.Close(); closeErr != nil {
-			return nil, fmt.Errorf("xelection: non-etcd session, close: %w", closeErr)
-		}
-		return nil, fmt.Errorf("xelection: session factory returned non-etcd session")
-	}
 
 	elec := concurrency.NewElection(concSession, e.prefix)
-	if err := elec.Campaign(ctx, candidateID); err != nil {
-		// 同时保留 campaign 与 close 的错误链，便于 errors.Is 判定根因。
-		// errors.Join 自动过滤 nil，close 成功时退化为单错误。
-		return nil, fmt.Errorf("xelection: campaign: %w",
-			errors.Join(err, session.Close()))
+	if err := e.runCampaign(ctx, elec, candidateID); err != nil {
+		return nil, e.handleCampaignErr(err, session)
+	}
+
+	// 防御竞态：Campaign 成功返回期间 Close 可能已触发；此时该句柄不应被使用，
+	// 立即 Resign 并关闭 session 以释放 leader key，返回 ErrElectionClosed。
+	if e.closed.Load() {
+		resignErr := elec.Resign(context.Background())
+		return nil, errors.Join(ErrElectionClosed, resignErr, session.Close())
 	}
 
 	ldr := newEtcdLeader(session, elec, candidateID, e.opts.logger)
@@ -123,9 +127,56 @@ func (e *etcdElection) Campaign(ctx context.Context, candidateID string) (Leader
 	return ldr, nil
 }
 
-// Close 参见 Election.Close。幂等。
+// acquireSession 通过注入工厂创建 session 并校验其为真实 *concurrency.Session。
+// 非真实 Session 时会尝试 Close 并返回错误，避免 lease 泄漏。
+func (e *etcdElection) acquireSession() (sessionProvider, *concurrency.Session, error) {
+	session, err := e.sessionFac(e.client, e.opts.ttlSeconds)
+	if err != nil {
+		return nil, nil, err
+	}
+	concSession, ok := session.(*concurrency.Session)
+	if !ok {
+		if closeErr := session.Close(); closeErr != nil {
+			return nil, nil, fmt.Errorf("xelection: non-etcd session, close: %w", closeErr)
+		}
+		return nil, nil, fmt.Errorf("xelection: session factory returned non-etcd session")
+	}
+	return session, concSession, nil
+}
+
+// runCampaign 运行 elec.Campaign；派生 campaignCtx 使 e.Close 能打断已阻塞的候选者
+// （修复 FG-M：原实现 Close 只置标志，无法中断底层 elec.Campaign）。
+func (e *etcdElection) runCampaign(ctx context.Context, elec *concurrency.Election, candidateID string) error {
+	campaignCtx, campaignCancel := context.WithCancel(ctx)
+	defer campaignCancel()
+	stopWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-e.closeCtx.Done():
+			campaignCancel()
+		case <-stopWatch:
+		}
+	}()
+	defer close(stopWatch)
+	return elec.Campaign(campaignCtx, candidateID)
+}
+
+// handleCampaignErr 统一 Campaign 错误处理：Close 触发的打断归一为 ErrElectionClosed，
+// 其他错误保留原 cause 链；两种路径都回收 session 避免 lease 泄漏。
+func (e *etcdElection) handleCampaignErr(err error, session sessionProvider) error {
+	if e.closed.Load() {
+		return errors.Join(ErrElectionClosed, session.Close())
+	}
+	return fmt.Errorf("xelection: campaign: %w",
+		errors.Join(err, session.Close()))
+}
+
+// Close 参见 Election.Close。幂等；同时 cancel closeCtx，打断已阻塞的 in-flight Campaign。
 func (e *etcdElection) Close(_ context.Context) error {
-	e.closed.Store(true)
+	if e.closed.Swap(true) {
+		return nil
+	}
+	e.closeCancel()
 	return nil
 }
 
@@ -147,6 +198,12 @@ type etcdLeader struct {
 	observeCtx    context.Context
 	observeCancel context.CancelFunc
 	observeDone   chan struct{}
+
+	// session 释放幂等守护：observe 在 watch 中断/session 过期时主动释放 lease，
+	// Resign 走 election.Resign → releaseSession 的顺序；任一路径先执行后，
+	// 另一路径调用 releaseSession 即为 no-op（sync.Once 保证）。
+	closeOnce       sync.Once
+	sessionCloseErr error
 }
 
 // newEtcdLeader 构造 Leader 句柄。当选后由 Election 调用。
@@ -172,6 +229,12 @@ func (l *etcdLeader) startObserve() {
 }
 
 // observe 监听 election 与 session 事件；任一退出条件触发 lost 并返回。
+//
+// 修复 FG-H：watch 中断（observe channel closed）或 session 过期时，
+// 必须主动释放 lease（关闭 session），否则调用方按 Lost() 重新 Campaign
+// 会被同进程旧 leader key 长时间阻塞直到 TTL 到期。
+// ctx 被主动取消的分支（由 Resign 触发）不在此处释放，让 Resign 在
+// election.Resign 成功后再 releaseSession，保持 revoke 顺序正确。
 func (l *etcdLeader) observe() {
 	defer close(l.observeDone)
 	if l.election == nil { // 单元测试注入路径
@@ -188,16 +251,42 @@ func (l *etcdLeader) observe() {
 		case resp, ok := <-ch:
 			if !ok {
 				l.loseLeadership("observe channel closed")
+				l.releaseSessionLogged("observe channel closed") // 释放 lease，避免旧 key 阻塞后续 Campaign
 				return
 			}
 			if len(resp.Kvs) > 0 && string(resp.Kvs[0].Value) != l.id {
 				l.loseLeadership("preempted by " + string(resp.Kvs[0].Value))
+				l.releaseSessionLogged("preempted")
 				return
 			}
 		case <-l.session.Done():
 			l.loseLeadership("session expired")
+			l.releaseSessionLogged("session expired")
 			return
 		}
+	}
+}
+
+// releaseSession 幂等关闭 session，捕获并记录首次 Close 错误。
+// observe 与 Resign 共用此方法确保 session 只关闭一次。
+func (l *etcdLeader) releaseSession() error {
+	l.closeOnce.Do(func() {
+		if err := l.session.Close(); err != nil {
+			l.sessionCloseErr = fmt.Errorf("xelection: close session: %w", err)
+		}
+	})
+	return l.sessionCloseErr
+}
+
+// releaseSessionLogged 在 observe 退出路径调用 releaseSession，错误经 logger 记录
+// 后吞掉（observe goroutine 无调用者可接收返回值）。Resign 路径走 releaseSession
+// 直接返回错误给调用者。
+func (l *etcdLeader) releaseSessionLogged(reason string) {
+	if err := l.releaseSession(); err != nil && l.logger != nil {
+		l.logger.Warn(context.Background(), "xelection: release session failed",
+			slog.String("id", l.id),
+			slog.String("reason", reason),
+			slog.String("err", err.Error()))
 	}
 }
 
@@ -249,16 +338,14 @@ func (l *etcdLeader) Resign(ctx context.Context) error {
 
 	// 同时保留 election.Resign 与 session.Close 错误链：任一失败都要可被 errors.Is 识别。
 	// 用 errors.Join 避免 resignErr != nil 时静默丢弃 session.Close 错误。
-	var electionErr, sessionErr error
+	// releaseSession 与 observe 共享 sync.Once，避免双关闭。
+	var electionErr error
 	if l.election != nil {
 		if err := l.election.Resign(ctx); err != nil {
 			electionErr = fmt.Errorf("xelection: resign: %w", err)
 		}
 	}
-	if err := l.session.Close(); err != nil {
-		sessionErr = fmt.Errorf("xelection: close session: %w", err)
-	}
-	return errors.Join(electionErr, sessionErr)
+	return errors.Join(electionErr, l.releaseSession())
 }
 
 // CandidateID 参见 Leader.CandidateID。

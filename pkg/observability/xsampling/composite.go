@@ -1,6 +1,23 @@
 package xsampling
 
-import "context"
+import (
+	"context"
+	"reflect"
+)
+
+// isNilSampler 判断 Sampler 接口值是否为 nil 或 typed-nil（如 (*RateSampler)(nil)）。
+// 拦截 composite 构造时传入的 typed-nil，避免 ShouldSample 热路径上解引用 panic。
+func isNilSampler(s Sampler) bool {
+	if s == nil {
+		return true
+	}
+	v := reflect.ValueOf(s)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	}
+	return false
+}
 
 // CompositeMode 组合采样模式
 type CompositeMode int
@@ -81,7 +98,7 @@ func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSam
 	}
 
 	for _, s := range samplers {
-		if s == nil {
+		if isNilSampler(s) {
 			return nil, ErrNilSampler
 		}
 	}

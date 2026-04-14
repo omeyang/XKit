@@ -131,6 +131,7 @@ func WithDebounce(d time.Duration) WatchOption {
 //	}
 //	defer w.Stop()
 //	w.Start() // 阻塞当前 goroutine；非阻塞场景请用 w.StartAsync()
+//
 // validateWatchConfig 校验 Watch 入参并返回具体的 *koanfConfig。
 func validateWatchConfig(cfg Config, callback WatchCallback) (*koanfConfig, error) {
 	kc, ok := cfg.(*koanfConfig)

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# XKit pre-push hook: 阻止未通过 CI 等价检查的提交进入远程。
+# 启用：task install-hooks（即 git config core.hooksPath .githooks）
+#
+# 跳过（紧急情况）：git push --no-verify
+# 但请三思——CI 失败会浪费 runner 资源，且 main 分支保护会拒绝合并。
+
+set -euo pipefail
+
+echo "==> pre-push: running task pre-push (lint-ci + gocyclo + vulncheck + test-short)"
+
+if ! command -v task >/dev/null 2>&1; then
+  echo "错误：未找到 task（go-task）。安装：go install github.com/go-task/task/v3/cmd/task@latest" >&2
+  exit 1
+fi
+
+task pre-push

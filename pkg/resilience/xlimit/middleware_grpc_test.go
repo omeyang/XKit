@@ -33,7 +33,7 @@ func setupGRPCTestLimiter(t *testing.T, limit int) Limiter {
 
 	t.Cleanup(func() {
 		_ = limiter.Close(context.Background()) //nolint:errcheck // cleanup
-		_ = client.Close()  //nolint:errcheck // cleanup
+		_ = client.Close()                      //nolint:errcheck // cleanup
 		mr.Close()
 	})
 

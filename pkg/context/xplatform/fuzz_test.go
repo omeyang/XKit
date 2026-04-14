@@ -22,11 +22,11 @@ func FuzzConfigValidate(f *testing.F) {
 		{"   ", ""},
 		{"platform-1", ""},
 		{"platform-1", "region-1"},
-		{"plat form", ""},     // 含空格
-		{"plat\tform", ""},    // 含制表符
-		{"plat\x00form", ""},  // 含 NUL
-		{"plat\x07form", ""},  // 含 BEL
-		{"plat\nform", ""},    // 含换行
+		{"plat form", ""},      // 含空格
+		{"plat\tform", ""},     // 含制表符
+		{"plat\x00form", ""},   // 含 NUL
+		{"plat\x07form", ""},   // 含 BEL
+		{"plat\nform", ""},     // 含换行
 		{"\u00a0platform", ""}, // 含 NBSP（unicode space）
 		{strings.Repeat("a", 128), ""},
 		{strings.Repeat("a", 129), ""},

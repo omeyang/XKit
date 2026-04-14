@@ -108,4 +108,3 @@ func (s *InformerStore) replace(items map[string][]byte, rev int64) {
 	s.items = cp
 	s.rev = rev
 }
-

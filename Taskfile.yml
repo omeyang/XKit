@@ -4,6 +4,9 @@
 version: '3'
 
 vars:
+  # 与 .github/workflows/ci.yml 的 GOLANGCI_LINT_VERSION 保持一致。
+  # 升级 CI 版本时必须同步更新此处，否则本地和 CI 的规则集会错开。
+  GOLANGCI_LINT_VERSION: v2.8.0
   ARTIFACTS_DIR: .artifacts
   COVERAGE_FILE: .artifacts/coverage.out
   COVERAGE_HTML: .artifacts/coverage.html
@@ -319,9 +322,14 @@ tasks:
   # ==================== 代码质量任务 ====================
 
   lint:
-    desc: 运行 golangci-lint 检查
+    desc: 运行 golangci-lint 检查（使用本地 PATH 版本）
     cmds:
       - golangci-lint run ./...
+
+  lint-ci:
+    desc: 使用与 CI 相同版本的 golangci-lint（{{.GOLANGCI_LINT_VERSION}}）
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
 
   lint-fix:
     desc: 运行 golangci-lint 并自动修复
@@ -347,7 +355,7 @@ tasks:
   gocyclo:
     desc: 运行圈复杂度检查
     cmds:
-      - gocyclo -over 10 internal/ pkg/
+      - go run github.com/fzipp/gocyclo/cmd/gocyclo@latest -over 10 internal/ pkg/
 
   vulncheck:
     desc: 运行安全漏洞扫描
@@ -372,6 +380,23 @@ tasks:
       - task: lint
       - task: test-short
       - task: worktree-check
+
+  pre-push:
+    desc: 推送前检查（与 CI 对齐：fmt + lint-ci + vulncheck + test）
+    cmds:
+      - task: fmt-check
+      - task: lint-ci
+      - task: vulncheck
+      - task: test-short
+    # 说明：不单独跑 `gocyclo` 任务。golangci-lint 自带 gocyclo 规则并应用 .golangci.yml
+    # 的 excludes（跳过 _test.go），而裸 gocyclo 会把所有测试文件都算进去。CI 侧只用
+    # golangci-lint，保持对齐。
+
+  install-hooks:
+    desc: 安装 git pre-push hook（指向 .githooks/）
+    cmds:
+      - git config core.hooksPath .githooks
+      - 'echo "已启用 .githooks/：下次 git push 前将自动运行 task pre-push"'
 
   ci:
     desc: CI 流水线检查（完整版本）

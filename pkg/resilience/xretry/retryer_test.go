@@ -701,7 +701,7 @@ func TestNilRetryer_Accessors(t *testing.T) {
 // ShouldRetry 始终返回 true 时 OnRetry 不应在最后一次失败后再触发。
 type alwaysRetryPolicyCustom struct{ max int }
 
-func (p *alwaysRetryPolicyCustom) MaxAttempts() int                          { return p.max }
+func (p *alwaysRetryPolicyCustom) MaxAttempts() int                                   { return p.max }
 func (p *alwaysRetryPolicyCustom) ShouldRetry(_ context.Context, _ int, _ error) bool { return true }
 
 // 回归: MaxAttempts 截断——OnRetry 触发次数应为 maxAttempts-1，不应多触发。

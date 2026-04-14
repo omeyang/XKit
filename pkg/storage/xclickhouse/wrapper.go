@@ -576,6 +576,10 @@ func (w *clickhouseWrapper) appendRowsToBatch(ctx context.Context, batchObj driv
 			errs = append(errs, fmt.Errorf("context canceled during append at row %d: %w", i, ctx.Err()))
 			return appendedCount, errs
 		}
+		if row == nil {
+			errs = append(errs, fmt.Errorf("nil row at index %d: %w", i, ErrEmptyRows))
+			return appendedCount, errs
+		}
 		if err := batchObj.AppendStruct(row); err != nil {
 			errs = append(errs, fmt.Errorf("append struct failed at row %d: %w", i, err))
 			return appendedCount, errs

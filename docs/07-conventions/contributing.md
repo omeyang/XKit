@@ -376,7 +376,9 @@ task check  # Lint + 测试 + 数据竞争检测
 ## 参考文档
 
 - **golangci-lint 配置**：`.golangci.yml`
-- **API 文档**：`docs/API.md`
-- **命名规范**：`docs/NAMING.md`
+- **API 文档**：[`api.md`](api.md)
+- **命名规范**：[`naming.md`](naming.md)
+- **ADR 决策记录**：[`../05-decisions/`](../05-decisions/00-index.md)
+- **文档索引**：[`../00-index.md`](../00-index.md)
 
 ---

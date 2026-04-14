@@ -381,13 +381,19 @@ tasks:
       - task: test-short
       - task: worktree-check
 
+  docs-ledger-check:
+    desc: 检查文档是否含记账式表述（"以前/后来/原本/改为"）
+    cmds:
+      - bash .githooks/docs-ledger-check.sh
+
   pre-push:
-    desc: 推送前检查（与 CI 对齐：fmt + lint-ci + vulncheck + test）
+    desc: 推送前检查（与 CI 对齐：fmt + lint-ci + vulncheck + test + 文档记账检查）
     cmds:
       - task: fmt-check
       - task: lint-ci
       - task: vulncheck
       - task: test-short
+      - task: docs-ledger-check
     # 说明：不单独跑 `gocyclo` 任务。golangci-lint 自带 gocyclo 规则并应用 .golangci.yml
     # 的 excludes（跳过 _test.go），而裸 gocyclo 会把所有测试文件都算进去。CI 侧只用
     # golangci-lint，保持对齐。

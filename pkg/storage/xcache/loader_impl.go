@@ -205,19 +205,27 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 	return l.loadWithDistLock(ctx, key, loadFn, ttl)
 }
 
-// LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
-func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+// validateLoadHashArgs 校验 LoadHash 入参。
+func (l *loader) validateLoadHashArgs(ctx context.Context, key, field string, loadFn LoadFunc) error {
 	if ctx == nil {
-		return nil, ErrNilContext
+		return ErrNilContext
 	}
 	if l.cache == nil {
-		return nil, ErrNilClient
+		return ErrNilClient
 	}
 	if key == "" || field == "" {
-		return nil, ErrEmptyKey
+		return ErrEmptyKey
 	}
 	if loadFn == nil {
-		return nil, ErrNilLoader
+		return ErrNilLoader
+	}
+	return nil
+}
+
+// LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
+func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+	if err := l.validateLoadHashArgs(ctx, key, field, loadFn); err != nil {
+		return nil, err
 	}
 
 	// 1. 尝试从 Hash 获取

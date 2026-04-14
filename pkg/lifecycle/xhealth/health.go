@@ -3,6 +3,7 @@ package xhealth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -207,7 +208,11 @@ func (h *Health) doShutdown() {
 			defer cancel()
 			if err := srv.Shutdown(ctx); err != nil {
 				// 超时或其它错误:强制关闭底层 listener/连接,确保 Serve 返回。
-				_ = srv.Close()
+				// 已进入强制关闭路径，Close 的二次错误无处可报，仅日志记录。
+				if closeErr := srv.Close(); closeErr != nil {
+					slog.Warn("xhealth: force close server after shutdown failure",
+						"shutdown_err", err, "close_err", closeErr)
+				}
 			}
 		}
 	})
@@ -299,7 +304,8 @@ func (h *Health) executeCheck(ctx context.Context, entry *checkEntry) CheckResul
 		}
 		// 设计决策: singleflight 防惊群,TTL 失效时只允许一个 goroutine 刷新,
 		// 其它并发探针共享同一结果,避免放大下游依赖压力。
-		v, _, _ := entry.sf.Do("", func() (any, error) {
+		// 闭包始终返回 nil error；若未来修改返回错误则记录以便定位。
+		v, err, _ := entry.sf.Do("", func() (any, error) {
 			if cached, ok := entry.getCached(); ok {
 				return cached, nil
 			}
@@ -307,6 +313,9 @@ func (h *Health) executeCheck(ctx context.Context, entry *checkEntry) CheckResul
 			entry.setCachedWithTTL(r, h.opts.cacheTTL)
 			return r, nil
 		})
+		if err != nil {
+			slog.Warn("xhealth: singleflight returned error", "err", err)
+		}
 		if cr, ok := v.(CheckResult); ok {
 			return cr
 		}

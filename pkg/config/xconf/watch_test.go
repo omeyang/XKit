@@ -713,7 +713,9 @@ func TestWatcher_StartAfterStopNoCallback(t *testing.T) {
 
 	var callCount int
 	var mu sync.Mutex
-	w, err := Watch(cfg.(*koanfConfig), func(c Config, err error) {
+	kc, ok := cfg.(*koanfConfig)
+	require.True(t, ok)
+	w, err := Watch(kc, func(c Config, err error) {
 		mu.Lock()
 		callCount++
 		mu.Unlock()

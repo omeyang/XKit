@@ -131,7 +131,8 @@ func WithDebounce(d time.Duration) WatchOption {
 //	}
 //	defer w.Stop()
 //	w.Start() // 阻塞当前 goroutine；非阻塞场景请用 w.StartAsync()
-func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, error) {
+// validateWatchConfig 校验 Watch 入参并返回具体的 *koanfConfig。
+func validateWatchConfig(cfg Config, callback WatchCallback) (*koanfConfig, error) {
 	kc, ok := cfg.(*koanfConfig)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported config type %T", ErrWatchFailed, cfg)
@@ -140,20 +141,20 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 	if kc == nil {
 		return nil, fmt.Errorf("%w: nil *koanfConfig", ErrWatchFailed)
 	}
-
 	if callback == nil {
 		return nil, ErrNilCallback
 	}
-
 	if kc.isBytes {
 		return nil, ErrNotFromFile
 	}
-
 	if kc.path == "" {
 		return nil, ErrEmptyPath
 	}
+	return kc, nil
+}
 
-	// 应用选项
+// applyWatchOptions 应用 WatchOption 并校验。
+func applyWatchOptions(opts []WatchOption) (*watchOptions, error) {
 	options := defaultWatchOptions()
 	for _, opt := range opts {
 		if opt == nil {
@@ -162,6 +163,19 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 		opt(options)
 	}
 	if err := options.validate(); err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, error) {
+	kc, err := validateWatchConfig(cfg, callback)
+	if err != nil {
+		return nil, err
+	}
+
+	options, err := applyWatchOptions(opts)
+	if err != nil {
 		return nil, err
 	}
 

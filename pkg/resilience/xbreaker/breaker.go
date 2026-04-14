@@ -295,25 +295,27 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 		}
 	}
 
-	// 设计决策: 回调通过 goroutine 异步执行，避免在 gobreaker 内部 mutex 持有期间
-	// 同步调用回调导致死锁。详见 WithOnStateChange 文档。
-	// goroutine 内使用 recover 隔离用户回调 panic，防止回调故障导致进程崩溃。
 	if b.onStateChange != nil {
-		cb := b.onStateChange
-		st.OnStateChange = func(name string, from, to gobreaker.State) {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("xbreaker: OnStateChange callback panicked",
-							"name", name, "from", from.String(), "to", to.String(), "panic", r)
-					}
-				}()
-				cb(name, from, to)
-			}()
-		}
+		st.OnStateChange = wrapOnStateChange(b.onStateChange)
 	}
 
 	return st
+}
+
+// wrapOnStateChange 把用户回调包成 goroutine + recover，避免在 gobreaker 内部 mutex
+// 持有期间同步调用导致死锁，并隔离 panic。详见 WithOnStateChange 文档。
+func wrapOnStateChange(cb func(name string, from, to gobreaker.State)) func(string, gobreaker.State, gobreaker.State) {
+	return func(name string, from, to gobreaker.State) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("xbreaker: OnStateChange callback panicked",
+						"name", name, "from", from.String(), "to", to.String(), "panic", r)
+				}
+			}()
+			cb(name, from, to)
+		}()
+	}
 }
 
 // buildCircuitBreaker 构建底层熔断器

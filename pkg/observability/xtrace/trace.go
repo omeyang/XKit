@@ -2,12 +2,15 @@ package xtrace
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
 	"github.com/omeyang/xkit/pkg/observability/xlog"
 )
+
+var errInvalidHex = errors.New("xtrace: invalid hex")
 
 // =============================================================================
 // 选项配置（HTTP 和 gRPC 共用）
@@ -297,7 +300,41 @@ func parseTraceparent(traceparent string) (traceID, spanID, traceFlags string, o
 		return "", "", "", false
 	}
 
+	// W3C v00：保留位目前仅定义 bit 0 (sampled)；OTel propagation.TraceContext
+	// 对 `version == 00 && opts[0] > 0x02` 直接判无效。此处与上游 SDK 对齐，
+	// 拒绝 v00 下 >0x02 的 flags（如 "03"/"ff"）以避免提取非法上下文并写入 xctx。
+	version := traceparent[0:2]
+	if version == "00" {
+		if b, err := parseHexByte(traceFlags); err == nil && b > 0x02 {
+			return "", "", "", false
+		}
+	}
+
 	return traceID, spanID, traceFlags, true
+}
+
+// parseHexByte 解析 2 位十六进制为 byte。调用方保证已通过 isValidHex 校验。
+func parseHexByte(s string) (byte, error) {
+	if len(s) != 2 {
+		return 0, errInvalidHex
+	}
+	hexVal := func(c byte) (byte, bool) {
+		switch {
+		case c >= '0' && c <= '9':
+			return c - '0', true
+		case c >= 'a' && c <= 'f':
+			return c - 'a' + 10, true
+		case c >= 'A' && c <= 'F':
+			return c - 'A' + 10, true
+		}
+		return 0, false
+	}
+	hi, ok1 := hexVal(s[0])
+	lo, ok2 := hexVal(s[1])
+	if !ok1 || !ok2 {
+		return 0, errInvalidHex
+	}
+	return hi<<4 | lo, nil
 }
 
 // isValidTraceparentVersion 验证 traceparent 版本格式
@@ -398,9 +435,11 @@ func formatTraceparent(traceID, spanID, traceFlags string) string {
 		return ""
 	}
 
-	// trace-flags 默认为 "00"（未采样）
+	// trace-flags 缺失或非法时默认 "01"（sampled），与 xmetrics.ensureParentSpan 一致。
+	// 默认 "00" 会在下游 ParentBased 采样器下被视为 remote-unsampled 导致 span 被丢弃，
+	// 出现"有 trace_id 但无导出 span"的观测盲区。如需显式 unsampled，请传入 "00"。
 	if traceFlags == "" || !isValidTraceFlags(traceFlags) {
-		traceFlags = "00"
+		traceFlags = "01"
 	}
 	// W3C v00 规范 & OTel propagation.TraceContext.Inject 行为：
 	// 输出 v00 traceparent 时，仅保留已采样位（bit 0），其他 flag 位清零。

@@ -420,7 +420,7 @@ func TestInjectToRequest(t *testing.T) {
 
 		// 验证 traceparent 格式（-00 表示未采样，因为无法确定实际采样决策）
 		traceparent := req.Header.Get(xtrace.HeaderTraceparent)
-		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if traceparent != expected {
 			t.Errorf("traceparent = %q, want %q", traceparent, expected)
 		}
@@ -519,7 +519,7 @@ func TestInjectTraceToHeader(t *testing.T) {
 			t.Error("invalid traceparent should not be forwarded")
 		}
 		// 应该从 TraceID 和 SpanID 生成有效的 traceparent
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if got != want {
 			t.Errorf("traceparent = %q, want generated %q", got, want)
 		}
@@ -762,7 +762,7 @@ func TestInjectToRequest_UpperCaseTraceIDNormalized(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	xtrace.InjectToRequest(ctx, req)
 
-	expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+	expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	if got := req.Header.Get(xtrace.HeaderTraceparent); got != expected {
 		t.Errorf("traceparent = %q, want %q (should be lowercase)", got, expected)
 	}
@@ -896,7 +896,7 @@ func TestInjectTraceToHeader_FormatTraceparentEdgeCases(t *testing.T) {
 				SpanID:     "b7ad6b7169203331",
 				TraceFlags: "xyz",
 			},
-			wantTraceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00",
+			wantTraceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 		},
 	}
 
@@ -987,7 +987,7 @@ func TestInjectToRequest_OverwritesExistingTraceparent(t *testing.T) {
 		xtrace.InjectToRequest(ctx, req)
 
 		// 新 traceparent 应覆盖旧值
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if got := req.Header.Get(xtrace.HeaderTraceparent); got != want {
 			t.Errorf("traceparent = %q, want %q", got, want)
 		}
@@ -1031,7 +1031,7 @@ func TestInjectToOutgoingContext_OverwritesExistingTraceparent(t *testing.T) {
 		}
 
 		// 新 traceparent 应覆盖旧值
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		vals := md.Get(xtrace.MetaTraceparent)
 		if len(vals) != 1 || vals[0] != want {
 			t.Errorf("traceparent = %v, want [%q]", vals, want)

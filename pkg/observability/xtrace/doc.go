@@ -9,6 +9,15 @@
 // Span 生命周期管理由 OTel SDK 的 otelhttp/otelgrpc 中间件负责。
 // xtrace 与 OTel 中间件可组合使用：xtrace 负责自定义头透传，OTel 负责 Span。
 //
+// 与 OTel 组合注意事项（重要）：
+//   - xtrace 从入站 traceparent 的 parent-id 写入 xctx.SpanID，后续
+//     InjectToRequest/InjectToOutgoingContext 会以该值作为出站 traceparent 的 span-id。
+//     若同时使用 otelhttp/otelgrpc 客户端拦截器，应让 OTel propagator 注入 W3C 头
+//     （它会使用当前服务新建 span 的 span-id），不要再调用 xtrace 的出站注入，
+//     否则链路拓扑会因 span-id 不一致而错位。
+//   - 纯 xtrace（无 OTel SDK）场景下，xtrace 表现为"透传上游 parent-id"的轻量方案，
+//     一般适合网关/边缘服务或无自身 span 生命周期需求的中间服务。
+//
 // 支持以下追踪标识：
 //   - TraceID: 链路追踪 ID（16字节，符合 W3C Trace Context）
 //   - SpanID: 跨度 ID（8字节，符合 W3C Trace Context）

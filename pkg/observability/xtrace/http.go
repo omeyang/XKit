@@ -56,6 +56,10 @@ func ExtractFromHTTPHeader(h http.Header) TraceInfo {
 			info.TraceID = traceID
 			info.SpanID = spanID
 			info.TraceFlags = traceFlags
+		} else {
+			// W3C: tracestate 语义绑定于其 traceparent，traceparent 无效时
+			// tracestate 不应被嫁接到后续（自定义头生成的）trace context 中传播。
+			info.Tracestate = ""
 		}
 	}
 

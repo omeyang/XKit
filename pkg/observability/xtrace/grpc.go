@@ -58,6 +58,10 @@ func ExtractFromMetadata(md metadata.MD) TraceInfo {
 			info.TraceID = traceID
 			info.SpanID = spanID
 			info.TraceFlags = traceFlags
+		} else {
+			// W3C: tracestate 绑定于其 traceparent，解析失败时丢弃 tracestate，
+			// 避免被嫁接到由自定义头重新生成的 trace context 中。
+			info.Tracestate = ""
 		}
 	}
 

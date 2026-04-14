@@ -201,7 +201,7 @@ func TestInjectToOutgoingContext(t *testing.T) {
 
 		// 验证 traceparent（-00 表示未采样，因为无法确定实际采样决策）
 		assertMetaValue(t, md, xtrace.MetaTraceparent,
-			"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00")
+			"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 	})
 
 	t.Run("空 context 不添加 metadata", func(t *testing.T) {
@@ -296,7 +296,7 @@ func TestInjectTraceToMetadata(t *testing.T) {
 		xtrace.InjectTraceToMetadata(md, info)
 
 		// 无效 traceparent 应该被拒绝，从 TraceID/SpanID 回退生成
-		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		assertMetaValue(t, md, xtrace.MetaTraceparent, expected)
 	})
 

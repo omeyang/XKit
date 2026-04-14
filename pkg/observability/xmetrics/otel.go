@@ -67,18 +67,20 @@ func WithInstrumentationName(name string) Option {
 }
 
 // WithTracerProvider 设置 TracerProvider。
+// 对 nil 和 typed-nil（如 (*customProvider)(nil)）均视为无效并忽略，保留默认 provider。
 func WithTracerProvider(provider trace.TracerProvider) Option {
 	return func(cfg *otelConfig) {
-		if provider != nil {
+		if !isNilInterface(provider) {
 			cfg.tracerProvider = provider
 		}
 	}
 }
 
 // WithMeterProvider 设置 MeterProvider。
+// 对 nil 和 typed-nil（如 (*customProvider)(nil)）均视为无效并忽略，保留默认 provider。
 func WithMeterProvider(provider metric.MeterProvider) Option {
 	return func(cfg *otelConfig) {
-		if provider != nil {
+		if !isNilInterface(provider) {
 			cfg.meterProvider = provider
 		}
 	}
@@ -88,6 +90,13 @@ func WithMeterProvider(provider metric.MeterProvider) Option {
 // 默认值为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]，
 // 适用于典型 API 操作（1ms ~ 10s）。
 // nil 或空切片会被忽略，保留默认桶边界。
+//
+// 注意（first registration wins）：OTel Go SDK 的 instrument identity 由
+// (Meter, name, kind) 决定，不包含 bucket 配置。同一 MeterProvider +
+// instrumentationName 下首次 NewOTelObserver 的 bucket 设置生效，
+// 后续同名 instrument 的不同 bucket 会被静默忽略。
+// 若需要多套 bucket，请通过 WithInstrumentationName 使用不同 scope，
+// 或在 SDK 侧通过 View 配置。
 func WithHistogramBuckets(buckets []float64) Option {
 	return func(cfg *otelConfig) {
 		if len(buckets) > 0 {
@@ -197,12 +206,18 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 	)
 	attrs = append(attrs, attrsToOTel(opts.Attrs)...)
 
+	// 保留入参作为兜底，防止自定义 tracer.Start 返回 nil context（违反 OTel 契约）。
+	// 否则 otelSpan.ctx 会持有 nil，End 中的 context.WithoutCancel 会 panic。
+	parentCtx := ctx
 	ctx, span := o.tracer.Start(
 		ctx,
 		operation,
 		trace.WithSpanKind(mapSpanKind(opts.Kind)),
 		trace.WithAttributes(attrs...),
 	)
+	if ctx == nil {
+		ctx = parentCtx
+	}
 
 	// 设计决策: 对 nil/typed-nil span 做 fail-open 防御。
 	// OTel API 契约保证 Tracer.Start 返回非 nil span，但自定义 TracerProvider

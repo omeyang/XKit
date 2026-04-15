@@ -29,3 +29,44 @@
   - Codex B1 — insertBatches 跨批次部分成功属 BatchResult 文档契约
   - Codex B2 — Close CAS 提前置位是标准 Go 惯例（conn.Close 失败不应重试）
 - 修复：commit d815f08；`task pre-push` 绿；已推送 main
+
+## 2026-04-16 slot=0 TARGET=xcache
+- 原始发现：Claude攻=3 守=4 / Codex A=0(输出为工具日志无表格) B=0(同)
+- 交叉对抗：Codex攻Claude → 挂起(stdin管道问题)未产出；Claude攻Codex → N/A(Codex无发现)
+- 合议：必修=0 存疑=0 舍弃=7
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |---|---|---|---|---|---|
+  | CA-1 | FG-H | loader.go:182 | 双%w据称仅第一个生效 | 舍弃 | 1(CA) |
+  | CA-2 | FG-H | loader_impl.go:382 | 双%w错误链丧失 | 舍弃 | 1(CA) |
+  | CA-3 | FG-M | loader_impl.go:84 | contextDetached nil防御 | 舍弃 | 1(CA) |
+  | CB-1 | FG-M | loader_impl.go:272 | WithCancel泄漏 | 舍弃 | 1(CB) |
+  | CB-2 | FG-M | loader_impl.go:104 | 语义混淆 | 舍弃 | 1(CB) |
+  | CB-3 | FG-H | loader_impl.go:120 | 两函数不一致 | 舍弃 | 1(CB) |
+  | CB-4 | FG-H | loader_impl.go:448 | ctx文档不明 | 舍弃 | 1(CB) |
+- 舍弃要点：
+  - CA-1/CA-2: Go 1.20+ 支持多 %w，`errors.Is` 两个 sentinel 均生效；项目惯例（xid 包同模式）
+  - CA-3: 公共入口 Load/LoadHash 已验 nil ctx (L169)，contextDetached 仅内部调用
+  - CB-1: context.WithCancel 不创建 goroutine，sfCancel defer 正确释放
+  - CB-2/CB-3: 两函数目的不同（detach vs no-detach），timeout==0 语义各自文档化(L94-97, L115-128)
+  - CB-4: 文档 nit 非 bug；L439-442 设计决策注释已解释 writeCtx 用途
+
+## 2026-04-16 slot=1 TARGET=xetcd
+- 原始发现：Claude攻=1 守=5 / Codex A=0(超时无表格) B=0(超时无表格)
+- 交叉对抗：Codex攻Claude → a=1 b=4 c=0；Claude攻Codex → N/A(Codex无发现)
+- 合议：必修=1 存疑=0 舍弃=4
+- 修复：commit 32f95dc
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 | 对抗结果 |
+  |---|---|---|---|---|---|---|
+  | 1 | FG-H | informer.go:239 | applyEvents 解引 ev.Kv 无 nil 守卫，panic 绕过 defer close 致死锁 | 必修 | 3(CA+CB+Codex-a) | Codex 确认(a) |
+  | 2 | FG-H | informer.go:168-178 | watchLoop 无限重试无 MaxRetries | 舍弃 | 1(CB) | Codex 判(b)：Informer 设计即重试至 ctx 取消 |
+  | 3 | FG-M | watch.go:512-513 | compaction 恢复注释与实现脱节 | 舍弃 | 1(CB) | Codex 判(b)：逻辑正确 |
+  | 4 | FG-M | watch.go:528-531 | sendMaxRetriesErrorIfNeeded 条件冗余 | 舍弃 | 1(CB) | Codex 判(b)：条件有区分作用 |
+  | 5 | FG-M | client.go:36-47 | registerWatchGoroutine TOCTOU | 舍弃 | 1(CB) | Codex 判(b)：RLock 已覆盖窗口 |
+- 舍弃要点：
+  - #2: Informer 文档即"重试至 ctx 取消"，未承诺 MaxRetries（设计决策）
+  - #3: compactRev 经 state 保存并在 buildRetryWatchOptions 正确使用，注释可改善但非 bug
+  - #4: handleWatchRetry 可因 ctx 取消返回 true，与 MaxRetries 超限条件不同（有区分作用）
+  - #5: RLock 覆盖 closed 检查和 watchWg.Add()，Close 写锁保证原子性（代码正确）

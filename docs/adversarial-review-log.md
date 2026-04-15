@@ -132,3 +132,17 @@
   - CA-H2: Close 全程在 mutex 内，closed=true 在资源关闭前设置，无间隙
   - CA-M2/CB-H1: Close() 返回 void 已文档化（L46），对齐 testing.TB.Cleanup 惯例
   - CxA-M1: Fuzz 每轮 Set/Get 独立语义，共享实例不影响正确性
+
+## 2026-04-16 slot=5 TARGET=xfile
+- 原始发现：Claude攻=2 守=1 / Codex A=0 B=0（两路均未产出结论表格，仅 dump 源码后 go 命令不可用）
+- 交叉对抗：Codex攻Claude → Codex 卡 stdin 未产出；Claude攻Codex → Codex 无发现，N/A
+- 合议：必修=0 存疑=0 舍弃=2
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-H1 | FG-H | path.go:303,308 | 双%w包装错误链 | 舍弃(FP:Go1.20+标准多%w特性，项目约定) | 1 |
+  | CA-M1/CB-M1 | FG-M | path.go:393 | 循环边界不对称 | 舍弃(FP:两函数均迭代256次，语法不同语义相同) | 2 |
+- 舍弃要点：
+  - CA-H1: fmt.Errorf 双 %w 是 Go 1.20+ 标准特性，errors.Is 可匹配两个 cause；xid/xmac 已有先例
+  - CA-M1/CB-M1: evalSymlinksPartial `i>255` 与 rejectDanglingSymlink `i<=255` 均允许 i=0..255 共 256 次迭代，边界对称

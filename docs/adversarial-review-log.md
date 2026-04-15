@@ -89,3 +89,25 @@
   - CA-1: BulkResult.Errors 与 error 返回值是部分成功 API 的惯用模式，非重复
   - CA-2: filter 在 L272-273 已归一化为 bson.D{}，buildSlowQueryInfoFromOps 收到非 nil
   - CB-2: MongoDB driver 契约保证 err==nil 时 result 非 nil
+
+## 2026-04-16 slot=3 TARGET=xetcdtest
+- 原始发现：Claude攻=4 守=3 / Codex A=截断无结论 B=截断无结论
+- 交叉对抗：Codex无发现可供Claude反攻；Claude发现经源码验证全为FP
+- 合议：必修=0 存疑=0 舍弃=7
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-1 | FG-H | mock.go:191 | 声称 embed.Etcd.Close() 返回 error 未检查 | 舍弃(FP) | CA+CB |
+  | CA-2 | FG-M | mock.go:205 | NewClient 闭包泄漏风险 | 舍弃(FP: 使用模式建议) | CA |
+  | CA-3 | FG-M | mock_test.go:25 | context.Background() 无超时 | 舍弃(FP: 测试风格) | CA |
+  | CA-4 | FG-M | mock.go:129-134 | panic 恢复 + defer unlock 死锁 | 舍弃(FP: LIFO 顺序正确) | CA |
+  | CB-1 | FG-H | mock.go:149-151 | waitReady 内 Close 后 tryStart 重复清理 | 舍弃(FP: removeDir≠Close, 无重复) | CB |
+  | CB-2 | FG-M | mock.go:191 | etcd.Close() 无错误处理 | 舍弃(FP: 同 CA-1) | CB |
+  | CB-3 | FG-M | mock.go:149 | waitReady 双重 Close 与 tryStart 不一致 | 舍弃(FP: 同 CB-1) | CB |
+- 舍弃要点：
+  - CA-1/CB-2: embed.Etcd.Close() 签名 func(e *Etcd) Close()，返回 void 非 error
+  - CB-1/CB-3: waitReady 调 e.Close() 只关 server/listener，不删 dir；tryStart L150 removeDir 必要且无重复
+  - CA-4: defer LIFO 保证 recover 先执行再 unlock，无死锁路径
+  - CA-2: 调用方契约 defer cleanup()，非包内缺陷
+  - CA-3: 简单 Put/Get 测试无需超时，且其他测试已有 ctx(t, d) 模式

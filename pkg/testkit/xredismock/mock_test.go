@@ -124,9 +124,6 @@ func FuzzClientSetGet(f *testing.F) {
 
 	ctx := context.Background()
 	f.Fuzz(func(t *testing.T, key, val string) {
-		if key == "" {
-			return // Redis 不允许空 key
-		}
 		if err := m.Client().Set(ctx, key, val, 0).Err(); err != nil {
 			t.Fatalf("set: %v", err)
 		}

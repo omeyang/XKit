@@ -111,3 +111,24 @@
   - CA-4: defer LIFO 保证 recover 先执行再 unlock，无死锁路径
   - CA-2: 调用方契约 defer cleanup()，非包内缺陷
   - CA-3: 简单 Put/Get 测试无需超时，且其他测试已有 ctx(t, d) 模式
+
+## 2026-04-16 slot=4 TARGET=xredismock
+- 原始发现：Claude攻=4 守=3 / Codex A=2 B=截断无结论
+- 交叉对抗：Codex攻Claude → 未完成（超时）；Claude攻Codex → a=1 b=1 c=0
+- 合议：必修=1 存疑=0 舍弃=6
+- 修复：commit e3c9db4
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CxA-M2 | FG-M | mock_test.go:127 | 注释"Redis 不允许空 key"错误，跳过合法空 key 测试 | 必修 | 1 |
+  | CA-H1 | FG-H | mock.go:40,43 | Client()/Server()Close后无检查 | 舍弃(FP:测试辅助包契约) | 2 |
+  | CA-H2 | FG-H | mock.go:48-62 | Close原子性 | 舍弃(FP:整个Close在mutex内) | 1 |
+  | CA-M1 | FG-M | mock.go:72 | cleanup引用泄漏 | 舍弃(FP:GC回收+已有测试) | 2 |
+  | CA-M2 | FG-M | mock.go:55-62 | Close错误未join | 舍弃(FP:文档化设计决策L46) | 2 |
+  | CB-H1 | FG-H | mock.go:56 | 错误被吞 | 舍弃(FP:同CA-M2) | 1 |
+  | CxA-M1 | FG-M | mock_test.go:119 | Fuzz状态累积 | 舍弃(FP:Set/Get无状态依赖) | 1 |
+- 舍弃要点：
+  - CA-H1/CB-M1: 测试辅助包，调用方契约 defer m.Close()，Close 后使用非包内缺陷
+  - CA-H2: Close 全程在 mutex 内，closed=true 在资源关闭前设置，无间隙
+  - CA-M2/CB-H1: Close() 返回 void 已文档化（L46），对齐 testing.TB.Cleanup 惯例
+  - CxA-M1: Fuzz 每轮 Set/Get 独立语义，共享实例不影响正确性

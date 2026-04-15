@@ -236,6 +236,12 @@ func (inf *Informer) watch(ctx context.Context, rev int64) error {
 
 func (inf *Informer) applyEvents(ctx context.Context, events []*clientv3.Event) {
 	for _, ev := range events {
+		if ev.Kv == nil {
+			inf.logger.Warn(ctx, "xetcd informer: skipping event with nil Kv",
+				slog.String("prefix", inf.prefix),
+			)
+			continue
+		}
 		key := string(ev.Kv.Key)
 		rev := ev.Kv.ModRevision
 		switch ev.Type {

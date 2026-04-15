@@ -1141,6 +1141,11 @@ func TestWrapper_ExecuteSingleBatch_UnorderedContextCancel(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 	assert.Error(t, err)
 	assert.True(t, shouldStop)
+
+	// 验证原始 MongoDB 错误被保留（而非被 context 错误替换）
+	var batchErr *BulkBatchError
+	require.ErrorAs(t, err, &batchErr)
+	assert.ErrorIs(t, batchErr.Err, errMockInsert)
 }
 
 // =============================================================================

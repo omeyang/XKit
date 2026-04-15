@@ -493,12 +493,10 @@ func (w *mongoWrapper) executeSingleBatch(ctx context.Context, coll collectionOp
 		return insertedCount, wrappedErr, true
 	}
 
-	// 无序模式下检查 context，避免继续无效工作
+	// 无序模式下检查 context，避免继续无效工作。
+	// 保留原始 MongoDB 错误（wrappedErr），仅通过 shouldStop=true 中止后续批次。
 	if ctx.Err() != nil {
-		return insertedCount, &BulkBatchError{
-			BatchIndex: batchIdx, BatchOffset: batchOffset, BatchSize: len(batch),
-			Err: fmt.Errorf("context canceled: %w", ctx.Err()),
-		}, true
+		return insertedCount, wrappedErr, true
 	}
 
 	return insertedCount, wrappedErr, false

@@ -10,12 +10,40 @@ REPO=/root/code/go/src/github.com/omeyang/XKit
 # cron 环境显式 PATH
 export PATH="/root/.local/share/fnm/node-versions/v24.14.1/installation/bin:/usr/local/bin:/root/.local/bin:/root/code/go/bin:/usr/bin:/bin"
 export HOME=/root
+# cron 非交互 shell 不加载 ~/.zshrc，必须显式放行 root + --dangerously-skip-permissions
+export IS_SANDBOX=1
 
 LOG_DIR="$REPO/.adversarial-runs"
 mkdir -p "$LOG_DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 RUNLOG="$LOG_DIR/slot${SLOT}-${TS}.log"
 exec > >(tee -a "$RUNLOG") 2>&1
+
+LOG_FILE="$REPO/docs/adversarial-review-log.md"
+
+# 向 adversarial-review-log.md 追加失败条目（仅在真正失败路径调用）
+append_failure_log() {
+  local stage="$1" detail="$2"
+  local date_cst; date_cst=$(TZ=Asia/Shanghai date +%Y-%m-%d)
+  {
+    [[ -f "$LOG_FILE" ]] || echo "# Adversarial Review Log"
+    echo ""
+    echo "## $date_cst slot=$SLOT TARGET=${TARGET:-unknown}"
+    echo "- 状态: FAILED"
+    echo "- 阶段: $stage"
+    echo "- 详情: $detail"
+    echo "- 运行日志: $RUNLOG"
+  } >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# 依赖体检：缺任何一个就 fail loud 而非静默退出
+for bin in claude codex task git awk find tee rg; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "FATAL: dependency '$bin' not found in PATH=$PATH"
+    append_failure_log "依赖体检" "$bin 不在 PATH"
+    exit 2
+  fi
+done
 
 echo "=== [$(date -Iseconds)] SLOT=$SLOT start ==="
 cd "$REPO"
@@ -32,7 +60,6 @@ TARGET="${PKGS[$IDX]}"
 echo "initial pick: IDX=$IDX TARGET=$TARGET (DOY=$DOY N=$N)"
 
 # 3 天内已审则向后跳
-LOG_FILE="$REPO/docs/adversarial-review-log.md"
 if [[ -f "$LOG_FILE" ]]; then
   CUTOFF=$(date -u -d '3 days ago' +%Y-%m-%d)
   for _ in 1 2 3 4 5; do
@@ -181,10 +208,23 @@ Read 两个 Codex 输出文件全文（文件不大，<20KB）。**如果 Codex 
 EOF
 )
 
+set +e
 claude -p "$CLAUDE_PROMPT" \
   --dangerously-skip-permissions \
-  --model claude-opus-4-6 \
-  || echo "claude exited with $?"
+  --model claude-opus-4-6
+CLAUDE_RC=$?
+set -e
 
 wait 2>/dev/null || true
-echo "=== [$(date -Iseconds)] SLOT=$SLOT end ==="
+
+# claude 非 0 退出时，判断是否已在合议/修复阶段写过日志；若今天没为本 slot 留下任何条目则补一条 FAILED
+if [[ $CLAUDE_RC -ne 0 ]]; then
+  echo "claude exited with $CLAUDE_RC"
+  TODAY_CST=$(TZ=Asia/Shanghai date +%Y-%m-%d)
+  if ! grep -q "^## $TODAY_CST slot=$SLOT TARGET=$TARGET" "$LOG_FILE" 2>/dev/null; then
+    STDERR_TAIL=$(tail -n 20 "$RUNLOG" 2>/dev/null | tr '\n' ' ' | head -c 800)
+    append_failure_log "Claude 编排器" "rc=$CLAUDE_RC; codex 原始输出: $CODEX_A / $CODEX_B; stderr tail: $STDERR_TAIL"
+  fi
+fi
+
+echo "=== [$(date -Iseconds)] SLOT=$SLOT end rc=$CLAUDE_RC ==="

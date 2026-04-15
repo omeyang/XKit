@@ -70,3 +70,22 @@
   - #3: compactRev 经 state 保存并在 buildRetryWatchOptions 正确使用，注释可改善但非 bug
   - #4: handleWatchRetry 可因 ctx 取消返回 true，与 MaxRetries 超限条件不同（有区分作用）
   - #5: RLock 覆盖 closed 检查和 watchWg.Add()，Close 写锁保证原子性（代码正确）
+
+## 2026-04-16 slot=2 TARGET=xmongo
+- 原始发现：Claude攻=2 守=2 / Codex A=0(过程日志无结论) B=0(过程日志无结论)
+- 交叉对抗：Codex攻Claude → 超时未完成；Claude攻Codex → 无发现可攻
+- 合议：必修=1 存疑=0 舍弃=3
+- 修复：commit 0fd2083
+- 合议表格：
+
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CB-1 | FG-M | wrapper.go:497-501 | 无序批量插入失败且 ctx 取消时，原始 MongoDB 错误被 context 错误替换 | 必修(裁决为修) | 1 |
+  | CA-1 | FG-M | wrapper.go:426 | BulkResult.Errors 与 resultErr 双返回 | 舍弃(FP:部分成功API惯例) | 1 |
+  | CA-2 | FG-H | wrapper.go:269 | SlowQueryInfo.Filter 记录 nil | 舍弃(FP:filter已在L272归一化) | 1 |
+  | CB-2 | FG-M | wrapper.go:478 | result nil 检查缺失 | 舍弃(FP:driver契约保证) | 1 |
+
+- 舍弃要点：
+  - CA-1: BulkResult.Errors 与 error 返回值是部分成功 API 的惯用模式，非重复
+  - CA-2: filter 在 L272-273 已归一化为 bson.D{}，buildSlowQueryInfoFromOps 收到非 nil
+  - CB-2: MongoDB driver 契约保证 err==nil 时 result 非 nil

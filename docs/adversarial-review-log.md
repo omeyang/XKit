@@ -163,3 +163,24 @@
   - 加 `hasCAMaterial`，CA 可选；未提供时 RootCAs 保持 nil 回退系统根
   - loadCAPool 在 AppendCertsFromPEM 前用 `bytes.TrimSpace` 判空，空白内容返回 ErrMissingCA
   - 补测 TestBuildServer_RequireFalseIgnoresCA / TestBuildServer_EmptyCAFile / TestBuildClient_NoCAUsesSystemRoots
+
+## 2026-04-17 slot=1 TARGET=xauth
+- 原始发现：Claude攻=7 (3H/4M) 守=6 (2H/4M) / Codex A=0 B=0（两路 10401/6010 行仅 dump 源码，未产出表格）
+- 交叉对抗：Codex攻Claude → a=2 b=10 c=1；Claude攻Codex → N/A（Codex 无发现）
+- 合议：必修=1（CA-3/CB-6 合一） 存疑=0 舍弃=12
+- 修复：commit <pending>
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-3/CB-6 | FG-M | cache.go:158-172 | Redis Hash HSET+EXPIRE 非原子，多字段分批写入时 EXPIRE 反复覆盖 hash TTL，先写字段实际 TTL 被延长 | 必修 | 2 + Codex(a) |
+  | CA-1 | FG-H | token.go:119 | wg.Go 疑似非标准 + LoadOrStore 与 goroutine 启动间隙 | 舍弃(FP: Go1.25 已有 WaitGroup.Go；LoadOrStore 已占位) | 1 |
+  | CA-2/CB-5 | FG-H/M | token_cache.go:237 | singleflight 闭包捕获首个 ctx | 舍弃(FP: 设计决策已文档化 line 233-236) | 2 |
+  | CA-4 | FG-M | token_cache.go:147-189 | Set 修改入参 data race | 舍弃(FP: token 为 loader 新分配，无共享) | 1 |
+  | CA-5/CB-2 | FG-M/H | http.go:197 | request 绕过 validateRequestHost SSRF | 舍弃(FP: doc.go:49-56 明确支持跨主机绝对 URL；Do 方法验证是独立入口) | 2 |
+  | CA-6/CB-4 | FG-M | platform.go:165,170 | 空字符串作未命中信号 | 舍弃(FP: fetchIDField 空 ID 返回错误，bool 始终 "true"/"false") | 2 |
+  | CA-7 | FG-M | token.go:332-395 | 冗余 select + Set 失败 L1 残留旧 token | 舍弃(FP: Set 先写 L1，远端失败不保留旧 L1) | 1 |
+  | CB-1/CB-3 | H/M | token.go:117-119 | GetOrLoad ttl 参数与 Set 内重算语义混乱 | 舍弃(FP: Set 注释已说明 ttl 为默认值、内部按 token 重算) | 1 |
+- 修复要点：
+  - RedisCacheStore 平台数据由 Hash 改为每字段独立 key（`xauth:platform:tenant:field`）
+  - SET + EX 单命令原子化；DeletePlatformData/Delete 枚举 `platformAllFields()` 批量删除
+  - 新增 TTL 独立性测试 `SetPlatformData fields have independent TTL`，先写字段按自身 TTL 过期不受后写延长

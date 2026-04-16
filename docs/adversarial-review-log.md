@@ -146,3 +146,20 @@
 - 舍弃要点：
   - CA-H1: fmt.Errorf 双 %w 是 Go 1.20+ 标准特性，errors.Is 可匹配两个 cause；xid/xmac 已有先例
   - CA-M1/CB-M1: evalSymlinksPartial `i>255` 与 rejectDanglingSymlink `i<=255` 均允许 i=0..255 共 256 次迭代，边界对称
+
+## 2026-04-17 slot=0 TARGET=xtls
+- 原始发现：Claude攻=0 守=3 / Codex A=1 B=0（B 仅搜索未产出表格）
+- 交叉对抗：Codex攻Claude → a=3 b=0 c=0；Claude攻Codex → a=1 b=0 c=0
+- 合议：必修=3 存疑=0 舍弃=0
+- 修复：commit 0b0db32
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CxA-M1/CB-M2 | FG-M | xtls.go:88-101,52 | RequireClientCert=false 提供 CA 时仍强制 mTLS，违反"false 仅 TLS"契约；注释"默认 true"与 Go bool 零值 false 矛盾 | 必修 | 2 |
+  | CB-M1 | FG-M | xtls.go:130-134 | BuildClientTLSConfig 强制 CA，不支持回退系统 CA 根（公网 HTTPS 场景） | 必修 | 1 |
+  | CB-M3 | FG-M | xtls.go:187-188 | loadCAPool 把空白 PEM 与格式错误统一报 ErrInvalidCA，诊断粒度不足（原标 FG-H 降级：无 panic/leak） | 必修 | 1 |
+- 修复要点：
+  - 简化 clientAuth 逻辑为 `if c.RequireClientCert { mTLS+loadCA } else { NoClientCert }`；文档改"默认 false"
+  - 加 `hasCAMaterial`，CA 可选；未提供时 RootCAs 保持 nil 回退系统根
+  - loadCAPool 在 AppendCertsFromPEM 前用 `bytes.TrimSpace` 判空，空白内容返回 ErrMissingCA
+  - 补测 TestBuildServer_RequireFalseIgnoresCA / TestBuildServer_EmptyCAFile / TestBuildClient_NoCAUsesSystemRoots

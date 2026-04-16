@@ -251,3 +251,29 @@
   - CB-1 包契约明确禁止空白字符（含 0x20），ContainsFunc(IsSpace) 预过滤已使 containsNonPrintableASCII 的 0x20 分支不可达，比 gRPC 更严属设计决策
   - CB-2 TrimSpace==""→Missing、ContainsFunc→Invalid 两个分支错误类型不同、语义清晰；测试覆盖两种场景通过验证
   - CB-3 Validate 是值接收者 + 只读；Init 存储前的 TrimSpace 归一化 L205-207 有明确注释，不存在"Validate 通过后直接使用未归一化 cfg"的真实路径（cfg 是值传入，Init 拿到的是调用栈副本，业务侧调用 Validate 后如需继续用需自行决定归一化）
+
+## 2026-04-17 slot=5 TARGET=xtenant
+- 原始发现：Claude攻=3 守=3 / Codex A=4 B=1 (去重后 X1-X4 共 4 条)
+- 交叉对抗：Codex攻Claude → a=0 b=6 c=0；Claude攻Codex → a=2 b=2 c=0
+- 合议：必修=3 存疑=0 舍弃=7
+- 修复：commit e64c70e
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | X2 | FG-M | http.go:262,grpc.go:277 | injectPlatform* 先 IsInitialized 再多次 atomic.Load，Reset 并发下读到撕裂快照 | 必修(Codex A + Claude CC a) | 2 |
+  | X4 | FG-M | doc.go:154 | 文档"Extract* 线程安全"未限定调用方对 Header/MD 的并发写约束 | 必修(Codex A + Claude CC a) | 2 |
+  | X1 | FG-M | grpc.go:302 | 非 ASCII 租户值写入 outgoing metadata 由 grpc-go 发送前拒绝(Internal)，doc 未警示 | 必修(文档)(Codex A+B，Claude CC b→采纳为文档契约) | 2 |
+  | X3 | FG-M | grpc.go:448 | status.Error 返回值丢失 sentinel 错误链 errors.Is 不匹配 | 舍弃(FP: Claude CC b，gRPC 惯例用 status.Code 而非 errors.Is) | 1 |
+  | C1 | FG-M | grpc.go:251 | InjectToOutgoingContext hadExisting=false 时返回原 ctx 被指线程安全歧义 | 舍弃(FP: Codex b，无 metadata 可复制且未修改入参，返回原 ctx 不破坏线程安全) | 1 |
+  | C2/C6 | FG-M | context.go:147-156 | WithTenantInfo 防御性"不可达"错误处理无测试 | 舍弃(FP: Codex b，xctx 当前仅 nil ctx 报错，前置已拦截；缺测试非缺陷) | 2 |
+  | C3 | FG-M | http.go:248 | InjectToRequest 原地写 req.Header 被指文档未说明并发约束 | 舍弃(FP: Codex b，doc.go:158-164 已明示原地写入 API 需独占) | 1 |
+  | C4 | FG-H | grpc.go:451 | validateGRPCTenantInfo 未 TrimSpace 被指与 Validate 不一致 | 舍弃(FP: Codex b，私有函数调用前 ExtractFromMetadata 已 TrimSpace) | 1 |
+  | C5 | FG-H | http.go:219 | validateHTTPTenantInfo 同上 | 舍弃(FP: Codex b，HTTP 路径同样先 ExtractFromHTTPHeader 已 TrimSpace) | 1 |
+- 修复要点：
+  - injectPlatformMetadata/injectPlatformHeaders 改用 xplatform.GetConfig 单次快照读，三字段（PlatformID/HasParent/UnclassRegionID）保证来源同一配置实例
+  - doc.go 线程安全章节拆分为"Context 操作/Extract 只读/原地写入"三类，明确 Extract* 对入参 Header/MD 的并发写约束需调用方保证
+  - doc.go 新增"值约束"章节：gRPC metadata 仅允许 ASCII 可打印字符（%x20-%x7E），非 ASCII 请改用 -bin 后缀 Binary Metadata
+  - 新增 TestInjectToRequest_PlatformSnapshotConsistency / TestInjectToOutgoingContext_PlatformSnapshotConsistency 回归测试：并发 Reset+Init 下 200 次迭代校验平台三字段要么全来自同一快照、要么全空
+- 舍弃要点：
+  - C1-C6 Claude 6 条发现交叉对抗全被 Codex 判 FP：防御性代码在 xctx 契约下真的不可达；TrimSpace 在私有校验函数前的 Extract 链已完成；doc.go 已文档化原地写入约束
+  - X3 status.Error(code, msg) 丢失 errors.Is 链在 gRPC 生态并非契约偏离：业界惯例用 status.Code(err)/status.FromError(err) 解析而非 errors.Is；修复需引入自定义 GRPCStatus+Unwrap 复合类型，收益/复杂度不匹配

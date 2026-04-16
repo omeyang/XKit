@@ -229,3 +229,25 @@
   - CB-4 错误优先级 `ErrAlreadyInitialized > ErrMissing/Empty/Invalid` 为显式设计契约（deploy.go:97,154；xplatform.Init 一致），Init() 仅 main 启动调用一次
   - CB-5 Parse 面向纯解析，空值与非法值统一为 ErrInvalidDeploymentType 是明文设计决策（deploy.go:251-257）；语义区分由上层 Init 通过 ErrMissingEnv/ErrEmptyEnv 完成
   - CxA-1 信任边界分析：DEPLOYMENT_TYPE 为 Kubernetes ConfigMap 环境变量，来源受管理员控制；即使 U+017F 被 ToUpper 归一为 "S"，下游存储仍为 ASCII deploy.SaaS 常量，语义不变；非跨信任边界漏洞，属防御深度建议
+
+## 2026-04-17 slot=4 TARGET=xplatform
+- 原始发现：Claude攻=0 守=3 (2H/1M) / Codex A=0(无结论) B=2 (2M)
+- 交叉对抗：Codex攻Claude → a=0 b=3 c=0；Claude攻Codex → a=2 b=0 c=0
+- 合议：必修=2 存疑=0 舍弃=3
+- 修复：commit 42887ef
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CB-1 | FG-M | platform.go:154 | 0x21..0x7e 排除空格 0x20 被指与 gRPC %x20-%x7e 冲突 | 舍弃(FP: Codex b，本包明示禁止空白，比 gRPC 更严是设计决策) | 1 |
+  | CB-2 | FG-H | platform.go:102 | TrimSpace+ContainsFunc(IsSpace) 两次判定被指逻辑混淆 | 舍弃(FP: Codex b，先 Missing 后 Invalid 路径清晰) | 1 |
+  | CB-3 | FG-H | platform.go:205-208 | Init 二次 TrimSpace 归一化被指与 Validate 分离易遗漏 | 舍弃(FP: Codex b，Validate 只校验不变更，Init 存储前归一化副本) | 1 |
+  | CX-B-1 | FG-M | doc.go:13 | 文档未声明仅允许 ASCII 可打印字节，中文 PlatformID 会 Init 失败 | 必修(Claude a) | 1 |
+  | CX-B-2 | FG-M | doc.go:14 | 文档未声明 UnclassRegionID 仅允许 ASCII 可打印字节 | 必修(Claude a) | 1 |
+- 修复要点：
+  - doc.go:13-14 PlatformID/UnclassRegionID 校验规则补充"仅允许 ASCII 可打印字节（0x21..0x7e，不含空格/非 ASCII）"并说明 gRPC imetadata.ValidatePair 约束
+  - platform.go Config.PlatformID/UnclassRegionID 字段注释同步补充该条校验规则
+  - 仅文档契约精化，实现零改动
+- 舍弃要点：
+  - CB-1 包契约明确禁止空白字符（含 0x20），ContainsFunc(IsSpace) 预过滤已使 containsNonPrintableASCII 的 0x20 分支不可达，比 gRPC 更严属设计决策
+  - CB-2 TrimSpace==""→Missing、ContainsFunc→Invalid 两个分支错误类型不同、语义清晰；测试覆盖两种场景通过验证
+  - CB-3 Validate 是值接收者 + 只读；Init 存储前的 TrimSpace 归一化 L205-207 有明确注释，不存在"Validate 通过后直接使用未归一化 cfg"的真实路径（cfg 是值传入，Init 拿到的是调用栈副本，业务侧调用 Validate 后如需继续用需自行决定归一化）

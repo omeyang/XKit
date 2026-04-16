@@ -60,6 +60,7 @@ type Config struct {
 	//   - 不能为空或纯空白字符
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	PlatformID string
 
@@ -72,6 +73,7 @@ type Config struct {
 	//   - 纯空白字符串归一化为空字符串（视为未设置，跳过校验）
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	UnclassRegionID string
 }

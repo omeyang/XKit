@@ -184,3 +184,27 @@
   - RedisCacheStore 平台数据由 Hash 改为每字段独立 key（`xauth:platform:tenant:field`）
   - SET + EX 单命令原子化；DeletePlatformData/Delete 枚举 `platformAllFields()` 批量删除
   - 新增 TTL 独立性测试 `SetPlatformData fields have independent TTL`，先写字段按自身 TTL 过期不受后写延长
+
+## 2026-04-17 slot=2 TARGET=xconf
+- 原始发现：Claude攻=2 (1H/1M) 守=4 (2H/2M) / Codex A=5 (5M) B=4 (4M)
+- 交叉对抗：Codex攻Claude → a=0 b=6 c=0（Claude 六条全 FP）；Claude攻Codex → a=8 b=0 c=1
+- 合议：必修=6 存疑=0 舍弃=7（Claude 六条全 FP + Codex B4 mapstructure 默认行为不属 M）
+- 修复：commit <pending>
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | A1 | FG-M | watch.go:263 | stopped 提前 true，并发 Stop 第二个立即返回但首个仍 Wait，契约违反 | 必修 | 1 + Claude(a) |
+  | A2 | FG-M | watch.go:237 | StartAsync runWg.Add(1) 在锁外（runWg.Go 语义），Stop 可在 Add 前 Wait 完并 Close | 必修 | 1 + Claude(a) |
+  | A3/B1 | FG-M | watch.go:296 | 回调内 Stop 跳过整个 callbackWg.Wait，多并发 in-flight 回调未等待 | 必修 | 2 + Claude(a) |
+  | A4/B2 | FG-M | watch.go:324 | Events/Errors 通道关闭分支不检查 stopped，Stop 后仍触发 unexpected 回调 | 必修 | 2 + Claude(a) |
+  | A5 | FG-M | koanf.go:192 | MustUnmarshal 只判 nil 接口，typed-nil Config 在 c.k.Load() 触发不清晰 nil 解引用 | 必修 | 1 + Claude(a) |
+  | B3 | FG-M | watch.go:342 | basename 过滤丢弃 K8s ConfigMap `..data` symlink 事件，热更新失效 | 必修 | 1 + Claude(a) |
+  | B4 | FG-M | koanf.go:139 | Unmarshal 不清零 target（mapstructure 默认行为） | 舍弃(L 级惯例，非 xconf 契约违反) | 1 |
+- 修复要点：
+  - Stop 改 stopped + stopDone channel：首个调用方执行清理后 close(stopDone)，非首个等待后返回相同 stopErr；自身是 in-flight 回调时直接返回避免自锁
+  - callbackWg + callbackGIDs 合并为 callbackStates map[int64]chan struct{}：每个 in-flight 回调独立 done channel，Stop 只等待非自身
+  - StartAsync 将 runWg.Add(1) 移入 mu 锁内，用显式 `go func() { defer Done(); run() }()`
+  - run() 通道关闭分支新增 isShuttingDown() 判断，Stop 后静默返回
+  - handleEvent 新增 `k8sConfigMapSymlink = "..data"` 允许 K8s atomic symlink swap 触发 Reload
+  - MustUnmarshal 用 reflect.ValueOf(cfg).Kind()==Ptr && IsNil() 拒绝 typed-nil，给出清晰 panic 信息
+  - 补测 5 条回归：ConcurrentStopIdempotent / StartAsyncStopNoSpuriousCallback / StopWaitsForOtherCallbacks / StopSuppressesChannelClosed / K8sConfigMapSymlink + TypedNilConfig

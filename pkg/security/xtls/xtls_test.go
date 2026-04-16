@@ -191,6 +191,40 @@ func TestBuildServer_SingleWayTLS(t *testing.T) {
 	assert.Nil(t, cfg.ClientCAs)
 }
 
+// TestBuildServer_RequireFalseIgnoresCA 验证 RequireClientCert=false 时即使提供 CA 也走单向 TLS。
+// 这是对"false 时仅 TLS"契约的回归守护——历史版本在该配置下会悄悄强制 mTLS。
+func TestBuildServer_RequireFalseIgnoresCA(t *testing.T) {
+	b := newCertBundle(t, "localhost")
+	cfg, err := xtls.BuildServerTLSConfig(xtls.Config{
+		Enabled:           true,
+		CertPEM:           b.serverPEM,
+		KeyPEM:            b.serverKey,
+		CAPEM:             b.caPEM,
+		RequireClientCert: false,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, tls.NoClientCert, cfg.ClientAuth)
+	assert.Nil(t, cfg.ClientCAs)
+}
+
+// TestBuildServer_EmptyCAFile 验证 CA 文件存在但内容全为空白时返回 ErrMissingCA 而非 ErrInvalidCA。
+func TestBuildServer_EmptyCAFile(t *testing.T) {
+	b := newCertBundle(t, "localhost")
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.crt")
+	require.NoError(t, os.WriteFile(caPath, []byte("   \n\t\n"), 0o600))
+
+	_, err := xtls.BuildServerTLSConfig(xtls.Config{
+		Enabled:           true,
+		CertPEM:           b.serverPEM,
+		KeyPEM:            b.serverKey,
+		CAFile:            caPath,
+		RequireClientCert: true,
+	})
+	assert.ErrorIs(t, err, xtls.ErrMissingCA)
+	assert.NotErrorIs(t, err, xtls.ErrInvalidCA)
+}
+
 func TestBuildClient_MinVersionFloor(t *testing.T) {
 	b := newCertBundle(t, "srv")
 	cfg, err := xtls.BuildClientTLSConfig(xtls.Config{
@@ -208,6 +242,20 @@ func TestBuildClient_MinVersionFloor(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint16(tls.VersionTLS13), cfg13.MinVersion)
+}
+
+// TestBuildClient_NoCAUsesSystemRoots 验证客户端未配 CA 时 RootCAs 保持 nil，
+// 由 crypto/tls 回退到操作系统 CA 根（典型于连接公网 HTTPS 服务）。
+func TestBuildClient_NoCAUsesSystemRoots(t *testing.T) {
+	cfg, err := xtls.BuildClientTLSConfig(xtls.Config{
+		Enabled:    true,
+		ServerName: "example.com",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Nil(t, cfg.RootCAs)
+	assert.Equal(t, "example.com", cfg.ServerName)
+	assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
 }
 
 // TestMTLSHandshake 通过 bufconn 验证完整 mTLS 握手链路。

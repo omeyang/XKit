@@ -4,6 +4,7 @@
 package xtls
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -23,8 +24,8 @@ import (
 // 同一字段两种来源同时给出时，优先使用 PEM 字节——便于通过配置中心或环境变量注入。
 //
 // 服务端与客户端共享同一 Config 类型，只是字段语义略有不同：
-//   - 作为服务端：Cert* 是服务端证书，CA* 用于校验客户端证书（RequireClientCert=true 时）
-//   - 作为客户端：Cert* 是客户端证书（仅 mTLS 需要），CA* 用于校验服务端证书
+//   - 作为服务端：Cert* 是服务端证书，CA* 用于校验客户端证书（仅 RequireClientCert=true 时加载）
+//   - 作为客户端：Cert* 是客户端证书（仅 mTLS 需要），CA* 用于校验服务端证书（留空则使用系统 CA 根）
 type Config struct {
 	// Enabled 总开关。设为 false 时 ServerCredentials / ClientCredentials 返回 insecure
 	// 凭据，调用方可无条件将其传给 grpc.Creds / grpc.WithTransportCredentials。
@@ -49,7 +50,9 @@ type Config struct {
 	ServerName string
 
 	// RequireClientCert 仅服务端生效。true 时强制 mTLS（双向认证），
-	// 对应 tls.RequireAndVerifyClientCert；false 时仅 TLS。默认 true。
+	// 对应 tls.RequireAndVerifyClientCert，且必须同时提供 CAPEM/CAFile；
+	// false 时仅单向 TLS（tls.NoClientCert），即使填了 CA 也不会校验客户端证书。
+	// 默认 false（Go bool 零值）。
 	RequireClientCert bool
 
 	// MinVersion TLS 最低版本。零值时默认 tls.VersionTLS12。
@@ -85,20 +88,16 @@ func BuildServerTLSConfig(c Config) (*tls.Config, error) {
 		cfg.MinVersion = c.MinVersion
 	}
 
-	clientAuth := tls.RequireAndVerifyClientCert
-	if !c.RequireClientCert && (len(c.CAPEM) == 0 && c.CAFile == "") {
-		// 未配置 CA 且不强制客户端证书：降级为单向 TLS。
-		clientAuth = tls.NoClientCert
-	}
-
-	if clientAuth == tls.RequireAndVerifyClientCert {
+	// 仅当显式要求 mTLS 时才加载 CA 并开启客户端证书校验；否则一律单向 TLS。
+	cfg.ClientAuth = tls.NoClientCert
+	if c.RequireClientCert {
 		pool, err := loadCAPool(c)
 		if err != nil {
 			return nil, err
 		}
 		cfg.ClientCAs = pool
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
-	cfg.ClientAuth = clientAuth
 
 	return cfg, nil
 }
@@ -127,11 +126,15 @@ func BuildClientTLSConfig(c Config) (*tls.Config, error) {
 		cfg.Certificates = []tls.Certificate{cert}
 	}
 
-	pool, err := loadCAPool(c)
-	if err != nil {
-		return nil, err
+	// CA 可选：未显式提供时 RootCAs 保持为 nil，由 crypto/tls 回退到系统 CA 根。
+	// 适用于连接公网 HTTPS 服务等无需自定义 CA 的场景。
+	if hasCAMaterial(c) {
+		pool, err := loadCAPool(c)
+		if err != nil {
+			return nil, err
+		}
+		cfg.RootCAs = pool
 	}
-	cfg.RootCAs = pool
 
 	return cfg, nil
 }
@@ -183,6 +186,10 @@ func loadCAPool(c Config) (*x509.CertPool, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 先排除空白文件，避免把"文件存在但内容为空"误报为格式错，丢失诊断信息。
+	if len(bytes.TrimSpace(caPEM)) == 0 {
+		return nil, ErrMissingCA
+	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, ErrInvalidCA
@@ -206,3 +213,4 @@ func readMaterial(inline []byte, path string, missingErr error) ([]byte, error) 
 
 func hasCertMaterial(c Config) bool { return len(c.CertPEM) > 0 || c.CertFile != "" }
 func hasKeyMaterial(c Config) bool  { return len(c.KeyPEM) > 0 || c.KeyFile != "" }
+func hasCAMaterial(c Config) bool   { return len(c.CAPEM) > 0 || c.CAFile != "" }

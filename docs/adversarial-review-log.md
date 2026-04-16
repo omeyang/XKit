@@ -208,3 +208,24 @@
   - handleEvent 新增 `k8sConfigMapSymlink = "..data"` 允许 K8s atomic symlink swap 触发 Reload
   - MustUnmarshal 用 reflect.ValueOf(cfg).Kind()==Ptr && IsNil() 拒绝 typed-nil，给出清晰 panic 信息
   - 补测 5 条回归：ConcurrentStopIdempotent / StartAsyncStopNoSpuriousCallback / StopWaitsForOtherCallbacks / StopSuppressesChannelClosed / K8sConfigMapSymlink + TypedNilConfig
+
+## 2026-04-17 slot=3 TARGET=xenv
+- 原始发现：Claude攻=0 守=5 (1H/4M) / Codex A=1 (1M) B=0(无发现)
+- 交叉对抗：Codex攻Claude → a=0 b=4 c=1；Claude攻Codex → a=0 b=0 c=1
+- 合议：必修=0 存疑=0 舍弃=6
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CB-1 | FG-M | export_test.go:19-23 | Reset 先清 initialized 后清 globalType 被质疑"锁时序反" | 舍弃(FP: Codex b) | 1 |
+  | CB-2 | FG-M | deploy.go:194,234 | Type/RequireType comma-ok 类型断言冗余 | 舍弃(FP: Codex b，lint 要求) | 1 |
+  | CB-3 | FG-M | deploy_test.go:631 | TestConcurrentResetAndRead 未显式验证中间态 | 舍弃(FP: Codex c，测试充分性非代码缺陷) | 1 |
+  | CB-4 | FG-H | deploy.go:113,165 | Init/InitWith 返回 ErrAlreadyInitialized 隐藏根源 | 舍弃(FP: Codex b，单次初始化契约) | 1 |
+  | CB-5 | FG-M | deploy.go:251-257 | xenv.Parse 吞掉 ErrMissingValue 与 xctx 不对齐 | 舍弃(FP: Codex b，deploy.go:251-257 文档化设计决策) | 1 |
+  | CxA-1 | FG-M | deploy.go:260 | strings.ToUpper 归一化 Unicode 同形字符(如 U+017F) | 舍弃(FP: Claude c，DEPLOYMENT_TYPE 来自受信 ConfigMap；归一后存储 ASCII 常量 deploy.SaaS，无下游语义变更) | 1 |
+- 舍弃要点：
+  - CB-1 反序（先清 globalType 后清 initialized）会产生 `initialized=true + globalType=""` 的真中间态，当前顺序配合 `Type() if !initialized.Load() return ""` 和 `RequireType() dt=="" return ErrNotInitialized` 已完整防御 TOCTOU，设计注释已文档化
+  - CB-2 `.golangci.yml check-type-assertions: true` 要求 comma-ok 形式，注释已明示；MEMORY 同类模式（xid 等）亦保留
+  - CB-4 错误优先级 `ErrAlreadyInitialized > ErrMissing/Empty/Invalid` 为显式设计契约（deploy.go:97,154；xplatform.Init 一致），Init() 仅 main 启动调用一次
+  - CB-5 Parse 面向纯解析，空值与非法值统一为 ErrInvalidDeploymentType 是明文设计决策（deploy.go:251-257）；语义区分由上层 Init 通过 ErrMissingEnv/ErrEmptyEnv 完成
+  - CxA-1 信任边界分析：DEPLOYMENT_TYPE 为 Kubernetes ConfigMap 环境变量，来源受管理员控制；即使 U+017F 被 ToUpper 归一为 "S"，下游存储仍为 ASCII deploy.SaaS 常量，语义不变；非跨信任边界漏洞，属防御深度建议

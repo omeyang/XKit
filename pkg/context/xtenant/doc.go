@@ -151,9 +151,20 @@
 //
 // 线程安全语义按 API 类型分别定义：
 //
-//   - Context 操作函数（With*/Extract*/TenantID/TenantName 等）：线程安全，可并发调用。
+//   - Context 操作函数（With*/TenantID/TenantName/RequireTenantID 等）：线程安全，
+//     可并发调用。底层 context.WithValue/ctx.Value 由标准库保证并发安全。
 //   - HTTP/gRPC 中间件与拦截器：按请求独立处理，可并发服务多个请求。
 //   - InjectToOutgoingContext：线程安全，内部已复制出站 metadata，不修改入参。
+//
+// 只读 API 的并发约束：Extract 类函数仅读取入参（http.Header/metadata.MD 为 map），
+// 函数本身不写入，但若调用方在另一 goroutine 并发写同一 Header/MD，会触发 race。
+// 调用方需保证传入的 Header/MD 在 Extract 期间未被并发修改（http.Request.Header 在
+// handler 链中通常由中间件顺序持有，gRPC metadata 的 incoming MD 由框架保证不可变）：
+//
+//   - ExtractFromHTTPHeader / ExtractTraceFromHTTPHeader
+//   - ExtractFromHTTPRequest / ExtractTraceFromHTTPRequest
+//   - ExtractFromMetadata / ExtractTraceFromMetadata
+//   - ExtractFromIncomingContext / ExtractTraceFromIncomingContext
 //
 // 原地写入类 API 的并发约束：以下函数会原地修改入参（底层 map），调用方必须独占
 // 传入的对象，禁止在共享 *http.Request/http.Header/metadata.MD 上并发调用，否则可能
@@ -162,4 +173,13 @@
 //   - InjectToRequest（写 req.Header）
 //   - InjectTenantToHeader（写传入的 http.Header）
 //   - InjectTenantToMetadata（写传入的 metadata.MD）
+//
+// # 值约束
+//
+// 注入到 gRPC metadata 的值会被 grpc-go 在发送前用 ValidatePair 校验：
+// 非 ASCII 可打印字符（%x20-%x7E 之外，例如中文、控制字符）会导致出站 RPC
+// 返回 codes.Internal。建议调用方在写入租户信息之前保证 TenantID/TenantName
+// 仅包含 ASCII 可打印字符；若业务必须传递非 ASCII 内容，请改用 "-bin" 后缀的
+// Binary Metadata 并自行 base64 编码。HTTP Header 没有此限制，但仍建议遵守同等约束
+// 以便 HTTP/gRPC 双协议兼容。
 package xtenant

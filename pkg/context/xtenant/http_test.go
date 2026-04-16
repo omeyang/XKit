@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/omeyang/xkit/pkg/context/xctx"
@@ -562,6 +564,58 @@ func TestInjectToRequest_WithPlatformNotInitialized(t *testing.T) {
 	if got := req.Header.Get(xtenant.HeaderTenantID); got != "tenant-123" {
 		t.Errorf("HeaderTenantID = %q, want %q", got, "tenant-123")
 	}
+}
+
+// TestInjectToRequest_PlatformSnapshotConsistency 回归测试：
+// 验证 injectPlatformHeaders 单次快照语义，Reset/Init 并发下
+// 每次注入结果保持内部一致（PlatformID 与 HasParent/UnclassRegionID 来自同一配置，
+// 不会出现 PlatformID 来自 Init 前、HasParent 来自 Init 后的撕裂）。
+func TestInjectToRequest_PlatformSnapshotConsistency(t *testing.T) {
+	xplatform.Reset()
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "snapshot-platform",
+		HasParent:       true,
+		UnclassRegionID: "snapshot-region",
+	}); err != nil {
+		t.Fatalf("xplatform.Init() error = %v", err)
+	}
+	t.Cleanup(xplatform.Reset)
+
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for !stop.Load() {
+			xplatform.Reset()
+			if err := xplatform.Init(xplatform.Config{
+				PlatformID:      "snapshot-platform",
+				HasParent:       true,
+				UnclassRegionID: "snapshot-region",
+			}); err != nil {
+				return
+			}
+		}
+	}()
+
+	const iters = 200
+	for i := 0; i < iters; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/downstream", nil)
+		xtenant.InjectToRequest(context.Background(), req)
+		pid := req.Header.Get(xtenant.HeaderPlatformID)
+		hp := req.Header.Get(xtenant.HeaderHasParent)
+		rid := req.Header.Get(xtenant.HeaderUnclassRegionID)
+
+		// 内部一致性：要么三者全来自 "snapshot-platform" 快照，要么全部为空（未初始化快照）。
+		allSet := pid == "snapshot-platform" && hp == "true" && rid == "snapshot-region"
+		allEmpty := pid == "" && hp == "" && rid == ""
+		if !allSet && !allEmpty {
+			t.Fatalf("torn platform snapshot: platform=%q hasParent=%q region=%q", pid, hp, rid)
+		}
+	}
+	stop.Store(true)
+	wg.Wait()
 }
 
 // =============================================================================

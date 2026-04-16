@@ -3,6 +3,8 @@ package xtenant_test
 import (
 	"context"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -465,6 +467,64 @@ func TestExtractFromIncomingContext_OnlyTenantName(t *testing.T) {
 	if got.TenantName != "n1" {
 		t.Errorf("TenantName = %q, want %q", got.TenantName, "n1")
 	}
+}
+
+// TestInjectToOutgoingContext_PlatformSnapshotConsistency 回归测试：
+// 验证 injectPlatformMetadata 单次快照语义，Reset/Init 并发下
+// 每次注入结果保持内部一致（PlatformID 与 HasParent/UnclassRegionID 来自同一配置）。
+func TestInjectToOutgoingContext_PlatformSnapshotConsistency(t *testing.T) {
+	xplatform.Reset()
+	if err := xplatform.Init(xplatform.Config{
+		PlatformID:      "snapshot-platform",
+		HasParent:       true,
+		UnclassRegionID: "snapshot-region",
+	}); err != nil {
+		t.Fatalf("xplatform.Init() error = %v", err)
+	}
+	t.Cleanup(xplatform.Reset)
+
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for !stop.Load() {
+			xplatform.Reset()
+			if err := xplatform.Init(xplatform.Config{
+				PlatformID:      "snapshot-platform",
+				HasParent:       true,
+				UnclassRegionID: "snapshot-region",
+			}); err != nil {
+				return
+			}
+		}
+	}()
+
+	const iters = 200
+	for i := 0; i < iters; i++ {
+		ctx := xtenant.InjectToOutgoingContext(context.Background())
+		md, _ := metadata.FromOutgoingContext(ctx)
+
+		pid := first(md.Get(xtenant.MetaPlatformID))
+		hp := first(md.Get(xtenant.MetaHasParent))
+		rid := first(md.Get(xtenant.MetaUnclassRegionID))
+
+		allSet := pid == "snapshot-platform" && hp == "true" && rid == "snapshot-region"
+		allEmpty := pid == "" && hp == "" && rid == ""
+		if !allSet && !allEmpty {
+			t.Fatalf("torn platform snapshot: platform=%q hasParent=%q region=%q", pid, hp, rid)
+		}
+	}
+	stop.Store(true)
+	wg.Wait()
+}
+
+func first(v []string) string {
+	if len(v) == 0 {
+		return ""
+	}
+	return v[0]
 }
 
 // =============================================================================

@@ -259,21 +259,25 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 //
 // 设计决策: 使用与租户/追踪字段一致的"以源为准"语义——
 // xplatform 未初始化时删除平台键，防止请求对象复用时旧平台信息泄漏到下游。
+//
+// 通过 xplatform.GetConfig 单次获取配置快照，避免多次 atomic.Load 在 Reset
+// 并发场景下读到不一致状态（部分字段来自初始化前、部分来自 Reset 后）。
 func injectPlatformHeaders(h http.Header) {
-	if !xplatform.IsInitialized() {
+	cfg, err := xplatform.GetConfig()
+	if err != nil {
 		h.Del(HeaderPlatformID)
 		h.Del(HeaderHasParent)
 		h.Del(HeaderUnclassRegionID)
 		return
 	}
-	h.Set(HeaderPlatformID, xplatform.PlatformID())
-	if xplatform.HasParent() {
+	h.Set(HeaderPlatformID, cfg.PlatformID)
+	if cfg.HasParent {
 		h.Set(HeaderHasParent, "true")
 	} else {
 		h.Set(HeaderHasParent, "false")
 	}
-	if regionID := xplatform.UnclassRegionID(); regionID != "" {
-		h.Set(HeaderUnclassRegionID, regionID)
+	if cfg.UnclassRegionID != "" {
+		h.Set(HeaderUnclassRegionID, cfg.UnclassRegionID)
 	} else {
 		h.Del(HeaderUnclassRegionID)
 	}

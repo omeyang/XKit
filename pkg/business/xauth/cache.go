@@ -51,9 +51,16 @@ func (s *RedisCacheStore) tokenKey(tenantID string) string {
 	return fmt.Sprintf("%stoken:%s", s.keyPrefix, tenantID)
 }
 
-// platformKey 生成平台数据缓存 key（Hash key）。
-func (s *RedisCacheStore) platformKey(tenantID string) string {
-	return fmt.Sprintf("%splatform:%s", s.keyPrefix, tenantID)
+// platformFieldKey 生成单字段平台数据缓存 key。
+// 设计决策：每字段独立 key，避免 Redis Hash 共享 TTL 导致多字段写入时
+// EXPIRE 反复覆盖、延长先写字段的生命周期——ttl 参数语义与实际 TTL 一致。
+func (s *RedisCacheStore) platformFieldKey(tenantID, field string) string {
+	return fmt.Sprintf("%splatform:%s:%s", s.keyPrefix, tenantID, field)
+}
+
+// platformAllFields 返回所有已知平台数据字段，用于批量删除。
+func platformAllFields() []string {
+	return []string{CacheFieldPlatformID, CacheFieldHasParent, CacheFieldUnclassRegionID}
 }
 
 // GetToken 从 Redis 获取 Token。
@@ -140,32 +147,27 @@ func marshalTokenInfo(t *TokenInfo) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// GetPlatformData 从 Redis Hash 获取平台数据。
+// GetPlatformData 从 Redis 获取平台数据字段。
 func (s *RedisCacheStore) GetPlatformData(ctx context.Context, tenantID string, field string) (string, error) {
-	key := s.platformKey(tenantID)
-	value, err := s.client.HGet(ctx, key, field).Result()
+	key := s.platformFieldKey(tenantID, field)
+	value, err := s.client.Get(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return "", ErrCacheMiss
 		}
-		return "", fmt.Errorf("xauth: redis hget failed: %w", err)
+		return "", fmt.Errorf("xauth: redis get failed: %w", err)
 	}
 
 	return value, nil
 }
 
-// SetPlatformData 将平台数据写入 Redis Hash。
+// SetPlatformData 将平台数据字段写入 Redis。
+// SET + EX 为原子单命令，避免 Pipeline HSET+EXPIRE 非原子且 TTL 被反复覆盖的问题。
 func (s *RedisCacheStore) SetPlatformData(ctx context.Context, tenantID string, field, value string, ttl time.Duration) error {
-	key := s.platformKey(tenantID)
+	key := s.platformFieldKey(tenantID, field)
 
-	pipe := s.client.Pipeline()
-	pipe.HSet(ctx, key, field, value)
-	if ttl > 0 {
-		pipe.Expire(ctx, key, ttl)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("xauth: redis hset failed: %w", err)
+	if err := s.client.Set(ctx, key, value, ttl).Err(); err != nil {
+		return fmt.Errorf("xauth: redis set failed: %w", err)
 	}
 
 	return nil
@@ -179,9 +181,14 @@ func (s *RedisCacheStore) DeleteToken(ctx context.Context, tenantID string) erro
 	return nil
 }
 
-// DeletePlatformData 仅删除平台数据缓存。
+// DeletePlatformData 删除租户所有平台数据字段。
 func (s *RedisCacheStore) DeletePlatformData(ctx context.Context, tenantID string) error {
-	if err := s.client.Del(ctx, s.platformKey(tenantID)).Err(); err != nil {
+	fields := platformAllFields()
+	keys := make([]string, len(fields))
+	for i, f := range fields {
+		keys[i] = s.platformFieldKey(tenantID, f)
+	}
+	if err := s.client.Del(ctx, keys...).Err(); err != nil {
 		return fmt.Errorf("xauth: redis del platform data failed: %w", err)
 	}
 	return nil
@@ -189,9 +196,11 @@ func (s *RedisCacheStore) DeletePlatformData(ctx context.Context, tenantID strin
 
 // Delete 删除租户相关的所有缓存（Token + 平台数据）。
 func (s *RedisCacheStore) Delete(ctx context.Context, tenantID string) error {
-	keys := []string{
-		s.tokenKey(tenantID),
-		s.platformKey(tenantID),
+	fields := platformAllFields()
+	keys := make([]string, 0, 1+len(fields))
+	keys = append(keys, s.tokenKey(tenantID))
+	for _, f := range fields {
+		keys = append(keys, s.platformFieldKey(tenantID, f))
 	}
 
 	if err := s.client.Del(ctx, keys...).Err(); err != nil {

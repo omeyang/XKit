@@ -24,15 +24,21 @@ func TestRedisCacheStore_TokenKey(t *testing.T) {
 	}
 }
 
-func TestRedisCacheStore_PlatformKey(t *testing.T) {
+func TestRedisCacheStore_PlatformFieldKey(t *testing.T) {
 	store := &RedisCacheStore{
 		keyPrefix: "xauth:",
 	}
 
-	key := store.platformKey("tenant-123")
-	expected := "xauth:platform:tenant-123"
-	if key != expected {
-		t.Errorf("platformKey = %q, expected %q", key, expected)
+	cases := map[string]string{
+		CacheFieldPlatformID:      "xauth:platform:tenant-123:platform_id",
+		CacheFieldHasParent:       "xauth:platform:tenant-123:has_parent",
+		CacheFieldUnclassRegionID: "xauth:platform:tenant-123:unclass_region_id",
+	}
+	for field, expected := range cases {
+		key := store.platformFieldKey("tenant-123", field)
+		if key != expected {
+			t.Errorf("platformFieldKey(%q) = %q, expected %q", field, key, expected)
+		}
 	}
 }
 
@@ -460,6 +466,26 @@ func TestRedisCacheStore_Integration(t *testing.T) {
 		value, err := store.GetPlatformData(ctx, "tenant-1", "field")
 		require.NoError(t, err)
 		assert.Equal(t, "value", value)
+	})
+
+	t.Run("SetPlatformData fields have independent TTL", func(t *testing.T) {
+		store, mr := newMiniredisStore(t)
+
+		// 先写 platform_id 给 1h TTL
+		require.NoError(t, store.SetPlatformData(ctx, "t", CacheFieldPlatformID, "p", time.Hour))
+		// 使 miniredis 时间前进 30 分钟
+		mr.FastForward(30 * time.Minute)
+		// 再写 has_parent，TTL 同样 1h
+		require.NoError(t, store.SetPlatformData(ctx, "t", CacheFieldHasParent, "true", time.Hour))
+
+		// 再前进 31 分钟：platform_id 已过 61m 应过期；has_parent 仅 31m 应仍在
+		mr.FastForward(31 * time.Minute)
+		_, err := store.GetPlatformData(ctx, "t", CacheFieldPlatformID)
+		assert.ErrorIs(t, err, ErrCacheMiss, "platform_id 应独立按自身 TTL 过期")
+
+		v, err := store.GetPlatformData(ctx, "t", CacheFieldHasParent)
+		require.NoError(t, err)
+		assert.Equal(t, "true", v, "has_parent 不应被先写字段的 TTL 连累")
 	})
 
 	t.Run("Delete removes token and platform data", func(t *testing.T) {

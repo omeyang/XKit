@@ -192,6 +192,12 @@ func MustUnmarshal(cfg Config, path string, target any) {
 	if cfg == nil {
 		panic("xconf: MustUnmarshal called with nil Config")
 	}
+	// 防 typed nil：var kc *koanfConfig; var cfg Config = kc 满足 cfg != nil，
+	// 但 cfg.Unmarshal 会在 c.k.Load() 触发 nil 指针解引用，错误信息不清晰。
+	rv := reflect.ValueOf(cfg)
+	if rv.Kind() == reflect.Ptr && rv.IsNil() {
+		panic("xconf: MustUnmarshal called with typed-nil Config")
+	}
 	if err := cfg.Unmarshal(path, target); err != nil {
 		panic(err)
 	}

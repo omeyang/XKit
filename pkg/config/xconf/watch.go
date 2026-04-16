@@ -39,23 +39,27 @@ type Watcher struct {
 	stopped  bool        // 标记资源是否已释放，确保 Stop() 幂等
 	timer    *time.Timer // debounce 定时器，Stop() 时需要取消
 
-	// 设计决策: 两层 WaitGroup 确保 Stop() 返回后不再有回调执行。
-	// runWg 跟踪 run() goroutine 生命周期（handleError 错误回调路径）。
-	// callbackWg 跟踪 debounce AfterFunc 中的 in-flight 防抖回调。
-	runWg      sync.WaitGroup // run goroutine 生命周期
-	callbackWg sync.WaitGroup // in-flight 防抖回调
+	// 设计决策: runWg 跟踪 run() goroutine 生命周期。
+	// 防抖回调生命周期由 callbackStates 中的 done channel 追踪（替代原 callbackWg），
+	// 以支持"等待其他 in-flight 回调但不等自身"的精细语义。
+	runWg sync.WaitGroup // run goroutine 生命周期
 
-	// 设计决策: runGID + callbackGIDs 记录 goroutine ID，用于检测 Stop() 重入。
+	// 设计决策: runGID + callbackStates 记录 goroutine ID，用于检测 Stop() 重入。
 	// - runGID: 若用户在错误回调（handleError 路径）中调用 Stop()，
 	//   Stop() 跳过 runWg.Wait()，避免 run goroutine 等待自身退出。
-	// - callbackGIDs: 若用户在防抖回调（time.AfterFunc 路径）中调用 Stop()，
-	//   Stop() 跳过 callbackWg.Wait()，避免回调 goroutine 等待自身完成。
-	//   使用 map 而非单值，因为多个 AfterFunc 回调可能并发执行
-	//   （前一个回调执行时间超过防抖间隔时，新事件会创建新的 AfterFunc goroutine）。
-	//   单值会被后到的 goroutine 覆盖，导致先到的 goroutine 在回调中调用 Stop() 时死锁。
+	// - callbackStates: key=回调 goroutine ID, value=该回调完成的信号 channel。
+	//   多个 AfterFunc 回调可能并发执行（前一个回调执行时间超过防抖间隔时，
+	//   新事件会创建新的 AfterFunc goroutine）。Stop() 需等待"除自身外"的其他 in-flight
+	//   回调完成，避免长耗时回调在 Stop 返回后仍在执行（违反 Stop 契约）。
 	// 安全性保证：两个字段的读写都在 mu 保护下。
-	runGID       int64              // run goroutine ID, 0 表示 run 未执行
-	callbackGIDs map[int64]struct{} // 防抖回调 goroutine ID 集合
+	runGID         int64                   // run goroutine ID, 0 表示 run 未执行
+	callbackStates map[int64]chan struct{} // in-flight 防抖回调 done channel 映射
+
+	// 设计决策: 并发 Stop 语义 — 所有调用方观察同一清理完成点。
+	// 第一个调用方执行清理并 close(stopDone)；并发的非首个调用方等待 stopDone。
+	// 例外：若并发调用方自身是 in-flight 回调（首个 Stop 在等它），直接返回避免死锁。
+	stopDone chan struct{} // 清理完成信号，由首个 Stop 调用方 close
+	stopErr  error         // 清理错误（仅首个调用方写入，其他读取）
 }
 
 // WatchOption 监视器配置选项
@@ -206,6 +210,7 @@ func Watch(cfg Config, callback WatchCallback, opts ...WatchOption) (*Watcher, e
 		debounce: options.debounce,
 		ctx:      ctx,
 		cancel:   cancel,
+		stopDone: make(chan struct{}),
 	}, nil
 }
 
@@ -228,6 +233,10 @@ func (w *Watcher) Start() {
 // StartAsync 异步启动监视
 // 在后台 goroutine 中运行，立即返回
 // 解决与 Stop() 的竞态：先设置 running 标志再启动 goroutine
+//
+// 设计决策: runWg.Add(1) 必须在 mu 锁内执行，避免 StartAsync 与 Stop 竞态。
+// 若 Add 移到锁外，Stop 可能在 Add 前 runWg.Wait() 并 Close watcher，
+// 使 run goroutine 随后在已关闭的 fsnotify 上运行，触发"channel closed"回调。
 func (w *Watcher) StartAsync() {
 	w.mu.Lock()
 	if w.stopped || w.running {
@@ -235,11 +244,13 @@ func (w *Watcher) StartAsync() {
 		return
 	}
 	w.running = true
+	w.runWg.Add(1)
 	w.mu.Unlock()
 
-	w.runWg.Go(func() {
+	go func() {
+		defer w.runWg.Done()
 		w.run()
-	})
+	}()
 }
 
 // Stop 停止监视并释放 fsnotify 资源。
@@ -248,24 +259,44 @@ func (w *Watcher) StartAsync() {
 //
 // 设计决策: Stop() 无论是否调用过 Start()，都会释放 fsnotify.Watcher。
 // Watch() 创建 fsnotify.Watcher 时已占用文件描述符，不释放会导致 fd 泄漏。
-// stopped 标志确保 Stop() 幂等，多次调用不会重复关闭。
+// stopped 标志 + stopDone channel 确保 Stop() 幂等且并发调用方共享同一完成点：
+//   - 首个调用方执行清理并 close(stopDone)
+//   - 并发的非首个调用方等待 stopDone 后返回相同结果
+//   - 例外：非首个调用方若自身是 in-flight 回调（首个 Stop 在等它），直接返回避免死锁
 //
-// 设计决策: 通过 runGID + callbackGIDs 检测回调内调用 Stop() 的场景。
+// 设计决策: 通过 runGID + callbackStates 检测回调内调用 Stop() 的场景。
 //   - 错误回调路径（handleError）：运行在 run() goroutine 中，通过 runGID 检测重入，
 //     跳过 runWg.Wait() 避免 run goroutine 等待自身退出导致死锁。
-//   - 防抖回调路径（time.AfterFunc）：运行在独立 goroutine 中，通过 callbackGIDs 检测重入，
-//     跳过 callbackWg.Wait() 避免回调 goroutine 等待自身完成导致死锁。
+//   - 防抖回调路径（time.AfterFunc）：运行在独立 goroutine 中，通过 callbackStates 检测重入,
+//     只等待"除自身外"的其他 in-flight 回调完成，保证 Stop 契约同时避免自锁。
 //
 // 两种场景中 running=false 均阻止新回调，context 已取消。
 func (w *Watcher) Stop() error {
 	w.mu.Lock()
-
 	if w.stopped {
+		// 非首个调用方：若自身是 in-flight 回调（首个 Stop 在等我完成），
+		// 直接返回避免死锁；否则等首个调用方完成清理后返回相同结果。
+		currentGID := goid()
+		_, inCallback := w.callbackStates[currentGID]
+		inRun := w.runGID != 0 && w.runGID == currentGID
 		w.mu.Unlock()
-		return nil
+		if inCallback || inRun {
+			return nil
+		}
+		<-w.stopDone
+		return w.stopErr
 	}
 	w.stopped = true
+	w.mu.Unlock()
 
+	w.stopErr = w.doStop()
+	close(w.stopDone)
+	return w.stopErr
+}
+
+// doStop 执行实际清理工作。仅由首个 Stop 调用方执行（stopped 标志保护）。
+func (w *Watcher) doStop() error {
+	w.mu.Lock()
 	if !w.running {
 		w.cancel()
 		w.mu.Unlock()
@@ -280,8 +311,16 @@ func (w *Watcher) Stop() error {
 
 	// 检测是否在回调中调用 Stop()（GID 在 mu 保护下读取）
 	currentGID := goid()
-	_, calledFromCallback := w.callbackGIDs[currentGID]
 	calledFromRun := w.runGID != 0 && w.runGID == currentGID
+
+	// 收集"非自身"的 in-flight 回调 done channel。
+	// 即使自身是 in-flight 回调，也必须等待其他并发回调完成，保证 Stop 契约。
+	var othersDone []chan struct{}
+	for gid, done := range w.callbackStates {
+		if gid != currentGID {
+			othersDone = append(othersDone, done)
+		}
+	}
 
 	w.cancel()
 	w.running = false
@@ -292,9 +331,9 @@ func (w *Watcher) Stop() error {
 		w.runWg.Wait()
 	}
 
-	// 等待 in-flight 防抖回调完成（防抖回调内调用 Stop 时跳过，避免自锁）
-	if !calledFromCallback {
-		w.callbackWg.Wait()
+	// 等待其他 in-flight 防抖回调完成（自身除外，避免自锁）
+	for _, d := range othersDone {
+		<-d
 	}
 
 	return w.watcher.Close()
@@ -321,6 +360,11 @@ func (w *Watcher) run() {
 
 		case event, ok := <-w.watcher.Events:
 			if !ok {
+				// 若 Stop 已启动（stopped=true 或 ctx 已取消），通道关闭是预期的正常关闭，
+				// 不再触发"unexpected"回调，避免违反 Stop 契约。
+				if w.isShuttingDown() {
+					return
+				}
 				w.safeCallback(fmt.Errorf("xconf: watch event channel closed unexpectedly [%s]", w.cfg.path))
 				return
 			}
@@ -328,6 +372,9 @@ func (w *Watcher) run() {
 
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
+				if w.isShuttingDown() {
+					return
+				}
 				w.safeCallback(fmt.Errorf("xconf: watch error channel closed unexpectedly [%s]", w.cfg.path))
 				return
 			}
@@ -336,17 +383,31 @@ func (w *Watcher) run() {
 	}
 }
 
+// isShuttingDown 判断 Watcher 是否正在/已停止。用于 run() 通道关闭分支避免 Stop 后仍触发回调。
+func (w *Watcher) isShuttingDown() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stopped
+}
+
+// k8sConfigMapSymlink 是 K8s ConfigMap/Secret 挂载使用的 atomic symlink 名称。
+// kubelet 更新时原子 rename 此 symlink 指向新 timestamp 目录；业务文件（如 config.yaml）
+// 的 symlink 目标随之变化但自身未发生事件，因此需额外接收 ..data 的事件触发 Reload。
+const k8sConfigMapSymlink = "..data"
+
 // handleEvent 处理文件系统事件
 func (w *Watcher) handleEvent(event fsnotify.Event, filename string) {
-	// 只处理目标配置文件的事件
-	if filepath.Base(event.Name) != filename {
+	// 只处理目标配置文件的事件，或 K8s ConfigMap 的 ..data symlink 事件
+	// （K8s 原子更新只 rename ..data symlink，不直接触发 config.yaml 事件）
+	base := filepath.Base(event.Name)
+	if base != filename && base != k8sConfigMapSymlink {
 		return
 	}
 
 	// 处理可能表示配置更新的事件
 	// - Write: 直接修改
 	// - Create: 新建文件（部分编辑器）
-	// - Rename: 原子写入模式（vim/emacs 写临时文件后 rename）
+	// - Rename: 原子写入模式（vim/emacs 写临时文件后 rename；K8s 更新 ..data symlink）
 	// - Remove: 文件被删除（Reload 会失败并通过 callback 通知）
 	if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) &&
 		!event.Has(fsnotify.Rename) && !event.Has(fsnotify.Remove) {
@@ -368,21 +429,21 @@ func (w *Watcher) handleEvent(event fsnotify.Event, filename string) {
 			w.mu.Unlock()
 			return
 		}
-		// 设计决策: callbackWg.Add(1) 必须在 mu 锁内执行。
-		// 若移到锁外，Stop() 可能在 Add 前完成 Wait()，导致 Stop 返回后仍有回调在执行。
-		w.callbackWg.Add(1)
+		// 设计决策: callbackStates 注册必须在 mu 锁内执行。
+		// 若移到锁外，Stop() 可能在注册前完成收集，导致 Stop 返回后仍有回调在执行。
 		cbGID := goid()
-		if w.callbackGIDs == nil {
-			w.callbackGIDs = make(map[int64]struct{})
+		cbDone := make(chan struct{})
+		if w.callbackStates == nil {
+			w.callbackStates = make(map[int64]chan struct{})
 		}
-		w.callbackGIDs[cbGID] = struct{}{}
+		w.callbackStates[cbGID] = cbDone
 		w.mu.Unlock()
 
 		defer func() {
 			w.mu.Lock()
-			delete(w.callbackGIDs, cbGID)
+			delete(w.callbackStates, cbGID)
 			w.mu.Unlock()
-			w.callbackWg.Done()
+			close(cbDone)
 		}()
 
 		err := w.cfg.Reload()

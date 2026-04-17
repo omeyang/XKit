@@ -301,3 +301,75 @@
   - CB-1~CB-5 五条守方"真问题"均经源码核实为 FP：ctx.Err() 是标准 Go 模式、TruncateUTF8 有 guard、JSON 溢出有 sendEncodingErrorResponse、shouldExit 检查 closed、exit 命令竞态有设计决策文档+审计日志
   - Codex 双路原始扫描均只输出搜索日志（~11K/5.7K 行），未生成发现表格
   - Codex 攻击 Claude 发现的交叉对抗超时（运行 28 分钟无输出），但主编排器独立源码核实已覆盖全部 10 条
+
+## 2026-04-18 slot=1 TARGET=xcron
+- 原始发现：Claude攻=5 守=5 / Codex A=0 B=0（双路均只输出源码转储 ~9.5K/3.3K 行，未生成发现表格）
+- 交叉对抗：Codex攻Claude → 未执行（Codex 无发现可供攻击）；Claude攻Codex → 未执行（Codex 无发现）；主编排器独立源码核实覆盖全部 10 条
+- 合议：必修=0 存疑=0 舍弃=10
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-1 | FG-H | wrapper.go:51-52 | taskCancel 多次调用 | 舍弃(FP: CancelFunc 多次调用为 no-op，Go 标准保证) | 1 |
+  | CA-2 | FG-H | locker_redis.go:206,255 | redis.Nil == 比较 | 舍弃(FP: go-redis v9 .Result() 直接返回 sentinel，== 正确；xdlock 用 errors.Is 是不同错误类型) | 1 |
+  | CA-3 | FG-M | wrapper.go:72 | taskCtx 二次赋值 cancel 失效 | 舍弃(FP: WithTimeout 创建子 context，父级 cancel 传播到子级) | 1 |
+  | CA-4 | FG-M | locker_k8s.go:298 | clockSkew 2s 默认值 | 舍弃(FP: K8s 官方 leader-election 默认值，文档化+允许自定义) | 2 |
+  | CA-5 | FG-M | cron.go:156-160 | WithImmediate 浅拷贝 race | 舍弃(FP: opts 创建后只读，浅拷贝仅修改 baseCtx) | 1 |
+  | CB-1 | FG-M | wrapper.go:186 | Unlock 用 Background ctx | 舍弃(FP: 设计正确——任务 ctx 取消后仍需释放锁) | 1 |
+  | CB-2 | FG-M | locker_redis.go:199-222 | unlockCompat GET-DEL 竞态 | 舍弃(FP: 微秒级窗口，已文档化，TTL 兜底) | 1 |
+  | CB-3 | FG-H | cron.go:221-226 | Stop() immediateWg 竞态 | 舍弃(FP: AddJob after Stop 属使用方契约违规) | 1 |
+  | CB-4 | FG-H | wrapper.go:311 | renewTimeout min(0,x)=0 | 舍弃(FP: lockTimeout 默认 5s，WithLockTimeout 拒绝 ≤0，fallback 兜底) | 1 |
+  | CB-5 | FG-M | locker_k8s.go:291-299 | clockSkew 方向错误 | 舍弃(FP: 方向正确——给持有者更多续期时间防误抢占) | 2 |
+- 舍弃要点：
+  - CA-1 CancelFunc 幂等调用是 Go context 包标准保证（"After the first call, subsequent calls do nothing"）
+  - CA-2 go-redis v9 中 redis.Nil 为 proto.RedisError(string) 类型，.Result() 直接返回不包装，== 比较等效于 errors.Is
+  - CA-3 context.WithTimeout(parent, d) 创建 parent 的子 context，cancel parent 传播到所有子级，taskCancel 可控制超时 context
+  - CA-4/CB-5 clockSkew 两条合并：默认 2s 对齐 K8s 官方，方向（+clockSkew 延后过期）给持有者更多续期余裕，均为正确设计
+  - CB-4 lockTimeout 通过 defaultJobOptions 默认 5s，WithLockTimeout 只接受 >0 值，API 层面无法设为 0
+  - Codex 双路原始扫描均只输出源码读取日志（~9.5K/3.3K 行），未生成发现表格
+
+## 2026-04-18 slot=2 TARGET=xdlock
+- 原始发现：Claude攻=1 守=4 / Codex A=0(过程日志截断) B=0(过程日志截断)
+- 交叉对抗：Codex攻Claude → a=1 b=3 c=1；Claude攻Codex → 无发现可攻
+- 合议：必修=0 存疑=0 舍弃=5
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |---|---|---|---|---|---|
+  | CA-1 | FG-M | redis_compat.go:31-32 | nil ctx→Background 替换 | 舍弃(FP: 仅 nil 替换，已取消非 nil ctx 保留) | 1 |
+  | CB-1 | FG-H | redis_compat.go:130,133 | fmt.Sprint 非字符串值比对 | 舍弃(FP: redsync 锁值固定为 string) | 1 |
+  | CB-2 | FG-M | redis_compat.go:84-89 | evalCompat 脚本识别脆弱 | 舍弃(FP: 未知脚本有防御性回退到 evalLua) | 1 |
+  | CB-3 | FG-M | redis_compat.go:156-162 | ctx 取消致 GET-DEL 返回 -1 | 舍弃(FP: DEL/PEXPIRE 取消返回 error 非 -1 + doc.go 已文档化竞态) | 1 |
+  | CB-4 | FG-M | redis.go:139-146 | ctx.Err 掩盖 Redis 错误 | 舍弃(FP: L139-142 设计决策注释——redsync 包装 ctx 错误导致匹配失败，优先返回调用方控制信号) | 1 |
+- 舍弃要点：
+  - CA-1 compatPool.Get() 的 nil→Background 仅处理 nil ctx 边界情况，非 nil 的已取消 ctx 正常传递
+  - CB-1 redsync v4 的 GenValueFunc 固定生成 base64 随机字符串，Eval 的 args[0] 永远是 string
+  - CB-2 evalCompat 对未知参数数量回退到 evalLua（L119），redsync v4.16 仅 3 个脚本均已覆盖
+  - CB-3 doc.go:109-110 已文档化 GET-DEL 微秒级竞态；Redis 命令取消返回 error 非静默返回 -1
+  - CB-4 redis.go:139-142 设计决策注释完整说明：redsync 将 context 错误包装在 ErrFailed 中导致 errors.Is 失败，ctx.Err() 独立检查是必要的补偿措施
+  - Codex 双路原始扫描均只输出源码读取日志（~8K/5K 行），未生成发现表格
+
+## 2026-04-18 slot=3 TARGET=xhealth
+- 原始发现：Claude攻=3 守=5 / Codex A=0 B=0（双路+交叉对抗均只输出源码读取日志，未生成发现表格）
+- 交叉对抗：Codex攻Claude → 无输出；Claude攻Codex → 无发现可攻（Codex 0 条）
+- 合议：必修=1 存疑=0 舍弃=7
+- 修复：commit d34dc31
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 | 对抗结果 |
+  |------|--------|---------|------|------|--------|----------|
+  | CB-4 | FG-M | check.go:52 | Timeout 负值校验用 ErrInvalidInterval，语义不符 | 必修 | CB+CC 判 a | 已修复 |
+  | CA-1 | FG-H | checker.go:86-90 | Body.Close 错误 return 不日志 | 舍弃 | CA 单源，CC 判 b | FP：HTTP 响应 Close 无法补救 |
+  | CA-2 | FG-M | health.go:319-322 | singleflight 断言失败 fallback | 舍弃 | CA 单源，CC 判 a 但不可达 | 防御性代码，闭包始终返回 CheckResult |
+  | CA-3 | FG-M | health.go:352 | ticker 在 asyncCtx cancel 后继续 | 舍弃 | CA 单源，CC 判 b | stopCh 先于 asyncCancel 关闭 |
+  | CB-1 | FG-M | checker.go:40 | conn.Close() 错误忽略 | 舍弃 | CB 单源，CC 判 b | 事实错误：return conn.Close() 已返回 |
+  | CB-2 | FG-H | health.go:308 | 闭包 nil error + error check 矛盾 | 舍弃 | CB 单源，CC 判 a 但文档化 | 注释明确前瞻性防御代码 |
+  | CB-3 | FG-M | handler.go:22-27 | 路由重复注册 | 舍弃 | CB 单源，CC 判 b | 不同路径不同 handler |
+  | CB-5 | FG-M | health.go:296-297 | 异步检查冷启动返回 StatusUp | 舍弃 | CB 单源，CC 判 a 但文档化 | K8s 标准模式，已文档化设计决策 |
+- 舍弃要点：
+  - CA-1 HTTP 响应体 Body.Close 错误在业界普遍不处理，健康检查结果不受影响
+  - CA-2 singleflight 闭包始终返回 (CheckResult, nil)，type assertion fallback 为纯防御性代码
+  - CA-3 doShutdown() 先 close(stopCh) 后 asyncCancel()，goroutine 通过 stopCh 退出
+  - CB-1 factual error：checker.go:40 为 `return conn.Close()` 已正确返回错误
+  - CB-2 health.go:307 注释"闭包始终返回 nil error；若未来修改返回错误则记录以便定位"——前瞻性防御
+  - CB-5 health.go:296 注释"异步检查尚未执行，返回默认 up"——K8s startup 标准行为
+  - Codex 三次运行（原始 A/B + 交叉对抗）均只输出源码读取日志，未生成结论表格

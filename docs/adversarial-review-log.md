@@ -277,3 +277,27 @@
 - 舍弃要点：
   - C1-C6 Claude 6 条发现交叉对抗全被 Codex 判 FP：防御性代码在 xctx 契约下真的不可达；TrimSpace 在私有校验函数前的 Extract 链已完成；doc.go 已文档化原地写入约束
   - X3 status.Error(code, msg) 丢失 errors.Is 链在 gRPC 生态并非契约偏离：业界惯例用 status.Code(err)/status.FromError(err) 解析而非 errors.Is；修复需引入自定义 GRPCStatus+Unwrap 复合类型，收益/复杂度不匹配
+
+## 2026-04-18 slot=0 TARGET=xdbg
+- 原始发现：Claude攻=5 守=5 / Codex A=0(纯搜索日志无表格) B=0(纯搜索日志无表格)
+- 交叉对抗：Codex攻Claude → 超时无输出；Claude攻Codex → N/A(Codex 0 发现)
+- 合议：必修=0 存疑=0 舍弃=10
+- 修复："无发现"
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-1 | FG-M | command_builtin.go:305 | os.CreateTemp("") 依赖隐式行为 | 舍弃(FP: os.CreateTemp("") 标准 Go 行为，内部调用 os.TempDir()) | 1 |
+  | CA-2 | FG-M | session.go:287-303 | conn.Close() 错误未检查 | 舍弃(FP: Close() 在 line 302 返回 error) | 1 |
+  | CA-3 | FG-M | server.go:18 | Stopped 终态 goroutine 退出 | 舍弃(FP: Stop() 调用 waitForGoroutines() 确保退出) | 1 |
+  | CA-4 | FG-H | options.go:339-348 | SocketPerm >0o777 未校验 | 舍弃(FP: setuid/setgid/sticky 是合法 Unix 权限位，函数目的是安全限制非穷举校验) | 1 |
+  | CA-5 | FG-M | server.go:124-127 | Enable/Disable CAS 竞态 | 舍弃(FP: CAS 原子操作保证一方成功另一方失败，无混乱) | 1 |
+  | CB-1 | FG-M | session.go:181 | 超时判断时序窗口 | 舍弃(FP: 标准 Go ctx.Err() 超时检查模式) | 1 |
+  | CB-2 | FG-M | protocol_codec.go:174 | UTF-8 截断越界 | 舍弃(FP: line 169 guard `len(s)<=maxBytes` 防护) | 1 |
+  | CB-3 | FG-H | options.go:369 | JSON overhead 突破限制 | 舍弃(FP: sendEncodingErrorResponse 兜底处理) | 1 |
+  | CB-4 | FG-M | session.go:255 | 写失败未 cancel | 舍弃(FP: shouldExit() 检查 closed 标志，同步循环下次迭代即退出) | 1 |
+  | CB-5 | FG-H | command_builtin.go:90 | exit 异步 Disable 竞态 | 舍弃(FP: wg.Go 追踪 goroutine+audit 日志兜底，设计决策已文档化) | 1 |
+- 舍弃要点：
+  - CA-1~CA-5 五条攻方发现均经源码核实为 FP：os.CreateTemp/Close 行为符合标准、CAS 原子保证正确、>0o777 是合法权限位、waitForGoroutines 保证清理
+  - CB-1~CB-5 五条守方"真问题"均经源码核实为 FP：ctx.Err() 是标准 Go 模式、TruncateUTF8 有 guard、JSON 溢出有 sendEncodingErrorResponse、shouldExit 检查 closed、exit 命令竞态有设计决策文档+审计日志
+  - Codex 双路原始扫描均只输出搜索日志（~11K/5.7K 行），未生成发现表格
+  - Codex 攻击 Claude 发现的交叉对抗超时（运行 28 分钟无输出），但主编排器独立源码核实已覆盖全部 10 条

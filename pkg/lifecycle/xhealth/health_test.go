@@ -127,6 +127,12 @@ func TestAddCheck_Validation(t *testing.T) {
 			wantErr: ErrNilCheck,
 		},
 		{
+			name:    "负 timeout",
+			check:   "test",
+			cfg:     CheckConfig{Check: goodCheck.Check, Timeout: -1},
+			wantErr: ErrInvalidTimeout,
+		},
+		{
 			name:    "负 interval",
 			check:   "test",
 			cfg:     CheckConfig{Check: goodCheck.Check, Async: true, Interval: -1},

@@ -49,7 +49,7 @@ func (c *CheckConfig) validate() error {
 		c.Timeout = defaultTimeout
 	}
 	if c.Timeout < 0 {
-		return fmt.Errorf("%w: got %v", ErrInvalidInterval, c.Timeout)
+		return fmt.Errorf("%w: got %v", ErrInvalidTimeout, c.Timeout)
 	}
 	if c.Async {
 		if c.Interval == 0 {

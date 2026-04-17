@@ -16,6 +16,9 @@ var (
 	// ErrDuplicateCheck 表示同一端点下注册了重名的检查项。
 	ErrDuplicateCheck = errors.New("xhealth: duplicate check name")
 
+	// ErrInvalidTimeout 表示 Timeout 无效（必须为正数）。
+	ErrInvalidTimeout = errors.New("xhealth: check timeout must be positive")
+
 	// ErrInvalidInterval 表示异步检查的 Interval 无效（必须为正数）。
 	ErrInvalidInterval = errors.New("xhealth: async check interval must be positive")
 

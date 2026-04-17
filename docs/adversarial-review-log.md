@@ -380,3 +380,19 @@
 - 合议：必修=0 存疑=0 舍弃=0
 - 修复：无发现
 - 备注：Claude 双代理独立扫描 nil/typed-nil/零值契约、并发安全、错误处理、context 传播、资源清理、API 契约、跨平台 build tag 等维度均未发现 FG-H/FG-M 真问题。Codex A 探索了 Plan9 构建失败（syscall.SIGQUIT undefined），判定为非真问题（包面向 Unix/K8s 生命周期管理，Plan9 非目标平台）。Codex A/B 均未输出规范表格，仅产出搜索日志。
+
+## 2026-04-18 slot=5 TARGET=xpulsar
+- 原始发现：Claude攻=4 守=2 / Codex A=0（仅输出源码读取日志） B=0（仅输出源码读取日志）
+- 交叉对抗：Codex 无发现无法攻击 Claude；Claude 无 Codex 发现可攻击。主编排器独立 Read 源码逐条裁决。
+- 合议：必修=0 存疑=0 舍弃=6
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 | 对抗结果 |
+  |---|---|---|---|---|---|---|
+  | CA-1 | FG-H | tracing.go:188-198 | extractPulsarTrace 返回 nil ctx | 舍弃 | 1 | FP: extractPulsarTrace 返回 input ctx（非 nil），ctx 在入口已 nil-guard |
+  | CA-2 | FG-M | client.go:113 | healthWg 未调 Add() | 舍弃 | 2(CA+CB) | FP: Go 1.25 sync.WaitGroup.Go() 内部处理 Add(1)/Done() |
+  | CA-3 | FG-M | client.go:237-245 | CAS 循环无上界 | 舍弃 | 1 | FP: 计数器受限于 producer/consumer 数量，标准 CAS 模式 |
+  | CA-4 | FG-M | tracing.go:188-198 | nil msg 语义混淆 | 舍弃 | 1 | FP: Consume:214 防御性 msg==nil 检查 + 设计决策注释 |
+  | CB-1 | FG-M | tracing.go:259 | Ack 失败被静默 | 舍弃 | 1 | FP: 文档化设计决策（L256-258），Ack 错误通过 span 属性记录 |
+  | CB-2 | FG-M | client.go:113 | healthWg.Go() 不安全 | 舍弃 | 2(CA+CB) | FP: 同 CA-2，Go 1.25 API |
+- 备注：xpulsar 代码质量高——nil 防御完备、context 传播正确、Close 幂等（sync.Once）、错误链使用 %w 一致、设计决策注释充分。Codex A/B 两次均未产出规范表格。

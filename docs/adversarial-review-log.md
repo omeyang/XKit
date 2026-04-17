@@ -373,3 +373,10 @@
   - CB-2 health.go:307 注释"闭包始终返回 nil error；若未来修改返回错误则记录以便定位"——前瞻性防御
   - CB-5 health.go:296 注释"异步检查尚未执行，返回默认 up"——K8s startup 标准行为
   - Codex 三次运行（原始 A/B + 交叉对抗）均只输出源码读取日志，未生成结论表格
+
+## 2026-04-18 slot=4 TARGET=xrun
+- 原始发现：Claude攻=0 守=0 / Codex A=0（日志截断无结论） B=0（日志截断无结论）
+- 交叉对抗：无输入（4 路均无发现），跳过
+- 合议：必修=0 存疑=0 舍弃=0
+- 修复：无发现
+- 备注：Claude 双代理独立扫描 nil/typed-nil/零值契约、并发安全、错误处理、context 传播、资源清理、API 契约、跨平台 build tag 等维度均未发现 FG-H/FG-M 真问题。Codex A 探索了 Plan9 构建失败（syscall.SIGQUIT undefined），判定为非真问题（包面向 Unix/K8s 生命周期管理，Plan9 非目标平台）。Codex A/B 均未输出规范表格，仅产出搜索日志。

@@ -352,8 +352,11 @@ func (w *clickhouseWrapper) executePageQuery(ctx context.Context, query string, 
 	defer func() {
 		closeErr := rows.Close()
 		if closeErr != nil {
-			w.queryCounter.IncQueryError()
 			err = errors.Join(err, fmt.Errorf("close rows failed: %w", closeErr))
+		}
+		// 统一计数：无论 Scan 还是 Close 失败，同一次查询只计一次错误
+		if err != nil {
+			w.queryCounter.IncQueryError()
 		}
 	}()
 
@@ -394,7 +397,6 @@ func (w *clickhouseWrapper) scanRows(rows driver.Rows, pageSize int64) ([][]any,
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
-			w.queryCounter.IncQueryError()
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
@@ -556,6 +558,7 @@ func (w *clickhouseWrapper) insertBatch(ctx context.Context, table string, batch
 	// 发送批次
 	if err := batchObj.Send(); err != nil {
 		errs = append(errs, fmt.Errorf("send batch failed: %w", err))
+		w.abortBatch(batchObj, &errs)
 		return 0, errs
 	}
 

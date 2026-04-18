@@ -443,6 +443,62 @@ func TestBatchInsert_SendError(t *testing.T) {
 	assert.Contains(t, result.Errors[0].Error(), "send batch failed")
 }
 
+func TestBatchInsert_SendErrorAbortsBatch(t *testing.T) {
+	aborted := false
+	conn := newMockConn()
+	conn.batchFunc = func(_ context.Context, _ string) Batch {
+		return &abortTrackingBatch{
+			mockBatch: &mockBatch{sendErr: assert.AnError},
+			aborted:   &aborted,
+		}
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	rows := []any{struct{ ID int }{ID: 1}}
+	result, err := w.BatchInsert(context.Background(), "users", rows, BatchOptions{})
+
+	assert.Error(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(0), result.InsertedCount)
+	assert.True(t, aborted, "Send 失败后应调用 Abort")
+}
+
+func TestQueryPage_ScanErrorCountsOnce(t *testing.T) {
+	conn := newMockConn()
+	conn.queryRowFunc = func(_ context.Context, _ string, _ ...any) Row {
+		return &mockRow{
+			scanFunc: func(dest ...any) error {
+				if ptr, ok := dest[0].(*uint64); ok {
+					*ptr = 100
+				}
+				return nil
+			},
+		}
+	}
+	conn.queryFunc = func(_ context.Context, _ string, _ ...any) (Rows, error) {
+		rows := newMockRows([]string{"id"}, [][]any{{1}})
+		rows.scanErr = assert.AnError
+		return rows, nil
+	}
+
+	w := &clickhouseWrapper{
+		conn:    conn,
+		options: defaultOptions(),
+	}
+
+	_, err := w.QueryPage(context.Background(), "SELECT * FROM users", PageOptions{
+		Page:     1,
+		PageSize: 10,
+	})
+
+	assert.Error(t, err)
+	assert.Equal(t, int64(1), w.queryCounter.QueryErrors(), "Scan 失败应只计一次 QueryError")
+}
+
 func TestBatchInsert_DefaultBatchSize(t *testing.T) {
 	conn := newMockConn()
 	batchCount := 0

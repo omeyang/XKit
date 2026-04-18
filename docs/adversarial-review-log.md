@@ -427,3 +427,19 @@
   | CB-4 | FG-H | breaker.go:259-268 | BucketPeriod>Interval 仅 warn | 舍弃 | 1(CB) |
 - 舍弃理由：CA-1 gobreaker TwoStep.Allow() 失败时返回 (nil, err)，done 为 nil 不可调用，代码正确返回；CA-2 doc.go:51-54 明确"不设背压机制"并指引用户自行实现有界队列（已文档化设计决策）；CB-1 代码注释 L333 明确"context 仅用于入口检查"；CB-2 fn 签名为 func()(T,error) 不接收 ctx，xretry 自行用 ctx 做取消检查；CB-3 DoWithRetrySimple 是 Simple API 变体，文档 L136 明确不接收 ctx；CB-4 NewBreaker 返回 *Breaker 无 error，warn 是当前 API 下的正确选择。
 - 备注：xbreaker 代码质量高——TwoStep 模式正确使用 defer+recover 保证 done 回调必调、buildSettings 防御性校验充分、设计决策注释覆盖完整（doc.go 回调背压、context 语义、API 简化变体）。Codex A/B 两次均上下文耗尽未产出结论。
+
+## 2026-04-19 slot=2 TARGET=xretry
+- 原始发现：Claude攻=2 守=3 / Codex A=0(截断) B=0(截断)
+- 交叉对抗：Codex攻Claude → 超时未产出；Claude攻Codex → 无发现可攻（Codex 0 条）
+- 合议：必修=0 存疑=0 舍弃=5
+- 修复："无发现"
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-1 | FG-H | errors.go:44-46 | Unwrap()返回nil | 舍弃 | 1(CA) |
+  | CA-2 | FG-M | retryer.go:217-220 | OnRetry无panic恢复 | 舍弃 | 1(CA) |
+  | CB-1 | FG-H | backoff.go:119 | jitter非对称[-j,+j-ε) | 舍弃 | 1(CB) |
+  | CB-2 | FG-M | wrapper.go:210-214 | RetryIf覆盖PermanentError | 舍弃 | 1(CB) |
+  | CB-3 | FG-M | retryer.go:194-206 | Retrier()一次性累积 | 舍弃 | 1(CB) |
+- 舍弃理由：CA-1 Unwrap()返回nil是标准Go行为（errors.Unwrap contract允许nil返回，表示"无包装错误"）；CA-2 用户回调在调用方goroutine运行，panic自然传播是Go惯例，retry-go自身也无recover；CB-1 randomFloat64()返回[0,1)是所有随机实现的标准特性，ε≈10⁻¹⁶完全可忽略；CB-2 wrapper.go:140-151已明确文档化RetryIf覆盖行为并给出示例代码；CB-3 retryer.go:235-243已文档化一次性使用约束（类比strings.Builder），TestRetrier_ReuseAccumulatesCount测试覆盖。
+- 备注：xretry 代码质量高——nil ctx/nil func/nil receiver全路径防御、NaN/Inf溢出安全处理（backoff.go:126）、线性退避预计算溢出检测（backoff.go:177-188）、atomic.Int64保证Retrier()逃逸后并发安全、设计决策注释覆盖完整。Codex A/B两次均上下文耗尽未产出结论。

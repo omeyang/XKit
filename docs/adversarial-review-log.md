@@ -396,3 +396,34 @@
   | CB-1 | FG-M | tracing.go:259 | Ack 失败被静默 | 舍弃 | 1 | FP: 文档化设计决策（L256-258），Ack 错误通过 span 属性记录 |
   | CB-2 | FG-M | client.go:113 | healthWg.Go() 不安全 | 舍弃 | 2(CA+CB) | FP: 同 CA-2，Go 1.25 API |
 - 备注：xpulsar 代码质量高——nil 防御完备、context 传播正确、Close 幂等（sync.Once）、错误链使用 %w 一致、设计决策注释充分。Codex A/B 两次均未产出规范表格。
+
+## 2026-04-19 slot=0 TARGET=xlog
+- 原始发现：Claude攻=0 守=3(1H/2M) / Codex A=0(过程日志无结论) B=0(过程日志无结论)
+- 交叉对抗：Codex攻Claude → a=0 b=2 c=1；Claude攻Codex → N/A(Codex无发现)
+- 合议：必修=0 存疑=1(裁决舍弃) 舍弃=3
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CB-1 | FG-H | global.go:98-100 | SetDefault 无 defer unlock | 舍弃 | 1(CB) |
+  | CB-2 | FG-M | global.go:36-68 | once.Do 回调 panic 污染 once 状态 | 舍弃 | 1(CB) |
+  | CB-3 | FG-M | logger.go:163-164 | stackWithSkip 防御分支 bufp 悬指针 | 舍弃 | 1(CB) |
+- 舍弃理由：CB-1 锁内仅 atomic.Pointer.Store 一行，不可能 panic，defer 无必要；CB-2 defaultLogger once.Do 回调使用默认参数（stderr/text/Info），stdlib 不 panic，且 mutex 有 defer 释放；CB-3 Go 逃逸分析确保 &buf 指向堆分配，不存在悬指针。
+- 备注：xlog 代码质量高——错误处理完备（fallback logger 降级）、并发安全（atomic.Pointer + globalMu + sync.Once 三层保护）、sync.Pool 使用正确（Put 前完成 string 拷贝）、设计决策注释充分。Codex A/B 两次均未产出规范表格（仅过程日志）。
+
+## 2026-04-19 slot=1 TARGET=xbreaker
+- 原始发现：Claude攻=2 守=4 / Codex A=0(上下文耗尽无结论) B=0(上下文耗尽无结论)
+- 交叉对抗：Codex攻Claude → a=1 b=5 c=0；Claude攻Codex → 无发现可攻（Codex 无输出）
+- 合议：必修=0 存疑=0 舍弃=6
+- 修复：无发现
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | CA-1 | FG-H | combo.go:261,366 | done 未调用导致 HalfOpen 计数不同步 | 舍弃 | 1(CA) |
+  | CA-2 | FG-M | breaker.go:309-318 | wrapOnStateChange goroutine 无背压 | 舍弃 | 1(CA)+Codex=a |
+  | CB-1 | FG-M | breaker.go:336-349 | Do() 不检查 context deadline | 舍弃 | 1(CB) |
+  | CB-2 | FG-M | combo.go:384 | ExecuteRetryThenBreak context 未传 | 舍弃 | 1(CB) |
+  | CB-3 | FG-M | combo.go:148-150 | DoWithRetrySimple context 割裂 | 舍弃 | 1(CB) |
+  | CB-4 | FG-H | breaker.go:259-268 | BucketPeriod>Interval 仅 warn | 舍弃 | 1(CB) |
+- 舍弃理由：CA-1 gobreaker TwoStep.Allow() 失败时返回 (nil, err)，done 为 nil 不可调用，代码正确返回；CA-2 doc.go:51-54 明确"不设背压机制"并指引用户自行实现有界队列（已文档化设计决策）；CB-1 代码注释 L333 明确"context 仅用于入口检查"；CB-2 fn 签名为 func()(T,error) 不接收 ctx，xretry 自行用 ctx 做取消检查；CB-3 DoWithRetrySimple 是 Simple API 变体，文档 L136 明确不接收 ctx；CB-4 NewBreaker 返回 *Breaker 无 error，warn 是当前 API 下的正确选择。
+- 备注：xbreaker 代码质量高——TwoStep 模式正确使用 defer+recover 保证 done 回调必调、buildSettings 防御性校验充分、设计决策注释覆盖完整（doc.go 回调背压、context 语义、API 简化变体）。Codex A/B 两次均上下文耗尽未产出结论。

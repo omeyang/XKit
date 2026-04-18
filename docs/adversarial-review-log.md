@@ -443,3 +443,19 @@
   | CB-3 | FG-M | retryer.go:194-206 | Retrier()一次性累积 | 舍弃 | 1(CB) |
 - 舍弃理由：CA-1 Unwrap()返回nil是标准Go行为（errors.Unwrap contract允许nil返回，表示"无包装错误"）；CA-2 用户回调在调用方goroutine运行，panic自然传播是Go惯例，retry-go自身也无recover；CB-1 randomFloat64()返回[0,1)是所有随机实现的标准特性，ε≈10⁻¹⁶完全可忽略；CB-2 wrapper.go:140-151已明确文档化RetryIf覆盖行为并给出示例代码；CB-3 retryer.go:235-243已文档化一次性使用约束（类比strings.Builder），TestRetrier_ReuseAccumulatesCount测试覆盖。
 - 备注：xretry 代码质量高——nil ctx/nil func/nil receiver全路径防御、NaN/Inf溢出安全处理（backoff.go:126）、线性退避预计算溢出检测（backoff.go:177-188）、atomic.Int64保证Retrier()逃逸后并发安全、设计决策注释覆盖完整。Codex A/B两次均上下文耗尽未产出结论。
+
+## 2026-04-19 slot=3 TARGET=xclickhouse
+- 原始发现：Claude攻=3 守=3 / Codex A=0 B=0（两份输出均为探索日志，无结论表格）
+- 交叉对抗：Codex攻Claude → a=2 b=4 c=0；Claude攻Codex → 无发现可攻
+- 合议：必修=2 存疑=0 舍弃=4
+- 修复：commit e3e1826
+- 合议表格：
+  | 编号 | 严重度 | 文件:行 | 根因 | 分类 | 来源数 |
+  |------|--------|---------|------|------|--------|
+  | 1 | FG-H | wrapper.go:557-559 | Send失败未Abort,与文档承诺不一致 | 必修(单源交叉验证) | 1(CB) |
+  | 2 | FG-M | wrapper.go:397+355 | Scan+Close双计IncQueryError,同一查询失败计两次 | 必修(单源交叉验证) | 1(CB) |
+  | 3 | FG-H | wrapper.go:606 | maybeSlowQuery nil防御 | 舍弃 | 1(CA) |
+  | 4 | FG-M | wrapper.go:495,500 | 错误链重复暴露 | 舍弃 | 1(CA) |
+  | 5 | FG-M | wrapper.go:356 | errors.Join nil | 舍弃 | 1(CA) |
+  | 6 | FG-M | wrapper.go:128-131 | TOCTOU竞态 | 舍弃 | 1(CB) |
+- 舍弃理由：CA-1(#3) detector关闭后MaybeSlowQuery安全（代码已有nil检查wrapper.go:606，且注释wrapper.go:128-130文档化）；CA-2(#4) 文档明确BatchResult同时返回聚合err和明细Errors（设计决策）；CA-3(#5) errors.Join可接受nil参数，仅close失败时Join合理；CB-3(#6) TOCTOU已文档化为已知限制（wrapper.go:128-131），detector.Close后MaybeSlowQuery无panic。

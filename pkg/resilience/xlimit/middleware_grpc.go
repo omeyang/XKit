@@ -2,6 +2,8 @@ package xlimit
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"math"
 	"strconv"
 
@@ -231,6 +233,10 @@ func handleGRPCLimit(ctx context.Context, limiter Limiter, key Key) (denied bool
 		if result != nil && !result.Allowed {
 			return true, grpcRateLimitError(ctx, result)
 		}
+		// fail-open 路径：记录告警便于运维发现配置错误或后端异常。
+		// 设计决策: 与 HTTP 中间件对齐——只记录预定义 error class 字符串字面量，
+		// 不写 err.Error() 或请求衍生字段。错误详情靠 trace + metric 兜底。
+		logFailOpenGRPC(ctx, err)
 		return false, nil // fail-open
 	}
 
@@ -266,4 +272,16 @@ func setRetryAfterTrailer(ctx context.Context, result *Result) {
 		strconv.FormatInt(retryAfterSec, 10))); err != nil {
 		return // transport 不可用时无法设置 trailer，继续返回限流错误
 	}
+}
+
+// logFailOpenGRPC 记录 gRPC fail-open 告警。
+// 与 HTTP 侧 logFailOpen 对齐：只记预定义 class 字面量，不写 err.Error()。
+func logFailOpenGRPC(ctx context.Context, err error) {
+	class := "internal"
+	if errors.Is(err, ErrLimiterClosed) {
+		class = "closed"
+	}
+	slog.WarnContext(ctx, "xlimit: gRPC interceptor fail-open due to limiter error",
+		slog.String("error_class", class),
+	)
 }

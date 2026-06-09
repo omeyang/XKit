@@ -1,0 +1,57 @@
+# XKit 对抗审查配置
+# 工具位置查找顺序：$ADVERSARIAL_REVIEW_HOME → ~/code/ai/github.com/omeyang/ai-toolkit/workflows/adversarial-review/
+#                  → $GOPATH/src/github.com/omeyang/ai-toolkit/workflows/adversarial-review/
+# 触发：pre-commit hook 增量审查（.githooks/，由 `task install-hooks` 启用）
+#       + cron 定时全包轮转（固定 SLOT→包 映射，0-7 点）
+
+repo:
+  root: .
+  search_dirs: [pkg, cmd, internal]
+  search_maxdepth: 3
+
+llm:
+  claude_model: claude-opus-4-7
+  codex_command: codex
+  parallel_codex: true
+
+review:
+  dimensions:
+    - "nil/typed-nil/零值契约"
+    - "并发安全（goroutine 退出、共享资源保护、TOCTOU）"
+    - "错误处理（%w 跨包、%v 抽象边界、errors.Is 链）"
+    - "context 传播（nil ctx 防御、取消信号、超时）"
+    - "资源清理（Close 幂等、goroutine 生命周期、Wait）"
+    - "API 契约（构造返 error、选项验证、典型陷阱）"
+  max_findings_per_source: 8
+
+diff:
+  default_ref: "--cached"
+  scope_strategy: auto
+  max_diff_lines: 500
+  skip_paths:
+    - "*.md"
+    - "docs/**"
+    - "llms*.txt"
+    - "**/testdata/**"
+    - ".adversarial-runs/**"
+  auto_stash_unstaged: false
+
+verify:
+  cmd: "task pre-push"
+  timeout_seconds: 600
+
+commit:
+  prefix_template: "fix({{TARGET}})"
+  push_after_fix: false
+
+log:
+  file: .adversarial-runs/review-log.md
+  run_dir: .adversarial-runs
+
+policy:
+  fail_on_severity: high
+  strict_on_error: false
+
+daily_check:
+  enabled: true
+  expected_entries: 15

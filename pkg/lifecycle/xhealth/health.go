@@ -3,6 +3,7 @@ package xhealth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -44,6 +45,18 @@ type Health struct {
 	stopOnce sync.Once
 	stopCh   chan struct{} // 通知异步 goroutine 停止
 	readyCh  chan struct{} // Run 中 listener 就绪后关闭
+
+	// asyncCtx/asyncCancel 用于取消异步检查中正在进行的 Check 调用,
+	// 避免停止时 wg.Wait 被尊重 ctx 的慢 Check 无界阻塞。
+	asyncCtx    context.Context
+	asyncCancel context.CancelFunc
+}
+
+// newAsyncCancelCtx 返回供异步检查使用的可取消 context。
+// 拆出独立函数：cancel 跨 New→doShutdown 生命周期，
+// 无法在 New 内 defer，包裹后避开 gosec G118 的同函数 defer 检查。
+func newAsyncCancelCtx() (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.Background())
 }
 
 // New 创建健康检查实例。
@@ -62,10 +75,13 @@ func New(opts ...Option) (*Health, error) {
 		}
 	}
 
+	asyncCtx, asyncCancel := newAsyncCancelCtx()
 	h := &Health{
-		opts:    o,
-		stopCh:  make(chan struct{}),
-		readyCh: make(chan struct{}),
+		opts:        o,
+		stopCh:      make(chan struct{}),
+		readyCh:     make(chan struct{}),
+		asyncCtx:    asyncCtx,
+		asyncCancel: asyncCancel,
 	}
 	for i := range h.statuses {
 		h.statuses[i] = StatusUp
@@ -106,9 +122,12 @@ func (h *Health) addCheck(ep endpoint, name string, cfg CheckConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if cfg.Async && h.started.Load() {
+		return fmt.Errorf("%w: cannot add async check after Run", ErrAlreadyStarted)
+	}
 
 	for _, e := range h.checks[ep] {
 		if e.name == name {
@@ -137,24 +156,35 @@ func (h *Health) Run(ctx context.Context) error {
 		return ErrAlreadyStarted
 	}
 
-	// 启动异步检查的后台 goroutine
-	var wg sync.WaitGroup
-	h.startAsyncChecks(&wg)
-
 	mux := http.NewServeMux()
 	h.registerHandlers(mux)
 
 	ln, err := net.Listen("tcp", h.opts.addr)
 	if err != nil {
 		h.started.Store(false)
-		return fmt.Errorf("%w: %v", ErrInvalidAddr, err)
+		return fmt.Errorf("%w: %w", ErrInvalidAddr, err)
 	}
+
+	// 设计决策: 先 Listen 成功后再启动异步检查,避免 Listen 失败时泄漏 goroutine。
+	// 启动异步检查的后台 goroutine
+	var wg sync.WaitGroup
+	h.startAsyncChecks(&wg)
 
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	h.server.Store(srv)
+
+	// 设计决策: 补偿关闭。如果在 Listen 和 server.Store 之间已调用 Shutdown，
+	// stopOnce 已执行但 server 尚未 Store（此时 Load 返回 nil），导致 Serve 永久运行。
+	// 此处检查 shutdown 标志并补偿关闭 server，使 Serve 立即返回 ErrServerClosed。
+	if h.shutdown.Load() {
+		if err := srv.Close(); err != nil {
+			slog.Warn("xhealth: compensated close after early shutdown", "err", err)
+		}
+	}
+
 	close(h.readyCh) // 通知 listener 就绪
 
 	// 监听取消信号
@@ -167,7 +197,9 @@ func (h *Health) Run(ctx context.Context) error {
 	}()
 
 	err = srv.Serve(ln)
-	// 等待异步 goroutine 退出
+	// 确保异步 goroutine 收到停止信号（Serve 可能因非 ErrServerClosed 错误返回）。
+	// doShutdown 幂等，由 stopOnce 保护。
+	h.doShutdown()
 	wg.Wait()
 
 	if err == http.ErrServerClosed {
@@ -185,13 +217,31 @@ func (h *Health) Shutdown() {
 }
 
 // doShutdown 执行实际关闭逻辑（幂等）。
+//
+// 设计决策: 使用 opts.shutdownTimeout 限制 srv.Shutdown 的最大耗时,
+// 避免慢 handler 导致 Shutdown/Run 无界阻塞。超时后 Shutdown 返回但连接会被强制关闭。
 func (h *Health) doShutdown() {
 	h.stopOnce.Do(func() {
 		h.shutdown.Store(true)
+
+		// 通知所有端点状态变更为 Down。
+		// 在 close(stopCh) 之前通知，确保回调在异步 goroutine 停止前执行。
+		for i := range h.statuses {
+			h.maybeNotifyStatusChange(endpoint(i), StatusDown)
+		}
+
 		close(h.stopCh)
+		h.asyncCancel() // 取消异步检查中正在进行的 Check 调用
 		if srv := h.server.Load(); srv != nil {
-			if err := srv.Shutdown(context.Background()); err != nil {
-				return
+			ctx, cancel := context.WithTimeout(context.Background(), h.opts.shutdownTimeout)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				// 超时或其它错误:强制关闭底层 listener/连接,确保 Serve 返回。
+				// 已进入强制关闭路径，Close 的二次错误无处可报，仅日志记录。
+				if closeErr := srv.Close(); closeErr != nil {
+					slog.Warn("xhealth: force close server after shutdown failure",
+						"shutdown_err", err, "close_err", closeErr)
+				}
 			}
 		}
 	})
@@ -235,9 +285,30 @@ func (h *Health) check(ctx context.Context, ep endpoint) *Result {
 		return &Result{Status: StatusUp}
 	}
 
+	// 设计决策: 端点级并发执行检查,端点总耗时 ≈ max(单检查耗时) 而非 sum。
+	// 避免多依赖场景下 /readyz 阻塞 N*Timeout,被 K8s 探针超时仍占用 handler goroutine。
 	results := make(map[string]CheckResult, len(entries))
-	for _, entry := range entries {
-		results[entry.name] = h.executeCheck(ctx, entry)
+	if len(entries) == 1 {
+		results[entries[0].name] = h.executeCheck(ctx, entries[0])
+	} else {
+		type nr struct {
+			name string
+			cr   CheckResult
+		}
+		ch := make(chan nr, len(entries))
+		var cwg sync.WaitGroup
+		for _, entry := range entries {
+			cwg.Add(1)
+			go func(e *checkEntry) {
+				defer cwg.Done()
+				ch <- nr{name: e.name, cr: h.executeCheck(ctx, e)}
+			}(entry)
+		}
+		cwg.Wait()
+		close(ch)
+		for v := range ch {
+			results[v.name] = v.cr
+		}
 	}
 
 	result := aggregate(entries, results)
@@ -260,15 +331,29 @@ func (h *Health) executeCheck(ctx context.Context, entry *checkEntry) CheckResul
 		if cached, ok := entry.getCached(); ok {
 			return cached
 		}
+		// 设计决策: singleflight 防惊群,TTL 失效时只允许一个 goroutine 刷新,
+		// 其它并发探针共享同一结果,避免放大下游依赖压力。
+		// 设计决策: 使用 context.Background() 而非请求 ctx,避免单个请求取消后
+		// 将 context.Canceled 结果写入缓存,污染后续探针。
+		// 闭包始终返回 nil error；若未来修改返回错误则记录以便定位。
+		v, err, _ := entry.sf.Do("", func() (any, error) {
+			if cached, ok := entry.getCached(); ok {
+				return cached, nil
+			}
+			r := entry.execute(context.Background())
+			entry.setCachedWithTTL(r, h.opts.cacheTTL)
+			return r, nil
+		})
+		if err != nil {
+			slog.Warn("xhealth: singleflight returned error", "err", err)
+		}
+		if cr, ok := v.(CheckResult); ok {
+			return cr
+		}
+		return entry.execute(ctx)
 	}
 
-	result := entry.execute(ctx)
-
-	if h.opts.cacheTTL > 0 {
-		entry.setCachedWithTTL(result, h.opts.cacheTTL)
-	}
-
-	return result
+	return entry.execute(ctx)
 }
 
 // startAsyncChecks 启动所有异步检查的后台 goroutine。
@@ -282,18 +367,18 @@ func (h *Health) startAsyncChecks(wg *sync.WaitGroup) {
 				continue
 			}
 			wg.Add(1)
-			go h.runAsyncCheck(wg, entry)
+			go h.runAsyncCheck(wg, endpoint(epIdx), entry)
 		}
 	}
 }
 
 // runAsyncCheck 后台定期执行异步检查。
-func (h *Health) runAsyncCheck(wg *sync.WaitGroup, entry *checkEntry) {
+func (h *Health) runAsyncCheck(wg *sync.WaitGroup, ep endpoint, entry *checkEntry) {
 	defer wg.Done()
 
-	// 立即执行一次
-	result := entry.execute(context.Background())
+	result := entry.execute(h.asyncCtx)
 	entry.setCached(result)
+	h.maybeNotifyStatusChange(ep, h.aggregateEndpointStatus(ep))
 
 	ticker := time.NewTicker(entry.config.Interval)
 	defer ticker.Stop()
@@ -301,12 +386,35 @@ func (h *Health) runAsyncCheck(wg *sync.WaitGroup, entry *checkEntry) {
 	for {
 		select {
 		case <-ticker.C:
-			result := entry.execute(context.Background())
+			result := entry.execute(h.asyncCtx)
 			entry.setCached(result)
+			h.maybeNotifyStatusChange(ep, h.aggregateEndpointStatus(ep))
 		case <-h.stopCh:
 			return
 		}
 	}
+}
+
+// aggregateEndpointStatus 从缓存结果聚合端点状态（不执行检查）。
+func (h *Health) aggregateEndpointStatus(ep endpoint) Status {
+	h.mu.RLock()
+	entries := h.checks[ep]
+	h.mu.RUnlock()
+
+	status := StatusUp
+	for _, entry := range entries {
+		cr, ok := entry.getCached()
+		if !ok {
+			continue
+		}
+		switch {
+		case cr.Status == StatusDown && status != StatusDown:
+			status = StatusDown
+		case cr.Status == StatusDegraded && status == StatusUp:
+			status = StatusDegraded
+		}
+	}
+	return status
 }
 
 // maybeNotifyStatusChange 在状态变化时调用回调。
@@ -324,5 +432,20 @@ func (h *Health) maybeNotifyStatusChange(ep endpoint, newStatus Status) {
 	h.statuses[ep] = newStatus
 	h.mu.Unlock()
 
-	h.opts.statusListener(endpointNames[ep], oldStatus, newStatus)
+	h.safeCallStatusListener(endpointNames[ep], oldStatus, newStatus)
+}
+
+// safeCallStatusListener 安全调用用户提供的状态监听回调。
+//
+// 内部 recover 用户回调的 panic，避免异步 goroutine 或 doShutdown 路径中的
+// panic 杀死进程（这些路径不受 net/http 的 recover 保护）。
+func (h *Health) safeCallStatusListener(epName string, oldStatus, newStatus Status) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("xhealth: status listener panic recovered",
+				"endpoint", epName, "old_status", string(oldStatus),
+				"new_status", string(newStatus), "panic", r)
+		}
+	}()
+	h.opts.statusListener(epName, oldStatus, newStatus)
 }

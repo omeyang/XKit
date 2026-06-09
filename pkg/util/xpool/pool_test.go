@@ -601,3 +601,32 @@ func TestWorkerPool_DoneAfterShutdownTimeout(t *testing.T) {
 		t.Fatal("Done() should close after workers finish")
 	}
 }
+
+// panicLogHandler 是一个在 Handle 中 panic 的 slog.Handler，用于测试 logger panic 不会导致 worker 崩溃。
+type panicLogHandler struct{}
+
+func (panicLogHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (panicLogHandler) Handle(context.Context, slog.Record) error { panic("logger panic") }
+func (panicLogHandler) WithAttrs([]slog.Attr) slog.Handler        { return panicLogHandler{} }
+func (panicLogHandler) WithGroup(string) slog.Handler             { return panicLogHandler{} }
+
+func TestWorkerPool_PanicRecoveryWithPanicLogger(t *testing.T) {
+	var processed atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	pool := newPoolForTest(t, 1, 10, func(n int) {
+		defer wg.Done()
+		if n == 0 {
+			panic("task panic")
+		}
+		processed.Add(1)
+	}, WithLogger(slog.New(panicLogHandler{})))
+	defer func() { require.NoError(t, pool.Close()) }()
+
+	require.NoError(t, pool.Submit(0)) // panic → logger panic → worker 应存活
+	require.NoError(t, pool.Submit(1)) // 正常处理
+
+	wg.Wait()
+	assert.Equal(t, int32(1), processed.Load())
+}

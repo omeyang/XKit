@@ -120,6 +120,16 @@ func TestConfig_Validate(t *testing.T) {
 			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: strings.Repeat("r", 128)},
 			err:    nil,
 		},
+		{
+			name:   "PlatformID含非ASCII字符",
+			config: xplatform.Config{PlatformID: "平台-001"},
+			err:    xplatform.ErrInvalidPlatformID,
+		},
+		{
+			name:   "UnclassRegionID含非ASCII字符",
+			config: xplatform.Config{PlatformID: "platform-001", UnclassRegionID: "区域-001"},
+			err:    xplatform.ErrInvalidUnclassRegionID,
+		},
 	}
 
 	for _, tt := range tests {

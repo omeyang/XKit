@@ -127,6 +127,13 @@ func applyLoadTimeout(ctx context.Context, timeout time.Duration) (context.Conte
 	return context.WithTimeout(ctx, timeout)
 }
 
+// isCacheLifecycleErr 判断错误是否为缓存生命周期错误（已关闭），
+// 此类错误应 fail-fast 透传给调用方，而非降级为回源。
+// 降级处理会隐藏生命周期错误，并在已关闭缓存场景造成 backend bypass/回源风暴。
+func isCacheLifecycleErr(err error) bool {
+	return errors.Is(err, redis.ErrClosed) || errors.Is(err, ErrClosed)
+}
+
 // hashFieldKey 生成 Hash field 的唯一标识 key。
 // 使用长度前缀格式避免碰撞："{len(key)}:{key}:{field}"
 // 例如：key="user", field="a:b" → "4:user:a:b"
@@ -184,6 +191,10 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
+		// 生命周期错误 fail-fast，不降级回源（避免隐藏 Close 后误用导致的回源风暴）。
+		if isCacheLifecycleErr(err) {
+			return nil, err
+		}
 	}
 
 	// 2. 缓存未命中或 Redis 错误，使用 singleflight 或直接回源
@@ -194,19 +205,27 @@ func (l *loader) Load(ctx context.Context, key string, loadFn LoadFunc, ttl time
 	return l.loadWithDistLock(ctx, key, loadFn, ttl)
 }
 
-// LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
-func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+// validateLoadHashArgs 校验 LoadHash 入参。
+func (l *loader) validateLoadHashArgs(ctx context.Context, key, field string, loadFn LoadFunc) error {
 	if ctx == nil {
-		return nil, ErrNilContext
+		return ErrNilContext
 	}
 	if l.cache == nil {
-		return nil, ErrNilClient
+		return ErrNilClient
 	}
 	if key == "" || field == "" {
-		return nil, ErrEmptyKey
+		return ErrEmptyKey
 	}
 	if loadFn == nil {
-		return nil, ErrNilLoader
+		return ErrNilLoader
+	}
+	return nil
+}
+
+// LoadHash 从 Redis Hash 加载数据，未命中时调用 loader 函数回源。
+func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFunc, ttl time.Duration) ([]byte, error) {
+	if err := l.validateLoadHashArgs(ctx, key, field, loadFn); err != nil {
+		return nil, err
 	}
 
 	// 1. 尝试从 Hash 获取
@@ -220,6 +239,10 @@ func (l *loader) LoadHash(ctx context.Context, key, field string, loadFn LoadFun
 	if !errors.Is(err, redis.Nil) {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
+		}
+		// 生命周期错误 fail-fast，不降级回源。
+		if isCacheLifecycleErr(err) {
+			return nil, err
 		}
 	}
 
@@ -338,6 +361,9 @@ func (l *loader) checkCacheGet(ctx context.Context, key string, loadFn LoadFunc,
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, true, ctxErr
 		}
+		if isCacheLifecycleErr(err) {
+			return nil, true, err
+		}
 		val, loadErr := l.loadAndCache(ctx, key, loadFn, ttl)
 		return val, true, loadErr
 	}
@@ -380,7 +406,19 @@ func (l *loader) applyTTLJitter(ttl time.Duration) time.Duration {
 	if jittered <= 0 {
 		return ttl
 	}
-	return time.Duration(jittered)
+	// 防御: TTL 接近 int64 上限时，float64 乘积可能超出 int64 范围，
+	// Go spec 规定此转换结果为实现定义，不可移植依赖。
+	const maxSafeDuration = float64(1<<63 - 1)
+	if jittered > maxSafeDuration {
+		return ttl
+	}
+	result := time.Duration(jittered)
+	// 防御: 极小正 TTL（例如 1ns）经 float 截断可能为 0，随后 Set(..., 0) 会写为永不过期 key，
+	// 违反 "ttl > 0 设置过期" 的 API 契约。钳制到最小 1ns 以保留有效过期语义。
+	if result <= 0 {
+		return time.Nanosecond
+	}
+	return result
 }
 
 // loadAndCache 加载数据并写入缓存。
@@ -508,6 +546,9 @@ func (l *loader) checkCacheHGet(ctx context.Context, key, field string, loadFn L
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, true, ctxErr
 		}
+		if isCacheLifecycleErr(err) {
+			return nil, true, err
+		}
 		val, loadErr := l.loadHashAndCache(ctx, key, field, loadFn, ttl)
 		return val, true, loadErr
 	}
@@ -581,15 +622,20 @@ func (l *loader) writeHashCache(ctx context.Context, key, field string, value []
 }
 
 // setHashTTLIfMissing 仅在 Hash key 无 TTL 时设置过期时间（HashTTLRefresh=false 路径）。
+// TTL 查询或 Expire 失败时触发 OnCacheSetError 回调，保持与 CacheSetErrorHook 契约一致：
+// TTL 缺失会导致 Hash 变为永不过期，影响防雪崩/防穿透过期语义，属于缓存写入失败范畴。
 func (l *loader) setHashTTLIfMissing(ctx context.Context, key string, cacheTTL time.Duration) {
 	currentTTL, ttlErr := l.cache.Client().TTL(ctx, key).Result()
 	if ttlErr != nil {
 		l.logWarn("xcache: hash ttl check failed", "key", key, "error", ttlErr)
+		l.onCacheSetError(ctx, key, ttlErr)
 		return
 	}
-	if currentTTL < 0 {
+	// -1: key 存在但无 TTL；-2: key 不存在（HSet 后微秒级竞态，Expire 无操作可跳过）
+	if currentTTL == -1 {
 		if expireErr := l.cache.Client().Expire(ctx, key, cacheTTL).Err(); expireErr != nil {
 			l.logWarn("xcache: hash expire failed", "key", key, "ttl", cacheTTL, "error", expireErr)
+			l.onCacheSetError(ctx, key, expireErr)
 		}
 	}
 }

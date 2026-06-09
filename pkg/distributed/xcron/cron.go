@@ -108,6 +108,10 @@ func (s *cronScheduler) AddJob(spec string, job Job, opts ...JobOption) (JobID, 
 	if job == nil {
 		return 0, ErrNilJob
 	}
+	// 防御 typed-nil：JobFunc(nil) 通过 interface nil 检查，但执行时会 panic
+	if fn, ok := job.(JobFunc); ok && fn == nil {
+		return 0, ErrNilJob
+	}
 
 	// 合并任务选项
 	jobOpts := defaultJobOptions()

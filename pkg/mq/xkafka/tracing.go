@@ -14,6 +14,10 @@ import (
 // TracingProducer 是带追踪注入能力的 Producer。
 type TracingProducer struct {
 	*producerWrapper
+
+	// closeMu 保护 Produce 与 Close 的并发。
+	// Produce 持读锁，Close 持写锁，确保 Close 等待进行中的 Produce 完成后再 Flush/Close。
+	closeMu sync.RWMutex
 }
 
 // NewTracingProducer 创建带追踪注入能力的 Producer。
@@ -32,6 +36,12 @@ func (w *TracingProducer) Produce(ctx context.Context, msg *kafka.Message, deliv
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	w.closeMu.RLock()
+	defer w.closeMu.RUnlock()
+	if w.closed.Load() {
+		return ErrClosed
 	}
 
 	injectKafkaTrace(ctx, w.options.Tracer, msg)
@@ -111,11 +121,17 @@ func (w *TracingConsumer) ReadMessage(ctx context.Context) (context.Context, *ka
 }
 
 // Consume 消费一条消息并执行处理函数。
-// closeMu 读锁保护 handler 执行和 StoreMessage 的原子性，
-// 确保 Close 等待进行中的消费完成后再关闭资源。
+// closeMu 读锁覆盖 ReadMessage → handler → StoreMessage 全链路，
+// 确保 Close 等待进行中的消费完成后再关闭底层 consumer（poll 在 PollTimeout 内返回）。
 func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (err error) {
 	if handler == nil {
 		return ErrNilHandler
+	}
+
+	w.closeMu.RLock()
+	defer w.closeMu.RUnlock()
+	if w.closed.Load() {
+		return ErrClosed
 	}
 
 	msgCtx, msg, err := w.ReadMessage(ctx)
@@ -126,8 +142,7 @@ func (w *TracingConsumer) Consume(ctx context.Context, handler MessageHandler) (
 		return nil
 	}
 
-	w.closeMu.RLock()
-	defer w.closeMu.RUnlock()
+	// 二次检查 closed：防御 poll 返回后 closed 被异常翻转（正常路径下 Close 因 RLock 被阻塞在写锁处不会触发）。
 	if w.closed.Load() {
 		return ErrClosed
 	}
@@ -166,6 +181,16 @@ func (w *TracingConsumer) Close() error {
 	w.closeMu.Lock()
 	defer w.closeMu.Unlock()
 	return w.consumerWrapper.Close()
+}
+
+// Close 优雅关闭生产者。
+// 获取写锁等待进行中的 Produce 完成后再 Flush/Close 底层生产者，
+// 避免 Flush 完成后仍有消息被写入导致丢失。
+// 重复调用 Close 安全返回 ErrClosed。
+func (w *TracingProducer) Close() error {
+	w.closeMu.Lock()
+	defer w.closeMu.Unlock()
+	return w.producerWrapper.Close()
 }
 
 // ConsumeLoop 循环消费消息直到 ctx 取消。

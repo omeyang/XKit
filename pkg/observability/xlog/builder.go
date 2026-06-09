@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,9 +73,18 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 	if b.err != nil {
 		return b
 	}
-	if w == nil {
+	if isNilInterface(w) {
 		b.err = fmt.Errorf("xlog: output writer is nil")
 		return b
+	}
+	// last-wins：若之前通过 SetRotation 创建过 rotator，此处将其关闭并清空，
+	// 避免隐藏的文件句柄被带入 cleanup（用户已显式切换到新的 writer）。
+	if b.rotator != nil {
+		if closeErr := b.rotator.Close(); closeErr != nil {
+			b.err = fmt.Errorf("xlog: failed to close previous rotator: %w", closeErr)
+			return b
+		}
+		b.rotator = nil
 	}
 	b.output = w
 	return b
@@ -84,6 +94,9 @@ func (b *Builder) SetOutput(w io.Writer) *Builder {
 func (b *Builder) SetLevel(level Level) *Builder {
 	if b.err != nil {
 		return b
+	}
+	if b.levelVar == nil {
+		b.levelVar = new(slog.LevelVar)
 	}
 	b.levelVar.Set(slog.Level(level))
 	return b
@@ -307,6 +320,11 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 		return nil, nil, fmt.Errorf("xlog: output writer is nil")
 	}
 
+	// 零值 Builder 不经过 New()，levelVar 可能为 nil
+	if b.levelVar == nil {
+		b.levelVar = new(slog.LevelVar)
+	}
+
 	// 创建 handler
 	opts := &slog.HandlerOptions{
 		Level:     b.levelVar,
@@ -356,8 +374,24 @@ func (b *Builder) Build() (LoggerWithLevel, func() error, error) {
 
 	// 创建 cleanup 函数
 	cleanup := b.createCleanup()
+	// 资源所有权已转移到 cleanup，清空 builder 指针避免重复 Build() 误关闭。
+	b.rotator = nil
 
 	return logger, cleanup, nil
+}
+
+// isNilInterface 检测接口值是否为 nil 或 typed-nil（例如 (*bytes.Buffer)(nil) 赋给 io.Writer）
+func isNilInterface(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // closeRotator best-effort 关闭已创建的 rotator，用于 Build() 错误路径防止文件句柄泄漏。
@@ -372,17 +406,21 @@ func (b *Builder) closeRotator() {
 }
 
 // createCleanup 创建清理函数
+//
+// 设计决策: closeErr 声明在外层闭包，确保首次 Close 的错误在重复调用时仍可返回。
+// 若 closeErr 声明在返回函数内部，once.Do 第二次不执行时 closeErr 被重新初始化为 nil，
+// 调用方会误认为关闭成功。
 func (b *Builder) createCleanup() func() error {
 	var once sync.Once
+	var closeErr error
 	rotator := b.rotator
 
 	return func() error {
-		var err error
 		once.Do(func() {
 			if rotator != nil {
-				err = rotator.Close()
+				closeErr = rotator.Close()
 			}
 		})
-		return err
+		return closeErr
 	}
 }

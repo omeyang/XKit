@@ -22,11 +22,11 @@ func FuzzConfigValidate(f *testing.F) {
 		{"   ", ""},
 		{"platform-1", ""},
 		{"platform-1", "region-1"},
-		{"plat form", ""},     // 含空格
-		{"plat\tform", ""},    // 含制表符
-		{"plat\x00form", ""},  // 含 NUL
-		{"plat\x07form", ""},  // 含 BEL
-		{"plat\nform", ""},    // 含换行
+		{"plat form", ""},      // 含空格
+		{"plat\tform", ""},     // 含制表符
+		{"plat\x00form", ""},   // 含 NUL
+		{"plat\x07form", ""},   // 含 BEL
+		{"plat\nform", ""},     // 含换行
 		{"\u00a0platform", ""}, // 含 NBSP（unicode space）
 		{strings.Repeat("a", 128), ""},
 		{strings.Repeat("a", 129), ""},
@@ -65,10 +65,10 @@ func FuzzConfigValidate(f *testing.F) {
 			return
 		}
 
-		// 不变量 2：PlatformID 包含空白或控制字符必须报 ErrInvalidPlatformID
-		if strings.ContainsFunc(platformID, unicode.IsSpace) || strings.ContainsFunc(platformID, unicode.IsControl) {
+		// 不变量 2：PlatformID 包含空白/控制/非ASCII字符必须报 ErrInvalidPlatformID
+		if strings.ContainsFunc(platformID, unicode.IsSpace) || strings.ContainsFunc(platformID, unicode.IsControl) || hasNonPrintableASCII(platformID) {
 			if !errors.Is(err, ErrInvalidPlatformID) {
-				t.Fatalf("PlatformID %q with whitespace/control should return ErrInvalidPlatformID, got %v", platformID, err)
+				t.Fatalf("PlatformID %q with invalid bytes should return ErrInvalidPlatformID, got %v", platformID, err)
 			}
 			return
 		}
@@ -93,4 +93,17 @@ func FuzzConfigValidate(f *testing.F) {
 			}
 		}
 	})
+}
+
+// hasNonPrintableASCII 判断字符串是否包含非可打印 ASCII 字节。
+//
+// 与 platform.go 的 containsNonPrintableASCII 语义一致，仅用于 fuzz 断言。
+func hasNonPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x21 || b > 0x7e {
+			return true
+		}
+	}
+	return false
 }

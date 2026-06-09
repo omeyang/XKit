@@ -159,11 +159,45 @@ func TestFallbackLimiter_FallbackClose(t *testing.T) {
 	if !errors.Is(err, ErrRedisUnavailable) {
 		t.Errorf("expected ErrRedisUnavailable, got %v", err)
 	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Errorf("expected original cause (ECONNREFUSED) to be preserved, got %v", err)
+	}
 	if result.Allowed {
 		t.Error("should not be allowed with fail-close")
 	}
 	if result.Rule != "fallback-close" {
 		t.Errorf("expected rule 'fallback-close', got %q", result.Rule)
+	}
+}
+
+func TestFallbackLimiter_FallbackClose_PreservesCause(t *testing.T) {
+	tests := []struct {
+		name   string
+		cause  error
+		wantIs error
+	}{
+		{"connection refused", syscall.ECONNREFUSED, syscall.ECONNREFUSED},
+		{"connection reset", syscall.ECONNRESET, syscall.ECONNRESET},
+		{"io timeout", &net.OpError{Op: "read", Err: io.ErrUnexpectedEOF}, io.ErrUnexpectedEOF},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			distributed := &mockFailingLimiter{failOnAllow: true, failErr: tc.cause}
+			local, err := NewLocal(WithRules(TenantRule("test", 100, time.Minute)))
+			if err != nil {
+				t.Fatalf("NewLocal failed: %v", err)
+			}
+			defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
+
+			fb := newFallbackLimiter(distributed, local, &options{config: Config{Fallback: FallbackClose}})
+			_, err = fb.Allow(context.Background(), Key{Tenant: "t"})
+			if !errors.Is(err, ErrRedisUnavailable) {
+				t.Errorf("expected ErrRedisUnavailable, got %v", err)
+			}
+			if !errors.Is(err, tc.wantIs) {
+				t.Errorf("expected original cause %v to be preserved, got %v", tc.wantIs, err)
+			}
+		})
 	}
 }
 

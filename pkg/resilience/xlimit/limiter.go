@@ -127,6 +127,9 @@ func New(rdb redis.UniversalClient, opts ...Option) (Limiter, error) {
 		cfg.metrics = metrics
 	}
 
+	warnEmptyRules(cfg)
+	warnLimitBelowPodCount(cfg)
+
 	matcher := newRuleMatcher(cfg.config.Rules)
 	backend := newRedisBackend(rdb)
 	distributed := newLimiterCore(backend, matcher, cfg)
@@ -168,6 +171,9 @@ func NewLocal(opts ...Option) (Limiter, error) {
 		cfg.metrics = metrics
 	}
 
+	warnEmptyRules(cfg)
+	warnLimitBelowPodCount(cfg)
+
 	matcher := newRuleMatcher(cfg.config.Rules)
 	backend := newLocalBackend(cfg.config.EffectivePodCount(), cfg.podCountProvider, cfg.logger)
 	return newLimiterCore(backend, matcher, cfg), nil
@@ -199,4 +205,34 @@ func warnDefaultPodCount(cfg *options) {
 		"in multi-pod deployments each pod gets the full quota, " +
 		"total throughput may reach N × limit. " +
 		"Use WithPodCount or WithPodCountProvider to set the real pod count.")
+}
+
+// warnEmptyRules 在构造阶段无规则时输出告警。
+// 空规则会导致 AllowN 无匹配返回 fail-open，配置路径错写或 ratelimit:{}
+// 会静默放行所有请求，运维难以察觉。
+func warnEmptyRules(cfg *options) {
+	if len(cfg.config.Rules) == 0 {
+		slog.Warn("xlimit: constructed limiter with zero rules; " +
+			"all requests will be allowed (fail-open). " +
+			"Verify WithRules / WithConfigProvider config path is correct.")
+	}
+}
+
+// warnLimitBelowPodCount 检测 rule.Limit < podCount 场景，此时
+// max(limit/podCount, 1) 会让每个 Pod 至少放行 1 个，总放行量超过 limit。
+func warnLimitBelowPodCount(cfg *options) {
+	pods := cfg.config.EffectivePodCount()
+	if pods <= 1 {
+		return
+	}
+	for _, r := range cfg.config.Rules {
+		if r.Limit > 0 && r.Limit < pods {
+			slog.Warn("xlimit: rule.Limit is smaller than LocalPodCount; "+
+				"each pod will allow at least 1 request/window, total throughput exceeds configured limit",
+				slog.String("rule", r.Name),
+				slog.Int("limit", r.Limit),
+				slog.Int("pod_count", pods),
+			)
+		}
+	}
 }

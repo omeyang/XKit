@@ -1105,6 +1105,49 @@ func TestTokenManager_Stop_WaitsForGoroutines(t *testing.T) {
 	mgr.Stop()
 }
 
+func TestTokenManager_StopPreventsNewRefresh(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
+		resp := map[string]any{"access_token": "tok", "expires_in": 3600}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	httpClient := NewHTTPClient(HTTPClientConfig{BaseURL: server.URL})
+	cache := NewTokenCache(TokenCacheConfig{EnableLocal: true})
+
+	mgr := mustNewTokenManager(t, TokenManagerConfig{
+		Config:                  cfg,
+		HTTP:                    httpClient,
+		Cache:                   cache,
+		RefreshThreshold:        5 * time.Minute,
+		EnableBackgroundRefresh: true,
+	})
+
+	// 先 Stop
+	mgr.Stop()
+
+	// 预填充即将过期的 Token，触发后台刷新条件
+	expiringToken := &TokenInfo{
+		AccessToken: "expiring",
+		ExpiresIn:   30,
+		ExpiresAt:   time.Now().Add(30 * time.Second),
+		ObtainedAt:  time.Now(),
+	}
+	_ = cache.Set(ctx, "tenant-stop", expiringToken, time.Hour)
+
+	// GetToken 不应 panic（tryStartRefresh 检查 stopped）
+	_, err := mgr.GetToken(ctx, "tenant-stop")
+	if err != nil {
+		t.Fatalf("GetToken after Stop should still work: %v", err)
+	}
+}
+
 func TestVerifyTokenForTenant(t *testing.T) {
 	ctx := context.Background()
 

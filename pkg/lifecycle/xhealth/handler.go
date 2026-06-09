@@ -52,6 +52,10 @@ func (h *Health) makeSubPathHandler(ep endpoint) http.HandlerFunc {
 		}
 
 		result := h.check(r.Context(), ep)
+		if result.Checks == nil {
+			h.writeSingleCheckResponse(w, r, CheckResult{Status: result.Status})
+			return
+		}
 		cr, ok := result.Checks[name]
 		if !ok {
 			http.NotFound(w, r)
@@ -89,7 +93,7 @@ func (h *Health) writeSingleCheckResponse(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(statusCode(cr.Status))
-	if cr.Status == StatusUp {
+	if cr.Status.IsHealthy() {
 		writeBody(w, []byte(responseOK))
 	} else {
 		writeBody(w, []byte(responseNotOK))

@@ -175,6 +175,20 @@ func TestNewEnrichHandler_NilBase_Error(t *testing.T) {
 	}
 }
 
+func TestNewEnrichHandler_TypedNilBase_Error(t *testing.T) {
+	var h *slog.JSONHandler // typed-nil
+	handler, err := xlog.NewEnrichHandler(h)
+	if err == nil {
+		t.Fatal("NewEnrichHandler(typed-nil) should return error")
+	}
+	if handler != nil {
+		t.Error("NewEnrichHandler(typed-nil) should return nil handler")
+	}
+	if !errors.Is(err, xlog.ErrNilHandler) {
+		t.Errorf("error should be ErrNilHandler, got: %v", err)
+	}
+}
+
 // =============================================================================
 // 性能测试
 // =============================================================================

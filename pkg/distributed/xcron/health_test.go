@@ -209,6 +209,30 @@ func TestHealthCheck_LockerHealth(t *testing.T) {
 	})
 }
 
+func TestHealthCheck_LockerHealth_Panic(t *testing.T) {
+	locker := &mockLockerWithHealthPanic{noopLocker: &noopLocker{}}
+	scheduler := New(WithLocker(locker))
+	defer scheduler.Stop()
+
+	checker := NewHealthChecker(scheduler, WithCheckLocker())
+	result := checker.Check(context.Background())
+
+	assert.Equal(t, HealthStatusUnhealthy, result.Status)
+	assert.Contains(t, result.Message, "locker unhealthy")
+	assert.Contains(t, result.Details["locker_error"], "panicked")
+}
+
+// mockLockerWithHealthPanic 实现 LockerHealthChecker 但 Health 方法 panic
+type mockLockerWithHealthPanic struct {
+	*noopLocker
+}
+
+func (m *mockLockerWithHealthPanic) Health(_ context.Context) error {
+	panic("health check boom")
+}
+
+var _ LockerHealthChecker = (*mockLockerWithHealthPanic)(nil)
+
 func TestHealthCheck_LockerWithoutHealthInterface(t *testing.T) {
 	// NoopLocker 没有实现 LockerHealthChecker
 	scheduler := New(WithLocker(NoopLocker()))

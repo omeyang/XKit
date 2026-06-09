@@ -23,7 +23,11 @@ type SlowQueryInfo struct {
 	// Operation 操作类型（find、insert、update、delete 等）。
 	Operation string
 
-	// Filter 查询过滤条件。
+	// Filter 查询过滤条件（字符串快照）。
+	//
+	// 经过 maybeSlowQuery 的 Filter 已被转为 fmt.Sprintf("%v", filter) 字符串，
+	// 以防止异步钩子与调用方对同一 filter 对象的并发读写竞态。
+	// 直接构造 SlowQueryInfo 时 Filter 可为任意类型。
 	//
 	// ⚠️ 安全提示：Filter 包含原始查询条件，可能含有敏感信息（如密码查询条件）。
 	// 在 SlowQueryHook 实现中写入日志时，请注意脱敏处理。

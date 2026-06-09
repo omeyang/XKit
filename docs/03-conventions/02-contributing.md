@@ -8,7 +8,7 @@
 
 ### 必需工具
 
-- **Go 1.25.9**（固定版本，流水线要求）
+- **Go 1.25.10**（固定版本，流水线要求）
 - **golangci-lint v2**（代码质量检查）
 - **go-task**（任务运行器，替代 Makefile）
 - **Git**（版本控制）
@@ -17,7 +17,7 @@
 
 ```bash
 # 检查 Go 版本
-go version  # 应显示 go1.25.9
+go version  # 应显示 go1.25.10
 
 # 检查 golangci-lint
 golangci-lint version
@@ -78,10 +78,79 @@ xkit/
 
 ### 命名规范
 
-- **包名**：小写，单数形式，简短（如 `http`, `json`）
-- **文件名**：snake_case（如 `user_service.go`）
-- **变量/函数**：camelCase（如 `getUserByID`）
-- **常量**：CamelCase（如 `MaxRetries`）
+**设计原则**
+
+1. 简洁准确——短而清晰
+2. 一致性——同类事物同一模式
+3. 禁止泛化词——避免 `manager/service/handler/util/helper/common/base/data`
+4. 遵循 Go 社区事实标准
+
+**目录与包**
+
+| 维度 | 规则 | 示例 |
+|---|---|---|
+| 领域目录 | 小写单词 | `context`, `observability`, `storage` |
+| 包目录 | `x` 前缀 + 小写 | `xctx`, `xlog`, `xcache` |
+| 包名（`package` 行） | 与目录同名，无下划线/短横线 | `package xctx` |
+
+目录到包名映射示例：
+
+```
+pkg/context/xctx       -> package xctx
+pkg/observability/xlog -> package xlog
+pkg/storage/xcache     -> package xcache
+```
+
+**文件**
+
+| 用途 | 命名 |
+|---|---|
+| 源码 | `snake_case.go`（如 `loader_impl.go`） |
+| 单元测试 | `<file>_test.go` |
+| 基准测试 | `<file>_bench_test.go` |
+| 模糊测试 | `<file>_fuzz_test.go` |
+| 示例测试 | `example_test.go` |
+| 平台特定 | `file_linux.go`（依赖 build tag） |
+
+**类型与接口**
+
+- 导出类型 PascalCase，不加包名前缀（包名已是上下文，用 `Tokenizer` 而非 `XstrTokenizer`）。
+- 单方法接口用 `-er` 后缀（`Loader`, `Closer`, `Reader`）。
+- 多方法接口用名词（`Logger`, `Redis`）。
+- 不用 `I` 前缀（`Logger` 而非 `ILogger`）。
+- 错误变量用 `Err` 前缀（`ErrNotFound`, `ErrLockFailed`）。
+
+**函数与 Context 操作**
+
+| 模式 | 示例 |
+|---|---|
+| 构造函数 | `NewLoader()`, `NewRedis()` |
+| 注入到 context | `WithTraceID()`, `WithTenantID()` |
+| 从 context 读 | `TraceID(ctx)`, `TenantID(ctx)` |
+| 不存在则生成 | `EnsureTraceID(ctx)` |
+| 失败返 error | `RequireTraceID(ctx)` |
+
+**函数选项（ADR 0003）**
+
+```go
+type LoaderOption func(*LoaderOptions)
+func WithSingleflight(b bool) LoaderOption
+func WithLoadTimeout(d time.Duration) LoaderOption
+```
+
+配置结构体后缀 `Options`（内部）/ `Config`（外部输入）。
+
+**日志字段（snake_case，与 JSON 输出一致）**
+
+```go
+slog.Warn("operation failed",
+    "trace_id", traceID,
+    "tenant_id", tenantID,
+    "error", err,
+)
+```
+
+常用字段：`trace_id` · `span_id` · `request_id` · `tenant_id` · `error` · `duration` · `component` · `operation`。
 
 ### 注释规范
 
@@ -338,7 +407,7 @@ git push origin feature/001-feature-name
 ### Q1: 如何验证 Go 版本？
 
 ```bash
-go version  # 应显示 go1.25.9
+go version  # 应显示 go1.25.10
 
 # 如版本不对，需安装或切换到正确版本
 ```
@@ -376,7 +445,8 @@ task check  # Lint + 测试 + 数据竞争检测
 ## 参考文档
 
 - **golangci-lint 配置**：`.golangci.yml`
-- **API 文档**：`docs/API.md`
-- **命名规范**：`docs/NAMING.md`
+- **API 文档**：[`api.md`](01-api.md)
+- **ADR 决策记录**：[`../01-decisions/`](../01-decisions/00-index.md)
+- **文档索引**：[`../00-index.md`](../00-index.md)
 
 ---

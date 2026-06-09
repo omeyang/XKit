@@ -24,7 +24,6 @@ func TestBulkInsert_NilCollection(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilCollection)
 }
 
-
 func TestBulkOptions_Defaults(t *testing.T) {
 	opts := BulkOptions{}
 
@@ -79,4 +78,3 @@ func TestBatchCalculation(t *testing.T) {
 		})
 	}
 }
-

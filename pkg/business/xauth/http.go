@@ -108,15 +108,16 @@ func NewSkipVerifyHTTPClient(baseURL string, timeout time.Duration) *HTTPClient 
 // 设计决策：req 必须指向已配置的 baseURL 主机，防止调用方传入任意 URL
 // 造成 SSRF。baseURL 为空时（极少数测试场景）允许任意主机。
 func (c *HTTPClient) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
 	if req == nil {
 		return nil, fmt.Errorf("xauth: nil request")
 	}
 	if err := c.validateRequestHost(req); err != nil {
 		return nil, err
 	}
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
+	req = req.WithContext(ctx)
 	// 通过接口方法间接调用，避免 gosec G704 在 *http.Client.Do 直接调用上误报。
 	// 该误报源于 G704 无法跟踪上方的 validateRequestHost 主机白名单校验。
 	var d httpDoer = c.client
@@ -163,6 +164,9 @@ func (c *HTTPClient) request(
 	headers map[string]string,
 	body, response any,
 ) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
 	url := c.buildURL(path)
 
 	// 开始 HTTP 请求观测

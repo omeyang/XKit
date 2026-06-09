@@ -420,7 +420,7 @@ func TestInjectToRequest(t *testing.T) {
 
 		// 验证 traceparent 格式（-00 表示未采样，因为无法确定实际采样决策）
 		traceparent := req.Header.Get(xtrace.HeaderTraceparent)
-		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if traceparent != expected {
 			t.Errorf("traceparent = %q, want %q", traceparent, expected)
 		}
@@ -519,7 +519,7 @@ func TestInjectTraceToHeader(t *testing.T) {
 			t.Error("invalid traceparent should not be forwarded")
 		}
 		// 应该从 TraceID 和 SpanID 生成有效的 traceparent
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if got != want {
 			t.Errorf("traceparent = %q, want generated %q", got, want)
 		}
@@ -762,7 +762,7 @@ func TestInjectToRequest_UpperCaseTraceIDNormalized(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	xtrace.InjectToRequest(ctx, req)
 
-	expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+	expected := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	if got := req.Header.Get(xtrace.HeaderTraceparent); got != expected {
 		t.Errorf("traceparent = %q, want %q (should be lowercase)", got, expected)
 	}
@@ -896,7 +896,7 @@ func TestInjectTraceToHeader_FormatTraceparentEdgeCases(t *testing.T) {
 				SpanID:     "b7ad6b7169203331",
 				TraceFlags: "xyz",
 			},
-			wantTraceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00",
+			wantTraceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
 		},
 	}
 
@@ -970,6 +970,86 @@ func TestInjectTraceToMetadata_TracestateRequiresTraceparent(t *testing.T) {
 }
 
 // =============================================================================
+// W3C tracestate 提取层防护测试
+// =============================================================================
+
+func TestExtractFromHTTPHeader_TracestateWithoutTraceparent(t *testing.T) {
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		h := makeHeader(
+			xtrace.HeaderTraceID, "0af7651916cd43dd8448eb211c80319c",
+			xtrace.HeaderTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromHTTPHeader(h)
+		if info.Tracestate != "" {
+			t.Errorf("Tracestate = %q, want empty (no traceparent)", info.Tracestate)
+		}
+		if info.TraceID != "0af7651916cd43dd8448eb211c80319c" {
+			t.Errorf("TraceID = %q, want preserved", info.TraceID)
+		}
+	})
+
+	t.Run("有效 traceparent 时保留 tracestate", func(t *testing.T) {
+		h := makeHeader(
+			xtrace.HeaderTraceparent, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+			xtrace.HeaderTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromHTTPHeader(h)
+		if info.Tracestate != "vendor=opaque" {
+			t.Errorf("Tracestate = %q, want %q", info.Tracestate, "vendor=opaque")
+		}
+	})
+
+	t.Run("无效 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		h := makeHeader(
+			xtrace.HeaderTraceparent, "invalid-format",
+			xtrace.HeaderTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromHTTPHeader(h)
+		if info.Tracestate != "" {
+			t.Errorf("Tracestate = %q, want empty (invalid traceparent)", info.Tracestate)
+		}
+	})
+}
+
+func TestExtractFromMetadata_TracestateWithoutTraceparent(t *testing.T) {
+	t.Run("无 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		md := metadata.Pairs(
+			xtrace.MetaTraceID, "0af7651916cd43dd8448eb211c80319c",
+			xtrace.MetaTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromMetadata(md)
+		if info.Tracestate != "" {
+			t.Errorf("Tracestate = %q, want empty (no traceparent)", info.Tracestate)
+		}
+		if info.TraceID != "0af7651916cd43dd8448eb211c80319c" {
+			t.Errorf("TraceID = %q, want preserved", info.TraceID)
+		}
+	})
+
+	t.Run("有效 traceparent 时保留 tracestate", func(t *testing.T) {
+		md := metadata.Pairs(
+			xtrace.MetaTraceparent, "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+			xtrace.MetaTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromMetadata(md)
+		if info.Tracestate != "vendor=opaque" {
+			t.Errorf("Tracestate = %q, want %q", info.Tracestate, "vendor=opaque")
+		}
+	})
+
+	t.Run("无效 traceparent 时丢弃 tracestate", func(t *testing.T) {
+		md := metadata.Pairs(
+			xtrace.MetaTraceparent, "invalid-format",
+			xtrace.MetaTracestate, "vendor=opaque",
+		)
+		info := xtrace.ExtractFromMetadata(md)
+		if info.Tracestate != "" {
+			t.Errorf("Tracestate = %q, want empty (invalid traceparent)", info.Tracestate)
+		}
+	})
+}
+
+// =============================================================================
 // 已有 traceparent 的覆盖行为测试
 // =============================================================================
 
@@ -987,7 +1067,7 @@ func TestInjectToRequest_OverwritesExistingTraceparent(t *testing.T) {
 		xtrace.InjectToRequest(ctx, req)
 
 		// 新 traceparent 应覆盖旧值
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		if got := req.Header.Get(xtrace.HeaderTraceparent); got != want {
 			t.Errorf("traceparent = %q, want %q", got, want)
 		}
@@ -1031,7 +1111,7 @@ func TestInjectToOutgoingContext_OverwritesExistingTraceparent(t *testing.T) {
 		}
 
 		// 新 traceparent 应覆盖旧值
-		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00"
+		want := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 		vals := md.Get(xtrace.MetaTraceparent)
 		if len(vals) != 1 || vals[0] != want {
 			t.Errorf("traceparent = %v, want [%q]", vals, want)

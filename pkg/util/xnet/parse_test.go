@@ -265,6 +265,14 @@ func TestParseRangeInvalidRangeEnd(t *testing.T) {
 	_, err := ParseRange("10.0.0.1-invalid")
 	assert.ErrorIs(t, err, ErrInvalidRange)
 	assert.Contains(t, err.Error(), "invalid range end")
+	assert.Contains(t, err.Error(), "ParseAddr")
+}
+
+func TestParseRangeInvalidRangeStart(t *testing.T) {
+	_, err := ParseRange("invalid-10.0.0.1")
+	assert.ErrorIs(t, err, ErrInvalidRange)
+	assert.Contains(t, err.Error(), "invalid range start")
+	assert.Contains(t, err.Error(), "ParseAddr")
 }
 
 func TestParseRangeInvertedRange(t *testing.T) {

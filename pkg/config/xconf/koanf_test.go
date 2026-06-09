@@ -410,6 +410,18 @@ func TestMustUnmarshal_NilConfig(t *testing.T) {
 	})
 }
 
+// TestMustUnmarshal_TypedNilConfig 验证 typed-nil Config 给出清晰错误（A5 修复）。
+// var kc *koanfConfig; var cfg Config = kc 满足 cfg != nil，
+// 修复前 cfg.Unmarshal 在 c.k.Load() 触发 nil pointer 解引用，错误不清晰。
+func TestMustUnmarshal_TypedNilConfig(t *testing.T) {
+	var target AppConfig
+	var kc *koanfConfig
+	var cfg Config = kc
+	assert.PanicsWithValue(t, "xconf: MustUnmarshal called with typed-nil Config", func() {
+		MustUnmarshal(cfg, "", &target)
+	})
+}
+
 func TestUnmarshal_NilTarget(t *testing.T) {
 	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
 	require.NoError(t, err)

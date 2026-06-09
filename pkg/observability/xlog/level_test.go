@@ -61,6 +61,11 @@ func TestParseLevel(t *testing.T) {
 		{" info ", xlog.LevelInfo, false},
 		{"\tdebug\n", xlog.LevelDebug, false},
 
+		// slog 偏移量语法
+		{"INFO+2", xlog.Level(2), false},
+		{"DEBUG-1", xlog.Level(-5), false},
+		{"ERROR+1", xlog.Level(9), false},
+
 		// 无效输入
 		{"", xlog.LevelInfo, true},
 		{"invalid", xlog.LevelInfo, true},
@@ -143,6 +148,8 @@ func TestLevel_UnmarshalText(t *testing.T) {
 		{"INFO", xlog.LevelInfo, false},
 		{"warn", xlog.LevelWarn, false},
 		{"ERROR", xlog.LevelError, false},
+		{"INFO+2", xlog.Level(2), false},
+		{"DEBUG-1", xlog.Level(-5), false},
 		{"invalid", xlog.LevelInfo, true},
 	}
 
@@ -168,7 +175,14 @@ func TestLevel_UnmarshalText(t *testing.T) {
 
 // TestLevel_RoundTrip 验证 MarshalText/UnmarshalText 往返一致性
 func TestLevel_RoundTrip(t *testing.T) {
-	for _, level := range []xlog.Level{xlog.LevelDebug, xlog.LevelInfo, xlog.LevelWarn, xlog.LevelError} {
+	levels := []xlog.Level{
+		xlog.LevelDebug, xlog.LevelInfo, xlog.LevelWarn, xlog.LevelError,
+		xlog.Level(2),   // INFO+2
+		xlog.Level(-5),  // DEBUG-1
+		xlog.Level(9),   // ERROR+1
+		xlog.Level(-96), // DEBUG-96
+	}
+	for _, level := range levels {
 		data, err := level.MarshalText()
 		if err != nil {
 			t.Fatalf("MarshalText(%v) error: %v", level, err)

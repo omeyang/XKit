@@ -35,6 +35,11 @@ type TokenManager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// stopMu + stopped 保护 wg.Go 与 wg.Wait 的线性化：
+	// Stop 先在锁内置 stopped=true 再 Wait，GetToken 在锁内检查 stopped 再 Go。
+	stopMu  sync.Mutex
+	stopped bool
 }
 
 // TokenManagerConfig TokenManager 配置。
@@ -116,9 +121,7 @@ func (m *TokenManager) GetToken(ctx context.Context, tenantID string) (string, e
 	// 检查是否需要后台刷新（去重：防止同一租户重复刷新）
 	if m.enableBackgroundRefresh && token.IsExpiringSoon(m.refreshThreshold) {
 		if _, loaded := m.refreshing.LoadOrStore(tenantID, struct{}{}); !loaded {
-			m.wg.Go(func() {
-				m.backgroundRefresh(tenantID)
-			})
+			m.tryStartRefresh(tenantID)
 		}
 	}
 
@@ -250,6 +253,8 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 		"refresh_token": {currentToken.RefreshToken},
 	}
 
+	// 设计决策: 刷新请求中同时传递 Bearer Token（Authorization）和 client_credentials（POST body）——
+	// 认证服务端约定需要旧 access_token 用于请求鉴权/审计，client_id+client_secret 用于客户端身份验证。
 	headers := map[string]string{
 		"Authorization": "Bearer " + currentToken.AccessToken,
 		"Content-Type":  "application/x-www-form-urlencoded",
@@ -394,9 +399,26 @@ func (m *TokenManager) backgroundRefresh(tenantID string) {
 	)
 }
 
+// tryStartRefresh 在 stopMu 保护下启动后台刷新 goroutine。
+// 与 Stop 互斥，确保 wg.Go 不会与 wg.Wait 并发。
+func (m *TokenManager) tryStartRefresh(tenantID string) {
+	m.stopMu.Lock()
+	defer m.stopMu.Unlock()
+	if m.stopped {
+		m.refreshing.Delete(tenantID)
+		return
+	}
+	m.wg.Go(func() {
+		m.backgroundRefresh(tenantID)
+	})
+}
+
 // Stop 停止 TokenManager，取消所有后台刷新任务并等待完成。
 // 这是 graceful shutdown 的一部分，应在 client.Close() 时调用。
 func (m *TokenManager) Stop() {
+	m.stopMu.Lock()
+	m.stopped = true
+	m.stopMu.Unlock()
 	if m.cancel != nil {
 		m.cancel()
 	}

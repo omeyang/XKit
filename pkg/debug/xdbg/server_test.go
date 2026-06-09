@@ -736,6 +736,29 @@ func TestServer_StopWithoutStart(t *testing.T) {
 	}
 }
 
+func TestServer_StartAfterStop(t *testing.T) {
+	srv, err := New(
+		WithBackgroundMode(true),
+		WithAuditLogger(NewNoopAuditLogger()),
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	err = srv.Start(ctx)
+	if !errors.Is(err, ErrInvalidState) {
+		t.Errorf("Start() after Stop() error = %v, want ErrInvalidState", err)
+	}
+}
+
 func TestServer_StartWithSignalMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")

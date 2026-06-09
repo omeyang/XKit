@@ -87,7 +87,9 @@ func defaultOptions() *Options {
 func applyOptions(opts []Option) *Options {
 	options := defaultOptions()
 	for _, opt := range opts {
-		opt(options)
+		if opt != nil {
+			opt(options)
+		}
 	}
 	return options
 }

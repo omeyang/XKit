@@ -1,6 +1,7 @@
 package xlimit
 
 import (
+	"maps"
 	"net/http"
 
 	"github.com/omeyang/xkit/pkg/context/xtenant"
@@ -42,11 +43,17 @@ func (e *HTTPKeyExtractor) Extract(r *http.Request) Key {
 		return Key{}
 	}
 
+	// 防御 r.URL 为 nil（手工构造的 http.Request{} 或异常中间件链）
+	var path string
+	if r.URL != nil {
+		path = r.URL.Path
+	}
+
 	key := Key{
 		Tenant: r.Header.Get(e.tenantHeader),
 		Caller: r.Header.Get(e.callerHeader),
 		Method: r.Method,
-		Path:   r.URL.Path,
+		Path:   path,
 	}
 
 	// 应用路径规范化器
@@ -60,8 +67,14 @@ func (e *HTTPKeyExtractor) Extract(r *http.Request) Key {
 	}
 
 	// 提取额外信息
+	// 深拷贝用户 extractor 返回的 map，防止调用方持有/修改
+	// 原 map 与 Key.Extra 形成别名，在并发场景触发 fatal: concurrent map read and map write。
 	if e.extraExtractor != nil {
-		key.Extra = e.extraExtractor(r)
+		if src := e.extraExtractor(r); len(src) > 0 {
+			dst := make(map[string]string, len(src))
+			maps.Copy(dst, src)
+			key.Extra = dst
+		}
 	}
 
 	return key

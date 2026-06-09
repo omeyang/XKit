@@ -79,7 +79,7 @@ func ExampleInjectToRequest() {
 	fmt.Println("traceparent:", req.Header.Get("traceparent"))
 	// Output:
 	// X-Trace-ID: 0af7651916cd43dd8448eb211c80319c
-	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00
+	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 }
 
 func ExampleInjectTraceToHeader() {
@@ -95,7 +95,7 @@ func ExampleInjectTraceToHeader() {
 	fmt.Println("traceparent:", h.Get("traceparent"))
 	fmt.Println("tracestate:", h.Get("tracestate"))
 	// Output:
-	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00
+	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 	// tracestate: vendor=opaque
 }
 
@@ -125,7 +125,7 @@ func ExampleInjectToOutgoingContext() {
 	fmt.Println("traceparent:", md.Get("traceparent")[0])
 	// Output:
 	// x-trace-id: 0af7651916cd43dd8448eb211c80319c
-	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00
+	// traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
 }
 
 func ExampleTraceInfoFromContext() {

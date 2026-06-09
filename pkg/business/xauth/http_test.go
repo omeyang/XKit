@@ -336,6 +336,31 @@ func TestHTTPClient_Do(t *testing.T) {
 		}
 		defer resp.Body.Close()
 	})
+
+	t.Run("nil context returns ErrNilContext", func(t *testing.T) {
+		client := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
+		req, _ := http.NewRequest("GET", "https://test.com/test", nil)
+		//nolint:staticcheck // SA1012: 故意传递 nil context 以验证防御逻辑
+		resp, err := client.Do(nil, req)
+		require.ErrorIs(t, err, ErrNilContext)
+		assert.Nil(t, resp)
+	})
+}
+
+func TestHTTPClient_NilContext(t *testing.T) {
+	client := NewHTTPClient(HTTPClientConfig{BaseURL: "https://test.com"})
+
+	t.Run("Get returns ErrNilContext", func(t *testing.T) {
+		//nolint:staticcheck // SA1012: 故意传递 nil context 以验证防御逻辑
+		err := client.Get(nil, "/test", nil, nil)
+		require.ErrorIs(t, err, ErrNilContext)
+	})
+
+	t.Run("Post returns ErrNilContext", func(t *testing.T) {
+		//nolint:staticcheck // SA1012: 故意传递 nil context 以验证防御逻辑
+		err := client.Post(nil, "/test", nil, nil, nil)
+		require.ErrorIs(t, err, ErrNilContext)
+	})
 }
 
 func TestHTTPClient_Client(t *testing.T) {

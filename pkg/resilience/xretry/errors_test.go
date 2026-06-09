@@ -55,6 +55,20 @@ func TestTemporaryError(t *testing.T) {
 	})
 }
 
+func TestPermanentError_TypedNil(t *testing.T) {
+	var e *PermanentError
+	assert.Equal(t, "xretry: permanent error", e.Error())
+	assert.Nil(t, e.Unwrap())
+	assert.False(t, e.Retryable())
+}
+
+func TestTemporaryError_TypedNil(t *testing.T) {
+	var e *TemporaryError
+	assert.Equal(t, "xretry: temporary error", e.Error())
+	assert.Nil(t, e.Unwrap())
+	assert.True(t, e.Retryable())
+}
+
 func TestIsRetryable(t *testing.T) {
 	t.Run("NilError", func(t *testing.T) {
 		assert.False(t, IsRetryable(nil))
@@ -104,6 +118,16 @@ func TestIsRetryable(t *testing.T) {
 		wrapped := errors.Join(errors.New("wrapper"), inner)
 		assert.True(t, IsRetryable(wrapped))
 	})
+
+	t.Run("TypedNilPermanentError", func(t *testing.T) {
+		var e *PermanentError
+		assert.False(t, IsRetryable(e))
+	})
+
+	t.Run("TypedNilTemporaryError", func(t *testing.T) {
+		var e *TemporaryError
+		assert.False(t, IsRetryable(e))
+	})
 }
 
 func TestIsPermanent(t *testing.T) {
@@ -139,6 +163,16 @@ func TestIsPermanent(t *testing.T) {
 		inner := NewPermanentError(errors.New("inner"))
 		wrapped := errors.Join(errors.New("wrapper"), inner)
 		assert.True(t, IsPermanent(wrapped))
+	})
+
+	t.Run("TypedNilPermanentError", func(t *testing.T) {
+		var e *PermanentError
+		assert.False(t, IsPermanent(e))
+	})
+
+	t.Run("TypedNilTemporaryError", func(t *testing.T) {
+		var e *TemporaryError
+		assert.False(t, IsPermanent(e))
 	})
 }
 

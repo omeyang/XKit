@@ -3,6 +3,7 @@ package xlimit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 )
 
@@ -59,11 +60,17 @@ func (f *fallbackLimiter) AllowN(ctx context.Context, key Key, n int) (*Result, 
 
 	// 优先使用自定义降级函数
 	if f.customFallback != nil {
-		return f.customFallback(ctx, key, n, err)
+		cbResult, cbErr := f.customFallback(ctx, key, n, err)
+		// 防御性检查: FallbackFunc 契约要求 cbErr==nil 时 cbResult 必非 nil，
+		// 与中间件的 nil-result 防御(FG-M2)保持一致，fail-open 避免调用方 panic。
+		if cbErr == nil && cbResult == nil {
+			return &Result{Allowed: true, Rule: "custom-fallback"}, nil
+		}
+		return cbResult, cbErr
 	}
 
 	// 执行默认降级策略
-	return f.fallback(ctx, key, n)
+	return f.fallback(ctx, key, n, err)
 }
 
 // logFallback 记录降级日志
@@ -77,7 +84,10 @@ func (f *fallbackLimiter) logFallback(ctx context.Context, err error) {
 }
 
 // fallback 执行降级策略
-func (f *fallbackLimiter) fallback(ctx context.Context, key Key, n int) (*Result, error) {
+//
+// cause 是触发降级的原始 Redis 错误，FallbackClose 会将其包装到返回错误中，
+// 使调用方可通过 errors.Is 识别具体的网络/超时根因。
+func (f *fallbackLimiter) fallback(ctx context.Context, key Key, n int, cause error) (*Result, error) {
 	switch f.strategy {
 	case FallbackLocal:
 		return f.local.AllowN(ctx, key, n)
@@ -92,7 +102,7 @@ func (f *fallbackLimiter) fallback(ctx context.Context, key Key, n int) (*Result
 		return &Result{
 			Allowed: false,
 			Rule:    "fallback-close",
-		}, ErrRedisUnavailable
+		}, fmt.Errorf("%w: %w", ErrRedisUnavailable, cause)
 
 	default:
 		// 默认使用本地限流

@@ -84,10 +84,11 @@ type BreakerOption func(*Breaker)
 
 // WithTripPolicy 设置熔断判定策略
 //
-// 默认策略：连续失败 5 次触发熔断
+// 默认策略：连续失败 5 次触发熔断。
+// typed-nil（如 var p *MyPolicy = nil）会被静默忽略。
 func WithTripPolicy(p TripPolicy) BreakerOption {
 	return func(b *Breaker) {
-		if p != nil {
+		if !isNilInterfaceValue(p) {
 			b.tripPolicy = p
 		}
 	}
@@ -101,9 +102,10 @@ func WithTripPolicy(p TripPolicy) BreakerOption {
 // 注意：被 IsSuccessful 标记为成功的错误会计入成功计数。
 // 如果需要从统计中完全排除某些错误（不影响任何计数），
 // 请使用 WithExcludePolicy。
+// typed-nil（如 var p *MyPolicy = nil）会被静默忽略。
 func WithSuccessPolicy(p SuccessPolicy) BreakerOption {
 	return func(b *Breaker) {
-		if p != nil {
+		if !isNilInterfaceValue(p) {
 			b.successPolicy = p
 		}
 	}
@@ -117,9 +119,11 @@ func WithSuccessPolicy(p SuccessPolicy) BreakerOption {
 // 与 WithSuccessPolicy 的区别：
 //   - WithSuccessPolicy: 将错误标记为"成功"，计入成功计数
 //   - WithExcludePolicy: 将错误从统计中排除，不计入任何计数
+//
+// typed-nil（如 var p *MyPolicy = nil）会被静默忽略。
 func WithExcludePolicy(p ExcludePolicy) BreakerOption {
 	return func(b *Breaker) {
-		if p != nil {
+		if !isNilInterfaceValue(p) {
 			b.excludePolicy = p
 		}
 	}
@@ -246,7 +250,9 @@ func NewBreaker(name string, opts ...BreakerOption) *Breaker {
 	}
 
 	for _, opt := range opts {
-		opt(b)
+		if opt != nil {
+			opt(b)
+		}
 	}
 
 	// 初始化底层熔断器
@@ -287,30 +293,35 @@ func (b *Breaker) buildSettings() gobreaker.Settings {
 
 	// 如果有错误排除策略
 	if b.excludePolicy != nil {
+		// 设计决策: err == nil 视为成功（不可排除），与 Breaker.IsExcluded 公开方法
+		// 及 RetryThenBreak.toResultError 的语义对齐。避免成功调用被错误地排除出统计，
+		// 导致半开状态探测成功无法推动状态机关闭。
 		st.IsExcluded = func(err error) bool {
-			return b.excludePolicy.IsExcluded(err)
+			return err != nil && b.excludePolicy.IsExcluded(err)
 		}
 	}
 
-	// 设计决策: 回调通过 goroutine 异步执行，避免在 gobreaker 内部 mutex 持有期间
-	// 同步调用回调导致死锁。详见 WithOnStateChange 文档。
-	// goroutine 内使用 recover 隔离用户回调 panic，防止回调故障导致进程崩溃。
 	if b.onStateChange != nil {
-		cb := b.onStateChange
-		st.OnStateChange = func(name string, from, to gobreaker.State) {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("xbreaker: OnStateChange callback panicked",
-							"name", name, "from", from.String(), "to", to.String(), "panic", r)
-					}
-				}()
-				cb(name, from, to)
-			}()
-		}
+		st.OnStateChange = wrapOnStateChange(b.onStateChange)
 	}
 
 	return st
+}
+
+// wrapOnStateChange 把用户回调包成 goroutine + recover，避免在 gobreaker 内部 mutex
+// 持有期间同步调用导致死锁，并隔离 panic。详见 WithOnStateChange 文档。
+func wrapOnStateChange(cb func(name string, from, to gobreaker.State)) func(string, gobreaker.State, gobreaker.State) {
+	return func(name string, from, to gobreaker.State) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("xbreaker: OnStateChange callback panicked",
+						"name", name, "from", from.String(), "to", to.String(), "panic", r)
+				}
+			}()
+			cb(name, from, to)
+		}()
+	}
 }
 
 // buildCircuitBreaker 构建底层熔断器
@@ -429,10 +440,15 @@ func (b *Breaker) Name() string {
 // Counts 返回当前统计计数
 //
 // 如果 b 为 nil，返回零值 Counts。
+//
+// 设计决策: 先调用 State() 触发 gobreaker 内部 currentState(now) 完成窗口过期/滚动，
+// 再读取 Counts。否则在无新请求时段调用 Counts() 会读到已过期窗口的旧计数，
+// 影响监控上报和调用方基于窗口计数的判断。
 func (b *Breaker) Counts() Counts {
 	if b == nil {
 		return Counts{}
 	}
+	_ = b.cb.State()
 	return b.cb.Counts()
 }
 
@@ -465,8 +481,12 @@ func (b *Breaker) ExcludePolicy() ExcludePolicy {
 
 // IsSuccessful 判断操作结果是否成功
 //
+// 如果 b 为 nil，使用默认的 err == nil 判断。
 // 如果设置了自定义 SuccessPolicy，使用它判断；否则使用默认的 err == nil 判断。
 func (b *Breaker) IsSuccessful(err error) bool {
+	if b == nil {
+		return err == nil
+	}
 	if b.successPolicy != nil {
 		return b.successPolicy.IsSuccessful(err)
 	}
@@ -475,8 +495,12 @@ func (b *Breaker) IsSuccessful(err error) bool {
 
 // IsExcluded 判断错误是否应被排除在统计之外
 //
+// 如果 b 为 nil，返回 false。
 // 如果设置了 ExcludePolicy 且 err 非 nil，使用它判断；否则返回 false。
 func (b *Breaker) IsExcluded(err error) bool {
+	if b == nil {
+		return false
+	}
 	if b.excludePolicy != nil && err != nil {
 		return b.excludePolicy.IsExcluded(err)
 	}
@@ -558,12 +582,25 @@ func (m *ManagedBreaker[T]) Name() string {
 }
 
 // State 返回熔断器当前状态
+//
+// 如果 m 为 nil，返回 StateClosed（零值）。
 func (m *ManagedBreaker[T]) State() State {
+	if m == nil {
+		return StateClosed
+	}
 	return m.cb.State()
 }
 
 // Counts 返回当前统计计数
+//
+// 如果 m 为 nil，返回零值 Counts。
+//
+// 设计决策: 先调用 State() 触发窗口过期刷新，再读 Counts。参见 Breaker.Counts 注释。
 func (m *ManagedBreaker[T]) Counts() Counts {
+	if m == nil {
+		return Counts{}
+	}
+	_ = m.cb.State()
 	return m.cb.Counts()
 }
 

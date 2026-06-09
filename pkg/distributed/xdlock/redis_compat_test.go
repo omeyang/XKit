@@ -399,6 +399,27 @@ func TestNewRedisFactoryWithOpts_NilClientInSlice(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilClient)
 }
 
+func TestNewRedisFactoryWithOpts_TypedNilClientInSlice(t *testing.T) {
+	_, client := newTestMiniredis(t)
+	var typedNil *redis.Client
+	_, err := NewRedisFactoryWithOpts([]redis.UniversalClient{client, typedNil})
+	assert.ErrorIs(t, err, ErrNilClient)
+	assert.ErrorContains(t, err, "typed-nil")
+}
+
+func TestNewRedisFactoryWithOpts_NilOption(t *testing.T) {
+	_, client := newTestMiniredis(t)
+	factory, err := NewRedisFactoryWithOpts(
+		[]redis.UniversalClient{client},
+		nil,
+		WithRedisScriptMode(rediscompat.ScriptModeLua),
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, factory)
+	defer func() { _ = factory.Close(context.Background()) }()
+}
+
 func TestNewRedisFactoryWithOpts_CompatMode(t *testing.T) {
 	_, client := newTestMiniredis(t)
 
@@ -564,6 +585,48 @@ func TestWithRedisScriptMode_SetsOption(t *testing.T) {
 	cfg := &redisFactoryConfig{}
 	WithRedisScriptMode(rediscompat.ScriptModeCompat)(cfg)
 	assert.Equal(t, rediscompat.ScriptModeCompat, cfg.ScriptMode)
+}
+
+// =============================================================================
+// resolveRedisScriptMode 探测所有 clients 测试
+// =============================================================================
+
+func TestResolveRedisScriptMode_ProbesAllClients(t *testing.T) {
+	luaMR, luaClient := newTestMiniredis(t)
+	_ = luaMR
+
+	compatMR, err := miniredis.Run()
+	require.NoError(t, err)
+	defer compatMR.Close()
+	compatClient := redis.NewClient(&redis.Options{
+		Addr:        compatMR.Addr(),
+		DialTimeout: 100 * time.Millisecond,
+		ReadTimeout: 100 * time.Millisecond,
+	})
+	defer func() { require.NoError(t, compatClient.Close()) }()
+	require.NoError(t, compatClient.Ping(context.Background()).Err())
+	compatMR.SetError("ERR unknown command 'eval'")
+	defer compatMR.SetError("")
+
+	t.Run("ExplicitMode_SkipsDetection", func(t *testing.T) {
+		got := resolveRedisScriptMode(rediscompat.ScriptModeLua, luaClient, compatClient)
+		assert.Equal(t, rediscompat.ScriptModeLua, got)
+	})
+
+	t.Run("Auto_AllLua", func(t *testing.T) {
+		got := resolveRedisScriptMode(rediscompat.ScriptModeAuto, luaClient)
+		assert.Equal(t, rediscompat.ScriptModeLua, got)
+	})
+
+	t.Run("Auto_SecondClientCompat", func(t *testing.T) {
+		got := resolveRedisScriptMode(rediscompat.ScriptModeAuto, luaClient, compatClient)
+		assert.Equal(t, rediscompat.ScriptModeCompat, got)
+	})
+
+	t.Run("Auto_FirstClientCompat", func(t *testing.T) {
+		got := resolveRedisScriptMode(rediscompat.ScriptModeAuto, compatClient, luaClient)
+		assert.Equal(t, rediscompat.ScriptModeCompat, got)
+	})
 }
 
 // =============================================================================

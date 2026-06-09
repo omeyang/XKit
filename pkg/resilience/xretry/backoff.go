@@ -97,7 +97,9 @@ func NewExponentialBackoff(opts ...ExponentialBackoffOption) *ExponentialBackoff
 		jitter:       0.1,
 	}
 	for _, opt := range opts {
-		opt(b)
+		if opt != nil {
+			opt(b)
+		}
 	}
 	// 与 NewLinearBackoff 保持一致：确保 maxDelay >= initialDelay
 	if b.maxDelay < b.initialDelay {

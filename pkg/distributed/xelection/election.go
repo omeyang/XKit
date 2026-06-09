@@ -50,4 +50,12 @@ type Leader interface {
 	// Key 本 Leader 在 etcd 中持有的 key 全路径（prefix + 内部后缀）。
 	// 用于外部审计或拒绝环境比对；返回空串表示未当选成功。
 	Key() string
+
+	// LeaderRevision 返回本届当选在 etcd 中 leader key 的创建 revision，
+	// 即 Fencing token（任期号）：全局单调，每届当选互不相同。
+	// 调用方可据此构造防双写事务的 CAS 条件
+	// （Compare(CreateRevision(Key()), "=", LeaderRevision())），
+	// 使「校验仍为本届 leader」与「写入」在 etcd 服务端原子完成，
+	// 拒绝脑裂期间旧 leader 的写入。未当选成功时返回 0。
+	LeaderRevision() int64
 }

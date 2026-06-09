@@ -242,6 +242,12 @@ func (g *Generator) New() (int64, error) {
 // 支持通过 context 取消等待。如果等待超过 maxWaitDuration（默认 500ms）
 // 仍无法生成，返回 [ErrClockBackwardTimeout]。
 //
+// 重要限制：Sonyflake v2 的 NextID 在检测到时钟回拨时，会在内部持锁 sleep
+// 直至时钟追上，而非返回错误。因此 ctx/maxWaitDuration/ErrClockBackwardTimeout
+// 仅对"generateID 返回错误"的场景（如未来上游新增可重试错误、测试替身）生效，
+// 无法中断 Sonyflake 内部的时钟回拨等待。如果对时钟回拨 RTO 有严格要求，
+// 应在部署层面保证时钟稳定性（NTP + chrony/systemd-timesyncd）。
+//
 // 如果 ctx 为 nil，返回 [ErrNilContext]。
 func (g *Generator) NewWithRetry(ctx context.Context) (int64, error) {
 	if err := g.validate(); err != nil {
@@ -442,9 +448,11 @@ func New() (int64, error) {
 
 // NewWithRetry 生成新的唯一 ID，遇到可重试错误时自动等待重试。
 //
-// 这是生产环境推荐使用的方法，能够容忍短暂的时钟异常（NTP 同步等）。
-// 支持通过 context 取消等待。
+// 这是生产环境推荐使用的方法。支持通过 context 取消等待。
 // 如果等待超过 maxWaitDuration（默认 500ms）仍无法生成，返回 [ErrClockBackwardTimeout]。
+//
+// 注意：此重试机制对 Sonyflake v2 内部的时钟回拨 sleep 无效
+// （详见 [Generator.NewWithRetry]）。
 func NewWithRetry(ctx context.Context) (int64, error) {
 	gen, err := ensureInitialized()
 	if err != nil {

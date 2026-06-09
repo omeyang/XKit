@@ -67,18 +67,20 @@ func WithInstrumentationName(name string) Option {
 }
 
 // WithTracerProvider 设置 TracerProvider。
+// 对 nil 和 typed-nil（如 (*customProvider)(nil)）均视为无效并忽略，保留默认 provider。
 func WithTracerProvider(provider trace.TracerProvider) Option {
 	return func(cfg *otelConfig) {
-		if provider != nil {
+		if !isNilInterface(provider) {
 			cfg.tracerProvider = provider
 		}
 	}
 }
 
 // WithMeterProvider 设置 MeterProvider。
+// 对 nil 和 typed-nil（如 (*customProvider)(nil)）均视为无效并忽略，保留默认 provider。
 func WithMeterProvider(provider metric.MeterProvider) Option {
 	return func(cfg *otelConfig) {
-		if provider != nil {
+		if !isNilInterface(provider) {
 			cfg.meterProvider = provider
 		}
 	}
@@ -88,6 +90,13 @@ func WithMeterProvider(provider metric.MeterProvider) Option {
 // 默认值为 [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]，
 // 适用于典型 API 操作（1ms ~ 10s）。
 // nil 或空切片会被忽略，保留默认桶边界。
+//
+// 注意（first registration wins）：OTel Go SDK 的 instrument identity 由
+// (Meter, name, kind) 决定，不包含 bucket 配置。同一 MeterProvider +
+// instrumentationName 下首次 NewOTelObserver 的 bucket 设置生效，
+// 后续同名 instrument 的不同 bucket 会被静默忽略。
+// 若需要多套 bucket，请通过 WithInstrumentationName 使用不同 scope，
+// 或在 SDK 侧通过 View 配置。
 func WithHistogramBuckets(buckets []float64) Option {
 	return func(cfg *otelConfig) {
 		if len(buckets) > 0 {
@@ -115,8 +124,17 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 		return nil, err
 	}
 
+	// 设计决策: 对自定义 TracerProvider/MeterProvider 可能返回的 nil/typed-nil
+	// tracer/meter 做契约防御。OTel API 契约保证返回非 nil，但自定义实现可能违反，
+	// 作为基础库，在初始化阶段返回明确错误优于运行时 panic。
 	tracer := cfg.tracerProvider.Tracer(cfg.instrumentationName)
+	if isNilInterface(tracer) {
+		return nil, ErrNilTracer
+	}
 	meter := cfg.meterProvider.Meter(cfg.instrumentationName)
+	if isNilInterface(meter) {
+		return nil, ErrNilMeter
+	}
 
 	total, err := meter.Int64Counter(
 		metricOperationTotal,
@@ -126,10 +144,11 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateCounter, err)
 	}
-	// 设计决策: 对 nil instrument 做 fail-open 防御（即使 err==nil）。
+	// 设计决策: 对 nil / typed-nil instrument 做 fail-open 防御（即使 err==nil）。
 	// OTel API 契约保证 err==nil 时返回非 nil instrument，但自定义 MeterProvider
-	// 可能违反此约定；作为基础库，不应将观测异常升级为业务崩溃。
-	if total == nil {
+	// 可能返回 typed-nil（如 (*customCounter)(nil)），仅 == nil 检查会漏检，
+	// 导致 End 时调用 Add/Record panic。
+	if isNilInterface(total) {
 		return nil, fmt.Errorf("%w: meter returned nil counter", ErrCreateCounter)
 	}
 
@@ -142,7 +161,7 @@ func NewOTelObserver(opts ...Option) (Observer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCreateHistogram, err)
 	}
-	if duration == nil {
+	if isNilInterface(duration) {
 		return nil, fmt.Errorf("%w: meter returned nil histogram", ErrCreateHistogram)
 	}
 
@@ -187,12 +206,20 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 	)
 	attrs = append(attrs, attrsToOTel(opts.Attrs)...)
 
+	// 保留入参作为兜底，防止自定义 tracer.Start 返回 nil context（违反 OTel 契约）。
+	// 否则 otelSpan.ctx 会持有 nil，End 中的 context.WithoutCancel 会 panic。
+	parentCtx := ctx
+	needsSpanEmbed := false
 	ctx, span := o.tracer.Start(
 		ctx,
 		operation,
 		trace.WithSpanKind(mapSpanKind(opts.Kind)),
 		trace.WithAttributes(attrs...),
 	)
+	if isNilInterface(ctx) {
+		ctx = parentCtx
+		needsSpanEmbed = true
+	}
 
 	// 设计决策: 对 nil/typed-nil span 做 fail-open 防御。
 	// OTel API 契约保证 Tracer.Start 返回非 nil span，但自定义 TracerProvider
@@ -207,6 +234,12 @@ func (o *otelObserver) Start(ctx context.Context, opts SpanOptions) (context.Con
 			operation: operation,
 			start:     time.Now(),
 		}
+	}
+
+	// 若 tracer.Start 返回 nil/typed-nil ctx 导致回退到 parentCtx，
+	// parentCtx 不含新 span，需重新嵌入以保证子操作通过 trace.SpanFromContext 找到当前 span。
+	if needsSpanEmbed {
+		ctx = trace.ContextWithSpan(ctx, span)
 	}
 
 	ctx = syncXctx(ctx, span.SpanContext())
@@ -241,6 +274,13 @@ func (s *otelSpan) End(result Result) {
 	}
 
 	s.endOnce.Do(func() {
+		// typed-nil error 归一化：防止 .Error() / RecordError 调用 panic。
+		// 例如 var err *MyError; Result{Err: err} 会使 Err != nil 为 true，
+		// 但调用 Err.Error() 时因底层指针为 nil 而 panic。
+		if isNilInterface(result.Err) {
+			result.Err = nil
+		}
+
 		status := resolveStatus(result)
 
 		// 统一使用 resolveStatus 结果设置 span 状态，确保与 metrics 一致
@@ -343,7 +383,7 @@ func attrsToOTel(attrs []Attr) []attribute.KeyValue {
 	}
 	converted := make([]attribute.KeyValue, 0, len(attrs))
 	for _, attr := range attrs {
-		if attr.Key == "" || attr.Value == nil {
+		if attr.Key == "" || isNilInterface(attr.Value) {
 			continue
 		}
 		if isReservedAttrKey(attr.Key) {

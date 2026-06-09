@@ -318,6 +318,32 @@ func TestJSONAuditLogger_WriteError(t *testing.T) {
 	logger.Log(record)
 }
 
+func TestNewAuditLogger_NilWriter(t *testing.T) {
+	logger := NewAuditLogger(nil)
+
+	record := &AuditRecord{
+		Timestamp: time.Now(),
+		Event:     AuditEventCommand,
+		Command:   "test",
+	}
+
+	// nil writer 回退到 stderr，不应 panic
+	logger.Log(record)
+}
+
+func TestNewJSONAuditLogger_NilWriter(t *testing.T) {
+	logger := NewJSONAuditLogger(nil)
+
+	record := &AuditRecord{
+		Timestamp: time.Now(),
+		Event:     AuditEventCommand,
+		Command:   "test",
+	}
+
+	// nil writer 回退到 stderr，不应 panic
+	logger.Log(record)
+}
+
 func TestDefaultAuditSanitizer(t *testing.T) {
 	args := []string{"arg1", "arg2", "arg3"}
 	result := DefaultAuditSanitizer("test", args)

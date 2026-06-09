@@ -117,7 +117,11 @@ func NewDefaultAuditLogger() AuditLogger {
 }
 
 // NewAuditLogger 创建自定义输出的审计日志记录器。
+// nil writer 回退到 os.Stderr。
 func NewAuditLogger(writer io.Writer) AuditLogger {
+	if writer == nil {
+		writer = os.Stderr
+	}
 	return &defaultAuditLogger{
 		writer: writer,
 	}
@@ -198,7 +202,11 @@ type jsonAuditLogger struct {
 }
 
 // NewJSONAuditLogger 创建 JSON 格式审计日志记录器。
+// nil writer 回退到 os.Stderr。
 func NewJSONAuditLogger(writer io.Writer) AuditLogger {
+	if writer == nil {
+		writer = os.Stderr
+	}
 	return &jsonAuditLogger{writer: writer}
 }
 

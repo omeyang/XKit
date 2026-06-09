@@ -229,11 +229,22 @@ func (c *schedulerHealthChecker) checkLockerHealth(ctx context.Context, result *
 	if !ok {
 		return
 	}
-	if err := checker.Health(ctx); err != nil {
+	if err := c.safeHealth(ctx, checker); err != nil {
 		result.Status = HealthStatusUnhealthy
 		appendMessage(result, fmt.Sprintf("locker unhealthy: %v", err))
 		result.Details["locker_error"] = err.Error()
 	}
+}
+
+// safeHealth 调用 LockerHealthChecker.Health 并隔离 panic。
+// 设计决策: 与 safeTryLock/startSpan 一致，外部 Locker 实现可能 panic，需隔离防止 Check 崩溃。
+func (c *schedulerHealthChecker) safeHealth(ctx context.Context, checker LockerHealthChecker) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("xcron: locker health check panicked: %v", r)
+		}
+	}()
+	return checker.Health(ctx)
 }
 
 // checkNoJobs 检查是否无任务注册

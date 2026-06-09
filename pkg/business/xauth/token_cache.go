@@ -2,6 +2,7 @@ package xauth
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -72,7 +73,7 @@ func NewTokenCache(cfg TokenCacheConfig) *TokenCache {
 	}
 
 	remote := cfg.Remote
-	if remote == nil {
+	if isNilCacheStore(remote) {
 		remote = NoopCacheStore{}
 	}
 
@@ -277,10 +278,26 @@ func (c *TokenCache) Clear() {
 	}
 }
 
+// Close 关闭本地缓存，停止 xlru 内部清理 goroutine。
+func (c *TokenCache) Close() {
+	if c.local != nil {
+		c.local.Close()
+	}
+}
+
 // LocalSize 返回本地缓存条目数。
 func (c *TokenCache) LocalSize() int {
 	if c.local == nil {
 		return 0
 	}
 	return c.local.Len()
+}
+
+// isNilCacheStore 检查 CacheStore 接口是否为 nil 或 typed-nil。
+func isNilCacheStore(cs CacheStore) bool {
+	if cs == nil {
+		return true
+	}
+	rv := reflect.ValueOf(cs)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }

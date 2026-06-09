@@ -89,7 +89,10 @@ func DefaultMachineID() (uint16, error) {
 	// 策略 5：从私有 IP 地址
 	id, err := machineIDFromPrivateIP()
 	if err != nil {
-		return 0, fmt.Errorf("xid: all machine ID strategies exhausted (os-hostname: %v): %w", hostnameErr, err)
+		// 使用 errors.Join 保留两个 cause 的错误链（hostnameErr + err），
+		// 调用方可通过 errors.Is/As 检查任一底层错误类型（FG-M1 fix）。
+		return 0, fmt.Errorf("xid: all machine ID strategies exhausted: %w",
+			errors.Join(hostnameErr, err))
 	}
 	return id, nil
 }

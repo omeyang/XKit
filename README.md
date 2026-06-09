@@ -2,6 +2,8 @@
 
 XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持。文档只关注当下可用能力与使用方式，不引入历史演变。
 
+> AI/RAG 全文喂入：`llms-full.txt` 由 CI 在 push/tag 时生成（Actions 工作流产物 + 在 tag 上附加到 GitHub Release）；本地可运行 `task docs-llms` 按需生成，文件已加入 `.gitignore`。
+
 ---
 
 ## 核心特性
@@ -50,7 +52,7 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/storage/xcache` | 缓存抽象层（Redis/Memory） | Stable |
-| `pkg/storage/xetcd` | etcd 客户端封装 | Beta |
+| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Beta |
 | `pkg/storage/xmongo` | MongoDB 客户端封装 | Beta |
 | `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Beta |
 
@@ -60,6 +62,8 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 | --- | --- | --- |
 | `pkg/distributed/xdlock` | 分布式锁 | Beta |
 | `pkg/distributed/xcron` | 分布式定时任务 | Beta |
+| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Beta |
+| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Beta |
 
 ### MQ（消息队列）
 
@@ -91,12 +95,20 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/lifecycle/xrun` | 进程生命周期管理（errgroup + 信号处理） | Stable |
+| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Beta |
+
+### Security（安全）
+
+| 包 | 用途 | 稳定性 |
+| --- | --- | --- |
+| `pkg/security/xtls` | TLS 配置与证书加载工具 | Beta |
 
 ### Util（通用工具）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/util/xfile` | 文件操作工具（路径安全） | Stable |
+| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Beta |
 | `pkg/util/xjson` | JSON 格式化工具 | Stable |
 | `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Beta |
 | `pkg/util/xlru` | LRU 缓存（泛型 + TTL） | Stable |
@@ -107,7 +119,15 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 | `pkg/util/xsys` | 系统资源限制管理 | Stable |
 | `pkg/util/xutil` | 泛型工具函数 | Stable |
 
-完整公开 API 与稳定性列表见 `docs/API.md`。
+### Testkit（测试辅助）
+
+| 包 | 用途 | 稳定性 |
+| --- | --- | --- |
+| `pkg/testkit/xetcdtest` | etcd 嵌入式测试桩（集成测试用） | Internal |
+| `pkg/testkit/xredismock` | Redis Mock 客户端 | Internal |
+| `pkg/distributed/xsemaphore/xsemaphoremock` | xsemaphore gomock 桩 | Internal |
+
+完整公开 API 与稳定性列表见 [`docs/03-conventions/01-api.md`](docs/03-conventions/01-api.md)。
 
 ---
 
@@ -115,8 +135,9 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 
 ### Go 版本
 
-- **固定版本**：Go 1.25.9（流水线要求）
+- **固定版本**：Go 1.25.10（流水线要求）
 - **验证方法**：`go version` 确认运行时版本
+- **1.23 兼容分支**：[`develop-1.23-release`](https://github.com/omeyang/XKit/tree/develop-1.23-release) 为 Go 1.23 用户提供功能等价版本（仅依赖版本上限不同）
 
 ### 代码质量
 
@@ -167,37 +188,21 @@ task bench         # 性能基准测试
 
 ---
 
-## 贡献指南
+## 贡献
 
-### 提交前检查
-
-**本地检查**（必须通过）：
-```bash
-task pre-commit  # 快速检查
-task ci          # 完整检查
-```
-
-### Code Review 要求
-
-- [ ] 代码符合项目原则（constitution.md）
-- [ ] 测试覆盖率达标（核心业务 ≥ 95%，整体 ≥ 90%）
-- [ ] golangci-lint 检查通过
-- [ ] 文档完整（代码注释 + 技术文档）
-- [ ] 无明显性能问题
-- [ ] 错误处理完善
-- [ ] 并发安全（如适用）
-
-### Merge Request 流程
-
-1. 创建分支：`git checkout -b feature/xxx`
-2. 执行开发工作流
-3. 提交代码（遵循 Conventional Commits 规范）
-4. 创建 MR
-5. Code Review 通过后合并
+贡献流程、测试规范、Code Review 要点见 [`docs/03-conventions/02-contributing.md`](docs/03-conventions/02-contributing.md)。
 
 ---
 
 ## 文档
 
-- **API 文档**：`docs/API.md`
-- **命名规范**：`docs/NAMING.md`
+文档分类入口：[`docs/00-index.md`](docs/00-index.md)
+
+| 类别 | 位置 |
+|---|---|
+| 关键决策（ADR） | [`docs/01-decisions/`](docs/01-decisions/00-index.md) |
+| 进度追踪 | [`docs/02-progress.md`](docs/02-progress.md) |
+| 约定规范（API / 贡献） | [`docs/03-conventions/`](docs/03-conventions/) |
+| 跨包概念 | [`docs/05-concepts/`](docs/05-concepts/00-index.md) |
+| 设计模式 | [`docs/06-patterns/`](docs/06-patterns/00-index.md) |
+| 包详情 | [`docs/04-packages/`](docs/04-packages/00-index.md) |

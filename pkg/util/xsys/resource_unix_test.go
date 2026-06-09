@@ -43,11 +43,19 @@ func TestSetFileLimit(t *testing.T) {
 func TestSetFileLimit_HighValue(t *testing.T) {
 	const highLimit = 1 << 30
 
-	// 保存原始值，测试结束后恢复。
-	origSoft, _, err := GetFileLimit()
+	// 保存原始 soft 和 hard，测试结束后完整恢复。
+	// SetFileLimit 设计上不降低 hard limit，因此 cleanup 需直接调用 setrlimit。
+	origSoft, origHard, err := GetFileLimit()
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		if restoreErr := SetFileLimit(origSoft); restoreErr != nil {
+		origCur, curErr := rlimFromUint64(origSoft)
+		origMax, maxErr := rlimFromUint64(origHard)
+		if curErr != nil || maxErr != nil {
+			t.Errorf("restore rlimit: convert failed: cur=%v, max=%v", curErr, maxErr)
+			return
+		}
+		rl := unix.Rlimit{Cur: origCur, Max: origMax}
+		if restoreErr := setrlimit(unix.RLIMIT_NOFILE, &rl); restoreErr != nil {
 			t.Errorf("restore rlimit: %v", restoreErr)
 		}
 	})

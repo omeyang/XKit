@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -95,6 +96,76 @@ func TestDetectScriptMode(t *testing.T) {
 }
 
 // ============================================================================
+// DetectScriptModeBounded 测试（构造函数防黑洞场景）
+// ============================================================================
+
+// TestDefaultDetectTimeout_Value 锁定默认 5s，被改动时必须显式更新本测试 + memory。
+func TestDefaultDetectTimeout_Value(t *testing.T) {
+	assert.Equal(t, 5*time.Second, DefaultDetectTimeout)
+	assert.Equal(t, DefaultDetectTimeout, detectTimeout, "包内可变副本默认与常量同值")
+}
+
+func TestDetectScriptModeBounded(t *testing.T) {
+	t.Run("正常 Redis：返回 Lua 模式", func(t *testing.T) {
+		mr, err := miniredis.Run()
+		require.NoError(t, err)
+		defer mr.Close()
+
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		defer client.Close()
+
+		mode, err := DetectScriptModeBounded(client)
+		assert.NoError(t, err)
+		assert.Equal(t, ScriptModeLua, mode)
+	})
+
+	t.Run("黑洞地址：超时内有界返回，不卡死构造函数", func(t *testing.T) {
+		// 启监听器但 accept 后永不读，让 Redis 客户端 dial 成功后阻塞在等响应阶段。
+		// 这模拟"TCP 连得通但 Redis 协议层无回应"的黑洞代理/防火墙场景。
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer func() { _ = ln.Close() }() //nolint:errcheck // test cleanup
+
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			for {
+				conn, acceptErr := ln.Accept()
+				if acceptErr != nil {
+					return
+				}
+				// 持有连接但永不读/不回，让客户端挂在 read 上
+				go func(c net.Conn) {
+					<-done
+					_ = c.Close() //nolint:errcheck // test cleanup
+				}(conn)
+			}
+		}()
+
+		// 临时缩短超时以加速测试（生产值 5s，测试只验证"有界"特性）
+		t.Cleanup(func() { detectTimeout = DefaultDetectTimeout })
+		detectTimeout = 200 * time.Millisecond
+
+		// 故意把 go-redis 的 DialTimeout/ReadTimeout 拉很长，证明真正起作用的是我们 200ms 的 ctx 超时
+		client := redis.NewClient(&redis.Options{
+			Addr:        ln.Addr().String(),
+			DialTimeout: 30 * time.Second,
+			ReadTimeout: 30 * time.Second,
+		})
+		defer client.Close()
+
+		start := time.Now()
+		mode, err := DetectScriptModeBounded(client)
+		elapsed := time.Since(start)
+
+		require.Error(t, err, "黑洞场景应返回 ctx 超时错误")
+		assert.Equal(t, ScriptModeLua, mode, "网络错误时回退 Lua 是文档化的安全默认")
+		assert.Less(t, elapsed, 2*time.Second,
+			"应在 detectTimeout(200ms) 内返回，绝不能等到 ReadTimeout(30s) 才解阻塞")
+	})
+}
+
+// ============================================================================
 // IsScriptUnsupportedError 测试
 // ============================================================================
 
@@ -112,6 +183,9 @@ func TestIsScriptUnsupportedError(t *testing.T) {
 		{"NOSCRIPT", errors.New("NOSCRIPT No matching script"), true},
 		{"cluster support disabled", errors.New("ERR This instance has cluster support disabled"), true},
 		{"not allowed", errors.New("ERR command 'EVAL' not allowed"), true},
+		{"NOPERM ACL", errors.New("NOPERM this user has no permissions to run the 'eval' command"), true},
+		{"NOPERM ACL v7", errors.New("NOPERM User default has no permissions to run the 'eval' command"), true},
+		{"OOM 非脚本错误", errors.New("OOM command not allowed when used memory > 'maxmemory'"), false},
 		{"context canceled", context.Canceled, false},
 		{"context deadline", context.DeadlineExceeded, false},
 	}

@@ -1,6 +1,8 @@
 package xlimit
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 )
 
@@ -62,6 +64,11 @@ func handleHTTPLimit(w http.ResponseWriter, r *http.Request, limiter Limiter, mo
 			mopts.DenyHandler(w, r, result)
 			return true
 		}
+		// fail-open 路径：记录告警便于运维发现配置错误或后端异常，
+		// 避免静默吞掉 ErrLimiterClosed / 内部错误导致限流实质失效。
+		// 设计决策: 故意不记录 r.URL.Path / r.Method 等用户可控字段，
+		// 避免控制字符注入日志（gosec G706）；定位场景靠 error/is_closed + 上游 trace。
+		logFailOpen(err)
 		return false // fail-open
 	}
 
@@ -92,4 +99,18 @@ func HTTPMiddlewareFunc(limiter Limiter, opts ...MiddlewareOption) func(http.Han
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return middleware(next).ServeHTTP
 	}
+}
+
+// logFailOpen 记录 fail-open 告警。
+// 设计决策: 故意只记录预定义的 error class 字符串字面量，不写入 err.Error()
+// 或任何请求/用户衍生字段；err 经 limiter.Allow(r.Context(), key) 被 gosec
+// 视为 tainted，避免日志注入风险（G706）。错误详情靠上游 trace + metric 兜底。
+func logFailOpen(err error) {
+	class := "internal"
+	if errors.Is(err, ErrLimiterClosed) {
+		class = "closed"
+	}
+	slog.Warn("xlimit: HTTP middleware fail-open due to limiter error",
+		slog.String("error_class", class),
+	)
 }

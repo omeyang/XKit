@@ -47,7 +47,10 @@ type DLQPolicy struct {
 	// DLQTopic 死信 Topic 名称（必须）
 	DLQTopic string
 
-	// RetryTopic 重试 Topic 名称（可选，空字符串表示原地重试）
+	// RetryTopic 重试 Topic 名称。
+	// 空字符串表示 requeue 到原 topic 的尾部（使用 kafka.PartitionAny，不保证回到原分区），
+	// 由同一消费者组再次拉取处理。**不保证分区内顺序**：同一 key 可能落到不同分区。
+	// 如需严格的分区内顺序重试，应显式配置独立的 RetryTopic。
 	RetryTopic string
 
 	// RetryPolicy 重试策略（必须）
@@ -226,15 +229,17 @@ func getRetryCount(msg *kafka.Message) int {
 	return 0
 }
 
-// setHeader 设置或更新消息 Header
+// setHeader 设置或更新消息 Header。
+// 删除所有同名 Header 后追加新值，避免重复 Header 导致下游 map 取后者读到旧值。
 func setHeader(msg *kafka.Message, key, value string) {
-	for i, h := range msg.Headers {
-		if h.Key == key {
-			msg.Headers[i].Value = []byte(value)
-			return
+	n := 0
+	for _, h := range msg.Headers {
+		if h.Key != key {
+			msg.Headers[n] = h
+			n++
 		}
 	}
-	msg.Headers = append(msg.Headers, kafka.Header{
+	msg.Headers = append(msg.Headers[:n], kafka.Header{
 		Key:   key,
 		Value: []byte(value),
 	})
@@ -392,6 +397,7 @@ func parseOriginalOffset(msg *kafka.Message) int64 {
 }
 
 // parseFirstFailTime 从消息头解析首次失败时间。
+// 空头部返回 time.Now()（首次失败）；解析失败返回零值（表示"未知"，由回调方通过 IsZero 判断）。
 func parseFirstFailTime(msg *kafka.Message) time.Time {
 	headerVal := getHeader(msg, HeaderFirstFailTime)
 	if headerVal == "" {
@@ -399,7 +405,7 @@ func parseFirstFailTime(msg *kafka.Message) time.Time {
 	}
 	parsed, err := time.Parse(time.RFC3339, headerVal)
 	if err != nil {
-		return time.Now()
+		return time.Time{}
 	}
 	return parsed
 }

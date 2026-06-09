@@ -15,6 +15,20 @@ type testUser struct {
 	Age  int    `json:"age"`
 }
 
+type panicMarshaler struct{}
+
+func (panicMarshaler) MarshalJSON() ([]byte, error) {
+	panic("MarshalJSON panic")
+}
+
+var errPanicSentinel = errors.New("sentinel from panic")
+
+type panicErrorMarshaler struct{}
+
+func (panicErrorMarshaler) MarshalJSON() ([]byte, error) {
+	panic(errPanicSentinel)
+}
+
 func TestPrettyE(t *testing.T) {
 
 	tests := []struct {
@@ -81,6 +95,16 @@ func TestPrettyE(t *testing.T) {
 			input:   make(chan int),
 			wantErr: true,
 		},
+		{
+			name:    "error_panic_marshal",
+			input:   panicMarshaler{},
+			wantErr: true,
+		},
+		{
+			name:    "error_panic_error_marshal",
+			input:   panicErrorMarshaler{},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -100,6 +124,13 @@ func TestPrettyE(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrettyE_PanicErrorChain(t *testing.T) {
+	_, err := PrettyE(panicErrorMarshaler{})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrMarshal), "should wrap ErrMarshal")
+	assert.True(t, errors.Is(err, errPanicSentinel), "should preserve panic error chain")
 }
 
 func TestPretty(t *testing.T) {
@@ -129,6 +160,11 @@ func TestPretty(t *testing.T) {
 		{
 			name:     "error_channel",
 			input:    make(chan int),
+			contains: "<marshal error:",
+		},
+		{
+			name:     "error_panic_marshal",
+			input:    panicMarshaler{},
 			contains: "<marshal error:",
 		},
 	}

@@ -25,6 +25,20 @@ func TestNewXConfProvider(t *testing.T) {
 	assert.Equal(t, "ratelimit", provider.path)
 }
 
+func TestXConfProvider_NilConfig(t *testing.T) {
+	provider := NewXConfProvider(nil, "ratelimit")
+
+	t.Run("Load returns ErrNilConfig", func(t *testing.T) {
+		_, err := provider.Load()
+		assert.ErrorIs(t, err, ErrNilConfig)
+	})
+
+	t.Run("Watch returns ErrNilConfig", func(t *testing.T) {
+		_, err := provider.Watch(context.Background())
+		assert.ErrorIs(t, err, ErrNilConfig)
+	})
+}
+
 // =============================================================================
 // Load
 // =============================================================================

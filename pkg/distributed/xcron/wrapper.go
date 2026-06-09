@@ -77,7 +77,7 @@ func (w *jobWrapper) Run() {
 	// 3. 链路追踪
 	taskCtx, span := w.startSpan(taskCtx)
 	if span != nil {
-		defer span.End()
+		defer w.safeSpanEnd(taskCtx, span)
 	}
 
 	// 4. 执行钩子 BeforeJob（正序），每个钩子独立 panic 保护
@@ -173,7 +173,34 @@ func (w *jobWrapper) startSpan(ctx context.Context) (resultCtx context.Context, 
 			resultSpan = nil
 		}
 	}()
-	return w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
+	resultCtx, resultSpan = w.opts.tracer.Start(ctx, "xcron."+w.opts.name)
+	if resultCtx == nil {
+		resultCtx = ctx
+	}
+	return resultCtx, resultSpan
+}
+
+// safeSpanEnd 安全结束 Span，捕获 panic。
+// 与 startSpan 对称，防止第三方 tracer 实现的 Span.End() panic 导致 cron goroutine 崩溃。
+func (w *jobWrapper) safeSpanEnd(ctx context.Context, span Span) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "span.End panicked",
+				"job", w.opts.name, "panic", r)
+		}
+	}()
+	span.End()
+}
+
+// safeSpanRecordError 安全记录 Span 错误，捕获 panic。
+func (w *jobWrapper) safeSpanRecordError(ctx context.Context, span Span, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(ctx, "span.RecordError panicked",
+				"job", w.opts.name, "panic", r)
+		}
+	}()
+	span.RecordError(err)
 }
 
 // executeJob 执行任务（可能带重试），包含 panic 恢复
@@ -185,10 +212,7 @@ func (w *jobWrapper) executeJob(ctx context.Context, rh *renewHandle) (err error
 			// 使用独立的 context 进行 Unlock，避免任务取消导致释放失败
 			unlockCtx, unlockCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer unlockCancel()
-			if unlockErr := rh.lockHandle.Unlock(unlockCtx); unlockErr != nil {
-				w.logWarn(ctx, "failed to release lock",
-					"job", w.opts.name, "error", unlockErr)
-			}
+			w.safeUnlock(ctx, rh.lockHandle, unlockCtx)
 		}()
 	}
 
@@ -211,7 +235,7 @@ func (w *jobWrapper) logResult(ctx context.Context, span Span, duration time.Dur
 		w.logError(ctx, "job failed",
 			"job", w.opts.name, "duration", duration, "error", err)
 		if span != nil {
-			span.RecordError(err)
+			w.safeSpanRecordError(ctx, span, err)
 		}
 	} else {
 		w.logDebug(ctx, "job completed",
@@ -243,6 +267,11 @@ func (w *jobWrapper) runWithRetry(ctx context.Context) error {
 		w.logWarn(ctx, "job failed, will retry",
 			"job", w.opts.name, "attempt", attempt, "backoff", backoff, "error", err)
 
+		// ctx 已取消时立即退出，防止 backoff=0 + AlwaysRetry 忙循环
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		// 等待退避时间
 		if backoff > 0 {
 			timer := time.NewTimer(backoff)
@@ -267,6 +296,21 @@ func (w *jobWrapper) safeRunJob(ctx context.Context) (err error) {
 		}
 	}()
 	return w.job.Run(ctx)
+}
+
+// safeUnlock 安全释放锁，将 panic 转为日志。
+// 与 safeTryLock 对称，防止第三方 Locker.Unlock 实现 panic 导致 cron goroutine 崩溃。
+func (w *jobWrapper) safeUnlock(jobCtx context.Context, handle LockHandle, unlockCtx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.logError(jobCtx, "lock unlock panicked",
+				"job", w.opts.name, "panic", r)
+		}
+	}()
+	if unlockErr := handle.Unlock(unlockCtx); unlockErr != nil {
+		w.logWarn(jobCtx, "failed to release lock",
+			"job", w.opts.name, "error", unlockErr)
+	}
 }
 
 // startRenew 启动锁续期协程，返回用于停止的 handle
@@ -390,7 +434,13 @@ func (w *jobWrapper) safeBeforeHook(ctx context.Context, hook Hook) (result cont
 			result = ctx // panic 时返回原始 ctx
 		}
 	}()
-	return hook.BeforeJob(ctx, w.opts.name)
+	result = hook.BeforeJob(ctx, w.opts.name)
+	if result == nil {
+		w.logWarn(ctx, "BeforeJob hook returned nil context, using original",
+			"job", w.opts.name)
+		result = ctx
+	}
+	return result
 }
 
 // runAfterHooks 执行 AfterJob 钩子（逆序，类似 defer）。

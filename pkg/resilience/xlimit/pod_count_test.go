@@ -133,6 +133,28 @@ func TestEnvPodCount_WithCaching(t *testing.T) {
 	})
 }
 
+func TestEnvPodCount_WithCacheDuration_Concurrent(t *testing.T) {
+	const testEnvVar = "XLIMIT_TEST_RACE_POD"
+	t.Setenv(testEnvVar, "5")
+
+	provider := NewEnvPodCount(testEnvVar, 1)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 1000 {
+			provider.WithCacheDuration(time.Duration(i+1) * time.Millisecond)
+		}
+	}()
+
+	for range 1000 {
+		count, err := provider.GetPodCount(context.Background())
+		require.NoError(t, err)
+		assert.Positive(t, count)
+	}
+	<-done
+}
+
 func TestPodCountProvider_Interface(t *testing.T) {
 	// 确保类型实现了接口
 	var _ PodCountProvider = StaticPodCount(1)

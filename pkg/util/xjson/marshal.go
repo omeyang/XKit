@@ -16,10 +16,21 @@ var ErrMarshal = errors.New("json marshal")
 // PrettyE 将任意值序列化为格式化（缩进两空格）的 JSON 字符串。
 // 序列化失败时返回空字符串和 [ErrMarshal] 包装的错误，
 // 适用于需要可靠区分成功与失败的场景。
-func PrettyE(v any) (string, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrMarshal, err)
+// 若传入值的 [json.Marshaler] 实现 panic，会被拦截并转为 [ErrMarshal] 包装的错误。
+func PrettyE(v any) (result string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = ""
+			if e, ok := r.(error); ok {
+				err = fmt.Errorf("%w: recovered panic: %w", ErrMarshal, e)
+			} else {
+				err = fmt.Errorf("%w: recovered panic: %v", ErrMarshal, r)
+			}
+		}
+	}()
+	data, marshalErr := json.MarshalIndent(v, "", "  ")
+	if marshalErr != nil {
+		return "", fmt.Errorf("%w: %w", ErrMarshal, marshalErr)
 	}
 	return string(data), nil
 }

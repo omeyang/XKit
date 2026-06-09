@@ -60,6 +60,7 @@ type Config struct {
 	//   - 不能为空或纯空白字符
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	PlatformID string
 
@@ -72,6 +73,7 @@ type Config struct {
 	//   - 纯空白字符串归一化为空字符串（视为未设置，跳过校验）
 	//   - 不能包含空白字符（空格、制表符等）
 	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
 	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
 	UnclassRegionID string
 }
@@ -88,38 +90,74 @@ type Config struct {
 //   - UnclassRegionID（非空时）不能包含控制字符 → ErrInvalidUnclassRegionID
 //   - UnclassRegionID（非空时）长度不超过 128 字节 → ErrInvalidUnclassRegionID
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.PlatformID) == "" {
+	if err := validatePlatformID(c.PlatformID); err != nil {
+		return err
+	}
+	return validateUnclassRegionID(c.UnclassRegionID)
+}
+
+// validatePlatformID 校验 PlatformID 非空、无空白/控制字符/非可打印 ASCII、长度合规。
+func validatePlatformID(id string) error {
+	if strings.TrimSpace(id) == "" {
 		return ErrMissingPlatformID
 	}
-	if strings.ContainsFunc(c.PlatformID, unicode.IsSpace) {
+	if strings.ContainsFunc(id, unicode.IsSpace) {
 		return fmt.Errorf("%w: contains whitespace", ErrInvalidPlatformID)
 	}
 	// 设计决策: 校验控制字符（NUL、BEL、ESC 等），因为 PlatformID 会被注入到
 	// HTTP Header（xtenant/http.go）和 gRPC Metadata（xtenant/grpc.go），
 	// 控制字符可能导致协议层错误或隐性污染。
-	if strings.ContainsFunc(c.PlatformID, unicode.IsControl) {
+	if strings.ContainsFunc(id, unicode.IsControl) {
 		return fmt.Errorf("%w: contains control characters", ErrInvalidPlatformID)
 	}
-	if len(c.PlatformID) > maxPlatformIDLen {
+	// 设计决策: 限制为 ASCII 可打印字节（0x21..0x7e）。gRPC 出站 metadata 要求普通
+	// value 为 %x20-%x7e 可打印 ASCII（imetadata.ValidatePair），非 ASCII 值会导致
+	// RPC 发送阶段 codes.Internal 错误。在 Init 时 fail-fast，优于运行时隐性失败。
+	if containsNonPrintableASCII(id) {
+		return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidPlatformID)
+	}
+	if len(id) > maxPlatformIDLen {
 		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidPlatformID, maxPlatformIDLen)
 	}
+	return nil
+}
 
-	// 设计决策: UnclassRegionID 用于 HTTP Header / gRPC Metadata 传播（xtenant 包），
-	// 必须校验空白字符和长度，防止 header 注入和溢出。允许空值（可选字段）。
-	// TrimSpace 归一化使纯空白输入等同于空字符串（未设置），与 PlatformID 的处理对称。
-	if strings.TrimSpace(c.UnclassRegionID) != "" {
-		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsSpace) {
-			return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
-		}
-		if strings.ContainsFunc(c.UnclassRegionID, unicode.IsControl) {
-			return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
-		}
-		if len(c.UnclassRegionID) > maxUnclassRegionIDLen {
-			return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)
+// validateUnclassRegionID 校验 UnclassRegionID（非空时）无空白/控制字符/非可打印 ASCII、长度合规。
+// 设计决策: UnclassRegionID 用于 HTTP Header / gRPC Metadata 传播（xtenant 包），
+// 必须校验空白字符和长度，防止 header 注入和溢出。允许空值（可选字段）。
+// TrimSpace 归一化使纯空白输入等同于空字符串（未设置），与 PlatformID 的处理对称。
+func validateUnclassRegionID(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	if strings.ContainsFunc(id, unicode.IsSpace) {
+		return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
+	}
+	if strings.ContainsFunc(id, unicode.IsControl) {
+		return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
+	}
+	if containsNonPrintableASCII(id) {
+		return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidUnclassRegionID)
+	}
+	if len(id) > maxUnclassRegionIDLen {
+		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)
+	}
+	return nil
+}
+
+// containsNonPrintableASCII 判断字符串是否包含非可打印 ASCII 字节（0x80+ 或 0x00..0x20/0x7f）。
+//
+// 设计决策: 按字节逐一检查（string index 操作），避免 rune 解码开销。
+// 与 unicode.IsSpace/IsControl 的校验存在重叠（0x00..0x20 和 0x7f），但三者组合
+// 可明确拆分错误语义（空白/控制/非ASCII），便于调用方排障。
+func containsNonPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x21 || b > 0x7e {
+			return true
 		}
 	}
-
-	return nil
+	return false
 }
 
 // =============================================================================

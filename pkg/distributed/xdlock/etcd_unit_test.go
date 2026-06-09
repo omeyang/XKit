@@ -87,7 +87,7 @@ func TestEtcdFactory_Health_NilContext(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	err := f.Health(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	err := f.Health(nil)
 	assert.ErrorIs(t, err, ErrNilContext)
 }
 
@@ -322,7 +322,7 @@ func TestEtcdLockHandle_Unlock_NilContext(t *testing.T) {
 	mockMu := &MockMutex{}
 	h := NewTestEtcdLockHandle(f, "lock:test", mockMu)
 
-	err := h.Unlock(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	err := h.Unlock(nil)
 	assert.ErrorIs(t, err, ErrNilContext)
 	assert.False(t, h.unlocked.Load())
 }
@@ -357,7 +357,7 @@ func TestEtcdFactory_TryLock_NilContext(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.TryLock(nil, "test-key") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	handle, err := f.TryLock(nil, "test-key")
 	assert.ErrorIs(t, err, ErrNilContext)
 	assert.Nil(t, handle)
 }
@@ -366,7 +366,7 @@ func TestEtcdFactory_Lock_NilContext(t *testing.T) {
 	mock := NewMockSession()
 	f := NewTestEtcdFactory(mock)
 
-	handle, err := f.Lock(nil, "test-key") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	handle, err := f.Lock(nil, "test-key")
 	assert.ErrorIs(t, err, ErrNilContext)
 	assert.Nil(t, handle)
 }
@@ -376,7 +376,7 @@ func TestEtcdLockHandle_Extend_NilContext(t *testing.T) {
 	f := NewTestEtcdFactory(mock)
 	h := NewTestEtcdLockHandle(f, "lock:test")
 
-	err := h.Extend(nil) //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	err := h.Extend(nil)
 	assert.ErrorIs(t, err, ErrNilContext)
 }
 

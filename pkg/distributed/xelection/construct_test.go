@@ -80,3 +80,37 @@ func TestLeader_KeyReturnsElectionKey(t *testing.T) {
 		t.Errorf("Key() = %q, want empty for nil election", got)
 	}
 }
+
+// TestLeader_LeaderRevisionReturnsElectionRev election 非 nil 时，
+// LeaderRevision 应透传底层 election.Rev()（Fencing token / 任期号）。
+func TestLeader_LeaderRevisionReturnsElectionRev(t *testing.T) {
+	t.Parallel()
+	ms := NewMockSession()
+	me := NewMockElection()
+	me.RevVal = 4217
+	l := NewTestLeaderWithElection(ms, me, "self", nil)
+	defer func() {
+		if err := l.Resign(context.Background()); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}()
+	if got := l.LeaderRevision(); got != 4217 {
+		t.Errorf("LeaderRevision() = %d, want 4217", got)
+	}
+}
+
+// TestLeader_LeaderRevisionZeroWithoutElection election==nil（未当选成功）时
+// LeaderRevision 应返回 0，避免误把 0 当作有效任期号写入 Fencing 事务。
+func TestLeader_LeaderRevisionZeroWithoutElection(t *testing.T) {
+	t.Parallel()
+	ms := NewMockSession()
+	l := NewTestLeader(ms, "self", nil)
+	defer func() {
+		if err := l.Resign(context.Background()); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}()
+	if got := l.LeaderRevision(); got != 0 {
+		t.Errorf("LeaderRevision() = %d, want 0 for nil election", got)
+	}
+}

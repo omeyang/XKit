@@ -22,7 +22,8 @@ func TestNew_PutGetOK(t *testing.T) {
 	}
 	defer m.Close()
 
-	c := context.Background()
+	c, cancel := ctx(t, 10*time.Second)
+	defer cancel()
 	if _, err := m.Client().Put(c, "k", "v"); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -61,7 +62,16 @@ func TestNew_WatchReceivesPut(t *testing.T) {
 	c, cancel := ctx(t, 10*time.Second)
 	defer cancel()
 
-	ch := m.Client().Watch(c, "/w")
+	ch := m.Client().Watch(c, "/w", clientv3.WithCreatedNotify())
+	select {
+	case resp := <-ch:
+		if !resp.Created {
+			t.Fatalf("expected watch created notification, got %+v", resp)
+		}
+	case <-c.Done():
+		t.Fatal("watch create timeout")
+	}
+
 	if _, err := m.Client().Put(c, "/w", "hello"); err != nil {
 		t.Fatalf("Put: %v", err)
 	}

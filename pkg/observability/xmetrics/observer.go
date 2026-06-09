@@ -12,12 +12,19 @@ import (
 // 自定义 Observer/TracerProvider 可能返回 typed-nil（接口内部 type 非空但 value 为 nil），
 // 仅 == nil 检查会遗漏此情况，后续方法调用可能 panic。
 // reflect 检查仅在 Start 路径使用（非热路径），性能开销可忽略。
+// 覆盖所有可 nil 的 Kind（Chan/Func/Interface/Map/Ptr/Slice），
+// 而非仅 Ptr，防止非指针类型实现接口后 typed-nil 漏检。
 func isNilInterface(v any) bool {
 	if v == nil {
 		return true
 	}
 	rv := reflect.ValueOf(v)
-	return rv.Kind() == reflect.Ptr && rv.IsNil()
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // Kind 表示观测跨度类型。
@@ -140,7 +147,7 @@ func Start(ctx context.Context, observer Observer, opts SpanOptions) (context.Co
 		return ctx, NoopSpan{}
 	}
 	retCtx, span := observer.Start(ctx, opts)
-	if retCtx == nil {
+	if isNilInterface(retCtx) {
 		retCtx = ctx
 	}
 	if isNilInterface(span) {

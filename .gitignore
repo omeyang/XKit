@@ -157,6 +157,7 @@ $RECYCLE.BIN/
 .copilot/
 .tabnine/
 .sourcegraph/
+.codex
 .cospec/
 AI.md
 COSTRICT.md
@@ -165,7 +166,11 @@ COSTRICT.md
 .specify/
 
 # 本地脚本与分析报告
-scripts/
+scripts/*
+!scripts/adversarial-review.sh
+!scripts/adversarial-review-daily-check.sh
+!scripts/sync-1.23-branch.sh
+!scripts/gen-llms-full.sh
 fix-reports/
 docs/REVIEW_WORKFLOW.md
 
@@ -175,3 +180,13 @@ docs/REVIEW_WORKFLOW.md
 
 *.log
 logs/
+
+# 自动化对抗审查运行日志（本地产物，不入库）
+.adversarial-runs/
+
+# 1.23 分支自动同步运行日志与汇总（本地产物，不入库）
+.sync-1.23-runs/
+docs/sync-1.23-log.md
+
+# 文档全文汇编（CI 产物 / 本地按需用 `task docs-llms` 生成，不入库）
+llms-full.txt

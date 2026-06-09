@@ -12,6 +12,7 @@
 //
 //   - [ErrInvalidFileLimit]: 文件限制值无效（如零值）
 //   - [ErrUnsupportedPlatform]: 当前平台不支持此操作
+//   - [ErrFileLimitOverflow]: 文件限制值超出当前平台 rlimit 字段表示范围（仅 FreeBSD/DragonFly）
 //
 // # 平台支持
 //

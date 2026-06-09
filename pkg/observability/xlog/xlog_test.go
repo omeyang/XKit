@@ -227,6 +227,38 @@ func TestBuilder_InvalidLevel(t *testing.T) {
 	}
 }
 
+// TestBuilder_ZeroValue_SetLevel 验证零值 Builder 调用 SetLevel 不 panic
+func TestBuilder_ZeroValue_SetLevel(t *testing.T) {
+	var b xlog.Builder
+	b.SetLevel(xlog.LevelWarn).SetOutput(&bytes.Buffer{})
+
+	logger, cleanup, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	if logger.GetLevel() != xlog.LevelWarn {
+		t.Errorf("GetLevel() = %v, want %v", logger.GetLevel(), xlog.LevelWarn)
+	}
+}
+
+func TestBuilder_ZeroValue_SetLevel_AfterBuild(t *testing.T) {
+	var b xlog.Builder
+	b.SetOutput(&bytes.Buffer{})
+
+	logger, cleanup, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	testCleanup(t, cleanup)
+
+	logger.SetLevel(xlog.LevelWarn)
+	if logger.GetLevel() != xlog.LevelWarn {
+		t.Errorf("GetLevel() = %v, want %v", logger.GetLevel(), xlog.LevelWarn)
+	}
+}
+
 func TestBuilder_SetFormat(t *testing.T) {
 	tests := []struct {
 		format   string
@@ -275,6 +307,16 @@ func TestBuilder_NilOutput(t *testing.T) {
 		Build()
 	if err == nil {
 		t.Error("Build() should return error for nil output")
+	}
+}
+
+func TestBuilder_SetOutput_TypedNil(t *testing.T) {
+	var w *bytes.Buffer // typed-nil
+	_, _, err := xlog.New().
+		SetOutput(w).
+		Build()
+	if err == nil {
+		t.Error("Build() should return error for typed-nil output writer")
 	}
 }
 
@@ -730,6 +772,58 @@ func TestBuilder_Build_AlreadyBuilt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already built") {
 		t.Errorf("error should mention 'already built', got: %v", err)
+	}
+}
+
+// TestBuilder_Build_AlreadyBuilt_RotatorNotClosed 回归：第二次 Build() 不得关闭
+// 第一次 Build() 已转交 cleanup 的 rotator，否则第一次 logger 写入将失败。
+func TestBuilder_Build_AlreadyBuilt_RotatorNotClosed(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/regress.log"
+
+	b := xlog.New().SetRotation(file)
+	logger, cleanup, err := b.Build()
+	if err != nil {
+		t.Fatalf("first Build() error: %v", err)
+	}
+
+	// 第二次 Build 应返回错误但不应关闭第一次 logger 的 rotator
+	if _, _, err2 := b.Build(); err2 == nil {
+		t.Fatal("second Build() should return error")
+	}
+
+	logger.Info(context.Background(), "still alive after second build")
+
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		t.Errorf("cleanup() error: %v", cleanupErr)
+	}
+
+	data, readErr := os.ReadFile(file)
+	if readErr != nil {
+		t.Fatalf("ReadFile error: %v", readErr)
+	}
+	if !strings.Contains(string(data), "still alive after second build") {
+		t.Errorf("log file missing message after second Build()\ncontent: %s", string(data))
+	}
+}
+
+// TestBuilder_SetOutput_ClosesPreviousRotator 回归：SetOutput 覆盖 SetRotation
+// 时应关闭并清空 rotator，避免隐藏文件句柄泄漏到 cleanup。
+func TestBuilder_SetOutput_ClosesPreviousRotator(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/rot-then-output.log"
+
+	var buf bytes.Buffer
+	_, cleanup, err := xlog.New().
+		SetRotation(file).
+		SetOutput(&buf).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	// cleanup 应是 no-op（rotator 已在 SetOutput 中被关闭并清空）
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		t.Errorf("cleanup() should not error, got: %v", cleanupErr)
 	}
 }
 

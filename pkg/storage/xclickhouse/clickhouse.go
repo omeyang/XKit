@@ -2,11 +2,27 @@ package xclickhouse
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/omeyang/xkit/internal/storageopt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+// isNilConn 判断 driver.Conn 接口是否为 nil 或 typed-nil。
+// driver.Conn 是接口类型，持有 typed-nil（如 (*someConn)(nil)）时 client == nil 为假，
+// 后续调用会在 nil 接收者上解引用导致 panic。
+func isNilConn(c driver.Conn) bool {
+	if c == nil {
+		return true
+	}
+	v := reflect.ValueOf(c)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Chan, reflect.Map, reflect.Slice, reflect.Func:
+		return v.IsNil()
+	}
+	return false
+}
 
 // =============================================================================
 // 接口定义
@@ -169,12 +185,15 @@ type BatchResult struct {
 //	}
 //	defer ch.Close()
 func New(client driver.Conn, opts ...Option) (ClickHouse, error) {
-	if client == nil {
+	if isNilConn(client) {
 		return nil, ErrNilClient
 	}
 
 	options := defaultOptions()
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(options)
 	}
 

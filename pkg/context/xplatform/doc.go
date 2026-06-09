@@ -10,8 +10,15 @@
 // 在服务启动时调用 Init 或 MustInit 初始化。初始化后可通过
 // PlatformID()、HasParent()、UnclassRegionID() 全局访问平台信息。
 //
-// PlatformID 校验规则：不能为空/纯空白、不能包含空白字符或控制字符、最大长度 128 字节。
-// UnclassRegionID 校验规则（非空时）：纯空白归一化为空字符串（视为未设置）、不能包含空白字符或控制字符、最大长度 128 字节。
+// PlatformID 校验规则：不能为空/纯空白、不能包含空白字符或控制字符、
+// 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格/非 ASCII）、最大长度 128 字节。
+// UnclassRegionID 校验规则（非空时）：纯空白归一化为空字符串（视为未设置）、
+// 不能包含空白字符或控制字符、仅允许 ASCII 可打印字节（0x21..0x7e，不含空格/非 ASCII）、
+// 最大长度 128 字节。
+//
+// 注意：非 ASCII 字节（含中文等）会被拒绝，因为 PlatformID/UnclassRegionID 会被注入
+// HTTP Header 与 gRPC Metadata（xtenant 包），gRPC imetadata.ValidatePair 要求
+// 普通 value 为 %x20-%x7e ASCII 可打印字符；本包进一步收紧禁止空格（0x20）。
 //
 // # 查询
 //

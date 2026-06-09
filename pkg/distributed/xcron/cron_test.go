@@ -221,6 +221,22 @@ func TestScheduler_AddJob_NilJob(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilJob)
 }
 
+func TestScheduler_AddJob_TypedNilJobFunc(t *testing.T) {
+	s := New()
+	defer s.Stop()
+
+	_, err := s.AddJob("@every 1s", JobFunc(nil))
+	assert.ErrorIs(t, err, ErrNilJob)
+}
+
+func TestScheduler_AddFunc_TypedNilJobFunc(t *testing.T) {
+	s := New()
+	defer s.Stop()
+
+	_, err := s.AddFunc("@every 1s", nil)
+	assert.ErrorIs(t, err, ErrNilJob)
+}
+
 func TestScheduler_Remove(t *testing.T) {
 	s := New()
 	defer s.Stop()
@@ -517,6 +533,122 @@ func TestJobWrapper_PanicIsolation(t *testing.T) {
 		// Renew panic 应导致任务被取消
 		assert.True(t, taskCanceled.Load())
 	})
+}
+
+// panicSpan 用于测试 span.End/RecordError panic 隔离
+type panicSpan struct{}
+
+func (s *panicSpan) End(_ ...any)                  { panic("span.End panic") }
+func (s *panicSpan) SetAttributes(_ ...any)        {}
+func (s *panicSpan) RecordError(_ error, _ ...any) { panic("span.RecordError panic") }
+
+// panicSpanObserver 返回会 panic 的 Span
+type panicSpanObserver struct{}
+
+func (o *panicSpanObserver) Start(ctx context.Context, _ string, _ ...any) (context.Context, Span) {
+	return ctx, &panicSpan{}
+}
+
+var _ Observer = (*panicSpanObserver)(nil)
+
+func TestJobWrapper_SpanPanicIsolation(t *testing.T) {
+	t.Run("span.End panic is recovered", func(t *testing.T) {
+		var executed atomic.Bool
+		job := JobFunc(func(_ context.Context) error {
+			executed.Store(true)
+			return nil
+		})
+
+		opts := defaultJobOptions()
+		opts.tracer = &panicSpanObserver{}
+		wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+		assert.True(t, executed.Load())
+	})
+
+	t.Run("span.RecordError panic is recovered", func(t *testing.T) {
+		job := JobFunc(func(_ context.Context) error {
+			return fmt.Errorf("test error")
+		})
+
+		opts := defaultJobOptions()
+		opts.tracer = &panicSpanObserver{}
+		stats := newStats()
+		wrapper := newJobWrapper(job, NoopLocker(), nil, stats, opts)
+
+		require.NotPanics(t, func() {
+			wrapper.Run()
+		})
+		assert.Equal(t, int64(1), stats.TotalExecutions())
+		assert.Equal(t, int64(1), stats.FailureCount())
+	})
+}
+
+// panicUnlockHandle 用于测试 Unlock panic 隔离
+type panicUnlockHandle struct{ key string }
+
+func (h *panicUnlockHandle) Unlock(_ context.Context) error                 { panic("unlock panic") }
+func (h *panicUnlockHandle) Renew(_ context.Context, _ time.Duration) error { return nil }
+func (h *panicUnlockHandle) Key() string                                    { return h.key }
+
+// panicUnlockLocker 正常获取锁，但 Unlock 会 panic
+type panicUnlockLocker struct{}
+
+func (l *panicUnlockLocker) TryLock(_ context.Context, key string, _ time.Duration) (LockHandle, error) {
+	return &panicUnlockHandle{key: key}, nil
+}
+
+var _ Locker = (*panicUnlockLocker)(nil)
+
+func TestJobWrapper_UnlockPanicIsolation(t *testing.T) {
+	var executed atomic.Bool
+	job := JobFunc(func(_ context.Context) error {
+		executed.Store(true)
+		return nil
+	})
+
+	opts := defaultJobOptions()
+	opts.name = "unlock-panic-job"
+	opts.lockTTL = 30 * time.Second
+	wrapper := newJobWrapper(job, &panicUnlockLocker{}, nil, nil, opts)
+
+	require.NotPanics(t, func() {
+		wrapper.Run()
+	})
+	assert.True(t, executed.Load())
+}
+
+// nilCtxHook 返回 nil context
+type nilCtxHook struct {
+	afterCalled atomic.Bool
+}
+
+func (h *nilCtxHook) BeforeJob(_ context.Context, _ string) context.Context { return nil }
+func (h *nilCtxHook) AfterJob(_ context.Context, _ string, _ time.Duration, _ error) {
+	h.afterCalled.Store(true)
+}
+
+func TestJobWrapper_NilCtxFromHook(t *testing.T) {
+	var receivedCtx context.Context
+	job := JobFunc(func(ctx context.Context) error {
+		receivedCtx = ctx
+		return nil
+	})
+
+	hook := &nilCtxHook{}
+	opts := defaultJobOptions()
+	opts.hooks = []Hook{hook}
+	wrapper := newJobWrapper(job, NoopLocker(), nil, nil, opts)
+
+	require.NotPanics(t, func() {
+		wrapper.Run()
+	})
+
+	assert.NotNil(t, receivedCtx)
+	assert.True(t, hook.afterCalled.Load())
 }
 
 func TestJobWrapper_ConcurrentExecution(t *testing.T) {

@@ -311,6 +311,41 @@ func TestInformer_HandlerPanicRecovered(t *testing.T) {
 	<-errCh
 }
 
+func (m *mockListWatcher) sendNilKvEvent() {
+	ch := m.currentWatchCh()
+	if ch == nil {
+		return
+	}
+	ch <- clientv3.WatchResponse{
+		Events: []*clientv3.Event{{
+			Type: clientv3.EventTypePut,
+			Kv:   nil,
+		}},
+	}
+}
+
+// TestInformer_NilKvEventSkipped 验证 ev.Kv==nil 的异常事件被跳过，后续正常事件仍被处理。
+func TestInformer_NilKvEventSkipped(t *testing.T) {
+	t.Parallel()
+	m := newMockListWatcher()
+	m.queueGet(mockGetResp{rev: 1})
+	inf := NewInformer(m, "/p/")
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := runInBackground(t, inf, ctx)
+	// 等待 watch channel 建立
+	deadline := time.Now().Add(3 * time.Second)
+	for m.currentWatchCh() == nil && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	// 发送 nil Kv 事件，不应 panic
+	m.sendNilKvEvent()
+	// 发送正常事件，验证 watch 仍存活
+	m.sendPut("/p/k", "v", 2)
+	waitForLen(t, inf.Store(), 1)
+	cancel()
+	<-errCh
+}
+
 // TestInformer_ReListBackoffRetries 验证 re-list 失败→退避→下一轮成功路径。
 // 每次 Watch 断开触发 1 次 list 尝试；为消耗多个 list 失败需要多次触发 Watch close。
 func TestInformer_ReListBackoffRetries(t *testing.T) {
@@ -393,6 +428,16 @@ func waitForCondition(t *testing.T, cond func() bool) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal("timeout waiting for condition")
+}
+
+// TestInformer_RunNilContext nil ctx 应返��� ErrNilContext 而非 panic。
+func TestInformer_RunNilContext(t *testing.T) {
+	t.Parallel()
+	inf := NewInformer(newMockListWatcher(), "/p/")
+	err := inf.Run(nil) //nolint:staticcheck // 测试 nil ctx 防御
+	if err != ErrNilContext {
+		t.Errorf("Run(nil) = %v, want %v", err, ErrNilContext)
+	}
 }
 
 // FuzzInformer_PrefixNoPanic 任意 prefix 字节串不应 panic。

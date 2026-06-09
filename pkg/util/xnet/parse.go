@@ -124,10 +124,10 @@ func parseExplicitRange(s string, idx int) (netipx.IPRange, bool, error) {
 		if addr, err := netip.ParseAddr(s); err == nil {
 			return netipx.IPRangeFrom(addr, addr), true, nil
 		}
-		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range end: %s", ErrInvalidRange, endStr)
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range end: %w", ErrInvalidRange, endErr)
 	}
 	if endErr == nil {
-		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range start: %s", ErrInvalidRange, startStr)
+		return netipx.IPRange{}, true, fmt.Errorf("%w: invalid range start: %w", ErrInvalidRange, startErr)
 	}
 	// 两侧都无效 → 不处理，让调用方回退
 	return netipx.IPRange{}, false, nil

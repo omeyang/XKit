@@ -37,7 +37,13 @@ func TCPDialCheck(addr string) CheckFunc {
 		if err != nil {
 			return fmt.Errorf("tcp dial %s: %w", addr, err)
 		}
-		return conn.Close()
+		// 拨号成功即检查通过；Close 错误不影响检查结果。
+		defer func() {
+			if err := conn.Close(); err != nil {
+				return
+			}
+		}()
+		return nil
 	}
 }
 

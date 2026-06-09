@@ -30,6 +30,7 @@ type Redis interface {
 	Client() redis.UniversalClient
 
 	// Close 关闭缓存连接。
+	// 重复调用 Close 会返回 ErrClosed。
 	// 设计决策: ctx 参数当前未使用，保留以保证接口统一性和未来扩展性（D-02）。
 	Close(ctx context.Context) error
 }

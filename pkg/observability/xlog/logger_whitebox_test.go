@@ -332,3 +332,22 @@ func TestBuilder_Build_ErrorPath_ClosesRotator(t *testing.T) {
 		t.Error("Build() error path should close and nil rotator")
 	}
 }
+
+// TestCreateCleanup_PreservesErrorOnRepeatCall 验证 cleanup 重复调用时保留首次 Close 错误
+func TestCreateCleanup_PreservesErrorOnRepeatCall(t *testing.T) {
+	wantErr := errors.New("disk full")
+	b := New()
+	b.rotator = &failingRotator{closeErr: wantErr}
+
+	cleanup := b.createCleanup()
+
+	err1 := cleanup()
+	if !errors.Is(err1, wantErr) {
+		t.Fatalf("first cleanup() = %v, want %v", err1, wantErr)
+	}
+
+	err2 := cleanup()
+	if !errors.Is(err2, wantErr) {
+		t.Fatalf("second cleanup() = %v, want %v (should preserve first error)", err2, wantErr)
+	}
+}

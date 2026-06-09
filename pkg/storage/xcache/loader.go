@@ -181,12 +181,18 @@ func (o *LoaderOptions) validate() error {
 	if o.EnableDistributedLock && o.DistributedLockTTL <= 0 {
 		return fmt.Errorf("%w: %w", ErrInvalidConfig, ErrInvalidLockTTL)
 	}
-	// 设计决策: 当 LoadTimeout > 0 且启用分布式锁时，强制 DistributedLockTTL > LoadTimeout。
+	// 规范化 LoadTimeout: 负值语义为"使用默认超时"，转换为实际值以确保后续校验准确。
+	// 不修改 o.LoadTimeout 本身，applyLoadTimeout 运行时同样会做此转换。
+	effectiveTimeout := o.LoadTimeout
+	if effectiveTimeout < 0 {
+		effectiveTimeout = defaultOperationTimeout
+	}
+	// 设计决策: 当 effectiveTimeout > 0 且启用分布式锁时，强制 DistributedLockTTL > effectiveTimeout。
 	// 如果锁 TTL ≤ LoadTimeout，慢回源可能导致锁过期并引发并发回源，降低防击穿效果。
 	// 当 LoadTimeout == 0（禁用超时）时跳过此检查，由用户自行保证 loadFn 不会无限阻塞。
-	if o.EnableDistributedLock && o.LoadTimeout > 0 && o.DistributedLockTTL <= o.LoadTimeout {
+	if o.EnableDistributedLock && effectiveTimeout > 0 && o.DistributedLockTTL <= effectiveTimeout {
 		return fmt.Errorf("%w: DistributedLockTTL (%v) must be greater than LoadTimeout (%v)",
-			ErrInvalidConfig, o.DistributedLockTTL, o.LoadTimeout)
+			ErrInvalidConfig, o.DistributedLockTTL, effectiveTimeout)
 	}
 	return nil
 }

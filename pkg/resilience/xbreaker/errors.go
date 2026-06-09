@@ -53,6 +53,12 @@ type BreakerError struct {
 
 // Error 实现 error 接口
 func (e *BreakerError) Error() string {
+	if e.Err == nil {
+		if e.Name != "" {
+			return fmt.Sprintf("breaker %s: <nil>", e.Name)
+		}
+		return "xbreaker: unknown error"
+	}
 	if e.Name != "" {
 		return fmt.Sprintf("breaker %s: %v", e.Name, e.Err)
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -890,6 +892,81 @@ func TestClient_Request_AutoRetryOn401(t *testing.T) {
 		// Should have made exactly 2 requests (initial + one retry)
 		assert.Equal(t, 2, requestCount, "expected initial + one retry only")
 	})
+}
+
+func TestClient_Request_AutoRetryOn401_IOReaderBody(t *testing.T) {
+	ctx := context.Background()
+	requestCount := 0
+	var retryBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
+		if r.FormValue("client_id") != "" {
+			writeJSONToken(w, fmt.Sprintf("token-%d", requestCount))
+			return
+		}
+		requestCount++
+		body, _ := io.ReadAll(r.Body)
+		if requestCount == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{"code": 401})
+			return
+		}
+		retryBody = string(body)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	c, err := NewClient(cfg, WithAutoRetryOn401(true))
+	require.NoError(t, err)
+	defer c.Close(context.Background())
+
+	var result map[string]string
+	err = c.Request(ctx, &AuthRequest{
+		TenantID: "t1",
+		URL:      "/test",
+		Method:   "POST",
+		Body:     strings.NewReader(`{"key":"value"}`),
+		Response: &result,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, `{"key":"value"}`, retryBody, "retry should replay buffered body")
+}
+
+func TestClient_Request_AutoRetryOn401_DoesNotMutateCallerBody(t *testing.T) {
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, testHandlerMaxBodyBytes)
+		if r.FormValue("client_id") != "" {
+			writeJSONToken(w, "token-1")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Host = server.URL
+	c, err := NewClient(cfg, WithAutoRetryOn401(true))
+	require.NoError(t, err)
+	defer c.Close(context.Background())
+
+	reader := strings.NewReader(`{"key":"value"}`)
+	req := &AuthRequest{
+		TenantID: "t1",
+		URL:      "/test",
+		Method:   "POST",
+		Body:     reader,
+	}
+	originalBody := req.Body
+	err = c.Request(ctx, req)
+	require.NoError(t, err)
+	assert.Same(t, originalBody, req.Body, "caller's AuthRequest.Body must not be mutated")
 }
 
 func TestClient_Request_RejectsInsecureAbsoluteURL(t *testing.T) {

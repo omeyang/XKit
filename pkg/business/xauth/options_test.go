@@ -185,6 +185,13 @@ func TestApplyOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("nil option in slice", func(t *testing.T) {
+		options := applyOptions([]Option{nil, WithLocalCache(false), nil})
+		if options.EnableLocalCache {
+			t.Error("EnableLocalCache should be false")
+		}
+	})
+
 	t.Run("multiple options", func(t *testing.T) {
 		mockCache := newMockCacheStore()
 		logger := slog.Default()

@@ -283,6 +283,19 @@ func TestTruncateOutput(t *testing.T) {
 			wantTrunc:    true,
 			wantOrigSize: 11,
 		},
+		{
+			name:         "escape chars cause truncation",
+			output:       strings.Repeat("\n", 10),
+			maxBytes:     15,
+			wantTrunc:    true,
+			wantOrigSize: 10,
+		},
+		{
+			name:      "escape chars fit within budget",
+			output:    strings.Repeat("\n", 5),
+			maxBytes:  10,
+			wantTrunc: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -295,6 +308,86 @@ func TestTruncateOutput(t *testing.T) {
 				t.Errorf("OriginalSize = %d, want %d", got.OriginalSize, tt.wantOrigSize)
 			}
 		})
+	}
+}
+
+func TestJsonStringLen(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want int
+	}{
+		{"empty", "", 0},
+		{"plain ascii", "hello", 5},
+		{"newlines", "\n\n\n", 6},
+		{"tabs", "\t\t", 4},
+		{"quotes", `"hello"`, 9},
+		{"backslash", `a\b`, 4},
+		{"control char", "\x00\x01", 12},
+		{"html chars", "<>&", 18},
+		{"chinese", "你好", 6},
+		{"mixed", "hi\nworld<", 15},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jsonStringLen(tt.s)
+			if got != tt.want {
+				t.Errorf("jsonStringLen(%q) = %d, want %d", tt.s, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncateJSONSafe(t *testing.T) {
+	tests := []struct {
+		name         string
+		s            string
+		maxJSONBytes int
+		want         string
+	}{
+		{"empty", "", 10, ""},
+		{"zero budget", "hello", 0, ""},
+		{"fits exactly", "hello", 5, "hello"},
+		{"plain truncation", "hello world", 5, "hello"},
+		{"newlines budget", "\n\n\n\n", 4, "\n\n"},
+		{"tab at boundary", "a\tb", 3, "a\t"},
+		{"tab no room", "a\tb", 2, "a"},
+		{"control char no room", "\x00abc", 5, ""},
+		{"control char fits", "\x00abc", 9, "\x00abc"},
+		{"html char", "<abc", 9, "<abc"},
+		{"html char no room", "<abc", 5, ""},
+		{"chinese not split", "你好世界", 5, "你"},
+		{"chinese exact", "你好", 6, "你好"},
+		{"mixed escape", "hi\nok", 6, "hi\nok"},
+		{"mixed escape truncate", "hi\nok", 5, "hi\no"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateJSONSafe(tt.s, tt.maxJSONBytes)
+			if got != tt.want {
+				t.Errorf("truncateJSONSafe(%q, %d) = %q, want %q", tt.s, tt.maxJSONBytes, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncateOutput_EscapeHeavyFitsInPayload(t *testing.T) {
+	codec := NewCodec()
+	maxOutputSize := MaxPayloadSize - JSONOverhead
+
+	output := strings.Repeat("\n", maxOutputSize)
+	resp := TruncateOutput(output, maxOutputSize)
+
+	data, err := codec.EncodeResponse(resp)
+	if err != nil {
+		t.Fatalf("EncodeResponse should succeed after JSON-aware truncation, got error: %v", err)
+	}
+
+	payloadLen := len(data) - HeaderSize
+	if payloadLen > MaxPayloadSize {
+		t.Errorf("payload %d exceeds MaxPayloadSize %d", payloadLen, MaxPayloadSize)
 	}
 }
 
@@ -456,6 +549,16 @@ func TestCodec_ParseHeader_TooShort(t *testing.T) {
 	_, _, err := codec.parseHeader([]byte{0x01, 0x02})
 	if !errors.Is(err, ErrInvalidMessage) {
 		t.Errorf("expected ErrInvalidMessage for short header, got %v", err)
+	}
+}
+
+func TestNewErrorResponse_NilError(t *testing.T) {
+	resp := NewErrorResponse(nil)
+	if resp.Success {
+		t.Error("NewErrorResponse(nil).Success should be false")
+	}
+	if resp.Error != "" {
+		t.Errorf("NewErrorResponse(nil).Error = %q, want empty", resp.Error)
 	}
 }
 

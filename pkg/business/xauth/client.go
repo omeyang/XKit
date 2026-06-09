@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"strings"
@@ -304,6 +305,21 @@ func (c *client) Request(ctx context.Context, req *AuthRequest) error {
 		return ErrMissingTenantID
 	}
 
+	// 401 重试需要 Body 可重放。io.Reader 在首次请求后被消费，
+	// 预缓冲为 []byte 确保第二次请求有完整 Body。
+	// 使用浅拷贝避免修改调用方传入的 AuthRequest。
+	if c.options.EnableAutoRetryOn401 {
+		if r, ok := req.Body.(io.Reader); ok {
+			data, bufErr := io.ReadAll(r)
+			if bufErr != nil {
+				return fmt.Errorf("xauth: buffer request body for retry: %w", bufErr)
+			}
+			copied := *req
+			copied.Body = data
+			req = &copied
+		}
+	}
+
 	err := c.doAuthRequest(ctx, tenantID, req)
 
 	// 401 自动重试：清除缓存后重试一次
@@ -398,9 +414,9 @@ func (c *client) Close(_ context.Context) error {
 	// 停止后台刷新任务
 	c.tokenMgr.Stop()
 
-	// 清理本地缓存
-	c.tokenCache.Clear()
-	c.platformMgr.ClearLocalCache()
+	// 关闭本地缓存（停止 xlru 清理 goroutine）
+	c.tokenCache.Close()
+	c.platformMgr.Close()
 
 	c.logger.Debug("xauth client closed")
 

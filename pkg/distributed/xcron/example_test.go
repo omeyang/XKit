@@ -225,11 +225,11 @@ func Example_accessUnderlyingCron() {
 	// 获取底层 *cron.Cron，使用原生能力
 	c := scheduler.Cron()
 
-	var executed bool
-	// 例如：使用原生 AddFunc（不带分布式锁）
+	// cron job 在独立 goroutine 内执行；高负载下 @every 1s 可能并行触发，
+	// 用 atomic.Bool + CompareAndSwap 做幂等控制（避免 race detector 抓 bool 读写）
+	var executed atomic.Bool
 	if _, err := c.AddFunc("@every 1s", func() {
-		if !executed {
-			executed = true
+		if executed.CompareAndSwap(false, true) {
 			fmt.Println("native cron job")
 		}
 	}); err != nil {

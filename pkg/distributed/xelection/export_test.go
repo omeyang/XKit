@@ -65,6 +65,7 @@ type MockElection struct {
 	ResignErr error
 	Resigned  bool
 	KeyVal    string
+	RevVal    int64
 }
 
 // NewMockElection 创建带缓冲的 MockElection，容量足够单测场景。
@@ -80,6 +81,9 @@ func (m *MockElection) Resign(_ context.Context) error { m.Resigned = true; retu
 
 // Key 参见 electionKind。返回预设字符串。
 func (m *MockElection) Key() string { return m.KeyVal }
+
+// Rev 参见 electionKind。返回预设 leader key revision（Fencing token）。
+func (m *MockElection) Rev() int64 { return m.RevVal }
 
 // CloseEvents 关闭 Events channel（触发 observe 的 "channel closed" 分支）。
 func (m *MockElection) CloseEvents() { close(m.Events) }
@@ -98,7 +102,8 @@ func (m *MockElection) SendLeader(value string) {
 
 // NewTestLeaderWithElection 构造一个注入 MockElection 的 Leader，
 // 用于完整覆盖 observe 的所有分支（抢占/通道关闭/session 过期）。
-func NewTestLeaderWithElection(session *MockSession, elec electionKind, id string, logger xlog.Logger) *etcdLeader {
+// session 接受 sessionProvider 以便测试注入自定义实现（如计数型 session）。
+func NewTestLeaderWithElection(session sessionProvider, elec electionKind, id string, logger xlog.Logger) *etcdLeader {
 	l := newEtcdLeader(session, elec, id, logger)
 	l.startObserve()
 	return l
@@ -113,12 +118,15 @@ func NewTestElection(prefix string, fac func() (sessionProvider, error), opts ..
 			opt(o)
 		}
 	}
+	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &etcdElection{
 		prefix: prefix,
 		opts:   o,
 		sessionFac: func(_ *clientv3.Client, _ int) (sessionProvider, error) {
 			return fac()
 		},
+		closeCtx:    closeCtx,
+		closeCancel: closeCancel,
 	}
 }
 

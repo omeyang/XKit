@@ -30,7 +30,7 @@ func TestCampaign_NilContext(t *testing.T) {
 	e := NewTestElection("/p/", func() (sessionProvider, error) {
 		return NewMockSession(), nil
 	})
-	_, err := e.Campaign(nil, "cand-1") //nolint:staticcheck // SA1012: nil ctx 是测试目标
+	_, err := e.Campaign(nil, "cand-1")
 	if !errors.Is(err, ErrNilContext) {
 		t.Fatalf("want ErrNilContext, got %v", err)
 	}
@@ -186,6 +186,26 @@ func TestLeader_LostChannelStable(t *testing.T) {
 	b := l.Lost()
 	if a != b {
 		t.Fatal("Lost() should return the same channel on repeated calls")
+	}
+}
+
+func TestLeader_ResignNilContext(t *testing.T) {
+	t.Parallel()
+	ms := NewMockSession()
+	l := NewTestLeader(ms, "cand-1", nil)
+
+	err := l.Resign(nil)
+	if !errors.Is(err, ErrNilContext) {
+		t.Fatalf("want ErrNilContext, got %v", err)
+	}
+	if !l.IsLeader() {
+		t.Fatal("IsLeader should remain true after nil ctx Resign")
+	}
+	if ms.Closed() {
+		t.Fatal("session should NOT be closed after nil ctx Resign")
+	}
+	if err := l.Resign(context.Background()); err != nil {
+		t.Fatalf("subsequent valid Resign: %v", err)
 	}
 }
 

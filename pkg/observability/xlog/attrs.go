@@ -64,8 +64,8 @@ const (
 //	    logger.Error(ctx, "operation failed", xlog.Err(err))
 //	}
 func Err(err error) slog.Attr {
-	if err == nil {
-		return slog.Attr{} // 空属性会被 slog 忽略
+	if isNilInterface(err) {
+		return slog.Attr{} // nil/typed-nil 返回空属性（会被 slog 忽略）
 	}
 	return slog.String(KeyError, err.Error())
 }

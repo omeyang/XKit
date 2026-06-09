@@ -13,8 +13,9 @@ import (
 // SignalTrigger 信号触发器。
 // 监听 SIGUSR1 信号，收到信号时触发 Toggle 事件。
 type SignalTrigger struct {
-	sigCh     chan os.Signal
-	closeOnce sync.Once
+	sigCh  chan os.Signal
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewSignalTrigger 创建信号触发器。
@@ -28,8 +29,14 @@ func NewSignalTrigger() *SignalTrigger {
 func (t *SignalTrigger) Watch(ctx context.Context) <-chan TriggerEvent {
 	eventCh := make(chan TriggerEvent, 1)
 
-	// 注册信号处理
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		close(eventCh)
+		return eventCh
+	}
 	signal.Notify(t.sigCh, syscall.SIGUSR1)
+	t.mu.Unlock()
 
 	go func() {
 		defer close(eventCh)
@@ -47,7 +54,6 @@ func (t *SignalTrigger) Watch(ctx context.Context) <-chan TriggerEvent {
 					select {
 					case eventCh <- TriggerEventToggle:
 					default:
-						// 通道已满，跳过
 					}
 				}
 			}
@@ -59,9 +65,13 @@ func (t *SignalTrigger) Watch(ctx context.Context) <-chan TriggerEvent {
 
 // Close 关闭触发器。
 func (t *SignalTrigger) Close() error {
-	t.closeOnce.Do(func() {
-		signal.Stop(t.sigCh)
-		close(t.sigCh)
-	})
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil
+	}
+	t.closed = true
+	signal.Stop(t.sigCh)
+	close(t.sigCh)
 	return nil
 }

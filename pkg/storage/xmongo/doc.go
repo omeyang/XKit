@@ -22,6 +22,15 @@
 // 除 Client() 和 Stats() 外的所有方法在 Close() 后调用均返回 ErrClosed。并发安全。
 // Stats() 在 Close() 后仍可调用，返回最终统计快照（其返回类型不含 error）。
 //
+// # Close TOCTOU 窗口（设计决策）
+//
+// Health/FindPage/BulkInsert 使用 atomic.Bool Load 做前置守卫，与 Close 的 CAS 之间
+// 存在极窄的 TOCTOU 窗口：已通过 Load 检查的操作可能在 Disconnect 之后才执行，
+// 此时收到的是 driver 级错误（而非 ErrClosed）。这是可接受的设计折中：
+//   - mongo.Client 在 Disconnect 后不会 panic，仅返回明确错误
+//   - 添加 RWMutex 会对每次操作引入锁开销，不适合高吞吐场景
+//   - 与 xlru 包的 Close TOCTOU 处理策略一致
+//
 // # Close(ctx) 签名说明
 //
 // 设计决策: Close 接受 context.Context 参数，与同模块的 xetcd 保持一致。

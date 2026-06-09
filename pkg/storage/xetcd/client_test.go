@@ -116,7 +116,15 @@ func newTestClientForPreconditions() *Client {
 	}
 }
 
-// TestClient_ZeroValue_NoPanic 验证零值 Client 调用所有公开方法不会 panic。
+// TestClient_NilPointer_NoPanic 验证 nil *Client 调用 checkPreconditions 不 panic��
+func TestClient_NilPointer_NoPanic(t *testing.T) {
+	var c *Client
+	if err := c.checkPreconditions(context.Background()); err != ErrNotInitialized {
+		t.Errorf("nil *Client checkPreconditions(ctx) = %v, want %v", err, ErrNotInitialized)
+	}
+}
+
+// TestClient_ZeroValue_NoPanic 验证零值 Client 调用所有���开方法不会 panic。
 func TestClient_ZeroValue_NoPanic(t *testing.T) {
 	c := &Client{}
 	ctx := context.Background()

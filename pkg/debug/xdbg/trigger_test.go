@@ -78,6 +78,27 @@ func TestSignalTrigger_ContextCancel(t *testing.T) {
 	}
 }
 
+func TestSignalTrigger_WatchAfterClose(t *testing.T) {
+	trigger := NewSignalTrigger()
+
+	if err := trigger.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	// Watch after Close 应返回已关闭通道，不应 panic
+	ctx := context.Background()
+	eventCh := trigger.Watch(ctx)
+
+	select {
+	case _, ok := <-eventCh:
+		if ok {
+			t.Error("expected channel to be closed")
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("timeout waiting for channel to close")
+	}
+}
+
 func TestSignalTrigger_Close(t *testing.T) {
 	trigger := NewSignalTrigger()
 

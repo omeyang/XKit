@@ -178,14 +178,76 @@ func TruncateUTF8(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
-// TruncateOutput 截断输出并返回截断后的响应。
+// TruncateOutput 截断输出，使 JSON 编码后的字符串内容不超过 maxBytes。
+// 这确保了即使输出包含大量需要转义的字符（如 \n → \\n），
+// 编码后的 Response payload 也不会超过 MaxPayloadSize。
 func TruncateOutput(output string, maxBytes int) *Response {
-	if len(output) <= maxBytes {
+	if jsonStringLen(output) <= maxBytes {
 		return NewSuccessResponse(output)
 	}
 
-	truncated := TruncateUTF8(output, maxBytes)
+	truncated := truncateJSONSafe(output, maxBytes)
 	return NewTruncatedResponse(truncated, len(output))
+}
+
+// jsonCharCost 返回单字节字符 c 经 JSON 编码后的字节数。
+// 匹配 encoding/json.Marshal 的转义规则（含 HTML 安全转义 <, >, &）。
+func jsonCharCost(c byte) int {
+	switch c {
+	case '"', '\\':
+		return 2
+	case '\b', '\f', '\n', '\r', '\t':
+		return 2
+	case '<', '>', '&':
+		return 6
+	default:
+		if c < 0x20 {
+			return 6
+		}
+		return 1
+	}
+}
+
+// jsonStringLen 返回 s 经 JSON 字符串编码后的内容长度（不含两端引号）。
+func jsonStringLen(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		n += jsonCharCost(s[i])
+	}
+	return n
+}
+
+// truncateJSONSafe 截断 s 使其 JSON 编码后的字符串内容不超过 maxJSONBytes。
+// 不会切断多字节 UTF-8 字符。
+func truncateJSONSafe(s string, maxJSONBytes int) string {
+	if maxJSONBytes <= 0 {
+		return ""
+	}
+
+	budget := maxJSONBytes
+	i := 0
+	for i < len(s) && budget > 0 {
+		c := s[i]
+
+		if c >= 0x80 {
+			_, size := utf8.DecodeRuneInString(s[i:])
+			if size > budget {
+				break
+			}
+			budget -= size
+			i += size
+			continue
+		}
+
+		cost := jsonCharCost(c)
+		if cost > budget {
+			break
+		}
+		budget -= cost
+		i++
+	}
+
+	return s[:i]
 }
 
 // safeIntToUint32 安全地将 int 转换为 uint32。

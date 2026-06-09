@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.25.9'
-  GOLANGCI_LINT_VERSION: 'v2.8.0'
+  GO_VERSION: '1.25.10'
+  GOLANGCI_LINT_VERSION: 'v2.11.4'
 
 jobs:
   # ==================== 代码质量检查 ====================
@@ -73,7 +73,7 @@ jobs:
         run: go test -v -race -p 2 -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5.5.2
+        uses: codecov/codecov-action@v6.0.0
         with:
           files: ./coverage.out
           flags: unit
@@ -137,6 +137,38 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  # ==================== 文档全文汇编（llms-full.txt 作为 CI 产物）====================
+  # llms-full.txt 不入仓（见 .gitignore），CI 在 push/tag 时生成：
+  #   - 作为工作流产物上传（Actions UI 下载，保留 90 天）
+  #   - tag 触发时附加到对应 GitHub Release 的资产（要求 release 已存在）
+  docs-llms:
+    name: Build llms-full.txt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # release 资产上传
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Generate llms-full.txt
+        run: bash scripts/gen-llms-full.sh
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llms-full
+          path: llms-full.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" llms-full.txt --clobber \
+            || echo "::warning::release upload failed; ensure release ${GITHUB_REF_NAME} exists"
 
   # ==================== 工作流 Lint（可选，检查工作流配置）====================
   # 注意：集成测试已移至本地运行，使用 task kube-up && task kube-test && task kube-down

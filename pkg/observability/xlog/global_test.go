@@ -99,6 +99,46 @@ func TestSetDefault_Nil(t *testing.T) {
 	}
 }
 
+// stubLogger 仅用于 typed-nil 测试
+type stubLogger struct{ s string }
+
+func (l *stubLogger) Debug(context.Context, string, ...slog.Attr) { _ = l.s }
+func (l *stubLogger) Info(context.Context, string, ...slog.Attr)  { _ = l.s }
+func (l *stubLogger) Warn(context.Context, string, ...slog.Attr)  { _ = l.s }
+func (l *stubLogger) Error(context.Context, string, ...slog.Attr) { _ = l.s }
+func (l *stubLogger) Stack(context.Context, string, ...slog.Attr) { _ = l.s }
+func (l *stubLogger) With(...slog.Attr) xlog.Logger               { return l }
+func (l *stubLogger) WithGroup(string) xlog.Logger                { return l }
+func (l *stubLogger) SetLevel(xlog.Level)                         {}
+func (l *stubLogger) GetLevel() xlog.Level                        { return xlog.LevelInfo }
+func (l *stubLogger) Enabled(context.Context, xlog.Level) bool    { return true }
+
+func TestSetDefault_TypedNil(t *testing.T) {
+	xlog.ResetDefault()
+	defer xlog.ResetDefault()
+
+	var buf bytes.Buffer
+	customLogger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	xlog.SetDefault(customLogger)
+
+	// typed-nil LoggerWithLevel 应该被忽略
+	var l *stubLogger
+	xlog.SetDefault(l)
+
+	// 全局函数不应 panic
+	xlog.Info(context.Background(), "after typed-nil test")
+	if !strings.Contains(buf.String(), "after typed-nil test") {
+		t.Errorf("SetDefault(typed-nil) should preserve existing logger, output: %s", buf.String())
+	}
+}
+
 func TestDefault_ConcurrencySafety(t *testing.T) {
 	// 重置全局状态
 	xlog.ResetDefault()

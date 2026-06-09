@@ -1026,6 +1026,29 @@ func TestFindSocketInodeSuccess(t *testing.T) {
 	}
 }
 
+func TestFindSocketInodePathWithSpaces(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "test socket.sock")
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("cannot create socket with spaces in path: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Log("close listener:", closeErr)
+		}
+	})
+
+	ino, findErr := findSocketInode(socketPath)
+	if findErr != nil {
+		t.Fatalf("findSocketInode() with space in path should succeed: %v", findErr)
+	}
+	if ino == 0 {
+		t.Error("inode should be nonzero")
+	}
+}
+
 func TestCmdInteractiveInvalidTimeout(t *testing.T) {
 	err := cmdInteractive(context.Background(), "/any.sock", 0)
 	if err == nil {

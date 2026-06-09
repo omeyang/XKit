@@ -162,6 +162,69 @@ func TestWrapper_SlowQueryHook_AboveThreshold(t *testing.T) {
 	assert.True(t, triggered)
 }
 
+func TestWrapper_SlowQueryHook_FilterSnapshot(t *testing.T) {
+	var capturedFilter any
+	hook := func(_ context.Context, info SlowQueryInfo) {
+		capturedFilter = info.Filter
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
+	w := &mongoWrapper{
+		options:           opts,
+		slowQueryDetector: detector,
+	}
+
+	filter := bson.M{"name": "test"}
+	info := SlowQueryInfo{
+		Filter:   filter,
+		Duration: 200 * time.Millisecond,
+	}
+
+	w.maybeSlowQuery(context.Background(), info)
+
+	// 钩子收到的 Filter 应为字符串快照，而非原始 bson.M 引用
+	filterStr, ok := capturedFilter.(string)
+	assert.True(t, ok, "Filter should be a string snapshot")
+	assert.Contains(t, filterStr, "name")
+}
+
+func TestWrapper_SlowQueryHook_FilterSnapshot_Nil(t *testing.T) {
+	var capturedFilter any
+	hook := func(_ context.Context, info SlowQueryInfo) {
+		capturedFilter = info.Filter
+	}
+
+	opts := &Options{
+		HealthTimeout:      5 * time.Second,
+		SlowQueryThreshold: 100 * time.Millisecond,
+		SlowQueryHook:      hook,
+	}
+	detector, err := newSlowQueryDetector(opts)
+	require.NoError(t, err)
+
+	w := &mongoWrapper{
+		options:           opts,
+		slowQueryDetector: detector,
+	}
+
+	info := SlowQueryInfo{
+		Filter:   nil,
+		Duration: 200 * time.Millisecond,
+	}
+
+	w.maybeSlowQuery(context.Background(), info)
+
+	// nil Filter 保持 nil
+	assert.Nil(t, capturedFilter)
+}
+
 func TestWrapper_SlowQueryHook_ThresholdDisabled(t *testing.T) {
 	var called bool
 	hook := func(_ context.Context, _ SlowQueryInfo) {
@@ -1137,10 +1200,15 @@ func TestWrapper_ExecuteSingleBatch_UnorderedContextCancel(t *testing.T) {
 	cancel()
 
 	insertOpts := options.InsertMany().SetOrdered(false)
-	count, err, shouldStop := w.executeSingleBatch(ctx, mock, []any{bson.M{"a": 1}}, insertOpts, false)
+	count, err, shouldStop := w.executeSingleBatch(ctx, mock, []any{bson.M{"a": 1}}, insertOpts, false, 0, 0)
 	assert.Equal(t, int64(0), count)
 	assert.Error(t, err)
 	assert.True(t, shouldStop)
+
+	// 验证原始 MongoDB 错误被保留（而非被 context 错误替换）
+	var batchErr *BulkBatchError
+	require.ErrorAs(t, err, &batchErr)
+	assert.ErrorIs(t, batchErr.Err, errMockInsert)
 }
 
 // =============================================================================

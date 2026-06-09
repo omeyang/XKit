@@ -35,13 +35,16 @@ func NewPermanentError(err error) *PermanentError {
 }
 
 func (e *PermanentError) Error() string {
-	if e.err == nil {
+	if e == nil || e.err == nil {
 		return "xretry: permanent error"
 	}
 	return e.err.Error()
 }
 
 func (e *PermanentError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.err
 }
 
@@ -60,13 +63,16 @@ func NewTemporaryError(err error) *TemporaryError {
 }
 
 func (e *TemporaryError) Error() string {
-	if e.err == nil {
+	if e == nil || e.err == nil {
 		return "xretry: temporary error"
 	}
 	return e.err.Error()
 }
 
 func (e *TemporaryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.err
 }
 
@@ -81,7 +87,7 @@ func (e *TemporaryError) Retryable() bool {
 //   - 实现 RetryableError 接口：根据 Retryable() 返回值判断
 //   - 其他错误：默认视为可重试
 func IsRetryable(err error) bool {
-	if err == nil {
+	if err == nil || isNilInterfaceValue(err) {
 		return false
 	}
 
@@ -108,7 +114,7 @@ func IsRetryable(err error) bool {
 // 但不属于"永久性错误"——使用新的 context 重试可能成功。
 // 如需检查"是否不可重试"，请使用 !IsRetryable(err)。
 func IsPermanent(err error) bool {
-	if err == nil {
+	if err == nil || isNilInterfaceValue(err) {
 		return false
 	}
 	var re RetryableError

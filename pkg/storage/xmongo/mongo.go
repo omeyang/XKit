@@ -168,7 +168,8 @@ type BulkResult struct {
 	InsertedCount int64
 
 	// Errors 写入过程中的错误列表。
-	// 每个批次的错误会被单独记录。
+	// 每个批次的错误会被单独记录，类型为 *BulkBatchError，
+	// 通过 BatchOffset 可将 mongo.BulkWriteException.WriteErrors[i].Index 映射回原始 docs 的全局下标。
 	// 无序模式下可能包含多个批次的错误。
 	Errors []error
 }

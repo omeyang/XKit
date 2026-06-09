@@ -206,10 +206,13 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...WatchOption) (<-
 	// 创建事件通道
 	eventCh := make(chan Event, o.bufferSize)
 
-	// 启动 watch goroutine
-	c.watchWg.Go(func() {
+	// 启动 watch goroutine（生命周期锁内检查 closed 后注册，避免 Close 并发 panic）
+	if err := c.registerWatchGoroutine(func() {
 		c.runWatchLoop(ctx, key, etcdOpts, eventCh)
-	})
+	}); err != nil {
+		close(eventCh)
+		return nil, err
+	}
 
 	return eventCh, nil
 }
@@ -430,10 +433,13 @@ func (c *Client) WatchWithRetry(ctx context.Context, key string, cfg RetryConfig
 	}
 	eventCh := make(chan Event, o.bufferSize)
 
-	// 启动带重试的 watch goroutine
-	c.watchWg.Go(func() {
+	// 启动带重试的 watch goroutine（生命周期锁内注册，与 Close 互斥）
+	if err := c.registerWatchGoroutine(func() {
 		c.runWatchWithRetry(ctx, key, cfg, opts, eventCh)
-	})
+	}); err != nil {
+		close(eventCh)
+		return nil, err
+	}
 
 	return eventCh, nil
 }
@@ -673,7 +679,11 @@ func sleepWithCancel(ctx context.Context, d time.Duration, done <-chan struct{})
 // 当多个客户端同时丢失连接（如 etcd 集群重启）时，确定性退避会导致
 // 所有客户端在相同时间点重连，对刚恢复的集群造成突发压力。
 func nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
-	next := time.Duration(float64(current) * cfg.BackoffMultiplier)
+	raw := float64(current) * cfg.BackoffMultiplier
+	if raw > float64(cfg.MaxBackoff) {
+		return cfg.MaxBackoff
+	}
+	next := time.Duration(raw)
 	next = addJitter(next)
 	return min(next, cfg.MaxBackoff)
 }

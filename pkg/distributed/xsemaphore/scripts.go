@@ -84,6 +84,14 @@ func getScripts() *scripts {
 // 如果 ctx 为 nil，返回 [ErrNilContext]；如果 client 为 nil，返回 [ErrNilClient]。
 //
 // 当 Redis 代理不支持 Lua 脚本时（ScriptModeCompat），此函数自动检测并返回 nil（空操作）。
+//
+// ctx 黑洞防护契约：
+// 与 [NewRedis] 构造函数走 rediscompat.DetectScriptModeBounded 的 5s 硬上限不同，
+// WarmupScripts 是显式运行时 API，内部探测以及随后的 4 次 SCRIPT LOAD 全部跟随
+// caller ctx。若 Redis 地址被防火墙/路由黑洞，或客户端把 DialTimeout/ReadTimeout
+// 配成 0，同时 caller 传入不带 deadline 的 ctx（如 context.Background()），本函数
+// 会无限阻塞。caller 必须自带 deadline（推荐 5~10s）才能保证有界返回——这是显式
+// 取 ctx 参数的 API 与无 caller-ctx 构造函数的边界差异，刻意保留以避免双重超时语义。
 func WarmupScripts(ctx context.Context, client redis.UniversalClient) error {
 	if ctx == nil {
 		return ErrNilContext

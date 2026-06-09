@@ -156,7 +156,14 @@ func Do(ctx context.Context, fn func() error, opts ...Option) error {
 	if fn == nil {
 		return ErrNilFunc
 	}
-	return retry.New(defaultOpts(ctx, opts)...).Do(fn)
+	// 0 延迟场景下，retry-go 的 select 可能在 ctx 已取消时仍命中 timer 分支，
+	// 这里在每次 fn 前检查 ctx，用 Unrecoverable 立即退出。
+	return retry.New(defaultOpts(ctx, opts)...).Do(func() error {
+		if err := ctx.Err(); err != nil {
+			return retry.Unrecoverable(err)
+		}
+		return fn()
+	})
 }
 
 // DoWithData 执行带重试的操作（有返回值）
@@ -181,7 +188,13 @@ func DoWithData[T any](ctx context.Context, fn func() (T, error), opts ...Option
 		var zero T
 		return zero, ErrNilFunc
 	}
-	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(fn)
+	return retry.NewWithData[T](defaultOpts(ctx, opts)...).Do(func() (T, error) {
+		if err := ctx.Err(); err != nil {
+			var zero T
+			return zero, retry.Unrecoverable(err)
+		}
+		return fn()
+	})
 }
 
 // defaultOpts 构建带有默认 RetryIf 逻辑的选项列表。
@@ -203,7 +216,11 @@ func defaultOpts(ctx context.Context, opts []Option) []Option {
 	// 设计决策: 默认只返回最后一个错误，与 Retryer.Do 保持一致。
 	// 调用方可通过 LastErrorOnly(false) 覆盖以获取聚合错误。
 	allOpts = append(allOpts, LastErrorOnly(true))
-	allOpts = append(allOpts, opts...)
+	for _, opt := range opts {
+		if opt != nil {
+			allOpts = append(allOpts, opt)
+		}
+	}
 	// ctx 最后追加，确保函数参数优先于 opts 中的 Context()
 	allOpts = append(allOpts, Context(ctx))
 	return allOpts
@@ -229,7 +246,7 @@ func defaultOpts(ctx context.Context, opts []Option) []Option {
 //	    return doSomething()
 //	})
 func NewRetrier(opts ...Option) *retry.Retrier {
-	return retry.New(opts...)
+	return retry.New(filterNilOpts(opts)...)
 }
 
 // NewRetrierWithData 创建一个带返回值的底层 retry.RetrierWithData
@@ -243,7 +260,7 @@ func NewRetrier(opts ...Option) *retry.Retrier {
 //	    return fetchData()
 //	})
 func NewRetrierWithData[T any](opts ...Option) *retry.RetrierWithData[T] {
-	return retry.NewWithData[T](opts...)
+	return retry.NewWithData[T](filterNilOpts(opts)...)
 }
 
 // ToDelayType 将 BackoffPolicy 转换为 retry-go 的 DelayTypeFunc
@@ -258,8 +275,18 @@ func NewRetrierWithData[T any](opts ...Option) *retry.RetrierWithData[T] {
 //	    xretry.Attempts(3),
 //	    xretry.DelayType(xretry.ToDelayType(backoff)),
 //	)
+func filterNilOpts(opts []Option) []Option {
+	filtered := make([]Option, 0, len(opts))
+	for _, opt := range opts {
+		if opt != nil {
+			filtered = append(filtered, opt)
+		}
+	}
+	return filtered
+}
+
 func ToDelayType(policy BackoffPolicy) DelayTypeFunc {
-	if policy == nil {
+	if isNilInterfaceValue(policy) {
 		return func(_ uint, _ error, _ DelayContext) time.Duration {
 			return 0
 		}

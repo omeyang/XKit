@@ -1207,3 +1207,32 @@ func TestRedisLockHandle_Unlock_TimedOutContext_WithMiniredis(t *testing.T) {
 	err = handle.Unlock(timedOutCtx)
 	assert.NoError(t, err)
 }
+
+func TestRedisLockHandle_Extend_StolenLock_SetsUnlocked_WithMiniredis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	factory, err := xdlock.NewRedisFactory(client)
+	require.NoError(t, err)
+	defer func() { _ = factory.Close(context.Background()) }()
+
+	ctx := context.Background()
+
+	handle1, err := factory.TryLock(ctx, "test-extend-stolen-unlocked", xdlock.WithExpiry(100*time.Millisecond))
+	require.NoError(t, err)
+	require.NotNil(t, handle1)
+
+	mr.FastForward(200 * time.Millisecond)
+
+	handle2, err := factory.TryLock(ctx, "test-extend-stolen-unlocked", xdlock.WithExpiry(5*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, handle2)
+	defer func() { _ = handle2.Unlock(ctx) }()
+
+	err = handle1.Extend(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+
+	err = handle1.Extend(ctx)
+	assert.ErrorIs(t, err, xdlock.ErrNotLocked)
+}

@@ -43,7 +43,7 @@ XKit 遵循 Go 语言的可见性规则：
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/storage/xcache` | 缓存抽象层（Redis/Memory） | Stable |
-| `pkg/storage/xetcd` | etcd 客户端封装 | Beta |
+| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Beta |
 | `pkg/storage/xmongo` | MongoDB 客户端封装 | Beta |
 | `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Beta |
 
@@ -53,6 +53,8 @@ XKit 遵循 Go 语言的可见性规则：
 |------|------|--------|
 | `pkg/distributed/xdlock` | 分布式锁 | Beta |
 | `pkg/distributed/xcron` | 分布式定时任务 | Beta |
+| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Beta |
+| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Beta |
 
 ### MQ（消息队列）
 
@@ -84,20 +86,37 @@ XKit 遵循 Go 语言的可见性规则：
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/lifecycle/xrun` | 进程生命周期管理（errgroup + 信号处理） | Stable |
+| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Beta |
+
+### Security（安全）
+
+| 包名 | 用途 | 稳定性 |
+|------|------|--------|
+| `pkg/security/xtls` | TLS 配置与证书加载工具 | Beta |
 
 ### Util（通用工具）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/util/xfile` | 文件操作工具（路径安全） | Stable |
+| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Beta |
 | `pkg/util/xjson` | JSON 格式化工具 | Stable |
 | `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Beta |
 | `pkg/util/xlru` | LRU 缓存（泛型 + TTL） | Stable |
+| `pkg/util/xmac` | MAC 地址工具库（多格式解析、验证、序列化） | Beta |
 | `pkg/util/xnet` | IP 地址工具库（net/netip） | Beta |
 | `pkg/util/xpool` | 泛型 Worker Pool | Stable |
 | `pkg/util/xproc` | 进程信息查询 | Stable |
 | `pkg/util/xsys` | 系统资源限制管理 | Stable |
 | `pkg/util/xutil` | 泛型工具函数 | Stable |
+
+### Testkit（测试辅助）
+
+| 包名 | 用途 | 稳定性 |
+|------|------|--------|
+| `pkg/testkit/xetcdtest` | etcd 嵌入式测试桩（集成测试用） | Internal |
+| `pkg/testkit/xredismock` | Redis Mock 客户端 | Internal |
+| `pkg/distributed/xsemaphore/xsemaphoremock` | xsemaphore gomock 桩 | Internal |
 
 ---
 
@@ -427,6 +446,54 @@ XKit 遵循 Go 语言的可见性规则：
 - `JobFunc func(ctx context.Context) error` - 函数适配 Job 接口
 - `HookFunc{Before, After}` - 函数适配 Hook 接口
 
+### pkg/distributed/xelection
+
+**接口**：
+- `Election` - 选举接口（创建 Leader）
+- `Leader` - 当选后的领导者
+  - `Campaign(ctx context.Context, candidateID string) error` - 参与竞选
+  - `Resign(ctx context.Context) error` - 主动让位
+  - `IsLeader() bool`、`Lost() <-chan struct{}` - 状态查询
+  - `Key() string`
+
+**工厂函数**：
+- `NewEtcdElection(client *clientv3.Client, prefix string, opts ...Option) (Election, error)` - 基于 etcd concurrency 的实现
+
+**选项**：
+- `WithTTL(seconds int)` / `WithTTLDuration(d time.Duration)` - 租约 TTL
+- `WithLogger(l xlog.Logger)` - 日志
+
+**测试桩**（同包）：`MockSession` / `MockElection` / `NewExpiredMockSession()` 供下游单元测试复用。
+
+### pkg/distributed/xsemaphore
+
+**核心接口**：
+- `Semaphore` - 分布式信号量，方法 `Acquire/Release/Extend/Query` 等
+- `Permit` - 许可句柄，含 `Release/Extend/ID/Resource/Capacity` 等
+
+**工厂函数**：
+- `New(client redis.UniversalClient, resource string, opts ...Option) (Semaphore, error)`
+- `WarmupScripts(ctx context.Context, client redis.UniversalClient) error` - 预热 Lua 脚本
+
+**全局选项**（部分）：
+- `WithKeyPrefix / WithLogger / WithMeterProvider / WithTracerProvider`
+- `WithFallback(strategy FallbackStrategy) / WithPodCount / WithOnFallback`
+- `WithDefaultTimeout(d time.Duration) / WithIDGenerator(fn IDGeneratorFunc)`
+- `WithScriptMode(rediscompat.ScriptMode)` - 代理兼容模式
+
+**Acquire 选项**：
+- `WithCapacity / WithTenantID / WithTenantQuota / WithTTL`
+- `WithMaxRetries(n int) / WithRetryDelay(d time.Duration)` - 重试控制（上限 MaxMaxRetries=10000）
+- `WithMetadata(map[string]string)`
+
+**错误分类**（断言函数）：
+- `IsRedisError / IsCapacityFull / IsTenantQuotaExceeded / IsPermitNotHeld / IsRetryable`
+- `ClassifyError(err error) string` - 标准化分类标签
+
+**遥测**：
+- `NewMetrics(meterProvider, opts ...) (*Metrics, error)` - OTel 指标
+- `Attr*` 系列 `slog.Attr` 工厂（PermitID/Resource/TenantID/Capacity/...）
+
 ### pkg/config/xconf
 
 **接口**：
@@ -481,6 +548,33 @@ XKit 遵循 Go 语言的可见性规则：
 **工厂函数**：
 - `New(opts ...Option) (*Server, error)`
 
+### pkg/lifecycle/xhealth
+
+**类型**：
+- `Health` - 健康探针服务（HTTP 监听 liveness/readiness/startup）
+- `Status string` - 健康状态枚举（Up/Down/Unknown 等）
+- `CheckFunc func(ctx context.Context) error` - 单个检查函数
+- `CheckConfig` - 检查配置（名称/超时/缓存/必需性）
+- `CheckResult / Result` - 单项与聚合结果
+- `StatusListenerFunc(endpoint string, oldStatus, newStatus Status)` - 状态变更回调
+
+**工厂函数**：
+- `New(opts ...Option) (*Health, error)`
+
+**内置检查器**：
+- `GoroutineCountCheck(threshold int) CheckFunc`
+- `TCPDialCheck(addr string) CheckFunc`
+- `DatabasePingCheck(db *sql.DB) CheckFunc`
+- `DNSResolveCheck(host string) CheckFunc`
+- `HTTPGetCheck(url string) CheckFunc`
+
+**选项**：
+- `WithAddr(addr string) / WithBasePath(path string)` - 监听地址与路径前缀
+- `WithCacheTTL(ttl time.Duration)` - 检查结果缓存
+- `WithStatusListener(fn StatusListenerFunc)` - 状态变更钩子（含 recover 防御）
+- `WithShutdownTimeout(d time.Duration)` - 优雅关闭超时
+- `WithDetailOnQueryParam(param string)` - 查询参数触发详细输出
+
 ### pkg/lifecycle/xrun
 
 **接口**：
@@ -519,6 +613,19 @@ XKit 遵循 Go 语言的可见性规则：
 - `NewTracingProducer(client Client, options pulsar.ProducerOptions, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error)`
 - `NewTracingConsumer(client Client, options pulsar.ConsumerOptions, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error)`
 
+### pkg/security/xtls
+
+**类型**：
+- `Config` - TLS 配置（证书/密钥/CA、文件路径或 inline 字节均可）
+
+**核心函数**：
+- `BuildServerTLSConfig(c Config) (*tls.Config, error)` - 构建服务端 `*tls.Config`
+- `BuildClientTLSConfig(c Config) (*tls.Config, error)` - 构建客户端 `*tls.Config`
+- `ServerCredentials(c Config) (credentials.TransportCredentials, error)` - gRPC 服务端凭据
+- `ClientCredentials(c Config) (credentials.TransportCredentials, error)` - gRPC 客户端凭据
+
+**特性**：MinVersion 默认 TLS1.2；Inline 字节优先于文件路径；支持 mTLS 双向校验。
+
 ### pkg/util/xfile
 
 **常量**：
@@ -530,6 +637,51 @@ XKit 遵循 Go 语言的可见性规则：
 - `SanitizePath(filename string) (string, error)` - 路径安全检查与规范化
 - `SafeJoin(base, path string) (string, error)` - 安全路径拼接（防止目录穿越）
 - `SafeJoinWithOptions(base, path string, opts SafeJoinOptions) (string, error)` - 带符号链接解析的安全拼接
+
+### pkg/util/xid
+
+**类型**：
+- `Generator` - ID 生成器（封装 Sonyflake v2）
+- `Components` - ID 分解结果（time / machineID / sequence）
+- `Option func(*options)` - 选项类型
+
+**全局函数（包级单例）**：
+- `Init(opts ...Option) error` - 初始化全局生成器（须先于 `New*` 调用）
+- `New() (int64, error)` - 生成新 ID
+- `NewWithRetry(ctx context.Context) (int64, error)` - 重试版（仅 generateID 错误）
+- `NewString() (string, error)` / `NewStringWithRetry(ctx) (string, error)` - 字符串形式
+- `MustNewWithRetry() int64` / `MustNewStringWithRetry() string` - panic 版
+- `Parse(s string) (int64, error)` - 解析字符串 ID
+- `Decompose(id int64) (Components, error)` - 拆解 ID
+
+**工厂函数**：
+- `NewGenerator(opts ...Option) (*Generator, error)` - 显式实例（测试/DI 用）
+- `DefaultMachineID() (uint16, error)` - 默认 machineID 策略（多层 fallback）
+
+**选项**：
+- `WithMachineID(fn func() (uint16, error))` - 自定义 machineID 提供器
+- `WithCheckMachineID(fn func(uint16) bool)` - machineID 合法性校验
+- `WithMaxWaitDuration(d time.Duration) / WithRetryInterval(d time.Duration)` - 重试参数
+
+### pkg/util/xmac
+
+**类型**：
+- `Addr` - 6 字节 MAC 地址（值类型）
+- `Format uint8` - 序列化格式枚举（Canonical/Cisco/Bare 等）
+
+**工厂与解析**：
+- `AddrFrom6(b [6]byte) Addr` / `Zero() Addr` / `Broadcast() Addr`
+- `Parse(s string) (Addr, error)` / `MustParse(s string) Addr`
+- `ParseBytes(b []byte) (Addr, error)` / `FromHardwareAddr(hw net.HardwareAddr) (Addr, error)`
+
+**迭代器**（Go 1.23+ `iter.Seq` / `iter.Seq2`）：
+- `Range(from, to Addr) iter.Seq[Addr]` - 区间遍历
+- `RangeN(start Addr, n int) iter.Seq[Addr]` - 计数遍历
+- `RangeWithIndex / RangeReverse / RangeReverseWithIndex` - 带索引/反向版本
+
+**聚合**：
+- `CollectN(seq, maxCount) []Addr` / `Count(seq) int` / `RangeCount(from, to) uint64`
+- `AddrToUint64 / Uint64ToAddr` - 与 uint64 互转
 
 ### pkg/util/xjson
 

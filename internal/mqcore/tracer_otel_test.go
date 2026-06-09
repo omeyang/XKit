@@ -401,6 +401,34 @@ func TestSyncTraceToXctx_TraceFlags_NotSampled(t *testing.T) {
 }
 
 // =============================================================================
+// OTelTracer Zero Value Safety
+// =============================================================================
+
+func TestOTelTracer_ZeroValue_InjectNoPanic(t *testing.T) {
+	var tracer OTelTracer
+	headers := map[string]string{}
+
+	assert.NotPanics(t, func() {
+		tracer.Inject(context.Background(), headers)
+	})
+	assert.Empty(t, headers)
+}
+
+func TestOTelTracer_ZeroValue_ExtractNoPanic(t *testing.T) {
+	var tracer OTelTracer
+	headers := map[string]string{
+		"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+	}
+
+	var result context.Context
+	assert.NotPanics(t, func() {
+		result = tracer.Extract(headers)
+	})
+	assert.NotNil(t, result)
+	assert.Equal(t, context.Background(), result)
+}
+
+// =============================================================================
 // OTelTracer Interface Compliance
 // =============================================================================
 

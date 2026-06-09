@@ -792,12 +792,71 @@ func TestBreaker_NilReceiver(t *testing.T) {
 	})
 }
 
+func TestBreaker_NilReceiver_IsSuccessful(t *testing.T) {
+	var b *Breaker
+	assert.True(t, b.IsSuccessful(nil))
+	assert.False(t, b.IsSuccessful(errTest))
+}
+
+func TestBreaker_NilReceiver_IsExcluded(t *testing.T) {
+	var b *Breaker
+	assert.False(t, b.IsExcluded(nil))
+	assert.False(t, b.IsExcluded(errTest))
+}
+
 func TestManagedBreaker_NilReceiver(t *testing.T) {
 	t.Run("Execute returns ErrNilManagedBreaker", func(t *testing.T) {
 		var m *ManagedBreaker[string]
 		_, err := m.Execute(func() (string, error) { return "hello", nil })
 		assert.ErrorIs(t, err, ErrNilManagedBreaker)
 	})
+
+	t.Run("State returns StateClosed", func(t *testing.T) {
+		var m *ManagedBreaker[string]
+		assert.Equal(t, StateClosed, m.State())
+	})
+
+	t.Run("Counts returns zero value", func(t *testing.T) {
+		var m *ManagedBreaker[string]
+		counts := m.Counts()
+		assert.Equal(t, uint32(0), counts.Requests)
+	})
+}
+
+// === nil BreakerOption 防护验证 ===
+
+func TestNewBreaker_NilOption(t *testing.T) {
+	t.Run("nil option in variadic is skipped", func(t *testing.T) {
+		b := NewBreaker("test", nil, WithTimeout(30*time.Second), nil)
+		assert.NotNil(t, b)
+		assert.Equal(t, 30*time.Second, b.timeout)
+	})
+
+	t.Run("all nil options", func(t *testing.T) {
+		b := NewBreaker("test", nil, nil)
+		assert.NotNil(t, b)
+		assert.Equal(t, DefaultTimeout, b.timeout)
+	})
+}
+
+// === typed-nil 策略接口防护验证 ===
+
+func TestWithTripPolicy_TypedNilIgnored(t *testing.T) {
+	var p *ConsecutiveFailuresPolicy
+	b := NewBreaker("test", WithTripPolicy(p))
+	assert.NotNil(t, b.TripPolicy(), "typed-nil TripPolicy should be silently ignored, default retained")
+}
+
+func TestWithSuccessPolicy_TypedNilIgnored(t *testing.T) {
+	var p *customSuccessPolicy
+	b := NewBreaker("test", WithSuccessPolicy(p))
+	assert.Nil(t, b.SuccessPolicy(), "typed-nil SuccessPolicy should be silently ignored")
+}
+
+func TestWithExcludePolicy_TypedNilIgnored(t *testing.T) {
+	var p *testExcludePolicy
+	b := NewBreaker("test", WithExcludePolicy(p))
+	assert.Nil(t, b.ExcludePolicy(), "typed-nil ExcludePolicy should be silently ignored")
 }
 
 // === FG-M1 修复验证：业务函数返回 gobreaker sentinel 不被误归因 ===

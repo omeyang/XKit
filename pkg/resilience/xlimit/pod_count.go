@@ -58,22 +58,22 @@ func NewEnvPodCount(envVar string, defaultCount int) *EnvPodCount {
 
 // WithCacheDuration 设置缓存时长
 func (e *EnvPodCount) WithCacheDuration(d time.Duration) *EnvPodCount {
+	e.mu.Lock()
 	e.CacheDuration = d
+	e.mu.Unlock()
 	return e
 }
 
 // GetPodCount 从环境变量获取 Pod 数量
 func (e *EnvPodCount) GetPodCount(_ context.Context) (int, error) {
-	// 检查缓存
-	if e.CacheDuration > 0 {
-		e.mu.RLock()
-		if e.cachedCount > 0 && time.Since(e.cachedAt) < e.CacheDuration {
-			count := e.cachedCount
-			e.mu.RUnlock()
-			return count, nil
-		}
+	e.mu.RLock()
+	cacheDuration := e.CacheDuration
+	if cacheDuration > 0 && e.cachedCount > 0 && time.Since(e.cachedAt) < cacheDuration {
+		count := e.cachedCount
 		e.mu.RUnlock()
+		return count, nil
 	}
+	e.mu.RUnlock()
 
 	// 读取环境变量
 	value := os.Getenv(e.EnvVar)
@@ -87,7 +87,7 @@ func (e *EnvPodCount) GetPodCount(_ context.Context) (int, error) {
 	}
 
 	// 更新缓存
-	if e.CacheDuration > 0 {
+	if cacheDuration > 0 {
 		e.mu.Lock()
 		e.cachedCount = count
 		e.cachedAt = time.Now()

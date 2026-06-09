@@ -170,6 +170,24 @@ func TestSetHeader_UpdateExisting(t *testing.T) {
 	assert.Equal(t, "new-value", string(msg.Headers[0].Value))
 }
 
+func TestSetHeader_DuplicateHeaders(t *testing.T) {
+	msg := &kafka.Message{
+		Headers: []kafka.Header{
+			{Key: "traceparent", Value: []byte("old-1")},
+			{Key: "other", Value: []byte("keep")},
+			{Key: "traceparent", Value: []byte("old-2")},
+		},
+	}
+
+	setHeader(msg, "traceparent", "new-trace")
+
+	assert.Len(t, msg.Headers, 2)
+	assert.Equal(t, "other", msg.Headers[0].Key)
+	assert.Equal(t, "keep", string(msg.Headers[0].Value))
+	assert.Equal(t, "traceparent", msg.Headers[1].Key)
+	assert.Equal(t, "new-trace", string(msg.Headers[1].Value))
+}
+
 func TestGetHeader_Exists(t *testing.T) {
 	msg := &kafka.Message{
 		Headers: []kafka.Header{
@@ -361,7 +379,6 @@ func TestBuildDLQMetadataFromMessage_WithValidFirstFailTime(t *testing.T) {
 
 func TestBuildDLQMetadataFromMessage_WithInvalidFirstFailTime(t *testing.T) {
 	topic := "test-topic"
-	beforeTest := time.Now()
 	msg := &kafka.Message{
 		TopicPartition: kafka.TopicPartition{
 			Topic:     &topic,
@@ -375,9 +392,8 @@ func TestBuildDLQMetadataFromMessage_WithInvalidFirstFailTime(t *testing.T) {
 
 	metadata := buildDLQMetadataFromMessage(msg, "test error", 1)
 
-	// 解析失败时应回退到当前时间
-	assert.True(t, metadata.FirstFailureTime.After(beforeTest) || metadata.FirstFailureTime.Equal(beforeTest))
-	assert.True(t, metadata.FirstFailureTime.Before(time.Now().Add(time.Second)))
+	// 解析失败时返回零值，调用方可通过 IsZero() 判断
+	assert.True(t, metadata.FirstFailureTime.IsZero())
 }
 
 // =============================================================================

@@ -317,6 +317,20 @@ func TestDLQConsumer_SendToDLQ_NilContext(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestDLQConsumer_SendToDLQ_CanceledContext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	dc, _, _ := newTestDLQConsumer(ctrl)
+
+	topic := "t"
+	msg := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic}, Value: []byte("v")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := dc.SendToDLQ(ctx, msg, errors.New("reason"))
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
 // =============================================================================
 // dlqConsumer.DLQStats() Tests
 // =============================================================================
@@ -748,6 +762,23 @@ func TestDLQConsumer_RedeliverMessage_StoreOffsetError(t *testing.T) {
 	err := dc.redeliverMessage(context.Background(), msg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "store offset after redeliver failed")
+}
+
+func TestDLQConsumer_RedeliverMessage_CanceledContext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	dc, _, _ := newTestDLQConsumer(ctrl)
+
+	topic := "t"
+	msg := &kafka.Message{
+		TopicPartition: kafka.TopicPartition{Topic: &topic},
+		Value:          []byte("v"),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := dc.redeliverMessage(ctx, msg)
+	assert.ErrorIs(t, err, context.Canceled)
 }
 
 // =============================================================================

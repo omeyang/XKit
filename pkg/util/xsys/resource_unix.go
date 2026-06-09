@@ -32,9 +32,16 @@ var fileLimitMu sync.Mutex
 // 注意：允许将 soft limit 设置为低于当前值。在进程运行中降低 soft limit
 // 可能导致后续文件操作因 "too many open files" 而失败。通常建议仅在进程启动阶段调用。
 //
+// 平台差异：在 FreeBSD/DragonFly 上 unix.Rlimit 的字段类型为 int64。
+// 超过 math.MaxInt64 的 limit 在这些平台会返回 [ErrFileLimitOverflow]。
+//
 // 并发安全：内部使用互斥锁保护读改写序列。
 func SetFileLimit(limit uint64) error {
 	if err := validateFileLimit(limit); err != nil {
+		return err
+	}
+	rl, err := rlimFromUint64(limit)
+	if err != nil {
 		return err
 	}
 
@@ -46,9 +53,9 @@ func SetFileLimit(limit uint64) error {
 		return fmt.Errorf("xsys: getrlimit RLIMIT_NOFILE: %w", err)
 	}
 
-	rlimit.Cur = limit
-	if rlimit.Max < limit {
-		rlimit.Max = limit
+	rlimit.Cur = rl
+	if rlimit.Max < rl {
+		rlimit.Max = rl
 	}
 
 	if err := setrlimit(unix.RLIMIT_NOFILE, &rlimit); err != nil {
@@ -65,5 +72,5 @@ func GetFileLimit() (soft, hard uint64, err error) {
 	if err := getrlimit(unix.RLIMIT_NOFILE, &rlimit); err != nil {
 		return 0, 0, fmt.Errorf("xsys: getrlimit RLIMIT_NOFILE: %w", err)
 	}
-	return rlimit.Cur, rlimit.Max, nil
+	return rlimToUint64(rlimit.Cur), rlimToUint64(rlimit.Max), nil
 }

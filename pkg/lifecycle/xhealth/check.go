@@ -3,8 +3,11 @@ package xhealth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // CheckFunc 定义健康检查函数签名。
@@ -47,7 +50,7 @@ func (c *CheckConfig) validate() error {
 		c.Timeout = defaultTimeout
 	}
 	if c.Timeout < 0 {
-		return fmt.Errorf("%w: got %v", ErrInvalidInterval, c.Timeout)
+		return fmt.Errorf("%w: got %v", ErrInvalidTimeout, c.Timeout)
 	}
 	if c.Async {
 		if c.Interval == 0 {
@@ -69,6 +72,10 @@ type checkEntry struct {
 	mu        sync.RWMutex
 	cached    *CheckResult
 	expiresAt time.Time // 缓存过期时间（零值表示不过期，用于异步检查）
+
+	// sf 保证同步缓存 miss/过期时同一 checkEntry 只有一个执行中的 Check,
+	// 避免 TTL 失效/冷启动时并发探针惊群放大下游依赖压力。
+	sf singleflight.Group
 }
 
 // getCached 返回缓存的检查结果（线程安全）。
@@ -101,11 +108,26 @@ func (e *checkEntry) setCachedWithTTL(r CheckResult, ttl time.Duration) {
 }
 
 // execute 执行检查并返回结果。
-func (e *checkEntry) execute(ctx context.Context) CheckResult {
+//
+// 内部 recover 用户 CheckFunc 的 panic，避免异步 goroutine 或并发同步 goroutine
+// 中的 panic 杀死进程（这些 goroutine 不受 net/http 的 recover 保护）。
+func (e *checkEntry) execute(ctx context.Context) (result CheckResult) {
 	checkCtx, cancel := context.WithTimeout(ctx, e.config.Timeout)
 	defer cancel()
 
 	start := time.Now()
+	defer func() {
+		if r := recover(); r != nil {
+			result = CheckResult{
+				Status:   StatusDown,
+				Error:    fmt.Sprintf("panic: %v", r),
+				Duration: time.Since(start),
+			}
+			slog.Error("xhealth: check panic recovered",
+				"check", e.name, "panic", r)
+		}
+	}()
+
 	err := e.config.Check(checkCtx)
 	duration := time.Since(start)
 

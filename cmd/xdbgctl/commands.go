@@ -489,7 +489,8 @@ func findSocketInode(absSocketPath string) (uint64, error) {
 	for _, line := range lines[1:] { // 跳过表头
 		fields := strings.Fields(line)
 		// /proc/net/unix 格式: Num RefCount Protocol Flags Type St Inode [Path]
-		if len(fields) >= 8 && fields[7] == absSocketPath {
+		// Path 是最后一列，可能包含空格，需用 Join 还原
+		if len(fields) >= 8 && strings.Join(fields[7:], " ") == absSocketPath {
 			ino, parseErr := strconv.ParseUint(fields[6], 10, 64)
 			if parseErr != nil {
 				continue

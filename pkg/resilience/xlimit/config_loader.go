@@ -49,6 +49,10 @@ func (p *XConfProvider) Load() (Config, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	if p.cfg == nil {
+		return Config{}, ErrNilConfig
+	}
+
 	var config Config
 	if err := p.cfg.Unmarshal(p.path, &config); err != nil {
 		return Config{}, err
@@ -65,6 +69,10 @@ func (p *XConfProvider) Load() (Config, error) {
 // Watch 监视配置变更
 // 当配置文件变更时，通过 channel 发送新配置
 func (p *XConfProvider) Watch(ctx context.Context) (<-chan ConfigChange, error) {
+	if p.cfg == nil {
+		return nil, ErrNilConfig
+	}
+
 	ch := make(chan ConfigChange, 1)
 
 	watcher, err := xconf.Watch(p.cfg, func(_ xconf.Config, watchErr error) {

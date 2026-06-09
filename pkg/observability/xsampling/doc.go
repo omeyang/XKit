@@ -87,7 +87,13 @@
 //
 // # 并发安全
 //
-// 所有采样器都是并发安全的，可以在多个 goroutine 中同时使用。
+// 内置采样器自身的状态并发安全，可以在多个 goroutine 中同时使用。
+// 调用方提供的扩展点必须自行保证并发安全：
+//   - CompositeSampler 中组合的自定义 Sampler 实现
+//   - KeyBasedSampler 的 KeyFunc（从 context 提取键）
+//   - KeyBasedSampler 的 OnEmptyKey 回调（空键时调用）
+//
+// 若这些闭包读写非同步的外部状态，即使使用内置采样器也会触发 race。
 //
 // # 性能
 //

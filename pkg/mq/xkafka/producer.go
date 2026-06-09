@@ -64,13 +64,22 @@ func (w *producerWrapper) Health(ctx context.Context) (err error) {
 	// 使用 channel 来处理 context 取消
 	done := make(chan error, 1)
 	go func() {
+		// 加锁前先检查 ctx，避免外层已超时时仍排队等 mu
+		if err := ctx.Err(); err != nil {
+			done <- err
+			return
+		}
 		// 加锁保护对底层 producer 的访问
 		w.mu.Lock()
 		defer w.mu.Unlock()
 
-		// 再次检查 closed，防止在等待锁期间 Close() 已执行
+		// 再次检查 closed / ctx，防止在等待锁期间 Close() 已执行或 ctx 已取消
 		if w.closed.Load() {
 			done <- ErrClosed
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			done <- err
 			return
 		}
 

@@ -1,0 +1,70 @@
+# XKit
+
+> Go 基础工具库（38 个包，整体覆盖率 94.0%）。统一的可观测性、弹性、存储、分布式协调与通用工具集，遵循"模块化 + 接口由使用方定义 + 函数选项"的设计范式。多轮 AI 对抗审查稳定。
+
+Go 版本：1.25.10（流水线固定）；1.23 兼容分支 `develop-1.23-release` 提供功能等价版本。所有错误处理使用 `%w` 跨包包装；构造函数返回 error 而非 panic；mock 放 `<pkg>mock/` 子包以隔离覆盖率。
+
+知识库索引：<https://github.com/omeyang/XKit/blob/main/docs/00-index.md>
+API 参考：<https://pkg.go.dev/github.com/omeyang/xkit>
+全文（供 RAG 一次性吞入）：由 CI 在 push/tag 时生成，可从 Actions 工作流产物 `llms-full` 下载，或在 release 资产中获取；本地用 `task docs-llms` 生成
+
+## 入口
+
+- [README](https://github.com/omeyang/XKit/blob/main/README.md): 项目概览、包清单、技术规范
+- [文档索引（顶层 MOC）](https://github.com/omeyang/XKit/blob/main/docs/00-index.md): 8 大分区导航
+- [变更日志](https://github.com/omeyang/XKit/blob/main/CHANGELOG.md): v0.1.0 候选段、版本规划
+- [术语表](https://github.com/omeyang/XKit/blob/main/docs/glossary.md): FG-H / FP / slot / CA/CB/Codex / typed-nil 等
+
+## 设计与约束
+
+- 设计目标、硬约束、覆盖率门槛见 [README](https://github.com/omeyang/XKit/blob/main/README.md) 与 [CLAUDE.md](https://github.com/omeyang/XKit/blob/main/CLAUDE.md)
+- [进度追踪](https://github.com/omeyang/XKit/blob/main/docs/06-progress.md)
+- [API 清单](https://github.com/omeyang/XKit/blob/main/docs/07-conventions/api.md)
+
+## 关键决策（ADR）
+
+- [0001 构造函数返回 error 不 panic](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0001-constructor-returns-error-not-panic.md)
+- [0002 接口由使用方定义](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0002-interface-defined-by-consumer.md)
+- [0003 函数选项模式](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0003-functional-options-for-config.md)
+- [0004 错误包装策略（%w 跨包，%v 抽象边界）](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0004-error-wrapping-policy.md)
+- [0005 slog 作为唯一日志后端](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0005-slog-as-sole-log-backend.md)
+- [0006 中文文档/英文标识符](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0006-chinese-docs-english-identifiers.md)
+- [0007 util 包不内置可观测性](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0007-util-packages-no-builtin-observability.md)
+- [0008 mock 放子包](https://github.com/omeyang/XKit/blob/main/docs/05-decisions/0008-mock-in-subpackage.md)
+
+## 包详情（38 包 + 14 子域索引）
+
+- [包索引 MOC](https://github.com/omeyang/XKit/blob/main/docs/packages/00-index.md)
+- 按域：[business](https://github.com/omeyang/XKit/tree/main/docs/packages/business) · [config](https://github.com/omeyang/XKit/tree/main/docs/packages/config) · [context](https://github.com/omeyang/XKit/tree/main/docs/packages/context) · [debug](https://github.com/omeyang/XKit/tree/main/docs/packages/debug) · [distributed](https://github.com/omeyang/XKit/tree/main/docs/packages/distributed) · [lifecycle](https://github.com/omeyang/XKit/tree/main/docs/packages/lifecycle) · [mq](https://github.com/omeyang/XKit/tree/main/docs/packages/mq) · [observability](https://github.com/omeyang/XKit/tree/main/docs/packages/observability) · [resilience](https://github.com/omeyang/XKit/tree/main/docs/packages/resilience) · [security](https://github.com/omeyang/XKit/tree/main/docs/packages/security) · [storage](https://github.com/omeyang/XKit/tree/main/docs/packages/storage) · [testkit](https://github.com/omeyang/XKit/tree/main/docs/packages/testkit) · [util](https://github.com/omeyang/XKit/tree/main/docs/packages/util) · [internal](https://github.com/omeyang/XKit/tree/main/docs/packages/internal)
+
+## 概念笔记（跨包）
+
+- [概念 MOC](https://github.com/omeyang/XKit/blob/main/docs/concepts/00-index.md)
+- [错误处理策略](https://github.com/omeyang/XKit/blob/main/docs/concepts/error-handling-policy.md)
+- [Typed-nil 陷阱](https://github.com/omeyang/XKit/blob/main/docs/concepts/typed-nil-trap.md)
+- [Nil context 防御](https://github.com/omeyang/XKit/blob/main/docs/concepts/nil-context-defense.md)
+- [Panic recover 纪律](https://github.com/omeyang/XKit/blob/main/docs/concepts/panic-recover-discipline.md)
+- [接口由使用方定义](https://github.com/omeyang/XKit/blob/main/docs/concepts/interface-by-consumer.md)
+- [函数选项模式](https://github.com/omeyang/XKit/blob/main/docs/concepts/functional-options.md)
+- [并发安全](https://github.com/omeyang/XKit/blob/main/docs/concepts/concurrency-safety.md)
+- [可观测性栈](https://github.com/omeyang/XKit/blob/main/docs/concepts/observability-stack.md)
+- [测试模式](https://github.com/omeyang/XKit/blob/main/docs/concepts/testing-patterns.md)
+- [Mock 隔离](https://github.com/omeyang/XKit/blob/main/docs/concepts/mock-isolation.md)
+
+## 设计模式
+
+- [模式 MOC](https://github.com/omeyang/XKit/blob/main/docs/patterns/00-index.md)
+- [Cache-Aside](https://github.com/omeyang/XKit/blob/main/docs/patterns/cache-aside.md) · [Singleflight](https://github.com/omeyang/XKit/blob/main/docs/patterns/singleflight.md)
+- [Distributed Lock](https://github.com/omeyang/XKit/blob/main/docs/patterns/distributed-lock.md) · [Leader Election](https://github.com/omeyang/XKit/blob/main/docs/patterns/leader-election.md)
+- [Worker Pool](https://github.com/omeyang/XKit/blob/main/docs/patterns/worker-pool.md) · [Circuit Breaker](https://github.com/omeyang/XKit/blob/main/docs/patterns/circuit-breaker.md)
+- [Fail-Fast 消费循环](https://github.com/omeyang/XKit/blob/main/docs/patterns/fail-fast-consume-loop.md)
+- [对抗审查](https://github.com/omeyang/XKit/blob/main/docs/patterns/adversarial-review.md)
+
+## 操作手册
+
+- [Runbook MOC](https://github.com/omeyang/XKit/blob/main/docs/runbooks/00-index.md)
+- [新增一个包](https://github.com/omeyang/XKit/blob/main/docs/runbooks/how-to-add-package.md)
+- [跑对抗审查](https://github.com/omeyang/XKit/blob/main/docs/runbooks/how-to-run-adversarial-review.md)
+- [同步 1.23 分支](https://github.com/omeyang/XKit/blob/main/docs/runbooks/how-to-sync-1.23-branch.md)
+- [发布版本](https://github.com/omeyang/XKit/blob/main/docs/runbooks/how-to-release.md)
+

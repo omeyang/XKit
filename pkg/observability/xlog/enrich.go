@@ -30,7 +30,7 @@ type EnrichHandler struct {
 // 且多数场景不会对 logger 调用 WithGroup。如需顶层 trace_id，避免对带 enrich 的
 // logger 调用 WithGroup，或在 WithGroup 前提取 enrich 字段。
 func NewEnrichHandler(base slog.Handler) (*EnrichHandler, error) {
-	if base == nil {
+	if isNilInterface(base) {
 		return nil, ErrNilHandler
 	}
 	return &EnrichHandler{base: base}, nil

@@ -302,6 +302,17 @@ func (b *cancelOnAppendBatch) AppendStruct(_ any) error {
 
 func (b *cancelOnAppendBatch) ScanStruct(_ any) error { return nil }
 
+// abortTrackingBatch 包装 mockBatch，追踪 Abort 是否被调用。
+type abortTrackingBatch struct {
+	*mockBatch
+	aborted *bool
+}
+
+func (b *abortTrackingBatch) Abort() error {
+	*b.aborted = true
+	return b.mockBatch.Abort()
+}
+
 // =============================================================================
 // 辅助构造函数
 // =============================================================================

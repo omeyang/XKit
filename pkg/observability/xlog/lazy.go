@@ -119,8 +119,8 @@ type lazyErrorValue struct {
 // LogValue 实现 slog.LogValuer 接口
 func (l lazyErrorValue) LogValue() slog.Value {
 	err := l.fn()
-	if err == nil {
-		return slog.Value{} // nil error 返回空值
+	if isNilInterface(err) {
+		return slog.Value{} // nil/typed-nil error 返回空值
 	}
 	return slog.StringValue(err.Error())
 }

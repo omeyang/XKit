@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/go-redsync/redsync/v4"
@@ -50,15 +51,20 @@ func NewRedisFactoryWithOpts(clients []redis.UniversalClient, opts ...RedisFacto
 		if client == nil {
 			return nil, errors.Join(ErrNilClient, fmt.Errorf("client at index %d is nil", i))
 		}
+		if rv := reflect.ValueOf(client); rv.Kind() == reflect.Pointer && rv.IsNil() {
+			return nil, errors.Join(ErrNilClient, fmt.Errorf("client at index %d is typed-nil", i))
+		}
 	}
 
 	cfg := &redisFactoryConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(cfg)
+		}
 	}
 
-	// 解析脚本模式（len(clients) > 0 已由上方校验保证）
-	scriptMode := resolveRedisScriptMode(cfg.ScriptMode, clients[0]) //nolint:gosec // G602: len validated above
+	// 解析脚本模式：Auto 时探测所有 clients（len > 0 已由上方校验保证）
+	scriptMode := resolveRedisScriptMode(cfg.ScriptMode, clients...)
 
 	// 创建 redsync Pool 列表
 	pools := make([]rsredis.Pool, len(clients))
@@ -79,17 +85,25 @@ func NewRedisFactoryWithOpts(clients []redis.UniversalClient, opts ...RedisFacto
 	}, nil
 }
 
-// resolveRedisScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
-func resolveRedisScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
+// resolveRedisScriptMode 解析脚本模式：Auto 时探测所有 clients，否则直接使用。
+// 任一 client 返回 ScriptModeCompat 则全部使用 Compat，确保 Redlock 多节点一致。
+//
+// 探测走 [rediscompat.DetectScriptModeBounded]，每个 client 有 5s 内部超时；
+// N 个 Redlock 节点全部黑洞时构造函数最长阻塞 N * 5s（仍有界，远好于原来的无限阻塞）。
+func resolveRedisScriptMode(mode rediscompat.ScriptMode, clients ...redis.UniversalClient) rediscompat.ScriptMode {
 	if mode != rediscompat.ScriptModeAuto {
 		return mode
 	}
-	// 网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）
-	detected, err := rediscompat.DetectScriptMode(context.Background(), client)
-	if err != nil {
-		return rediscompat.ScriptModeLua
+	for _, client := range clients {
+		detected, err := rediscompat.DetectScriptModeBounded(client)
+		if err != nil {
+			continue
+		}
+		if detected == rediscompat.ScriptModeCompat {
+			return rediscompat.ScriptModeCompat
+		}
 	}
-	return detected
+	return rediscompat.ScriptModeLua
 }
 
 // TryLock 非阻塞式获取锁，返回 LockHandle。
@@ -312,13 +326,16 @@ func (h *redisLockHandle) Extend(ctx context.Context) error {
 	ok, err := h.mutex.ExtendContext(ctx)
 	if err != nil {
 		wrappedErr := wrapRedisError(err)
-		// 锁已过期/被抢走 → 所有权已丢失
+		// 锁已过期/被抢走 → 所有权已丢失，设置 unlocked 标记防止后续 Extend
+		// 发送无意义的 Redis 请求（与 Unlock 的 L284/L293 路径对称）
 		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+			h.unlocked.Store(true)
 			return ErrNotLocked
 		}
 		return wrappedErr
 	}
 	if !ok {
+		h.unlocked.Store(true)
 		return ErrNotLocked
 	}
 	return nil

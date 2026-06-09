@@ -46,8 +46,9 @@ func NewOTelTracer(opts ...OTelTracerOption) OTelTracer {
 }
 
 // Inject 将追踪信息注入到消息头。
+// 零值 OTelTracer（propagator 为 nil）降级为 no-op，不会 panic。
 func (t OTelTracer) Inject(ctx context.Context, headers map[string]string) {
-	if headers == nil {
+	if headers == nil || t.propagator == nil {
 		return
 	}
 	ctx = ensureSpanContext(ctx)
@@ -55,8 +56,9 @@ func (t OTelTracer) Inject(ctx context.Context, headers map[string]string) {
 }
 
 // Extract 从消息头提取追踪信息。
+// 零值 OTelTracer（propagator 为 nil）降级为 no-op，返回 context.Background()。
 func (t OTelTracer) Extract(headers map[string]string) context.Context {
-	if headers == nil {
+	if headers == nil || t.propagator == nil {
 		return context.Background()
 	}
 	ctx := t.propagator.Extract(context.Background(), propagation.MapCarrier(headers))

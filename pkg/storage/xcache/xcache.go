@@ -57,12 +57,13 @@ func NewRedis(client redis.UniversalClient, opts ...RedisOption) (Redis, error) 
 }
 
 // resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
+// 探测走 [rediscompat.DetectScriptModeBounded]，有 5s 内部超时防止 Redis 黑洞地址
+// 卡死构造函数；超时/网络错误时降级为 Lua（安全默认值）。
 func resolveScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
 	if mode != rediscompat.ScriptModeAuto {
 		return mode
 	}
-	// 网络错误时 DetectScriptMode 返回 ScriptModeLua（安全默认值）
-	detected, err := rediscompat.DetectScriptMode(context.Background(), client)
+	detected, err := rediscompat.DetectScriptModeBounded(client)
 	if err != nil {
 		return rediscompat.ScriptModeLua
 	}
@@ -360,6 +361,9 @@ func (w *memoryWrapper) Client() *ristretto.Cache[string, []byte] {
 }
 
 func (w *memoryWrapper) Wait() {
+	if w.closed.Load() {
+		return
+	}
 	w.cache.Wait()
 }
 

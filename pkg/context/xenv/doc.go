@@ -30,7 +30,8 @@
 // 错误优先级：ErrAlreadyInitialized > ErrMissingEnv > ErrEmptyEnv > ErrInvalidDeploymentType。
 // 不提供隐式默认值：环境变量未设置返回 ErrMissingEnv，
 // 空值返回 ErrEmptyEnv，非法值返回 ErrInvalidDeploymentType。
-// 测试场景可使用 Reset() 重置状态（该函数仅在 go test 期间可用）。
+// 本包测试可使用 Reset() 重置状态（定义在 export_test.go 中，仅本包 go test 可用，
+// 外部包无法调用）。
 //
 // # 查询
 //

@@ -718,6 +718,18 @@ func TestNextBackoff(t *testing.T) {
 	}
 }
 
+// TestNextBackoff_OverflowSaturation 验证极大 Duration 不会因 float64→int64 溢出变负。
+func TestNextBackoff_OverflowSaturation(t *testing.T) {
+	cfg := RetryConfig{
+		MaxBackoff:        math.MaxInt64,
+		BackoffMultiplier: 2.0,
+	}
+	got := nextBackoff(math.MaxInt64, cfg)
+	if got < 0 {
+		t.Errorf("nextBackoff(MaxInt64) = %v, want non-negative", got)
+	}
+}
+
 // TestAddJitter 测试 addJitter 函数。
 func TestAddJitter(t *testing.T) {
 	t.Run("zero duration", func(t *testing.T) {

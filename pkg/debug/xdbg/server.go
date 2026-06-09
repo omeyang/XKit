@@ -89,6 +89,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if !s.state.CompareAndSwap(int32(ServerStateCreated), int32(ServerStateStarted)) {
+		if ServerState(s.state.Load()) == ServerStateStopped {
+			return fmt.Errorf("%w: server has been stopped", ErrInvalidState)
+		}
 		return ErrAlreadyRunning
 	}
 

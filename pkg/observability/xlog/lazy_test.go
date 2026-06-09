@@ -442,6 +442,34 @@ func TestLazy_NilFn(t *testing.T) {
 	}
 }
 
+func TestLazyError_TypedNilError(t *testing.T) {
+	var buf bytes.Buffer
+	logger, cleanup, err := xlog.New().
+		SetOutput(&buf).
+		SetLevel(xlog.LevelDebug).
+		SetFormat("json").
+		Build()
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	defer func() { _ = cleanup() }()
+
+	// fn 返回 typed-nil error 不应 panic
+	logger.Debug(context.Background(), "typed-nil err",
+		xlog.LazyError("err", func() error {
+			return (*testError)(nil) // typed-nil
+		}),
+	)
+
+	output := buf.String()
+	if !strings.Contains(output, "typed-nil err") {
+		t.Errorf("expected output to contain 'typed-nil err', got: %s", output)
+	}
+	if strings.Contains(output, "panicked") {
+		t.Errorf("typed-nil error should not cause panic, got: %s", output)
+	}
+}
+
 // BenchmarkLazyGroup 测试 LazyGroup 性能
 func BenchmarkLazyGroup(b *testing.B) {
 	logger, cleanup, err := xlog.New().

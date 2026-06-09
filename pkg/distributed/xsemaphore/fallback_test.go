@@ -2,6 +2,7 @@ package xsemaphore
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -461,6 +462,44 @@ func TestFallbackAcquire_AllStrategies(t *testing.T) {
 		assert.Contains(t, permit.ID(), "noop-")
 
 		releasePermit(t, ctx, permit)
+	})
+
+	t.Run("FallbackOpen returns interface-nil when ID generation fails", func(t *testing.T) {
+		// 回归测试：doFallback 在 FallbackOpen 分支若直接 `return newNoopPermit(...)`，
+		// newNoopPermit 返回 (*noopPermit)(nil) 时会被装箱为非 nil 的 Permit 接口
+		// （typed-nil through interface 陷阱），调用方 `if permit != nil { permit.Release() }`
+		// 清理模式会 nil 解引用 panic。修复后必须显式返回 nil 接口。
+		//
+		// 测试通过 .(*fallbackSemaphore) 类型断言直接调用未导出的 doFallback，
+		// 绕开 redisSemaphore.doAcquire 的前置 ID 生成（line redis.go:346）——
+		// 否则相同的失败 IDGenerator 会让分布式路径先于 fallback 返回
+		// ErrIDGenerationFailed（非 IsRedisError），导致 doFallback 永远不被执行。
+		_, client := setupRedis(t)
+
+		sem, err := New(client,
+			WithFallback(FallbackOpen),
+			WithPodCount(2),
+			WithIDGenerator(func(_ context.Context) (string, error) {
+				return "", errors.New("simulated ID generation failure")
+			}),
+		)
+		require.NoError(t, err)
+		defer closeSemaphore(t, sem)
+
+		fs, ok := sem.(*fallbackSemaphore)
+		require.True(t, ok, "expected *fallbackSemaphore when WithFallback is set")
+
+		ctx := context.Background()
+		permit, err := fs.doFallback(ctx, "id-gen-fail-test", []AcquireOption{WithCapacity(10)}, false)
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrIDGenerationFailed)
+
+		// 关键断言：用 Go 原生 == nil 检查接口值，**不要用 assert.Nil**——
+		// testify 的 Nil 会经反射拆开接口，对 typed-nil 也返回 true，测不出此 bug。
+		if permit != nil {
+			t.Fatalf("expected interface-nil Permit, got typed-nil (interface holds %T)", permit)
+		}
 	})
 
 	t.Run("FallbackClose returns error for Acquire", func(t *testing.T) {

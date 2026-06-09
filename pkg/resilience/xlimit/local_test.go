@@ -456,8 +456,8 @@ func TestTokenBucket_UpdateParams(t *testing.T) {
 		lastUpdate: time.Now(),
 	}
 
-	// 缩小 burst，tokens 应该被截断到新容量
-	tb.updateParams(50, 50, time.Minute)
+	// 缩小 burst，tokens 应该被截断到新容量（通过 takeWithParams 的 n=0 触发参数刷新）
+	tb.takeWithParams(50, 50, time.Minute, 0)
 
 	tb.mu.Lock()
 	if tb.limit != 50 {
@@ -471,8 +471,8 @@ func TestTokenBucket_UpdateParams(t *testing.T) {
 	}
 	tb.mu.Unlock()
 
-	// 扩大 burst，tokens 不变
-	tb.updateParams(200, 200, time.Minute)
+	// 扩大 burst，tokens 不应凭空增加（本测试时间间隔极短，补令牌可忽略）
+	tb.takeWithParams(200, 200, time.Minute, 0)
 	tb.mu.Lock()
 	if tb.limit != 200 {
 		t.Errorf("expected limit 200, got %d", tb.limit)
@@ -480,8 +480,8 @@ func TestTokenBucket_UpdateParams(t *testing.T) {
 	if tb.burst != 200 {
 		t.Errorf("expected burst 200, got %d", tb.burst)
 	}
-	if tb.tokens != 50 {
-		t.Errorf("expected tokens unchanged at 50, got %f", tb.tokens)
+	if tb.tokens < 50 || tb.tokens > 51 {
+		t.Errorf("expected tokens ~50 after short interval, got %f", tb.tokens)
 	}
 	tb.mu.Unlock()
 }

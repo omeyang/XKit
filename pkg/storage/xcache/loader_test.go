@@ -780,6 +780,23 @@ func TestNewLoader_DistLockTTL_EqualToLoadTimeout_ReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
+func TestNewLoader_NegativeLoadTimeout_StillValidatesDistLockTTL(t *testing.T) {
+	// LoadTimeout < 0 语义为"使用默认超时 30s"，validate 必须用实际生效值做 DistributedLockTTL 比较。
+	cache, _ := newTestRedis(t)
+
+	// When - LoadTimeout=-1（运行时转为 30s），DistributedLockTTL=20s < 30s
+	_, err := NewLoader(cache,
+		WithDistributedLock(true),
+		WithLoadTimeout(-1),
+		WithDistributedLockTTL(20*time.Second),
+	)
+
+	// Then
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
+	assert.Contains(t, err.Error(), "DistributedLockTTL")
+}
+
 func TestNewLoader_NilCache_ReturnsError(t *testing.T) {
 	_, err := NewLoader(nil)
 	assert.ErrorIs(t, err, ErrNilClient)
@@ -1093,6 +1110,29 @@ func TestSetHashTTLIfMissing_WhenKeyHasTTL_SkipsExpire(t *testing.T) {
 	ttlResult, err := cache.Client().TTL(ctx, "has-ttl-hash").Result()
 	require.NoError(t, err)
 	assert.True(t, ttlResult > 30*time.Minute, "original TTL should be preserved")
+}
+
+func TestSetHashTTLIfMissing_WhenKeyNotExist_SkipsExpire(t *testing.T) {
+	cache, mr := newTestRedis(t)
+	ctx := context.Background()
+
+	l := &loader{cache: cache, options: defaultLoaderOptions()}
+
+	// key 不存在时 TTL 返回 -2，不应调用 Expire（无操作可跳过）
+	mr.Del("nonexistent-key")
+	l.setHashTTLIfMissing(ctx, "nonexistent-key", time.Hour)
+
+	// key 仍不存在（Expire 未创建 key）
+	assert.False(t, mr.Exists("nonexistent-key"), "Expire should not create non-existent key")
+}
+
+func TestApplyTTLJitter_ExtremelyLargeTTL_ReturnsTTL(t *testing.T) {
+	l := &loader{options: defaultLoaderOptions()}
+	l.options.TTLJitter = 1.0
+
+	largeTTL := time.Duration(1<<63 - 1)
+	result := l.applyTTLJitter(largeTTL)
+	assert.True(t, result > 0, "result should be positive for extreme TTL")
 }
 
 // =============================================================================

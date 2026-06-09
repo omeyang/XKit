@@ -56,7 +56,16 @@ func ExtractFromHTTPHeader(h http.Header) TraceInfo {
 			info.TraceID = traceID
 			info.SpanID = spanID
 			info.TraceFlags = traceFlags
+		} else {
+			// W3C: tracestate 语义绑定于其 traceparent，traceparent 无效时
+			// tracestate 不应被嫁接到后续（自定义头生成的）trace context 中传播。
+			info.Tracestate = ""
 		}
+	} else {
+		// W3C Trace Context 规范：tracestate 不得在无 traceparent 时存在。
+		// 丢弃孤立的 tracestate，避免后续 InjectTraceToHeader 生成 traceparent 后
+		// 将无关的 tracestate 嫁接到新 trace context 中。
+		info.Tracestate = ""
 	}
 
 	return info
@@ -145,7 +154,7 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 //
 // 用于手动构造 HTTP Header 的场景。
 // 如果 TraceInfo.Traceparent 为空但有有效的 TraceID 和 SpanID，
-// 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "00"）。
+// 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "01" 已采样）。
 //
 // 注意：如果 Traceparent 格式无效，会静默丢弃并尝试从 TraceID/SpanID 生成。
 // 如果同时设置了 TraceID 和 Traceparent，请确保两者一致以避免下游混淆。

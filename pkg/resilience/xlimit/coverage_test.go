@@ -496,6 +496,30 @@ func TestFallbackLimiter_CustomFallback(t *testing.T) {
 	assert.Equal(t, "custom-fallback", result.Rule)
 }
 
+func TestFallbackLimiter_CustomFallback_NilResultNilError(t *testing.T) {
+	distributed := &mockFailingLimiter{
+		failOnAllow: true,
+		failErr:     syscall.ECONNREFUSED,
+	}
+	local, err := NewLocal(WithRules(TenantRule("test", 10, time.Minute)))
+	require.NoError(t, err)
+	defer func() { _ = local.Close(context.Background()) }() //nolint:errcheck // defer cleanup
+
+	opts := &options{
+		config: Config{Fallback: FallbackLocal},
+		customFallback: func(_ context.Context, _ Key, _ int, _ error) (*Result, error) {
+			return nil, nil //nolint:nilnil // 故意违反契约用于测试
+		},
+	}
+	fb := newFallbackLimiter(distributed, local, opts)
+
+	result, err := fb.Allow(context.Background(), Key{Tenant: "t"})
+	require.NoError(t, err)
+	require.NotNil(t, result, "nil result + nil error should be guarded to non-nil result")
+	assert.True(t, result.Allowed, "should fail-open on nil result")
+	assert.Equal(t, "custom-fallback", result.Rule)
+}
+
 // noopLogger 实现 xlog.Logger 接口用于测试
 type noopLogger struct{}
 

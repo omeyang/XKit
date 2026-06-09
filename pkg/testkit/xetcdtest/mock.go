@@ -10,6 +10,7 @@
 package xetcdtest
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -59,17 +60,55 @@ type Mock struct {
 // 数据目录使用临时目录，Close 时自动清理。
 // 端口抢占导致启动失败会自动重试，重试次数上限 maxStartAttempts。
 func New() (*Mock, error) {
-	var lastErr error
+	var errs []error
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		m, err := tryStart()
 		if err == nil {
 			return m, nil
 		}
-		lastErr = err
+		errs = append(errs, err)
 		// 指数退避等待下一次尝试，避开并发抢占窗口。
 		time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
 	}
-	return nil, fmt.Errorf("xetcdtest: start after %d attempts: %w", maxStartAttempts, lastErr)
+	return nil, fmt.Errorf("xetcdtest: start after %d attempts: %w", maxStartAttempts, errors.Join(errs...))
+}
+
+// buildConfig 构造 embed.Config，随机分配 client/peer URL。
+func buildConfig(dir string) (*embed.Config, *url.URL, error) {
+	clientURL, err := randomLocalURL()
+	if err != nil {
+		return nil, nil, err
+	}
+	peerURL, err := randomLocalURL()
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := embed.NewConfig()
+	cfg.Name = "xetcdtest"
+	cfg.Dir = dir
+	cfg.ListenClientUrls = []url.URL{*clientURL}
+	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
+	cfg.ListenPeerUrls = []url.URL{*peerURL}
+	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
+	cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
+	cfg.LogLevel = "error"
+	cfg.Logger = "zap"
+	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zap.NewNop())
+	return cfg, clientURL, nil
+}
+
+// waitReady 等待 embed.Etcd ready，失败时 Close 并返回错误。
+func waitReady(e *embed.Etcd) error {
+	select {
+	case <-e.Server.ReadyNotify():
+		return nil
+	case err := <-e.Err():
+		e.Close()
+		return fmt.Errorf("xetcdtest: etcd async error before ready: %w", err)
+	case <-time.After(startTimeout):
+		e.Close()
+		return fmt.Errorf("xetcdtest: etcd not ready within %s", startTimeout)
+	}
 }
 
 // tryStart 单次尝试启动嵌入式 etcd；失败（含 etcd 深层 panic）时清理资源返回错误。
@@ -88,36 +127,21 @@ func tryStart() (_ *Mock, retErr error) {
 		}
 	}
 	defer unlock()
+	// 设计决策: recover 仅清理 dir，无法关闭 StartEtcd 半初始化的 listener/goroutine。
+	// 上游 embed.StartEtcd 的 defer 在 panic 时因 err==nil 跳过清理（upstream 限制）。
+	// 泄漏资源随进程退出回收，测试场景可接受；不 recover 则无法重试端口竞态。
 	defer func() {
 		if v := recover(); v != nil {
 			removeDir(dir)
-			// 附带堆栈，便于调试嵌入式 etcd 启动时深层 panic（如 WAL 竞态）。
 			retErr = fmt.Errorf("xetcdtest: embed panic: %v\n%s", v, debug.Stack())
 		}
 	}()
 
-	clientURL, err := randomLocalURL()
+	cfg, clientURL, err := buildConfig(dir)
 	if err != nil {
 		removeDir(dir)
 		return nil, err
 	}
-	peerURL, err := randomLocalURL()
-	if err != nil {
-		removeDir(dir)
-		return nil, err
-	}
-
-	cfg := embed.NewConfig()
-	cfg.Name = "xetcdtest"
-	cfg.Dir = dir
-	cfg.ListenClientUrls = []url.URL{*clientURL}
-	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
-	cfg.ListenPeerUrls = []url.URL{*peerURL}
-	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
-	cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
-	cfg.LogLevel = "error"
-	cfg.Logger = "zap"
-	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zap.NewNop())
 
 	e, err := embed.StartEtcd(cfg)
 	unlock()
@@ -126,12 +150,9 @@ func tryStart() (_ *Mock, retErr error) {
 		return nil, fmt.Errorf("xetcdtest: start etcd: %w", err)
 	}
 
-	select {
-	case <-e.Server.ReadyNotify():
-	case <-time.After(startTimeout):
-		e.Close()
+	if err := waitReady(e); err != nil {
 		removeDir(dir)
-		return nil, fmt.Errorf("xetcdtest: etcd not ready within %s", startTimeout)
+		return nil, err
 	}
 
 	cli, err := clientv3.New(clientv3.Config{

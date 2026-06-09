@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# XKit pre-commit hook: 快速本地检查（仅对本次变更）。
+# 启用：task install-hooks（即 git config core.hooksPath .githooks）
+#
+# 跳过（不推荐）：git commit --no-verify
+
+set -euo pipefail
+
+# 仅当本次暂存包含文档/README 时才跑 ledger 检查（提速）
+if git diff --cached --name-only | grep -qE '^(docs/|README\.md$)'; then
+  echo "==> pre-commit: docs-ledger-check"
+  bash .githooks/docs-ledger-check.sh
+fi

@@ -84,9 +84,13 @@ func NewSuccessResponse(output string) *Response {
 
 // NewErrorResponse 创建错误响应。
 func NewErrorResponse(err error) *Response {
+	var errMsg string
+	if err != nil {
+		errMsg = err.Error()
+	}
 	return &Response{
 		Success: false,
-		Error:   err.Error(),
+		Error:   errMsg,
 	}
 }
 

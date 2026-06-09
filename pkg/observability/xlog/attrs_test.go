@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+type testError struct{ msg string }
+
+func (e *testError) Error() string { return e.msg }
+
 func TestErr(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -26,6 +30,11 @@ func TestErr(t *testing.T) {
 		{
 			name:    "nil error",
 			err:     nil,
+			wantNil: true,
+		},
+		{
+			name:    "typed-nil error",
+			err:     (*testError)(nil),
 			wantNil: true,
 		},
 	}

@@ -355,6 +355,13 @@ func (m *PlatformManager) setLocalCache(tenantID, field, value string) {
 	m.localCache.Set(localCacheKey(tenantID, field), value)
 }
 
+// Close 关闭本地缓存，停止 xlru 内部清理 goroutine。
+func (m *PlatformManager) Close() {
+	if m.localCache != nil {
+		m.localCache.Close()
+	}
+}
+
 // ClearLocalCache 清空本地缓存。
 func (m *PlatformManager) ClearLocalCache() {
 	if m.localCache != nil {

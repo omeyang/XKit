@@ -77,6 +77,25 @@ func TestNewClient_CleanupCloses(t *testing.T) {
 	}
 }
 
+func TestNewClient_ErrorCleanupNoPanic(t *testing.T) {
+	t.Parallel()
+	// 即使 NewClient 内部 New 失败，返回的 cleanup 也必须是 noop 而非 nil。
+	// 这里直接验证成功路径返回的 cleanup 非 nil，以及错误路径的 cleanup 非 nil 契约。
+	_, cleanup, err := NewClient()
+	if err != nil {
+		// 正常环境不应失败，但无论如何 cleanup 不能是 nil。
+		if cleanup == nil {
+			t.Fatal("cleanup should be non-nil even on error")
+		}
+		cleanup() // 不应 panic
+		return
+	}
+	defer cleanup()
+	if cleanup == nil {
+		t.Fatal("cleanup should be non-nil on success")
+	}
+}
+
 func TestClose_IsIdempotent(t *testing.T) {
 	t.Parallel()
 	m, err := New()
@@ -87,9 +106,23 @@ func TestClose_IsIdempotent(t *testing.T) {
 	m.Close() // 第二次 Close 不应 panic
 }
 
+func TestAddr_AfterCloseNoPanic(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := m.Addr()
+	m.Close()
+	// miniredis.Close 会将内部 srv 置 nil；Addr 必须使用缓存，不能 panic。
+	if got := m.Addr(); got != want {
+		t.Errorf("Addr after Close = %q, want %q", got, want)
+	}
+}
+
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		m, err := New()
 		if err != nil {
 			b.Fatal(err)
@@ -110,9 +143,6 @@ func FuzzClientSetGet(f *testing.F) {
 
 	ctx := context.Background()
 	f.Fuzz(func(t *testing.T, key, val string) {
-		if key == "" {
-			return // Redis 不允许空 key
-		}
 		if err := m.Client().Set(ctx, key, val, 0).Err(); err != nil {
 			t.Fatalf("set: %v", err)
 		}

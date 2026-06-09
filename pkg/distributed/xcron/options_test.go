@@ -627,7 +627,34 @@ func TestJobWrapper_RunWithRetry(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 2, attempts)
 	})
+
+	t.Run("exits on canceled ctx with zero backoff", func(t *testing.T) {
+		var attempts atomic.Int32
+		job := JobFunc(func(_ context.Context) error {
+			attempts.Add(1)
+			return errors.New("always fail")
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // 立即取消
+
+		opts := defaultJobOptions()
+		opts.name = "retry-job"
+		opts.retry = &alwaysRetryPolicy{}
+		opts.backoff = nil // backoff=0
+
+		wrapper := newJobWrapper(job, NoopLocker(), newMockLogger(), nil, opts)
+		err := wrapper.runWithRetry(ctx)
+
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.LessOrEqual(t, attempts.Load(), int32(1))
+	})
 }
+
+// alwaysRetryPolicy 无限重试策略，用于测试忙循环防御
+type alwaysRetryPolicy struct{}
+
+func (p *alwaysRetryPolicy) ShouldRetry(_ int, _ error) bool { return true }
 
 // ============================================================================
 // Wrapper startSpan Tests

@@ -318,6 +318,30 @@ func TestStart_ObserverReturnsNilContext(t *testing.T) {
 	assert.NotNil(t, span)
 }
 
+// typedNilCtxType 是用于构造 typed-nil context 的类型。
+type typedNilCtxType struct{ context.Context }
+
+// typedNilCtxObserver 返回 typed-nil context，用于验证 Start 的 typed-nil context 兜底逻辑。
+type typedNilCtxObserver struct{}
+
+func (typedNilCtxObserver) Start(_ context.Context, _ SpanOptions) (context.Context, Span) {
+	var c *typedNilCtxType // typed-nil context
+	return c, NoopSpan{}
+}
+
+func TestStart_ObserverReturnsTypedNilContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	newCtx, span := Start(ctx, typedNilCtxObserver{}, SpanOptions{
+		Component: "test",
+		Operation: "typed-nil-ctx-observer",
+	})
+
+	assert.NotNil(t, newCtx)
+	assert.NotNil(t, span)
+}
+
 // nilSpanObserver 是返回 nil span 的测试用 Observer，用于验证 Start 的兜底逻辑。
 type nilSpanObserver struct{}
 
@@ -385,6 +409,55 @@ func TestIsNilInterface(t *testing.T) {
 	t.Run("struct_value", func(t *testing.T) {
 		var span Span = NoopSpan{}
 		assert.False(t, isNilInterface(span))
+	})
+
+	t.Run("typed_nil_func", func(t *testing.T) {
+		type myFunc func()
+		var f myFunc
+		assert.True(t, isNilInterface(f))
+	})
+
+	t.Run("non_nil_func", func(t *testing.T) {
+		f := func() {}
+		assert.False(t, isNilInterface(f))
+	})
+
+	t.Run("typed_nil_map", func(t *testing.T) {
+		var m map[string]int
+		assert.True(t, isNilInterface(m))
+	})
+
+	t.Run("non_nil_map", func(t *testing.T) {
+		m := map[string]int{}
+		assert.False(t, isNilInterface(m))
+	})
+
+	t.Run("typed_nil_slice", func(t *testing.T) {
+		var s []int
+		assert.True(t, isNilInterface(s))
+	})
+
+	t.Run("non_nil_slice", func(t *testing.T) {
+		s := []int{}
+		assert.False(t, isNilInterface(s))
+	})
+
+	t.Run("typed_nil_chan", func(t *testing.T) {
+		var ch chan int
+		assert.True(t, isNilInterface(ch))
+	})
+
+	t.Run("non_nil_chan", func(t *testing.T) {
+		ch := make(chan int)
+		assert.False(t, isNilInterface(ch))
+	})
+
+	t.Run("int_value", func(t *testing.T) {
+		assert.False(t, isNilInterface(42))
+	})
+
+	t.Run("string_value", func(t *testing.T) {
+		assert.False(t, isNilInterface("hello"))
 	})
 }
 

@@ -11,7 +11,8 @@
 // # 背景
 //
 // 线上 Redis 基础设施混合部署：部分是 Redis Cluster 直连，部分通过代理（如 Predixy）。
-// 部分代理对 EVAL/EVALSHA/MULTI/EXEC/WATCH 命令返回权限错误或不支持错误。
+// 部分代理对 EVAL/EVALSHA/MULTI/EXEC/WATCH 命令返回权限错误或不支持错误；
+// Redis 6+ 的 ACL 机制也可能通过 NOPERM 拒绝 EVAL。
 // 本包提供自动探测和手动指定两种方式，让上层包在代理环境中用基础命令替代 Lua 脚本。
 //
 // # 主要功能

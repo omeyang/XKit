@@ -2,6 +2,7 @@ package xfile
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -283,7 +284,7 @@ func joinAndVerify(cleanBase, cleanPath string) (string, error) {
 	joined := filepath.Join(cleanBase, cleanPath)
 	rel, err := filepathRelFn(cleanBase, joined)
 	if err != nil {
-		return "", fmt.Errorf("failed to compute relative path (%v): %w", err, ErrPathEscaped)
+		return "", fmt.Errorf("failed to compute relative path: %w: %w", ErrPathEscaped, err)
 	}
 	// 设计决策: 此检查在当前验证流程下不可触发（validatePath 已排除 ".." 段，
 	// filepath.Join + filepath.Rel 不会引入新的 ".." 段），但保留作为防御性代码，
@@ -311,7 +312,7 @@ func resolveAndVerifySymlinks(cleanBase, joined string) (string, error) {
 	// 设计决策: filepath.Rel 对两个已清理的绝对路径不会返回错误，此处拆分处理
 	// 是防御性设计，确保排障时能区分"路径计算异常"与"实际路径逃逸"两种场景。
 	if err != nil {
-		return "", fmt.Errorf("failed to compute resolved relative path (%v): %w", err, ErrPathEscaped)
+		return "", fmt.Errorf("failed to compute resolved relative path: %w: %w", ErrPathEscaped, err)
 	}
 	// 使用 hasDotDotSegment 精确检测路径穿越
 	if hasDotDotSegment(rel) {
@@ -339,13 +340,22 @@ func evalSymlinksPartial(path string) (string, error) {
 		return resolved, nil
 	}
 
+	// 安全检查: 如果整条路径中任何已存在的组件本身是 symlink，但 EvalSymlinks 失败，
+	// 说明 symlink 目标不存在（dangling symlink）。此时若按"未解析叶子"逻辑把
+	// symlink 名直接拼回去，调用方使用返回路径打开/创建文件时 OS 会跟随 symlink，
+	// 在 base 目录之外创建文件，绕过 SafeJoinWithOptions 的包含性检查。
+	// 必须在向上收集前拒绝任何 dangling symlink 组件。
+	if err := rejectDanglingSymlink(path); err != nil {
+		return "", err
+	}
+
 	// 迭代：从叶向根逐层收集不存在的路径段，找到最深的可解析祖先
 	clean := filepath.Clean(path)
 	var trail []string // 不存在的路径段（逆序收集）
 
 	current := clean
 	for i := 0; ; i++ {
-		if i > maxSymlinkDepth {
+		if i >= maxSymlinkDepth {
 			return "", ErrPathTooDeep
 		}
 
@@ -371,4 +381,34 @@ func evalSymlinksPartial(path string) (string, error) {
 
 		current = dir
 	}
+}
+
+// rejectDanglingSymlink 沿路径自叶向根 Lstat 每个已存在组件，
+// 若发现组件本身是 symlink 且目标不存在（os.Stat 失败），则为 dangling symlink，
+// 返回 ErrSymlinkResolution。这样可避免把 symlink 名拼回返回路径，
+// 防止调用方通过 dangling symlink 在 base 之外创建/写入文件。
+//
+// 设计决策: 使用 os.Stat（跟随 symlink）区分 dangling 与 valid symlink。
+// valid symlink 指向已存在目录时不应被拒绝——前置 EvalSymlinks 失败可能仅因叶子
+// 文件不存在，而非 symlink 本身 dangling。安全保证由调用方的包含性检查兜底。
+func rejectDanglingSymlink(path string) error {
+	clean := filepath.Clean(path)
+	current := clean
+	for i := 0; i < maxSymlinkDepth; i++ {
+		info, lerr := os.Lstat(current)
+		if lerr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				if _, serr := os.Stat(current); serr != nil {
+					return fmt.Errorf("dangling symlink at %q: %w", current, ErrSymlinkResolution)
+				}
+			}
+			return nil
+		}
+		dir := filepath.Dir(current)
+		if dir == current {
+			return nil
+		}
+		current = dir
+	}
+	return ErrPathTooDeep
 }

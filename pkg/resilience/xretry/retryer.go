@@ -48,19 +48,21 @@ type Retryer struct {
 // RetryerOption 执行器配置选项
 type RetryerOption func(*Retryer)
 
-// WithRetryPolicy 设置重试策略
+// WithRetryPolicy 设置重试策略。
+// typed-nil（如 var p *FixedRetryPolicy = nil）会被静默忽略。
 func WithRetryPolicy(p RetryPolicy) RetryerOption {
 	return func(r *Retryer) {
-		if p != nil {
+		if !isNilInterfaceValue(p) {
 			r.retryPolicy = p
 		}
 	}
 }
 
-// WithBackoffPolicy 设置退避策略
+// WithBackoffPolicy 设置退避策略。
+// typed-nil（如 var p *FixedBackoff = nil）会被静默忽略。
 func WithBackoffPolicy(p BackoffPolicy) RetryerOption {
 	return func(r *Retryer) {
-		if p != nil {
+		if !isNilInterfaceValue(p) {
 			r.backoffPolicy = p
 		}
 	}
@@ -87,7 +89,9 @@ func NewRetryer(opts ...RetryerOption) *Retryer {
 		backoffPolicy: NewExponentialBackoff(),
 	}
 	for _, opt := range opts {
-		opt(r)
+		if opt != nil {
+			opt(r)
+		}
 	}
 	return r
 }
@@ -111,7 +115,13 @@ func (r *Retryer) Do(ctx context.Context, fn func(ctx context.Context) error) er
 	opts := r.buildOptions(ctx)
 
 	// 执行重试
+	// 设计决策: 在 fn 执行前检查 ctx，防止 0 延迟场景下 retry-go 的
+	// select { timer | ctx.Done() } 随机选中 timer 分支，导致 ctx 已取消
+	// 仍继续下一轮调用 fn。Unrecoverable 包裹确保 retry-go 立即退出。
 	return retry.New(opts...).Do(func() error {
+		if err := ctx.Err(); err != nil {
+			return retry.Unrecoverable(err)
+		}
 		return fn(ctx)
 	})
 }
@@ -136,8 +146,12 @@ func DoWithResult[T any](ctx context.Context, r *Retryer, fn func(ctx context.Co
 	// 构建 retry-go 的选项
 	opts := r.buildOptions(ctx)
 
-	// 执行重试
+	// 执行重试（同 Do：fn 前检查 ctx 防止 0 延迟取消竞争）
 	return retry.NewWithData[T](opts...).Do(func() (T, error) {
+		if err := ctx.Err(); err != nil {
+			var zero T
+			return zero, retry.Unrecoverable(err)
+		}
 		return fn(ctx)
 	})
 }
@@ -151,13 +165,13 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	// 设置上下文
 	opts = append(opts, Context(ctx))
 
-	// 防止零值 Retryer 使用时 panic
+	// 防止零值 Retryer 或 typed-nil 策略使用时 panic
 	retryPolicy := r.retryPolicy
-	if retryPolicy == nil {
+	if isNilInterfaceValue(retryPolicy) {
 		retryPolicy = NewFixedRetry(3)
 	}
 	backoffPolicy := r.backoffPolicy
-	if backoffPolicy == nil {
+	if isNilInterfaceValue(backoffPolicy) {
 		backoffPolicy = NewExponentialBackoff()
 	}
 
@@ -178,11 +192,18 @@ func (r *Retryer) buildOptions(ctx context.Context) []Option {
 	// 设计决策: 使用 atomic.Int64 而非普通 int，确保通过 Retrier() 逃逸的
 	// *retry.Retrier 即使被并发调用也不会触发数据竞争（Go 规范中数据竞争是未定义行为）。
 	// 对 Retryer.Do() 路径（每次创建独立闭包）无额外影响。
+	// 设计决策: 当 count >= maxAttempts 时在 RetryIf 中直接 false 截断，避免 retry-go
+	// 在达到硬上限后仍调用 OnRetry（retry-go 内部 OnRetry 先于 last-attempt 检查触发，
+	// 见 retry-go v5 retry.go 的 shouldRetry 循环），从而污染回调/指标/日志计数。
 	var attemptCount atomic.Int64
 	opts = append(opts, RetryIf(func(err error) bool {
 		count := int(attemptCount.Add(1))
 		// 先检查 retry-go 的 Unrecoverable（处理 xretry.Unrecoverable 包装的错误）
 		if !IsRecoverable(err) {
+			return false
+		}
+		// 先按 MaxAttempts 硬截断，防止 OnRetry 在最后一次失败后仍被触发
+		if maxAttempts > 0 && count >= maxAttempts {
 			return false
 		}
 		// 委托给 RetryPolicy.ShouldRetry，传递完整的 ctx 和 attempt 参数
@@ -232,7 +253,9 @@ func (r *Retryer) Retrier(ctx context.Context) *retry.Retrier {
 		ctx = context.Background()
 	}
 	if r == nil {
-		return retry.New(Context(ctx))
+		// 文档声明"使用默认配置"，应等价于 NewRetryer() 的行为
+		// （FixedRetry(3)、ExponentialBackoff、LastErrorOnly），而非 retry-go 裸默认
+		r = NewRetryer()
 	}
 	return retry.New(r.buildOptions(ctx)...)
 }
@@ -248,7 +271,7 @@ func RetrierWithData[T any](ctx context.Context, r *Retryer) *retry.RetrierWithD
 		ctx = context.Background()
 	}
 	if r == nil {
-		return retry.NewWithData[T](Context(ctx))
+		r = NewRetryer()
 	}
 	return retry.NewWithData[T](r.buildOptions(ctx)...)
 }

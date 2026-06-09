@@ -1388,3 +1388,46 @@ func TestWithoutSignalHandler_OverridesWithSignals(t *testing.T) {
 		t.Fatal("timeout")
 	}
 }
+
+// ----------------------------------------------------------------------------
+// typed-nil 防御
+// ----------------------------------------------------------------------------
+
+func TestHTTPServer_TypedNilServer(t *testing.T) {
+	var server *http.Server // typed-nil
+	g, _ := NewGroup(context.Background())
+	g.Go(HTTPServer(server, time.Second))
+
+	err := g.Wait()
+	if !errors.Is(err, ErrNilServer) {
+		t.Errorf("expected ErrNilServer for typed-nil *http.Server, got %v", err)
+	}
+}
+
+func TestRunServices_TypedNilServiceFunc(t *testing.T) {
+	var svc ServiceFunc // typed-nil
+	err := RunServicesWithOptions(
+		context.Background(),
+		[]Option{WithoutSignalHandler()},
+		svc,
+	)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService for typed-nil ServiceFunc, got %v", err)
+	}
+}
+
+type stubService struct{}
+
+func (s *stubService) Run(ctx context.Context) error { return nil }
+
+func TestRunServices_TypedNilStructService(t *testing.T) {
+	var svc *stubService // typed-nil
+	err := RunServicesWithOptions(
+		context.Background(),
+		[]Option{WithoutSignalHandler()},
+		svc,
+	)
+	if !errors.Is(err, ErrNilService) {
+		t.Errorf("expected ErrNilService for typed-nil *stubService, got %v", err)
+	}
+}

@@ -428,6 +428,16 @@ func TestMemoryWrapper_Wait_WaitsForWrites(t *testing.T) {
 	assert.Equal(t, []byte("value"), val)
 }
 
+func TestMemoryWrapper_Wait_AfterClose_ReturnsImmediately(t *testing.T) {
+	cache, err := NewMemory()
+	require.NoError(t, err)
+
+	_ = cache.Close(context.Background())
+
+	// Wait() 应在 closed 后立即返回，不阻塞也不 panic
+	cache.Wait()
+}
+
 // =============================================================================
 // Redis 配置选项测试
 // =============================================================================

@@ -86,6 +86,23 @@ func TestBreakerError_Error(t *testing.T) {
 	})
 }
 
+func TestBreakerError_Error_NilErr(t *testing.T) {
+	t.Run("nil Err with name", func(t *testing.T) {
+		be := &BreakerError{Name: "my-svc", State: StateOpen}
+		assert.Equal(t, "breaker my-svc: <nil>", be.Error())
+	})
+
+	t.Run("nil Err without name", func(t *testing.T) {
+		be := &BreakerError{State: StateOpen}
+		assert.Equal(t, "xbreaker: unknown error", be.Error())
+	})
+
+	t.Run("zero value BreakerError", func(t *testing.T) {
+		be := &BreakerError{}
+		assert.Equal(t, "xbreaker: unknown error", be.Error())
+	})
+}
+
 func TestWrapBreakerError_AlreadyWrapped(t *testing.T) {
 	original := &BreakerError{Err: ErrOpenState, Name: "inner", State: StateOpen}
 	wrapped := wrapBreakerError(original, "outer")

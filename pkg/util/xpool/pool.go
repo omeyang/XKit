@@ -92,6 +92,9 @@ func (p *Pool[T]) worker() {
 func (p *Pool[T]) safeHandle(task T) {
 	defer func() {
 		if r := recover(); r != nil {
+			// 防止外部 logger 实现 panic 导致 worker 崩溃。
+			defer func() { recover() }()
+
 			attrs := make([]slog.Attr, 0, 4) // 预分配：panic + stack + task/task_type + pool（可选）
 			attrs = append(attrs,
 				slog.Any("panic", r),

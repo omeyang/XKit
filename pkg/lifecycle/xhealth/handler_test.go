@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -172,6 +173,25 @@ func TestHTTP_SubPath(t *testing.T) {
 	}
 }
 
+func TestHTTP_SubPath_DegradedReturnsOK(t *testing.T) {
+	addr := freePort(t)
+	h := newTestHealth(t, WithAddr(addr), WithCacheTTL(0))
+
+	require.NoError(t, h.AddReadinessCheck("cache", CheckConfig{
+		Check:     func(_ context.Context) error { return errors.New("slow") },
+		SkipOnErr: true,
+	}))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	resp := httpGet(t, addr, "/readyz/cache")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "ok", readBody(t, resp))
+}
+
 func TestHTTP_SubPath_Detail(t *testing.T) {
 	addr := freePort(t)
 	h := newTestHealth(t, WithAddr(addr), WithCacheTTL(0))
@@ -254,6 +274,32 @@ func TestHTTP_NoChecks(t *testing.T) {
 	resp := httpGet(t, addr, "/healthz")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "ok", readBody(t, resp))
+}
+
+func TestHTTP_SubPath_ShutdownReturns503(t *testing.T) {
+	h := newTestHealth(t, WithCacheTTL(0))
+
+	require.NoError(t, h.AddReadinessCheck("db", CheckConfig{
+		Check: func(_ context.Context) error { return nil },
+	}))
+
+	mux := http.NewServeMux()
+	h.registerHandlers(mux)
+
+	// Shutdown 前子路径正常
+	req := httptest.NewRequest(http.MethodGet, "/readyz/db", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	h.Shutdown()
+
+	// Shutdown 后子路径应返回 503 而非 404
+	req = httptest.NewRequest(http.MethodGet, "/readyz/db", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Equal(t, "not ok", rec.Body.String())
 }
 
 func TestHTTP_CustomDetailParam(t *testing.T) {

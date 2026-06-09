@@ -91,8 +91,8 @@ func Default() LoggerWithLevel {
 // 注意：如果传入 nil，操作会被忽略（不会修改当前 logger）。
 // 要重置为默认 logger，请使用 ResetDefault()。
 func SetDefault(l LoggerWithLevel) {
-	if l == nil {
-		// 拒绝 nil，避免后续全局函数 panic
+	if isNilInterface(l) {
+		// 拒绝 nil/typed-nil，避免后续全局函数 panic
 		return
 	}
 	globalMu.Lock()

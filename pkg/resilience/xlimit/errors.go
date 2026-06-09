@@ -43,6 +43,9 @@ var (
 
 	// ErrNilClient 表示传入的 Redis 客户端为 nil
 	ErrNilClient = errors.New("xlimit: redis client is nil")
+
+	// ErrNilConfig 表示传入的配置实例为 nil
+	ErrNilConfig = errors.New("xlimit: config is nil")
 )
 
 // =============================================================================

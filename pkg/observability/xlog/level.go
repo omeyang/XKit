@@ -56,10 +56,12 @@ func (l *Level) UnmarshalText(data []byte) error {
 }
 
 // ParseLevel 解析字符串为日志级别
-// 支持 debug/info/warn/warning/error（大小写不敏感）
+// 支持 debug/info/warn/warning/error（大小写不敏感），
+// 以及 slog 的偏移量语法（如 "INFO+2"、"DEBUG-1"）。
 // 输入会自动 TrimSpace，与 SetFormat 行为一致
 func ParseLevel(s string) (Level, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	s = strings.TrimSpace(s)
+	switch strings.ToLower(s) {
 	case "debug":
 		return LevelDebug, nil
 	case "info":
@@ -69,6 +71,11 @@ func ParseLevel(s string) (Level, error) {
 	case "error":
 		return LevelError, nil
 	default:
-		return LevelInfo, fmt.Errorf("xlog: unknown level %q", s)
+		// 回退到 slog.Level.UnmarshalText，支持非标准级别（如 "INFO+2"、"DEBUG-1"）
+		var sl slog.Level
+		if err := sl.UnmarshalText([]byte(s)); err != nil {
+			return LevelInfo, fmt.Errorf("xlog: unknown level %q", s)
+		}
+		return Level(sl), nil
 	}
 }

@@ -86,6 +86,11 @@ func (c *dlqConsumer) ConsumeWithRetry(ctx context.Context, handler MessageHandl
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	// closeMu 读锁覆盖 ReadMessage → processMessage 全链路，
+	// 避免 Close 在 poll 期间关闭底层 consumer 导致竞态。
+	c.closeMu.RLock()
+	defer c.closeMu.RUnlock()
 	if c.closed.Load() {
 		return ErrClosed
 	}
@@ -129,12 +134,11 @@ func (c *dlqConsumer) ConsumeLoopWithPolicy(ctx context.Context, handler Message
 }
 
 // processMessage 处理单条消息。
+// 调用方约束：必须已持有 c.closeMu.RLock（由 ConsumeWithRetry/ConsumeLoop 或测试显式获取）。
 // 设计决策: messagesConsumed/bytesConsumed 在此处递增，而非在 ReadMessage 中，
 // 因为 dlqConsumer 直接调用底层 consumer.ReadMessage（不经过 TracingConsumer.ReadMessage），
 // 避免双重计数。如果未来重构为使用 TracingConsumer，需移除此处的统计递增。
 func (c *dlqConsumer) processMessage(ctx context.Context, msg *kafka.Message, handler MessageHandler) (resultErr error) {
-	c.closeMu.RLock()
-	defer c.closeMu.RUnlock()
 	if c.closed.Load() {
 		return ErrClosed
 	}
@@ -238,6 +242,9 @@ func (c *dlqConsumer) sendToDLQInternal(ctx context.Context, msg *kafka.Message,
 	dlqMsg := c.buildDLQMessage(msg, reason, retryCount)
 
 	// 发送到 DLQ Topic
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(dlqMsg, deliveryChan); err != nil {
@@ -288,7 +295,11 @@ func (c *dlqConsumer) DLQStats() DLQStats {
 
 // formatFailureReason 使用策略配置的格式化函数将错误转换为失败原因字符串。
 // 如果未配置 FailureReasonFormatter，使用默认的截断格式化。
+// 对 nil err 统一短路返回空串，避免自定义 formatter（常用 err.Error()）被 nil 解引用 panic。
 func (c *dlqConsumer) formatFailureReason(err error) string {
+	if err == nil {
+		return ""
+	}
 	if c.policy.FailureReasonFormatter != nil {
 		return c.policy.FailureReasonFormatter(err)
 	}
@@ -328,6 +339,9 @@ func (c *dlqConsumer) redeliverMessage(ctx context.Context, msg *kafka.Message) 
 		Headers: msg.Headers,
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// 使用缓冲 channel 避免 ctx 取消时 producer 发送阻塞
 	deliveryChan := make(chan kafka.Event, 1)
 	if err := c.dlqProducer.Produce(redeliverMsg, deliveryChan); err != nil {

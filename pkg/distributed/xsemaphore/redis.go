@@ -129,13 +129,15 @@ func New(client redis.UniversalClient, opts ...Option) (Semaphore, error) {
 	return sem, nil
 }
 
-// resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用指定模式
+// resolveScriptMode 解析脚本模式：Auto 时探测，否则直接使用指定模式。
+// 探测走 [rediscompat.DetectScriptModeBounded]，有 5s 内部超时，防止 Redis 黑洞地址
+// 卡死构造函数；超时/网络错误时降级为 Lua（与 rediscompat 文档化的安全默认值一致）。
 func resolveScriptMode(cfg *options, client redis.UniversalClient) rediscompat.ScriptMode {
 	if cfg.scriptMode != rediscompat.ScriptModeAuto {
 		return cfg.scriptMode
 	}
 
-	detected, detectErr := rediscompat.DetectScriptMode(context.Background(), client)
+	detected, detectErr := rediscompat.DetectScriptModeBounded(client)
 	if detectErr != nil && cfg.logger != nil {
 		cfg.logger.Warn(context.Background(), "script mode detection failed, defaulting to lua",
 			AttrError(detectErr),

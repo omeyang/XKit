@@ -49,6 +49,9 @@ var (
 // =============================================================================
 
 var (
+	// ErrNilContext 表示传入的 context 为 nil。
+	ErrNilContext = errors.New("xauth: nil context")
+
 	// ErrNilRequest 表示传入的请求为 nil。
 	ErrNilRequest = errors.New("xauth: nil request")
 

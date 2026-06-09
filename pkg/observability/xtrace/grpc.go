@@ -58,7 +58,16 @@ func ExtractFromMetadata(md metadata.MD) TraceInfo {
 			info.TraceID = traceID
 			info.SpanID = spanID
 			info.TraceFlags = traceFlags
+		} else {
+			// W3C: tracestate 绑定于其 traceparent，解析失败时丢弃 tracestate，
+			// 避免被嫁接到由自定义头重新生成的 trace context 中。
+			info.Tracestate = ""
 		}
+	} else {
+		// W3C Trace Context 规范：tracestate 不得在无 traceparent 时存在。
+		// 丢弃孤立的 tracestate，避免后续 InjectTraceToMetadata 生成 traceparent 后
+		// 将无关的 tracestate 嫁接到新 trace context 中。
+		info.Tracestate = ""
 	}
 
 	return info
@@ -66,6 +75,9 @@ func ExtractFromMetadata(md metadata.MD) TraceInfo {
 
 // ExtractFromIncomingContext 从 incoming context 提取追踪信息
 func ExtractFromIncomingContext(ctx context.Context) TraceInfo {
+	if ctx == nil {
+		return TraceInfo{}
+	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return TraceInfo{}
@@ -219,7 +231,7 @@ func InjectToOutgoingContext(ctx context.Context) context.Context {
 //
 // 用于手动构造 Metadata 的场景。
 // 如果 TraceInfo.Traceparent 为空但有有效的 TraceID 和 SpanID，
-// 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "00"）。
+// 会自动生成 traceparent（使用 TraceFlags，若为空则默认 "01" 已采样）。
 //
 // 注意：如果同时设置了 TraceID 和 Traceparent，请确保两者一致以避免下游混淆。
 func InjectTraceToMetadata(md metadata.MD, info TraceInfo) {

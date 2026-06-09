@@ -198,7 +198,14 @@ func (f *fallbackSemaphore) doFallback(ctx context.Context, resource string, opt
 		if tenantID == "" {
 			tenantID = xtenant.TenantID(ctx)
 		}
-		return newNoopPermit(ctx, resource, tenantID, cfg.ttl, cfg.metadata, f.opts)
+		// 设计决策: 显式拆分返回值，避免 (*noopPermit)(nil) 被装箱为非 nil 的 Permit 接口
+		// （typed-nil through interface 陷阱）。其它错误路径（redisSemaphore.doAcquire、
+		// FallbackLocal、FallbackClose）均显式 return nil, err，此处对齐。
+		p, err := newNoopPermit(ctx, resource, tenantID, cfg.ttl, cfg.metadata, f.opts)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
 
 	case FallbackClose:
 		return nil, ErrRedisUnavailable

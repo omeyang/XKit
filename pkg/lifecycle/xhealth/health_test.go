@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -125,6 +127,12 @@ func TestAddCheck_Validation(t *testing.T) {
 			check:   "test",
 			cfg:     CheckConfig{},
 			wantErr: ErrNilCheck,
+		},
+		{
+			name:    "负 timeout",
+			check:   "test",
+			cfg:     CheckConfig{Check: goodCheck.Check, Timeout: -1},
+			wantErr: ErrInvalidTimeout,
 		},
 		{
 			name:    "负 interval",
@@ -392,6 +400,289 @@ func TestSyncCheckCache(t *testing.T) {
 	mu.Unlock()
 	// 由于缓存，应只执行 1 次
 	assert.Equal(t, 1, c)
+}
+
+func TestRun_ServeErrorStopsAsyncChecks(t *testing.T) {
+	h := newTestHealth(t, WithAddr("127.0.0.1:0"))
+
+	require.NoError(t, h.AddReadinessCheck("async", CheckConfig{
+		Check:    func(_ context.Context) error { return nil },
+		Async:    true,
+		Interval: 50 * time.Millisecond,
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- h.Run(ctx)
+	}()
+	<-h.ReadyCh()
+
+	// 关闭底层 listener 触发 Serve 返回非 ErrServerClosed 错误
+	srv := h.server.Load()
+	require.NotNil(t, srv)
+	require.NoError(t, srv.Close())
+
+	select {
+	case err := <-errCh:
+		// Run 应在合理时间内返回（异步 goroutine 已被 doShutdown 停止）
+		assert.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after Serve error — async goroutines leaked")
+	}
+}
+
+func TestCheckPanicRecovery(t *testing.T) {
+	h := newTestHealth(t, WithCacheTTL(0))
+
+	require.NoError(t, h.AddReadinessCheck("panicker", CheckConfig{
+		Check: func(_ context.Context) error { panic("boom") },
+	}))
+
+	result, err := h.CheckReadiness(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, StatusDown, result.Status)
+	assert.Contains(t, result.Checks["panicker"].Error, "panic: boom")
+}
+
+func TestAsyncCheckPanicRecovery(t *testing.T) {
+	h := newTestHealth(t, WithAddr(freePort(t)))
+
+	require.NoError(t, h.AddReadinessCheck("panicker", CheckConfig{
+		Check:    func(_ context.Context) error { panic("async boom") },
+		Async:    true,
+		Interval: 50 * time.Millisecond,
+	}))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	result, err := h.CheckReadiness(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, StatusDown, result.Status)
+	assert.Contains(t, result.Checks["panicker"].Error, "panic: async boom")
+}
+
+func TestSingleflightDoesNotCacheCancelledResult(t *testing.T) {
+	var callCount int
+	var mu sync.Mutex
+
+	h := newTestHealth(t, WithCacheTTL(500*time.Millisecond))
+
+	require.NoError(t, h.AddReadinessCheck("db", CheckConfig{
+		Check: func(_ context.Context) error {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			return nil
+		},
+		Timeout: time.Second,
+	}))
+
+	// 用已取消的 ctx 执行检查
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := h.CheckReadiness(cancelledCtx)
+	require.NoError(t, err)
+	// singleflight 使用 Background ctx，所以即使请求 ctx 已取消，检查仍应成功
+	assert.Equal(t, StatusUp, result.Status)
+}
+
+func TestAddAsyncCheckAfterRun(t *testing.T) {
+	addr := freePort(t)
+	h := newTestHealth(t, WithAddr(addr))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	err := h.AddReadinessCheck("late-async", CheckConfig{
+		Check:    func(_ context.Context) error { return nil },
+		Async:    true,
+		Interval: time.Second,
+	})
+	assert.ErrorIs(t, err, ErrAlreadyStarted)
+
+	// 同步检查在 Run 后仍可注册
+	err = h.AddReadinessCheck("late-sync", CheckConfig{
+		Check: func(_ context.Context) error { return nil },
+	})
+	assert.NoError(t, err)
+}
+
+func TestShutdown_DuringRunStartup(t *testing.T) {
+	h := newTestHealth(t, WithAddr(freePort(t)))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- h.Run(context.Background())
+	}()
+
+	// 立即 Shutdown，可能在 server.Store 之前。
+	// 有两种合法结果：
+	//   1. Shutdown 在 Run CAS 之前 → ErrShutdown
+	//   2. Shutdown 在 Listen/Store 窗口 → 补偿关闭，Run 返回 nil
+	// 关键断言：Run 不能永久阻塞。
+	h.Shutdown()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			assert.ErrorIs(t, err, ErrShutdown)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return — shutdown compensation failed")
+	}
+}
+
+func TestShutdown_NotifiesListener(t *testing.T) {
+	var mu sync.Mutex
+	var changes []string
+
+	listener := func(ep string, old, new Status) {
+		mu.Lock()
+		defer mu.Unlock()
+		changes = append(changes, fmt.Sprintf("%s:%s->%s", ep, old, new))
+	}
+
+	h := newTestHealth(t, WithStatusListener(listener))
+
+	h.Shutdown()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, changes, "liveness:up->down")
+	assert.Contains(t, changes, "readiness:up->down")
+	assert.Contains(t, changes, "startup:up->down")
+}
+
+func TestAsyncCheck_StatusListenerNotification(t *testing.T) {
+	var mu sync.Mutex
+	var changes []string
+
+	listener := func(ep string, old, new Status) {
+		mu.Lock()
+		defer mu.Unlock()
+		changes = append(changes, fmt.Sprintf("%s:%s->%s", ep, old, new))
+	}
+
+	var fail atomic.Bool
+	h := newTestHealth(t, WithAddr(freePort(t)), WithStatusListener(listener))
+
+	require.NoError(t, h.AddReadinessCheck("db", CheckConfig{
+		Check: func(_ context.Context) error {
+			if fail.Load() {
+				return errors.New("db down")
+			}
+			return nil
+		},
+		Async:    true,
+		Interval: 50 * time.Millisecond,
+	}))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	fail.Store(true)
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, changes, "readiness:up->down",
+		"listener should be notified when async check changes status")
+}
+
+func TestListenError_PreservesChain(t *testing.T) {
+	h := newTestHealth(t, WithAddr("invalid-addr-no-port"))
+	err := h.Run(context.Background())
+	require.ErrorIs(t, err, ErrInvalidAddr)
+
+	var netErr *net.OpError
+	assert.True(t, errors.As(err, &netErr),
+		"wrapped net error should be unwrappable via errors.As")
+}
+
+func TestBasePath_AutoNormalize(t *testing.T) {
+	addr := freePort(t)
+	h := newTestHealth(t, WithAddr(addr), WithBasePath("api"), WithCacheTTL(0))
+
+	require.NoError(t, h.AddReadinessCheck("ok", CheckConfig{
+		Check: func(_ context.Context) error { return nil },
+	}))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	resp := httpGet(t, addr, "/api/readyz")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "ok", readBody(t, resp))
+}
+
+func TestStatusListenerPanicRecovery(t *testing.T) {
+	listener := func(_ string, _, _ Status) {
+		panic("listener boom")
+	}
+
+	h := newTestHealth(t, WithCacheTTL(0), WithStatusListener(listener))
+
+	require.NoError(t, h.AddReadinessCheck("db", CheckConfig{
+		Check: func(_ context.Context) error { return errors.New("fail") },
+	}))
+
+	// 同步检查路径：listener panic 应被 recover，不应杀进程
+	result, err := h.CheckReadiness(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, StatusDown, result.Status)
+}
+
+func TestStatusListenerPanicRecovery_Async(t *testing.T) {
+	listener := func(_ string, _, _ Status) {
+		panic("async listener boom")
+	}
+
+	h := newTestHealth(t, WithAddr(freePort(t)), WithStatusListener(listener))
+
+	require.NoError(t, h.AddReadinessCheck("db", CheckConfig{
+		Check:    func(_ context.Context) error { return errors.New("fail") },
+		Async:    true,
+		Interval: 50 * time.Millisecond,
+	}))
+
+	wait := startHealthInBackground(t, h)
+	defer func() {
+		require.NoError(t, wait())
+	}()
+
+	// 等待异步检查执行：若 listener panic 未被 recover，进程会崩溃
+	time.Sleep(200 * time.Millisecond)
+
+	result, err := h.CheckReadiness(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, StatusDown, result.Status)
+}
+
+func TestStatusListenerPanicRecovery_Shutdown(t *testing.T) {
+	listener := func(_ string, _, _ Status) {
+		panic("shutdown listener boom")
+	}
+
+	h := newTestHealth(t, WithStatusListener(listener))
+
+	// Shutdown 路径：listener panic 应被 recover，不应杀进程
+	h.Shutdown()
+	assert.True(t, h.IsShutdown())
 }
 
 func TestSyncCheckNoCache(t *testing.T) {

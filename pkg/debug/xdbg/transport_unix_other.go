@@ -5,12 +5,13 @@ package xdbg
 import (
 	"fmt"
 	"net"
-	"os"
 )
 
-// getPeerIdentity 返回当前进程身份作为降级方案（非 Linux/macOS/FreeBSD）。
-// 在不支持 SO_PEERCRED 或 LOCAL_PEERCRED 的平台上，我们无法获取对端身份，
-// 因此返回当前进程的身份信息。调用方应注意此限制。
+// getPeerIdentity 在不支持 SO_PEERCRED / LOCAL_PEERCRED 的平台上返回 nil 身份。
+//
+// 设计决策: 此前返回当前进程身份作为"降级"，会使审计日志把调用者伪造为服务端自身，
+// 造成错误归因。改为返回 nil：ResolveIdentity(nil) 会生成字符串 "unknown"，
+// 审计日志能清晰反映"对端身份不可知"，不掩盖事实。
 func getPeerIdentity(conn net.Conn) (*PeerIdentity, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
@@ -22,11 +23,6 @@ func getPeerIdentity(conn net.Conn) (*PeerIdentity, error) {
 		return nil, fmt.Errorf("invalid unix connection")
 	}
 
-	// 降级：返回当前进程身份
-	// 注意：这意味着在此平台上无法真正识别对端身份
-	return &PeerIdentity{
-		UID: uint32(os.Getuid()),
-		GID: uint32(os.Getgid()),
-		PID: int32(os.Getpid()),
-	}, nil
+	// 平台不支持 peer credentials — 返回 nil 身份（审计显示 "unknown"）。
+	return nil, nil
 }

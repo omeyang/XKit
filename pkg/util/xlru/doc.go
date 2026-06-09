@@ -51,7 +51,9 @@
 //     已过期但尚未被后台清理的条目（底层库行为）
 //   - 锁竞争：底层库使用 sync.Mutex（非 RWMutex），因为 Get 会更新 LRU 顺序；
 //     高并发读场景下可能有锁竞争，当前性能对大多数场景足够
-//   - Close 后行为：Close 后所有读操作返回零值/false，写操作静默忽略
+//   - Close 后行为：Close 后所有读操作返回零值/false，写操作静默忽略；
+//     清理 goroutine 异步退出，最长滞留 TTL/100（受上游不可中断 sleep 影响）
+//   - TTL=0 语义：透传给上游为 10 年哨兵 TTL，实际使用中等价于“永不过期”
 //   - unsafe 依赖：Close 通过 reflect+unsafe 访问底层库未导出字段以停止 goroutine，
 //     升级 golang-lru 版本时需验证兼容性
 //

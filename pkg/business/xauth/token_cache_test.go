@@ -520,3 +520,53 @@ func TestTokenCache_LocalSize_WithoutLocal(t *testing.T) {
 		t.Errorf("LocalSize = %d, expected 0", cache.LocalSize())
 	}
 }
+
+func TestTokenCache_Close(t *testing.T) {
+	t.Run("close with local cache", func(t *testing.T) {
+		cache := NewTokenCache(TokenCacheConfig{
+			EnableLocal: true,
+		})
+		cache.Close()
+		// 关闭后操作不应 panic
+		if cache.LocalSize() != 0 {
+			t.Errorf("LocalSize after Close = %d, expected 0", cache.LocalSize())
+		}
+	})
+
+	t.Run("close without local cache", func(t *testing.T) {
+		cache := NewTokenCache(TokenCacheConfig{
+			EnableLocal: false,
+		})
+		cache.Close() // 不应 panic
+	})
+}
+
+func TestNewTokenCache_TypedNilRemote(t *testing.T) {
+	var nilStore *mockCacheStore // typed-nil
+	cache := NewTokenCache(TokenCacheConfig{
+		Remote: nilStore,
+	})
+	// typed-nil 应退回 NoopCacheStore，Get 返回 ErrCacheMiss 而非 panic
+	_, _, err := cache.Get(context.Background(), "tenant-1")
+	assert.Equal(t, ErrCacheMiss, err)
+}
+
+func TestIsNilCacheStore(t *testing.T) {
+	t.Run("nil interface", func(t *testing.T) {
+		assert.True(t, isNilCacheStore(nil))
+	})
+
+	t.Run("typed nil pointer", func(t *testing.T) {
+		var s *mockCacheStore
+		assert.True(t, isNilCacheStore(s))
+	})
+
+	t.Run("non-nil value", func(t *testing.T) {
+		s := newMockCacheStore()
+		assert.False(t, isNilCacheStore(s))
+	})
+
+	t.Run("noop struct", func(t *testing.T) {
+		assert.False(t, isNilCacheStore(NoopCacheStore{}))
+	})
+}

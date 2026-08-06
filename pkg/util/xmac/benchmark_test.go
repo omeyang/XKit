@@ -20,7 +20,7 @@ func BenchmarkParse(b *testing.B) {
 	for _, tc := range inputs {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				_, _ = Parse(tc.input)
 			}
 		})
@@ -32,7 +32,7 @@ func BenchmarkString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.String()
 	}
 }
@@ -53,7 +53,7 @@ func BenchmarkFormatString(b *testing.B) {
 	for _, tc := range formats {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				_ = addr.FormatString(tc.format)
 			}
 		})
@@ -65,7 +65,7 @@ func BenchmarkMarshalJSON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = json.Marshal(addr)
 	}
 }
@@ -75,7 +75,7 @@ func BenchmarkUnmarshalJSON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var addr Addr
 		_ = json.Unmarshal(data, &addr)
 	}
@@ -86,7 +86,7 @@ func BenchmarkIsValid(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsValid()
 	}
 }
@@ -96,7 +96,7 @@ func BenchmarkIsUsable(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsUsable()
 	}
 }
@@ -107,7 +107,7 @@ func BenchmarkCompare(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = a.Compare(c)
 	}
 }
@@ -117,7 +117,7 @@ func BenchmarkNext(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.Next()
 	}
 }
@@ -131,7 +131,7 @@ func BenchmarkPrev(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.Prev()
 	}
 }
@@ -141,7 +141,7 @@ func BenchmarkBytes(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.Bytes()
 	}
 }
@@ -151,7 +151,7 @@ func BenchmarkHardwareAddr(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.HardwareAddr()
 	}
 }
@@ -161,7 +161,7 @@ func BenchmarkOUI(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.OUI()
 	}
 }
@@ -171,7 +171,7 @@ func BenchmarkNIC(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.NIC()
 	}
 }
@@ -185,7 +185,7 @@ func BenchmarkIsUnicast(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsUnicast()
 	}
 }
@@ -195,7 +195,7 @@ func BenchmarkIsMulticast(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsMulticast()
 	}
 }
@@ -205,7 +205,7 @@ func BenchmarkIsBroadcast(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsBroadcast()
 	}
 }
@@ -215,7 +215,7 @@ func BenchmarkIsLocallyAdministered(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsLocallyAdministered()
 	}
 }
@@ -225,7 +225,7 @@ func BenchmarkIsUniversallyAdministered(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsUniversallyAdministered()
 	}
 }
@@ -235,7 +235,7 @@ func BenchmarkIsZero(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsZero()
 	}
 }
@@ -245,7 +245,7 @@ func BenchmarkIsSpecial(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = addr.IsSpecial()
 	}
 }
@@ -259,7 +259,7 @@ func BenchmarkMarshalText(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.MarshalText()
 	}
 }
@@ -269,7 +269,7 @@ func BenchmarkUnmarshalText(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var addr Addr
 		_ = addr.UnmarshalText(text)
 	}
@@ -284,7 +284,7 @@ func BenchmarkValue(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.Value()
 	}
 }
@@ -292,7 +292,7 @@ func BenchmarkValue(b *testing.B) {
 func BenchmarkScan(b *testing.B) {
 	b.Run("string", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			var addr Addr
 			_ = addr.Scan("aa:bb:cc:dd:ee:ff")
 		}
@@ -302,7 +302,7 @@ func BenchmarkScan(b *testing.B) {
 		data := []byte("aa:bb:cc:dd:ee:ff")
 		b.ReportAllocs()
 		b.ResetTimer()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			var addr Addr
 			_ = addr.Scan(data)
 		}
@@ -312,7 +312,7 @@ func BenchmarkScan(b *testing.B) {
 		data := []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}
 		b.ReportAllocs()
 		b.ResetTimer()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			var addr Addr
 			_ = addr.Scan(data)
 		}
@@ -320,7 +320,7 @@ func BenchmarkScan(b *testing.B) {
 
 	b.Run("nil", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			var addr Addr
 			_ = addr.Scan(nil)
 		}
@@ -336,14 +336,14 @@ func BenchmarkParseVsNetParseMAC(b *testing.B) {
 
 	b.Run("xmac.Parse", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_, _ = Parse(input)
 		}
 	})
 
 	b.Run("net.ParseMAC", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_, _ = net.ParseMAC(input)
 		}
 	})
@@ -355,14 +355,14 @@ func BenchmarkStringVsNetHardwareAddr(b *testing.B) {
 
 	b.Run("xmac.String", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_ = xmacAddr.String()
 		}
 	})
 
 	b.Run("net.HardwareAddr.String", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_ = netAddr.String()
 		}
 	})
@@ -375,7 +375,7 @@ func BenchmarkCompareVsBytes(b *testing.B) {
 	// xmac 使用值类型直接比较
 	b.Run("xmac.Compare", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_ = a.Compare(c)
 		}
 	})
@@ -385,7 +385,7 @@ func BenchmarkCompareVsBytes(b *testing.B) {
 	netC, _ := net.ParseMAC("aa:bb:cc:dd:ee:00")
 	b.Run("net.HardwareAddr.String_eq", func(b *testing.B) {
 		b.ReportAllocs()
-		for b.Loop() {
+		for i := 0; i < b.N; i++ {
 			_ = netA.String() == netC.String()
 		}
 	})
@@ -401,7 +401,7 @@ func BenchmarkTypicalWorkflow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		addr, err := Parse(input)
 		if err != nil {
 			b.Fatal(err)
@@ -419,7 +419,7 @@ func BenchmarkJSONRoundTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		data, _ := json.Marshal(addr)
 		var addr2 Addr
 		_ = json.Unmarshal(data, &addr2)
@@ -432,7 +432,7 @@ func BenchmarkDatabaseRoundTrip(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		// 写入
 		val, _ := addr.Value()
 		// 读取
@@ -459,7 +459,7 @@ func BenchmarkParseInvalid(b *testing.B) {
 	for _, tc := range inputs {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				_, _ = Parse(tc.input)
 			}
 		})
@@ -471,7 +471,7 @@ func BenchmarkNextOverflow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.Next()
 	}
 }
@@ -481,7 +481,7 @@ func BenchmarkPrevUnderflow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = addr.Prev()
 	}
 }

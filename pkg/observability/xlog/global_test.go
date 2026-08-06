@@ -421,7 +421,7 @@ func BenchmarkDefault(b *testing.B) {
 	_ = xlog.Default()
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = xlog.Default()
 	}
 }
@@ -440,7 +440,7 @@ func BenchmarkGlobal_Info(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		xlog.Info(ctx, "benchmark message")
 	}
 }

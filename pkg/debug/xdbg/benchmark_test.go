@@ -21,7 +21,7 @@ func BenchmarkCodec_EncodeRequest(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := codec.EncodeRequest(req)
 		if err != nil {
 			b.Fatalf("EncodeRequest error = %v", err)
@@ -41,7 +41,7 @@ func BenchmarkCodec_DecodeRequest(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
 		_, err := codec.DecodeRequest(r)
 		if err != nil {
@@ -61,7 +61,7 @@ func BenchmarkCodec_EncodeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := codec.EncodeResponse(resp)
 		if err != nil {
 			b.Fatalf("EncodeResponse error = %v", err)
@@ -81,7 +81,7 @@ func BenchmarkCodec_DecodeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader(data)
 		_, err := codec.DecodeResponse(r)
 		if err != nil {
@@ -106,7 +106,7 @@ func BenchmarkCodec_EncodeLargeResponse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := codec.EncodeResponse(resp)
 		if err != nil {
 			b.Fatalf("EncodeResponse error = %v", err)
@@ -129,7 +129,7 @@ func BenchmarkCommandRegistry_Get(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = reg.Get("cmdk") // 中间的命令
 	}
 }
@@ -148,7 +148,7 @@ func BenchmarkCommandRegistry_Has(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = reg.Has("cmdk")
 	}
 }
@@ -169,7 +169,7 @@ func BenchmarkCommandRegistry_Whitelist(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = reg.Get("cmdc")
 	}
 }
@@ -186,7 +186,7 @@ func BenchmarkTruncateUTF8(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = TruncateUTF8(input, 1000)
 	}
 }
@@ -201,7 +201,7 @@ func BenchmarkTruncateUTF8_ASCII(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = TruncateUTF8(input, 1000)
 	}
 }
@@ -216,7 +216,7 @@ func BenchmarkJSONMarshal_Request(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, err := json.Marshal(req)
 		if err != nil {
 			b.Fatalf("json.Marshal error = %v", err)
@@ -235,7 +235,7 @@ func BenchmarkJSONUnmarshal_Request(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var r Request
 		err := json.Unmarshal(data, &r)
 		if err != nil {
@@ -259,7 +259,7 @@ func BenchmarkIdentityInfo_String(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = info.String()
 	}
 }
@@ -286,7 +286,7 @@ func BenchmarkAuditRecord_Format(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		logger.Log(record)
 	}
 }

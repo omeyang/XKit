@@ -60,7 +60,7 @@ func BenchmarkFindPageInternal(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := w.findPageInternal(context.Background(), coll, bson.M{}, opts); err != nil {
 			b.Fatalf("findPageInternal failed: %v", err)
 		}
@@ -83,7 +83,7 @@ func BenchmarkBulkInsertInternal(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := w.bulkInsertInternal(context.Background(), coll, docs, opts); err != nil {
 			b.Fatalf("bulkInsertInternal failed: %v", err)
 		}

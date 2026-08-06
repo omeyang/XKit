@@ -310,8 +310,8 @@ func wrapEtcdError(err error) error {
 	if errors.Is(err, concurrency.ErrSessionExpired) {
 		return fmt.Errorf("%w: %w", ErrSessionExpired, err)
 	}
-	if errors.Is(err, concurrency.ErrLockReleased) {
-		return fmt.Errorf("%w: %w", ErrNotLocked, err)
-	}
+	// 1.23 分支行为差异: 本分支 etcd 客户端锁定在 v3.5.21，未导出 concurrency.ErrLockReleased
+	// (v3.6+ 新增)，因此"锁被 session 提前释放"的错误不会映射为 ErrNotLocked，调用方无法
+	// 通过 errors.Is(err, ErrNotLocked) 判定这一场景。详见 docs/08-1.23-branch-notes.md。
 	return err
 }

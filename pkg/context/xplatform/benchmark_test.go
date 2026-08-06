@@ -20,7 +20,7 @@ func BenchmarkConfig_Validate_Valid(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := cfg.Validate(); err != nil {
 			b.Fatal(err)
 		}
@@ -34,7 +34,7 @@ func BenchmarkConfig_Validate_Invalid(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := cfg.Validate(); err == nil {
 			b.Fatal("expected validation error")
 		}
@@ -60,7 +60,7 @@ func BenchmarkPlatformID(b *testing.B) {
 	b.ResetTimer()
 
 	var v string
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		v = xplatform.PlatformID()
 	}
 	runtime.KeepAlive(v)
@@ -79,7 +79,7 @@ func BenchmarkHasParent(b *testing.B) {
 	b.ResetTimer()
 
 	var v bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		v = xplatform.HasParent()
 	}
 	runtime.KeepAlive(v)
@@ -98,7 +98,7 @@ func BenchmarkUnclassRegionID(b *testing.B) {
 	b.ResetTimer()
 
 	var v string
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		v = xplatform.UnclassRegionID()
 	}
 	runtime.KeepAlive(v)
@@ -116,7 +116,7 @@ func BenchmarkIsInitialized(b *testing.B) {
 	b.ResetTimer()
 
 	var v bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		v = xplatform.IsInitialized()
 	}
 	runtime.KeepAlive(v)
@@ -134,7 +134,7 @@ func BenchmarkRequirePlatformID(b *testing.B) {
 	b.ResetTimer()
 
 	var v string
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var err error
 		v, err = xplatform.RequirePlatformID()
 		if err != nil {
@@ -158,7 +158,7 @@ func BenchmarkGetConfig(b *testing.B) {
 	b.ResetTimer()
 
 	var v xplatform.Config
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		var err error
 		v, err = xplatform.GetConfig()
 		if err != nil {

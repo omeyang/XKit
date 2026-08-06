@@ -209,7 +209,7 @@ Read 两个 Codex 输出文件全文（文件不大，<20KB）。**如果 Codex 
 \`\`\`
 
 ## 硬约束
-- Go 1.24.6 固定（禁用 1.25+ 专有 API）；中文注释英文标识符；构造器返 error 不 panic；comma-ok 断言；\`_ = expr\` 算 errcheck 违规；mock 放子包；funlen≤70
+- Go 1.23 固定（禁用 1.24+ 专有 API）；中文注释英文标识符；构造器返 error 不 panic；comma-ok 断言；\`_ = expr\` 算 errcheck 违规；mock 放子包；funlen≤70
 - 禁破坏性 git（reset --hard / push --force / --no-verify）
 - **严禁跳过任何阶段**。即使 Codex 输出看起来是"截断/无结论"，也必须手动提取表格行进入交叉对抗
 - 空包（无 .go）→ 只写日志并退出

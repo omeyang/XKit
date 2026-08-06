@@ -2,7 +2,7 @@
 
 > Go 基础工具库（38 个包，整体覆盖率 94.0%）。统一的可观测性、弹性、存储、分布式协调与通用工具集，遵循"模块化 + 接口由使用方定义 + 函数选项"的设计范式。多轮 AI 对抗审查稳定。
 
-Go 版本：1.24.6（内网流水线构建底座固定）；1.23 兼容分支 `develop-1.23-release` 提供功能等价版本。所有错误处理使用 `%w` 跨包包装；构造函数返回 error 而非 panic；mock 放 `<pkg>mock/` 子包以隔离覆盖率。
+Go 版本：1.23.x（本分支为 1.23 兼容版本；主线 `main` 锁定 1.24.6）。所有错误处理使用 `%w` 跨包包装；构造函数返回 error 而非 panic；mock 放 `<pkg>mock/` 子包以隔离覆盖率。
 
 知识库索引：<https://github.com/omeyang/XKit/blob/main/docs/00-index.md>
 API 参考：<https://pkg.go.dev/github.com/omeyang/xkit>

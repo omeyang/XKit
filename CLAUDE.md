@@ -15,7 +15,7 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 
 `task pre-push` 包含 check-toolchain / fmt-check / lint-ci / mod-check / build / cross-check / test-short / docs-ledger-check，覆盖 CI 的 **Go 侧**静态检查。仅 CI 跑的部分：actionlint（工作流配置）、`-race` 全量测试、覆盖率上报、`llms-full.txt` 生成。**不要把 Go 侧静态扫描交给 CI 发现。**
 
-不含 govulncheck：工具链锁定 go1.24.6 而 Go 1.24 已停止安全维护，扫描恒为红，见 `CHANGELOG.md`。
+不含 govulncheck：本分支的 Go 1.23 已停止安全维护，扫描恒为红，见 `CHANGELOG.md`。
 
 ## 项目结构
 
@@ -34,11 +34,12 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 
 ## 硬约束
 
-- Go 版本：**1.24.6**（内网流水线构建底座固定版本，`task check-toolchain` 精确校验）；1.23 兼容分支 `develop-1.23-release`
+- Go 版本：**1.23.x**（`task check-toolchain` 校验）；本分支为 1.23 兼容版本，主线见 `main`（Go 1.24.6）
+- 与 `main` 的可观察行为差异：[`docs/08-1.23-branch-notes.md`](docs/08-1.23-branch-notes.md)
 - go.mod 的 `go` 指令为**最低语言版本**（由依赖 MVS 决定），不是工具链锁；不写 `toolchain` 指令——内网 `GOTOOLCHAIN=local` + `GOSUMDB=off`，任何工具链自动下载必失败
-- 经 `go run` / `go install` 从源码构建的工具（golangci-lint / gocyclo / actionlint），其 go.mod 的 `go` 指令必须 **≤ 1.24.6**；升级前先查该行，版本在 `Taskfile.yml` 与 `ci.yml` 中固定
-- 不使用 Go 1.25+ 专有 API（如 `sync.WaitGroup.Go`、`testing/synctest`、`T.Output`）
-- Lint：`golangci-lint v2.8.0`，`.golangci.yml` 严格（`errcheck.check-blank: true` / `check-type-assertions: true` / `funlen.max=70` / `gocyclo<=10`）
+- 经 `go run` / `go install` 从源码构建的工具（golangci-lint / gocyclo / actionlint），其 go.mod 的 `go` 指令必须 **≤ 1.23**；升级前先查该行，版本在 `Taskfile.yml` 与 `ci.yml` 中固定
+- 不使用 Go 1.24+ 专有 API（如 `testing.B.Loop`、`sync.WaitGroup.Go`、`testing/synctest`）
+- Lint：`golangci-lint v2.3.1`，`.golangci.yml` 严格（`errcheck.check-blank: true` / `check-type-assertions: true` / `funlen.max=70` / `gocyclo<=10`）
 - 错误：跨包用 `%w`；抽象边界用 `%v`（须有 `// 设计决策:` 注释，ADR 0004）
 - 构造函数返 `error`，不 `panic`（ADR 0001）
 - 接口由使用方定义（ADR 0002）
@@ -70,4 +71,4 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 
 ## 运行时环境
 
-Linux/Rocky 10；Go 1.24.6；`task`（go-task）；包管理 `dnf5`。
+Linux/Rocky 10；Go 1.23.x；`task`（go-task）；包管理 `dnf5`。

@@ -135,10 +135,10 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 
 ### Go 版本
 
-- **固定版本**：Go 1.24.6（内网流水线构建底座要求）
-- **验证方法**：`task check-toolchain`（精确校验 `go env GOVERSION`）
-- **不使用 Go 1.25+ 专有 API**；`go run`/`go install` 构建的工具链版本亦须 ≤ 1.24.6
-- **1.23 兼容分支**：[`develop-1.23-release`](https://github.com/omeyang/XKit/tree/develop-1.23-release) 为 Go 1.23 用户提供功能等价版本（仅依赖版本上限不同）
+- **固定版本**：Go 1.23.x（本分支为 1.23 兼容版本）
+- **验证方法**：`task check-toolchain`（校验 `go env GOVERSION`）
+- **不使用 Go 1.24+ 专有 API**；`go run`/`go install` 构建的工具链版本亦须 ≤ 1.23
+- **与 `main` 分支的行为差异**：见 [`docs/08-1.23-branch-notes.md`](docs/08-1.23-branch-notes.md)
 
 ### 代码质量
 

@@ -356,7 +356,9 @@ func BenchmarkThroughput(b *testing.B) {
 		var wg sync.WaitGroup
 
 		for g := 0; g < goroutines; g++ {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				for op := 0; op < opsPerGoroutine; op++ {
 					permit, _ := sem.TryAcquire(ctx, "bench-throughput",
 						WithCapacity(10000),
@@ -366,7 +368,7 @@ func BenchmarkThroughput(b *testing.B) {
 						releasePermitB(b, ctx, permit)
 					}
 				}
-			})
+			}()
 		}
 
 		wg.Wait()

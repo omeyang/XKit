@@ -340,7 +340,9 @@ func TestIntegration_HighConcurrency(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				permit, err := sem.TryAcquire(ctx,
 					fmt.Sprintf("concurrent-resource-%d", id%5),
@@ -357,7 +359,7 @@ func TestIntegration_HighConcurrency(t *testing.T) {
 					}
 				}
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -386,7 +388,9 @@ func TestIntegration_ConcurrentTenants(t *testing.T) {
 		for j := 0; j < goroutinesPerTenant; j++ {
 			tid := tenantID
 			idx := i
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				permit, err := sem.TryAcquire(ctx, "shared-resource",
 					WithCapacity(1000),
 					WithTenantQuota(quotaPerTenant),
@@ -400,7 +404,7 @@ func TestIntegration_ConcurrentTenants(t *testing.T) {
 					time.Sleep(5 * time.Millisecond)
 					releasePermit(t, ctx, permit)
 				}
-			})
+			}()
 		}
 	}
 

@@ -14,7 +14,7 @@ XKit 知识库。所有内容是 markdown，用相对路径链接，可在 Obsid
 | 01 | **关键决策（ADR）** | [01-decisions/](01-decisions/00-index.md) | 8 篇架构决策记录 |
 | 02 | 进度追踪 | [02-progress.md](02-progress.md) | 包稳定性矩阵 + 实测覆盖率 |
 | 03 | 约定规范 | [03-conventions/](03-conventions/01-api.md) | API 清单 + 贡献流程 |
-| 04 | 包详情 | [04-packages/](04-packages/00-index.md) | 每个包一页详细文档（38 包 + 14 子域索引） |
+| 04 | 包详情 | [04-packages/](04-packages/00-index.md) | 每个包一页详细文档 + 子域索引 |
 | 05 | 概念笔记 | [05-concepts/](05-concepts/00-index.md) | 跨包概念（错误处理、并发、可观测性等 10 篇） |
 | 06 | 设计模式 | [06-patterns/](06-patterns/00-index.md) | 重复出现的解题模板（Cache-Aside / Distributed Lock 等 8 篇） |
 | 07 | 术语表 | [07-glossary.md](07-glossary.md) | FG-H / FP / slot / CA/CB/Codex / typed-nil 等 |

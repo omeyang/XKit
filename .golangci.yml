@@ -1,7 +1,9 @@
 version: "2"
 
 run:
-  timeout: 10m
+  # 不在此设 timeout：实测配置值不足以阻止冷缓存下的超时退出（错误信息明确提示
+  # "try increasing it by passing --timeout option"）。超时统一由命令行给出，
+  # 单一事实源为 Taskfile.yml 的 GOLANGCI_LINT_TIMEOUT 与 ci.yml 的 args --timeout。
   tests: true
 
 linters:
@@ -231,6 +233,12 @@ linters:
         linters:
           - gosec
         source: "uint64\\(s\\.n\\)"
+      # xmac.CollectN: result 在 maxCount > 0 时已条件预分配（见函数内设计决策注释），
+      # maxCount <= 0 时刻意保持 nil 让切片从零增长。prealloc 不识别条件 make。
+      - path: xmac/iter\.go
+        linters:
+          - prealloc
+        source: "var result \\[\\]Addr"
       # xkeylock: cache line padding field — blank identifier is intentional for struct alignment
       - path: xkeylock/keylock_impl\.go
         linters:

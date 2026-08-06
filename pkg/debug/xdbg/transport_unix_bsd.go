@@ -1,5 +1,10 @@
 //go:build darwin || freebsd
 
+// 文件名不得带 _darwin / _freebsd 等 GOOS 后缀：Go 会据文件名施加隐式约束，
+// 与 //go:build 行取交集。原名 transport_unix_darwin.go 使本文件在 freebsd 上
+// 被排除，getPeerIdentity 无定义，GOOS=freebsd 编译长期失败而门禁全绿。
+// 故取 _bsd（非 GOOS 名，不产生隐式约束），平台集合只由上面的 build 行决定。
+
 package xdbg
 
 import (

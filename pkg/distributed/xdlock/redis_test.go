@@ -325,7 +325,9 @@ func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 	defer cancel()
 
 	for i := 0; i < goroutines; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			handle, err := factory.Lock(ctx, "concurrent-lock",
 				xdlock.WithTries(50),
 				xdlock.WithRetryDelay(100*time.Millisecond),
@@ -338,7 +340,7 @@ func TestRedisFactory_Lock_Concurrent(t *testing.T) {
 
 			// 临界区：递增计数器
 			atomic.AddInt64(&counter, 1)
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -363,7 +365,9 @@ func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 	defer cancel()
 
 	for i := 0; i < goroutines; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				handle, err := factory.Lock(ctx, "mutual-exclusion",
 					xdlock.WithTries(50),
@@ -386,7 +390,7 @@ func TestRedisFactory_Lock_MutualExclusion(t *testing.T) {
 				atomic.AddInt64(&counter, -1)
 				_ = handle.Unlock(ctx)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

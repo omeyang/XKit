@@ -679,12 +679,16 @@ func TestJobWrapper_ConcurrentExecution(t *testing.T) {
 
 	// 并发执行
 	var wg sync.WaitGroup
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		wrapper1.Run()
-	})
-	wg.Go(func() {
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		wrapper2.Run()
-	})
+	}()
 	wg.Wait()
 
 	// 验证只有一个获得了锁并执行
@@ -946,7 +950,9 @@ func TestScheduler_ConcurrentAddRemove(t *testing.T) {
 
 	for i := range goroutines {
 		idx := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			name := fmt.Sprintf("concurrent-job-%d", idx)
 			id, err := s.AddFunc("@every 1h", func(ctx context.Context) error {
 				return nil
@@ -956,7 +962,7 @@ func TestScheduler_ConcurrentAddRemove(t *testing.T) {
 			}
 			// 立即移除，制造 AddJob 和 Remove 的并发竞争
 			s.Remove(id)
-		})
+		}()
 	}
 
 	wg.Wait()

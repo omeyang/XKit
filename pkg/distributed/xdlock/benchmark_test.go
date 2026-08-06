@@ -530,7 +530,9 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 
 	for g := 0; g < numGoroutines; g++ {
 		gid := g
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for i := 0; i < b.N/numGoroutines; i++ {
 				key := fmt.Sprintf("highvol-%d-%d", gid, i)
 				handle, err := factory.TryLock(ctx, key, opts...)
@@ -538,7 +540,7 @@ func BenchmarkRedisFactory_HighVolume(b *testing.B) {
 					_ = handle.Unlock(ctx)
 				}
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

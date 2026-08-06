@@ -36,8 +36,8 @@ type TokenManager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	// stopMu + stopped 保护 wg.Go 与 wg.Wait 的线性化：
-	// Stop 先在锁内置 stopped=true 再 Wait，GetToken 在锁内检查 stopped 再 Go。
+	// stopMu + stopped 保护 wg.Add 与 wg.Wait 的线性化：
+	// Stop 先在锁内置 stopped=true 再 Wait，GetToken 在锁内检查 stopped 再启动 goroutine。
 	stopMu  sync.Mutex
 	stopped bool
 }
@@ -400,7 +400,7 @@ func (m *TokenManager) backgroundRefresh(tenantID string) {
 }
 
 // tryStartRefresh 在 stopMu 保护下启动后台刷新 goroutine。
-// 与 Stop 互斥，确保 wg.Go 不会与 wg.Wait 并发。
+// 与 Stop 互斥，确保 wg.Add 不会与 wg.Wait 并发。
 func (m *TokenManager) tryStartRefresh(tenantID string) {
 	m.stopMu.Lock()
 	defer m.stopMu.Unlock()
@@ -408,9 +408,11 @@ func (m *TokenManager) tryStartRefresh(tenantID string) {
 		m.refreshing.Delete(tenantID)
 		return
 	}
-	m.wg.Go(func() {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
 		m.backgroundRefresh(tenantID)
-	})
+	}()
 }
 
 // Stop 停止 TokenManager，取消所有后台刷新任务并等待完成。

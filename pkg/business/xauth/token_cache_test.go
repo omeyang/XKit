@@ -365,13 +365,15 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 
 		// Launch multiple concurrent requests
 		for i := 0; i < 10; i++ {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				_, _ = cache.GetOrLoad(ctx, "tenant-1", func(ctx context.Context) (*TokenInfo, error) {
 					loadCalls.Add(1)
 					time.Sleep(50 * time.Millisecond)
 					return testToken("loaded-token", 3600), nil
 				}, time.Hour)
-			})
+			}()
 		}
 
 		wg.Wait()
@@ -391,13 +393,15 @@ func TestTokenCache_GetOrLoad(t *testing.T) {
 
 		// Launch multiple concurrent requests
 		for i := 0; i < 5; i++ {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				_, _ = cache.GetOrLoad(ctx, "tenant-1", func(ctx context.Context) (*TokenInfo, error) {
 					loadCalls.Add(1)
 					time.Sleep(50 * time.Millisecond)
 					return testToken("loaded-token", 3600), nil
 				}, time.Hour)
-			})
+			}()
 		}
 
 		wg.Wait()

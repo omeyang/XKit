@@ -7,8 +7,8 @@
 
 ## [未发布] - v0.1.0 候选
 
-首个 Tag 候选。包含 38 个包（Stable 14 / Beta 21 / Alpha 1 / Internal 3），
-整体覆盖率 94.0%，核心包均 ≥ 90%。
+首个 Tag 候选。包清单、稳定性分级与覆盖率以 [`docs/02-progress.md`](docs/02-progress.md)
+为单一事实源，此处不复制具体数字以免失真。
 
 ### 新增
 
@@ -29,10 +29,35 @@
 
 ### 工程基础设施
 
-- Go 1.25.10 + golangci-lint v2.8.0 + go-task
+- Go 1.24.6 + golangci-lint v2.8.0 + go-task
+- 工具链锁定 go1.24.6（内网流水线构建底座）：`task check-toolchain` 精确门禁，
+  CI 设 `GOTOOLCHAIN=local` 复现内网约束（`GOSUMDB=off` + 私有代理取不到工具链模块，
+  任何自动下载必失败）；go.mod 不写 `toolchain` 指令；由源码构建的工具
+  （golangci-lint / gocyclo / actionlint）版本固定且 go directive ≤ 1.24.6
+- 不设 govulncheck 门禁（`task pre-push`、`task ci`、CI 均不含）。工具链锁定
+  go1.24.6，而 Go 1.24 已停止安全维护：实测存在多条可达漏洞，其中一部分需把底座
+  升到 go1.24.13（`golang:1.24.6-bullseye` 是官方最后一个 bullseye 底座，换底座会
+  改变 glibc 依赖），另一部分只在 go1.25.x / x/net v0.51.0+ 修复，在 Go 1.24
+  上永无补丁。恒红的门禁拦不住问题，只会淹没真正新增的信号，故移除而非豁免。
+  具体条目以实跑为准（数字随依赖与漏洞库变动，此处不记）：
+  `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...`。
 - `develop-1.23-release` 分支：Go 1.23 功能等价版本（仅依赖版本上限不同）
-- CI 流水线本地化（`task pre-push` 与 `.github/workflows/ci.yml` 同源）
+- CI 触发覆盖两个长期分支：`on.push` / `on.pull_request` 的 `branches` 均为
+  `[main, develop-1.23-release]`，两分支逐字一致。此前只写 `[main]`，
+  `develop-1.23-release` 的 push 永远不匹配，该分支自建仓起从未跑过远端 CI
+- CI 流水线本地化（`task pre-push` 覆盖 CI 的 Go 侧静态检查；
+  actionlint、`-race` 全量测试、覆盖率上报、llms 生成仅 CI 跑）
 - 多轮 CA/CB/Codex A/Codex B 对抗审查（覆盖 30+ 包）
+
+### 破坏性变更（相对改造前）
+
+- `pkg/resilience/xbreaker` 不再导出 `CircuitBreaker[T]` 与 `TwoStepCircuitBreaker[T]`
+  两个泛型类型别名。泛型类型别名是 Go 1.24 语言特性，`develop-1.23-release` 分支
+  无法表达；为使两分支公开 API 严格一致，两边统一移除。
+  别名与被别名类型本就是同一类型，运行时行为、方法集、可比较性均无变化。
+  **迁移**：显式书写类型名的地方改用 `gobreaker.CircuitBreaker[T]` /
+  `gobreaker.TwoStepCircuitBreaker[T]` 并 `import "github.com/sony/gobreaker/v2"`；
+  `NewCircuitBreaker` / `NewTwoStepCircuitBreaker` 的调用方式不变，返回值可直接用。
 
 ### 关键设计决策
 

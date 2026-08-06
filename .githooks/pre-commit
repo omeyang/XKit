@@ -1,13 +1,65 @@
 #!/usr/bin/env bash
-# XKit pre-commit hook: 快速本地检查（仅对本次变更）。
+# XKit pre-commit hook: 快速本地检查（仅对本次变更）+ 增量对抗审查。
 # 启用：task install-hooks（即 git config core.hooksPath .githooks）
 #
 # 跳过（不推荐）：git commit --no-verify
+#
+# 说明：对抗审查此前单独装在 .git/hooks/pre-commit（不入版本库），与本目录互斥
+# ——core.hooksPath 只能指一处，装了哪套另一套就整体失效，导致本文件的
+# docs-ledger 检查从未执行。合并到这里后 `task install-hooks` 是唯一入口，
+# pre-commit / commit-msg / pre-push 与对抗审查一起生效。
 
 set -euo pipefail
 
-# 仅当本次暂存包含文档/README 时才跑 ledger 检查（提速）
-if git diff --cached --name-only | grep -qE '^(docs/|README\.md$)'; then
+# ===== 1. 文档记账检查（仅当本次暂存包含文档/README 时才跑，提速）=====
+# 用 `git diff --cached --quiet -- <pathspec>` 替代 `--name-only | grep -q`：
+#   1) pipefail 下 grep -q 早退可让 git 遭 SIGPIPE(141)，if 判 false 会静默跳过检查
+#     （大量文件暂存且 docs/README 排序靠前时可复现 pipeline_rc=141）。
+#   2) 默认 core.quotePath=true 下 `docs/中文.md` 输出被包成 `"docs/\344\270\255\346\226\207.md"`，
+#     `^(docs/|README\.md$)` 不命中，中文文档提交时静默跳过检查。
+# --quiet 用 exit code 表达差异（1=有差异，0=无差异），跳过管道、免受这两处影响。
+if ! git diff --cached --quiet -- docs/ README.md; then
   echo "==> pre-commit: docs-ledger-check"
   bash .githooks/docs-ledger-check.sh
 fi
+
+# ===== 2. 增量对抗审查 =====
+AI_TOOLKIT="${AI_TOOLKIT_HOME:-$HOME/code/ai/github.com/omeyang/ai-toolkit}"
+REVIEW_SCRIPT="$AI_TOOLKIT/workflows/adversarial-review/scripts/review-diff.sh"
+
+if [[ ! -x "$REVIEW_SCRIPT" ]]; then
+  echo "⚠️  pre-commit: 未找到对抗审查工具，跳过（不阻断提交）" >&2
+  echo "    期望位置：$REVIEW_SCRIPT" >&2
+  echo "    可设 AI_TOOLKIT_HOME 指向 ai-toolkit 仓库" >&2
+  exit 0
+fi
+
+# merge / rebase / cherry-pick 期间不审：这些提交的内容来自别处，
+# 审查应发生在其原始提交上。
+git_dir=$(git rev-parse --git-dir)
+if [[ -f "$git_dir/MERGE_HEAD" \
+   || -d "$git_dir/rebase-merge" \
+   || -d "$git_dir/rebase-apply" \
+   || -f "$git_dir/CHERRY_PICK_HEAD" ]]; then
+  exit 0
+fi
+
+# 重入保护：审查流程自身若触发 commit，不再递归审查
+[[ "${AIREVIEW_RUNNING:-}" == "1" ]] && exit 0
+
+echo "==> pre-commit: adversarial-review（耗时较长，产物见 .adversarial-runs/）"
+
+# 必须清掉 git 注入钩子的环境变量再调外部工具。
+# git 运行钩子时会导出 GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE / GIT_PREFIX，
+# 这些会被钩子派生的**所有**子进程继承。外部工具若在别处（临时夹具目录、
+# 另一个仓库）执行 git 写操作，会因继承的 GIT_DIR 把提交打进本仓库并移动本分支。
+# 曾实际发生：两个 "init" 提交以本仓库 HEAD 为父提交写入，删掉 1024 个文件。
+# 清掉后 git 改为从 cwd 自动发现仓库（钩子的 cwd 即仓库顶层），行为等价且安全。
+rc=0
+env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE -u GIT_PREFIX \
+    -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_AUTHOR_DATE \
+    "$REVIEW_SCRIPT" || rc=$?
+
+# exit 3 = 工具主动跳过（空 diff / 路径全被 skip_paths 排除 / diff 过大）→ 放行
+[[ "$rc" -eq 3 ]] && exit 0
+exit "$rc"

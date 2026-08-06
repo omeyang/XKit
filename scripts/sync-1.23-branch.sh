@@ -132,21 +132,28 @@ git merge origin/main --no-edit
 **逐项检查并修复**（发现不符合的地方用 Edit 工具修）：
 
 1. \`go.mod\` 顶部必须是 \`go 1.23.0\`，不能有 \`toolchain\` 指令
-2. \`.github/workflows/ci.yml\` 中 \`GO_VERSION: '1.23.0'\`
-3. \`Taskfile.yml\` 的 verify task 中 grep 字符串为 \`"go1.23"\`
-4. \`README.md\`、\`docs/03-conventions/02-contributing.md\` 中的 Go 版本字符串应为 1.23
-5. **全仓库**搜 \`wg\\.Go(\`（任意 WaitGroup 变量的 \`.Go\` 调用）：
+2. \`.github/workflows/ci.yml\` 中 \`GO_VERSION: '1.23.0'\`；保留 \`GOTOOLCHAIN: local\`
+3. \`Taskfile.yml\` 的 vars 中 \`REQUIRED_GO_VERSION: go1.23.x\`（check-toolchain 任务据此精确门禁）
+4. 由源码构建的工具版本必须能被 go1.23 构建（go.mod 的 go directive ≤ 1.23）——
+   \`Taskfile.yml\` 与 \`ci.yml\` 两处同步：
+   - \`GOLANGCI_LINT_VERSION\` → \`v2.3.1\`（v2.4.0+ 要求 go 1.24.0）
+   - \`ACTIONLINT_VERSION\` → \`v1.7.7\`（v1.7.10+ 要求 go 1.24.0）
+   - \`GOCYCLO_VERSION\` \`v0.6.0\` 无需改（go1.18）
+5. \`README.md\`、\`docs/03-conventions/02-contributing.md\`、\`CLAUDE.md\`、\`llms.txt\` 中的 Go 版本字符串应为 1.23
+6. **全仓库**搜 \`\\.Go(func() {\` 与 \`wg\\.Go(\`（任意 WaitGroup 变量的 \`.Go\` 调用）：
    替换为 \`wg.Add(1); go func() { defer wg.Done(); <原闭包体> }()\`
-6. **全仓库**搜 \`for b\\.Loop()\`：
+   （main 自 Go 1.24.6 改造后已不再使用 \`sync.WaitGroup.Go\`，此项通常应为空；
+   注意别误伤 \`xrun.Group.Go\` 与 \`errgroup.Group.Go\`——它们的回调带返回值）
+7. **全仓库**搜 \`for b\\.Loop()\`：
    替换为 \`for i := 0; i < b.N; i++\`
-7. \`pkg/distributed/xdlock/etcd.go\` 的 \`wrapEtcdError\` 中 **不能**出现 \`concurrency.ErrLockReleased\` 分支（etcd v3.5.21 未导出）；如果 merge 时被 \`--theirs\` 带进来，删掉并加回下面的注释：
+8. \`pkg/distributed/xdlock/etcd.go\` 的 \`wrapEtcdError\` 中 **不能**出现 \`concurrency.ErrLockReleased\` 分支（etcd v3.5.21 未导出）；如果 merge 时被 \`--theirs\` 带进来，删掉并加回下面的注释：
    \`\`\`
    // 1.23 分支行为差异: 本分支 etcd 客户端锁定在 v3.5.21，未导出 concurrency.ErrLockReleased
    // (v3.6+ 新增)，因此"锁被 session 提前释放"的错误不会映射为 ErrNotLocked，调用方无法
    // 通过 errors.Is(err, ErrNotLocked) 判定这一场景。详见 docs/1.23-branch-notes.md。
    \`\`\`
-8. \`pkg/mq/xpulsar/auth_test.go\` 的 "valid params" 子测试**不应**断言 \`method.auth != nil\`（v0.16 构造时校验可能产生 nil auth）
-9. \`docs/1.23-branch-notes.md\` 必须保留（如果 merge 产生冲突或丢失，从 $BACKUP_TAG 恢复）
+9. \`pkg/mq/xpulsar/auth_test.go\` 的 "valid params" 子测试**不应**断言 \`method.auth != nil\`（v0.16 构造时校验可能产生 nil auth）
+10. \`docs/1.23-branch-notes.md\` 必须保留（如果 merge 产生冲突或丢失，从 $BACKUP_TAG 恢复）
 
 ### 步骤 3：依赖版本上限（memory/project_1_23_branch.md 记录）
 执行：
@@ -179,7 +186,7 @@ task lint
 task test
 task build
 \`\`\`
-**不跑 \`task vulncheck\`**（本分支长期有 2 个不可修复 CVE，会失败，属预期）。
+两分支均已移除 govulncheck 门禁（见 CHANGELOG「工程基础设施」），无需再单独跳过。
 
 任何一步失败：
 - 读日志，分析根因

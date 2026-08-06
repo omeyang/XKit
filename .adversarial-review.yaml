@@ -1,6 +1,6 @@
 # XKit 对抗审查配置
-# 工具位置查找顺序：$ADVERSARIAL_REVIEW_HOME → ~/code/ai/github.com/omeyang/ai-toolkit/workflows/adversarial-review/
-#                  → $GOPATH/src/github.com/omeyang/ai-toolkit/workflows/adversarial-review/
+# 工具位置：${AI_TOOLKIT_HOME:-~/code/ai/github.com/omeyang/ai-toolkit}/workflows/adversarial-review/
+#           只认 AI_TOOLKIT_HOME 这一个环境变量（ADVERSARIAL_REVIEW_HOME 无效，工具链未读取）
 # 触发：pre-commit hook 增量审查（.githooks/，由 `task install-hooks` 启用）
 #       + cron 定时全包轮转（固定 SLOT→包 映射，0-7 点）
 

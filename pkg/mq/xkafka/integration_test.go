@@ -465,7 +465,9 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 
 	for i := 0; i < producerCount; i++ {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			config := &kafka.ConfigMap{
 				"bootstrap.servers": brokers,
 			}
@@ -497,7 +499,7 @@ func TestIntegration_ConcurrentProducers(t *testing.T) {
 					return
 				}
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

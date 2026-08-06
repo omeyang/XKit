@@ -7,13 +7,14 @@ import (
 // 以下是 sony/gobreaker/v2 的类型别名，便于直接使用底层能力
 // 用户可以直接使用这些类型，无需导入 gobreaker 包
 
+// 设计决策: 不导出 CircuitBreaker[T] / TwoStepCircuitBreaker[T] 的类型别名。
+// 泛型类型别名（type A[T any] = B[T]）是 Go 1.24 才支持的语言特性，
+// develop-1.23-release 分支的最低语言版本为 1.23，无法表达；为使两个分支的公开
+// API 严格一致，两边都不导出，NewCircuitBreaker / NewTwoStepCircuitBreaker 直接
+// 返回 gobreaker 的类型。别名与被别名类型本就是同一类型，去掉后运行时行为不变，
+// 调用方若需显式书写类型名，用 gobreaker.CircuitBreaker[T]。
+
 type (
-	// CircuitBreaker 泛型熔断器类型别名
-	CircuitBreaker[T any] = gobreaker.CircuitBreaker[T]
-
-	// TwoStepCircuitBreaker 两阶段泛型熔断器类型别名
-	TwoStepCircuitBreaker[T any] = gobreaker.TwoStepCircuitBreaker[T]
-
 	// Settings 熔断器配置
 	Settings = gobreaker.Settings
 
@@ -67,7 +68,7 @@ var (
 //	result, err := cb.Execute(func() (string, error) {
 //	    return callRemoteService()
 //	})
-func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
+func NewCircuitBreaker[T any](st Settings) *gobreaker.CircuitBreaker[T] {
 	return gobreaker.NewCircuitBreaker[T](st)
 }
 
@@ -93,7 +94,7 @@ func NewCircuitBreaker[T any](st Settings) *CircuitBreaker[T] {
 //
 //	// 第二阶段：报告结果（nil 表示成功，非 nil 表示失败）
 //	done(err)
-func NewTwoStepCircuitBreaker[T any](st Settings) *TwoStepCircuitBreaker[T] {
+func NewTwoStepCircuitBreaker[T any](st Settings) *gobreaker.TwoStepCircuitBreaker[T] {
 	return gobreaker.NewTwoStepCircuitBreaker[T](st)
 }
 

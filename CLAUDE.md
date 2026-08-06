@@ -7,16 +7,19 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 | 任务 | 命令 |
 |---|---|
 | 完整本地检查（push 前必跑） | `task pre-push` |
-| Lint | `task lint` |
+| Lint（与 CI 同版本同超时，以此为准） | `task lint-ci` |
+| Lint（本地快速迭代，版本随 PATH 不固定） | `task lint` |
 | 测试 | `task test` / `task test-cover` / `task test-race` |
 | 基准测试 | `task bench` |
 | 集成测试（需中间件） | `go test -tags=integration ./pkg/...` |
 
-`task pre-push` 包含 fmt-check / lint-ci / vulncheck / test-short——与 `.github/workflows/ci.yml` 同源。**不要把静态扫描交给 CI 发现。**
+`task pre-push` 包含 check-toolchain / fmt-check / lint-ci / mod-check / build / cross-check / test-short / docs-ledger-check，覆盖 CI 的 **Go 侧**静态检查。仅 CI 跑的部分：actionlint（工作流配置）、`-race` 全量测试、覆盖率上报、`llms-full.txt` 生成。**不要把 Go 侧静态扫描交给 CI 发现。**
+
+不含 govulncheck：工具链锁定 go1.24.6 而 Go 1.24 已停止安全维护，扫描恒为红，见 `CHANGELOG.md`。
 
 ## 项目结构
 
-- 包：`pkg/<domain>/<pkg>/`（38 个；分类见 [`docs/00-index.md`](docs/00-index.md)）
+- 包：`pkg/<domain>/<pkg>/`（分类见 [`docs/00-index.md`](docs/00-index.md)；包数与稳定性以 [`docs/02-progress.md`](docs/02-progress.md) 为单一事实源）
 - 内部：`internal/`（仅项目内部使用）
 - CLI：`cmd/xdbgctl`
 
@@ -31,8 +34,11 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 
 ## 硬约束
 
-- Go 版本：**1.25.10**（固定，`task verify` 校验）；1.23 兼容分支 `develop-1.23-release`
-- Lint：`golangci-lint v2.11.4`，`.golangci.yml` 严格（`errcheck.check-blank: true` / `check-type-assertions: true` / `funlen.max=70` / `gocyclo<=10`）
+- Go 版本：**1.24.6**（内网流水线构建底座固定版本，`task check-toolchain` 精确校验）；1.23 兼容分支 `develop-1.23-release`
+- go.mod 的 `go` 指令为**最低语言版本**（由依赖 MVS 决定），不是工具链锁；不写 `toolchain` 指令——内网 `GOTOOLCHAIN=local` + `GOSUMDB=off`，任何工具链自动下载必失败
+- 经 `go run` / `go install` 从源码构建的工具（golangci-lint / gocyclo / actionlint），其 go.mod 的 `go` 指令必须 **≤ 1.24.6**；升级前先查该行，版本在 `Taskfile.yml` 与 `ci.yml` 中固定
+- 不使用 Go 1.25+ 专有 API（如 `sync.WaitGroup.Go`、`testing/synctest`、`T.Output`）
+- Lint：`golangci-lint v2.8.0`，`.golangci.yml` 严格（`errcheck.check-blank: true` / `check-type-assertions: true` / `funlen.max=70` / `gocyclo<=10`）
 - 错误：跨包用 `%w`；抽象边界用 `%v`（须有 `// 设计决策:` 注释，ADR 0004）
 - 构造函数返 `error`，不 `panic`（ADR 0001）
 - 接口由使用方定义（ADR 0002）
@@ -56,12 +62,12 @@ XKit 协作入口。AI 助手与新协作者读本文件先于其他文档。
 ## 对抗审查
 
 - 配置：[`.adversarial-review.yaml`](.adversarial-review.yaml)
-- 工具位置（按优先级查找）：
-  1. `$ADVERSARIAL_REVIEW_HOME`（环境变量显式指定）
-  2. `~/code/ai/github.com/omeyang/ai-toolkit/workflows/adversarial-review/`（本机默认）
-  3. `$GOPATH/src/github.com/omeyang/ai-toolkit/workflows/adversarial-review/`（兜底搜索）
+- 工具位置：`${AI_TOOLKIT_HOME:-~/code/ai/github.com/omeyang/ai-toolkit}/workflows/adversarial-review/`
+  （只认 `AI_TOOLKIT_HOME` 这一个环境变量；找不到时 pre-commit 打印告警并放行，不阻断提交）
 - 触发：pre-commit 增量审查 + cron 定时全包
+- 钩子：全部经 `.githooks/`，由 `task install-hooks` 一次装好。`core.hooksPath` 只能指一处，
+  勿把对抗审查另装到 `.git/hooks/`——两套互斥，会让 `.githooks/` 整体失效。
 
 ## 运行时环境
 
-Linux/Rocky 10；Go 1.25.10；`task`（go-task）；包管理 `dnf5`。
+Linux/Rocky 10；Go 1.24.6；`task`（go-task）；包管理 `dnf5`。

@@ -203,7 +203,9 @@ func TestConcurrentGeneration(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < goroutines; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < idsPerGoroutine; j++ {
 				id, err := New()
 				if err != nil {
@@ -212,7 +214,7 @@ func TestConcurrentGeneration(t *testing.T) {
 				}
 				ids <- id
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

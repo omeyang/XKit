@@ -412,9 +412,11 @@ func TestConcurrentInit(t *testing.T) {
 	errs := make(chan error, goroutines)
 
 	for range goroutines {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			errs <- xenv.InitWith(xenv.DeploymentLocal)
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -595,13 +597,15 @@ func TestConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for range goroutines {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_ = xenv.Type()
 			_ = xenv.IsLocal()
 			_ = xenv.IsSaaS()
 			_ = xenv.IsInitialized()
 			_, _ = xenv.RequireType()
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -625,13 +629,17 @@ func TestConcurrentResetAndRead(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// 写者：Reset
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			xenv.Reset()
-		})
+		}()
 
 		// 读者：RequireType + Type
 		for range readers {
-			wg.Go(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				dt, err := xenv.RequireType()
 				if err == nil && dt == "" {
 					t.Errorf("RequireType() = (%q, nil), contract violation: must not return empty type without error", dt)
@@ -640,7 +648,7 @@ func TestConcurrentResetAndRead(t *testing.T) {
 				if got := xenv.Type(); got != "" && got != xenv.DeploymentLocal {
 					t.Errorf("Type() = %q, want empty or DeploymentLocal", got)
 				}
-			})
+			}()
 		}
 
 		wg.Wait()

@@ -1,24 +1,38 @@
 name: CI
 
+# 两个长期分支共用这一份触发条件，`on:` 块在两分支间保持逐字一致——
+# ci.yml 的分支差异只允许出现在下面 env 的 GO_VERSION 与工具版本上。
+# push 事件读取被推送分支自身的这份定义，因此每个分支的门禁由它自己的
+# 这个文件生效；列表里的另一个分支名是 no-op，只为消除两分支的无谓 diff。
 on:
   push:
-    branches: [main]
+    branches: [main, develop-1.23-release]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, develop-1.23-release]
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.25.10'
-  GOLANGCI_LINT_VERSION: 'v2.11.4'
+  # 内网流水线构建底座锁定 go1.24.6，CI 必须与之一致。
+  GO_VERSION: '1.24.6'
+
+  # GOTOOLCHAIN=local 禁止工具链自动下载，让 CI 忠实复现内网约束：
+  # 任何要求 go > GO_VERSION 的依赖或工具会在这里立刻失败，而不是等到内网
+  # （GOSUMDB=off + 私有代理，取不到工具链模块）才炸。
+  GOTOOLCHAIN: local
+
+  # 以下工具版本受 GOTOOLCHAIN=local 约束——go.mod 的 go directive 必须 <= GO_VERSION。
+  GOLANGCI_LINT_VERSION: 'v2.8.0'   # v2.9.0+ 要求 go 1.25.0
+  ACTIONLINT_VERSION: 'v1.7.10'     # v1.7.11+ 要求 go 1.25.0
 
 jobs:
   # ==================== 代码质量检查 ====================
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -47,10 +61,16 @@ jobs:
             exit 1
           fi
 
+      # 文档记账门禁在 CI 侧兜底：该检查此前只挂在 task pre-push 上，
+      # 而 pre-push 可被 git push --no-verify 绕过，等于没有强制力。
+      - name: Docs ledger check
+        run: bash .githooks/docs-ledger-check.sh
+
   # ==================== 单元测试 ====================
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -66,8 +86,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y librdkafka-dev
 
-      - name: Clean build cache
-        run: go clean -cache
+      # 只清测试结果缓存以强制重跑用例；不清 go clean -cache——那会把 setup-go
+      # 刚恢复的 ~/.cache/go-build 整个抹掉，令上面的 cache: true 完全失效。
+      - name: Clean test cache
+        run: go clean -testcache
 
       - name: Run tests with coverage
         run: go test -v -race -p 2 -coverprofile=coverage.out -covermode=atomic ./...
@@ -85,6 +107,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -106,37 +129,46 @@ jobs:
       - name: Build
         run: go build -v ./...
 
-      # 跨平台编译验证：确保 !unix build tag 分支（如 xsys）持续可编译。
-      # 仅编译验证，不运行测试（Windows 下无 librdkafka 等依赖）。
+      # 跨平台编译验证：确保 windows/!unix build tag 分支持续可编译。
+      #
+      # 覆盖全部包而非只覆盖 xsys——只盯单个包的门禁曾漏掉真实缺陷：xdbg 的
+      # command_builtin.go / command_registry_test.go 缺 !windows 约束，引用了
+      # windows stub Server 上不存在的字段，GOOS=windows 编译长期失败而 CI 全绿。
+      #
+      # 用 go vet 而非 go build：vet 连测试文件一起类型检查，能抓到只在测试里
+      # 出现的平台约束缺失（上述 command_registry_test.go 即属此类）。
+      # 排除 pkg/mq/xkafka：依赖 confluent-kafka-go 的 cgo/librdkafka，本就不支持 windows。
+      #
+      # 与 Taskfile.yml 的 cross-check 任务保持一致，改这里必须同步改那里。
       - name: Cross-compile check (Windows)
-        run: GOOS=windows GOARCH=amd64 go build ./pkg/util/xsys/...
-
-      - name: Cross-compile check (Windows tests)
-        run: GOOS=windows GOARCH=amd64 go test -c -o /dev/null ./pkg/util/xsys/...
-
-  # ==================== 安全扫描 ====================
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install librdkafka (for confluent-kafka-go)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y librdkafka-dev
+          # 必须显式 set -euo pipefail：GitHub 的 run: 默认 shell 是 `bash -e {0}`，
+          # 带 -e 但**不带 -o pipefail**。go list 遇到坏包时会 exit 1 却仍向 stdout
+          # 打印其余包，管道退出码取自 grep（0），pkgs 非空 → 空集校验放行 →
+          # go vet 只扫到子集，跨平台门禁静默降级为部分覆盖。Taskfile 侧已有此行。
+          set -euo pipefail
+          pkgs=$(go list ./... | grep -vE '/pkg/mq/xkafka($|/)')
+          [ -n "$pkgs" ] || { echo "::error::go list 未返回任何包，交叉编译门禁无法生效"; exit 1; }
+          # shellcheck disable=SC2086  # pkgs 为换行分隔的包列表，此处依赖分词展开为多参数
+          GOOS=windows GOARCH=amd64 go vet $pkgs
 
-      - name: Run govulncheck
+      # BSD 系与 tag 变体：与 Taskfile.yml 的 cross-check 后两条命令保持一致。
+      # 只 vet xdbg 与 xsys（仅这两个包含平台专属文件），只取 darwin + freebsd
+      # （已覆盖全部平台专属文件，dragonfly 不额外覆盖任何文件）。
+      - name: Cross-compile check (BSD) and build-tag variants
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          set -euo pipefail
+          for os in darwin freebsd; do
+            GOOS=$os GOARCH=amd64 go vet ./pkg/debug/xdbg/... ./pkg/util/xsys/...
+          done
+          for tag in integration e2e; do
+            go vet -tags="$tag" ./...
+          done
+
+  # 说明：不设 govulncheck 作业。工具链锁定 go1.24.6 而 Go 1.24 已停止安全维护，
+  # 扫描恒为红且无法通过升级依赖消除，恒红门禁反而淹没新增信号。
+  # 详见 CHANGELOG「工程基础设施」。需要人工排查时本地跑：
+  #   go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   # ==================== 文档全文汇编（llms-full.txt 作为 CI 产物）====================
   # llms-full.txt 不入仓（见 .gitignore），CI 在 push/tag 时生成：
@@ -145,6 +177,10 @@ jobs:
   docs-llms:
     name: Build llms-full.txt
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 依赖全部前置检查：任一失败时不应把产物附到 release。
+    # 含 actionlint——工作流配置本身有缺陷时，其产出的发布资产同样不可信。
+    needs: [lint, test, build, actionlint]
     permissions:
       contents: write  # release 资产上传
     steps:
@@ -166,15 +202,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" llms-full.txt --clobber \
-            || echo "::warning::release upload failed; ensure release ${GITHUB_REF_NAME} exists"
+        run: gh release upload "${GITHUB_REF_NAME}" llms-full.txt --clobber
 
   # ==================== 工作流 Lint（可选，检查工作流配置）====================
   # 注意：集成测试已移至本地运行，使用 task kube-up && task kube-test && task kube-down
   actionlint:
     name: Workflow Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -187,5 +222,5 @@ jobs:
 
       - name: Install and run actionlint
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          go install github.com/rhysd/actionlint/cmd/actionlint@${{ env.ACTIONLINT_VERSION }}
           actionlint -color

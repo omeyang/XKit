@@ -280,7 +280,9 @@ func TestRedisLocker_Concurrent_Integration(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			locker, err := xcron.NewRedisLocker(client,
 				xcron.WithRedisIdentity("worker-"+string(rune('A'+id))),
 			)
@@ -301,7 +303,7 @@ func TestRedisLocker_Concurrent_Integration(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 				handle.Unlock(ctx)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -327,7 +329,9 @@ func TestRedisLocker_MutualExclusion_Integration(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		id := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			locker, err := xcron.NewRedisLocker(client,
 				xcron.WithRedisIdentity("worker-"+string(rune('A'+id))),
 			)
@@ -370,7 +374,7 @@ func TestRedisLocker_MutualExclusion_Integration(t *testing.T) {
 				atomic.AddInt64(&inCriticalSection, -1)
 				handle.Unlock(ctx)
 			}
-		})
+		}()
 	}
 
 	wg.Wait()

@@ -166,20 +166,24 @@ func TestStats_Concurrent(t *testing.T) {
 	// 并发记录
 	for i := 0; i < 100; i++ {
 		n := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			var err error
 			if n%3 == 0 {
 				err = errors.New("error")
 			}
 			stats.recordExecution("concurrent-job", time.Duration(n)*time.Millisecond, err)
-		})
+		}()
 	}
 
 	// 并发跳过
 	for i := 0; i < 50; i++ {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			stats.recordSkip("concurrent-job")
-		})
+		}()
 	}
 
 	wg.Wait()

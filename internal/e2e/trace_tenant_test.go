@@ -60,7 +60,11 @@ func (h *captureHandler) snapshot() map[string]slog.Value {
 
 func TestHTTPTraceTenantChain_E2E(t *testing.T) {
 	capture := &captureHandler{}
-	logger := slog.New(xlog.NewEnrichHandler(capture))
+	enrich, err := xlog.NewEnrichHandler(capture)
+	if err != nil {
+		t.Fatalf("NewEnrichHandler: %v", err)
+	}
+	logger := slog.New(enrich)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger.InfoContext(r.Context(), "handled")

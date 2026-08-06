@@ -189,9 +189,14 @@ func TestRetryer_Do(t *testing.T) {
 		elapsed := time.Since(start)
 
 		assert.NoError(t, err)
-		// 应该有 2 次退避等待，每次 50ms
+		// 重试次数用确定性断言，不依赖时间
+		assert.Equal(t, 3, attempts)
+		// 应该有 2 次退避等待，每次 50ms。下界证明退避确实生效；
+		// 上界只用于兜底"退避量级严重失控"（如单位写错成 50s），刻意放宽到
+		// 标称值的 10 倍——`task test-short` 以默认并行度跑满 CPU 时，定时器
+		// 唤醒延迟可轻易把 100ms 抬到 250ms 以上，紧上界必然 flaky。
 		assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond)
-		assert.LessOrEqual(t, elapsed, 200*time.Millisecond)
+		assert.LessOrEqual(t, elapsed, time.Second)
 	})
 }
 

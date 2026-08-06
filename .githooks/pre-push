@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-echo "==> pre-push: running task pre-push (lint-ci + gocyclo + vulncheck + test-short)"
+echo "==> pre-push: running task pre-push (工具链门禁 + fmt + lint-ci + mod + build + 跨平台 + test-short + 文档记账)"
 
 if ! command -v task >/dev/null 2>&1; then
   echo "错误：未找到 task（go-task）。安装：go install github.com/go-task/task/v3/cmd/task@latest" >&2

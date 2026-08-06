@@ -151,9 +151,11 @@ func TestDefault_ConcurrencySafety(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		idx := i
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			loggers[idx] = xlog.Default()
-		})
+		}()
 	}
 
 	wg.Wait()

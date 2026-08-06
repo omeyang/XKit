@@ -34,7 +34,7 @@ func BenchmarkMergeTraceContext(b *testing.B) {
 	extracted, _ = xctx.WithTraceFlags(extracted, "01")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		MergeTraceContext(base, extracted)
 	}
 }
@@ -45,7 +45,7 @@ func BenchmarkEnsureSpanContext_FromXctx(b *testing.B) {
 	ctx, _ = xctx.WithSpanID(ctx, "b7ad6b7169203331")
 
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		ensureSpanContext(ctx)
 	}
 }

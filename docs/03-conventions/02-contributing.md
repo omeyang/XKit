@@ -8,7 +8,7 @@
 
 ### 必需工具
 
-- **Go 1.24.6**（固定版本，内网流水线构建底座要求）
+- **Go 1.23.x**（本分支为 1.23 兼容版本）
 - **golangci-lint v2**（代码质量检查）
 - **go-task**（任务运行器，替代 Makefile）
 - **Git**（版本控制）
@@ -17,7 +17,7 @@
 
 ```bash
 # 检查 Go 版本
-go version  # 应显示 go1.24.6
+go version  # 应显示 go1.23.x
 
 # 检查 golangci-lint
 golangci-lint version
@@ -470,7 +470,7 @@ git push origin feature/001-feature-name
 ### Q1: 如何验证 Go 版本？
 
 ```bash
-task check-toolchain  # 精确校验，应输出 "✅ Go 工具链 go1.24.6"
+task check-toolchain  # 应输出 "✅ Go 工具链 go1.23.x"
 
 # 如版本不对，需安装或切换到正确版本
 ```

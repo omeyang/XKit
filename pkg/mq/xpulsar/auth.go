@@ -118,6 +118,11 @@ func TLSCertFromSupplier(supplier func() (*tls.Certificate, error)) (AuthMethod,
 //   - issuerURL: OAuth2 Token 签发地址
 //   - audience: 目标受众标识（通常为 Pulsar 集群标识）
 //   - credentialsPath: 客户端凭证文件路径（JSON 格式，包含 client_id 和 client_secret）
+//
+// 1.23 分支行为差异: 本分支 pulsar-client-go 锁定在 v0.16，OAuth2 凭证的文件加载与 issuer 访问
+// 发生在构造时（main 的 v0.18+ 延迟到首次使用）。这意味着 credentialsPath 文件不存在或 issuerURL
+// 不可达的错误会在此函数内更早暴露，且返回的 AuthMethod 内部 auth 可能为 nil——下游不要对
+// Authentication() 非 nil 做硬断言。详见 docs/08-1.23-branch-notes.md。
 func OAuth2(issuerURL, audience, credentialsPath string) (AuthMethod, error) {
 	if issuerURL = strings.TrimSpace(issuerURL); issuerURL == "" {
 		return AuthMethod{}, ErrEmptyIssuerURL

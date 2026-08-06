@@ -15,7 +15,7 @@ func BenchmarkSubmit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var rejected int64
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := pool.Submit(0); err != nil {
 			rejected++
 		}
@@ -36,7 +36,7 @@ func BenchmarkSubmit_ZeroReject(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := pool.Submit(0); err != nil {
 			b.Fatalf("unexpected reject: %v", err)
 		}
@@ -105,7 +105,7 @@ func BenchmarkSubmitAndProcess(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	var rejected int64
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := pool.Submit(0); err != nil {
 			rejected++
 		}
@@ -118,7 +118,7 @@ func BenchmarkSubmitAndProcess(b *testing.B) {
 // BenchmarkLifecycle 测量 New→Submit(N)→Close 完整生命周期开销。
 func BenchmarkLifecycle(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		pool, err := New(2, 64, func(_ int) {})
 		if err != nil {
 			b.Fatal(err)

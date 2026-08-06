@@ -122,7 +122,7 @@ func TestAddr_AfterCloseNoPanic(t *testing.T) {
 
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		m, err := New()
 		if err != nil {
 			b.Fatal(err)

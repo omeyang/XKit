@@ -402,7 +402,7 @@ func BenchmarkRuleMatcher_FindRule(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = matcher.findRule("tenant")
 	}
 }
@@ -430,7 +430,7 @@ func BenchmarkRuleMatcher_GetEffectiveLimit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = matcher.getEffectiveLimit(rule, rendered)
 	}
 }

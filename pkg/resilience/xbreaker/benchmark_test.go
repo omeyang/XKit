@@ -17,7 +17,7 @@ var benchSinkBool bool
 
 func BenchmarkNewBreaker_Default(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = NewBreaker("test")
 	}
 }
@@ -28,7 +28,7 @@ func BenchmarkNewBreaker_WithOptions(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = NewBreaker("test",
 			WithTripPolicy(policy),
 			WithTimeout(30*time.Second),
@@ -49,7 +49,7 @@ func BenchmarkBreaker_Do_Success(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = breaker.Do(ctx, fn)
 	}
 }
@@ -81,7 +81,7 @@ func BenchmarkExecute_Success(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = Execute(ctx, breaker, fn)
 	}
 }
@@ -116,7 +116,7 @@ func BenchmarkManagedBreaker_Execute(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _ = managed.Execute(fn)
 	}
 }
@@ -157,7 +157,7 @@ func BenchmarkConsecutiveFailures_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -175,7 +175,7 @@ func BenchmarkFailureRatio_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -193,7 +193,7 @@ func BenchmarkFailureCount_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -216,7 +216,7 @@ func BenchmarkCompositePolicy_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -234,7 +234,7 @@ func BenchmarkNeverTrip_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -251,7 +251,7 @@ func BenchmarkAlwaysTrip_ReadyToTrip(b *testing.B) {
 	b.ResetTimer()
 
 	var result bool
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		result = policy.ReadyToTrip(counts)
 	}
 	benchSinkBool = result
@@ -267,7 +267,7 @@ func BenchmarkBreaker_State(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = breaker.State()
 	}
 }
@@ -278,7 +278,7 @@ func BenchmarkBreaker_Counts(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = breaker.Counts()
 	}
 }
@@ -289,14 +289,14 @@ func BenchmarkBreaker_Counts(b *testing.B) {
 
 func BenchmarkNewConsecutiveFailures(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = NewConsecutiveFailures(5)
 	}
 }
 
 func BenchmarkNewFailureRatio(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = NewFailureRatio(0.5, 10)
 	}
 }
@@ -308,7 +308,7 @@ func BenchmarkNewCompositePolicy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_ = NewCompositePolicy(p1, p2)
 	}
 }

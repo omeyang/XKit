@@ -14,7 +14,7 @@ func BenchmarkAcquireUnlock(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		h, err := kl.Acquire(ctx, "key")
 		if err != nil {
 			b.Fatal(err)
@@ -29,7 +29,7 @@ func BenchmarkTryAcquireUnlock(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		h, err := kl.TryAcquire("key")
 		if err != nil {
 			b.Fatal(err)
@@ -98,7 +98,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		entry, err := kl.getOrCreate("key")
 		if err != nil {
 			b.Fatal(err)

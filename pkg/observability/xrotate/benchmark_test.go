@@ -30,7 +30,7 @@ func BenchmarkWrite(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := r.Write(data); err != nil {
 			b.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func BenchmarkWriteLarge(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(data)))
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := r.Write(data); err != nil {
 			b.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func BenchmarkWriteSmall(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(data)))
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := r.Write(data); err != nil {
 			b.Fatal(err)
 		}
@@ -145,7 +145,7 @@ func BenchmarkWriteWithOptions(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if _, err := r.Write(data); err != nil {
 			b.Fatal(err)
 		}
@@ -161,7 +161,7 @@ func BenchmarkNewLumberjack(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		filename := filepath.Join(tmpDir, "bench_new.log")
 		r, err := NewLumberjack(filename)
 		if err != nil {
@@ -180,7 +180,7 @@ func BenchmarkNewLumberjackWithOptions(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		filename := filepath.Join(tmpDir, "bench_new_opts.log")
 		r, err := NewLumberjack(filename,
 			WithMaxSize(50),
@@ -222,7 +222,7 @@ func BenchmarkRotate(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		if err := r.Rotate(); err != nil {
 			b.Fatal(err)
 		}

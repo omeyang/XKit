@@ -4,16 +4,17 @@
 version: '3'
 
 vars:
-  # 流水线锁定的工具链版本（内网构建底座）。verify 任务据此做精确门禁。
-  REQUIRED_GO_VERSION: go1.24.6
+  # 本分支锁定的工具链版本。给到 minor 表示接受 go1.23 全系（本分支无固定构建
+  # 底座镜像，与 main 锁死单一 patch 不同）。check-toolchain 据此做门禁。
+  REQUIRED_GO_VERSION: go1.23
 
   # 以下工具全部经 `go run`/`go install` 从源码构建，因此它们 go.mod 的 go directive
-  # 必须 <= REQUIRED_GO_VERSION——内网 GOTOOLCHAIN=local 且取不到工具链模块，
+  # 必须 <= REQUIRED_GO_VERSION——GOTOOLCHAIN=local 且内网取不到工具链模块，
   # 更高的 directive 不会自动降级，只会直接构建失败。**升级前先查 go.mod 的 go 行。**
   #
   # 与 .github/workflows/ci.yml 的同名变量保持一致。
   # 升级 CI 版本时必须同步更新此处，否则本地和 CI 的规则集会错开。
-  GOLANGCI_LINT_VERSION: v2.8.0   # v2.9.0+ 要求 go 1.25.0
+  GOLANGCI_LINT_VERSION: v2.3.1   # v2.4.0+ 要求 go 1.24.0
   GOCYCLO_VERSION: v0.6.0
   # 与 ci.yml 的 golangci-lint-action `args: --timeout=...` 保持一致。
   GOLANGCI_LINT_TIMEOUT: 5m
@@ -445,8 +446,8 @@ tasks:
     cmds:
       - go run github.com/fzipp/gocyclo/cmd/gocyclo@{{.GOCYCLO_VERSION}} -over 10 internal/ pkg/
 
-  # 说明：不提供 vulncheck 任务。工具链锁定 go1.24.6 后 govulncheck 恒为红——
-  # Go 1.24 已停止安全维护，报出的 stdlib 条目在本工具链上永远无法修复，
+  # 说明：不提供 vulncheck 任务。与 main 一致移除——main 锁定 go1.24.6 后
+  # govulncheck 恒为红（Go 1.24 已停止安全维护），本分支的 Go 1.23 更早 EOL，
   # 恒红的门禁既拦不住问题也淹没新增信号。详见 CHANGELOG「工程基础设施」。
   # 需要人工排查时直接跑：
   #   go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

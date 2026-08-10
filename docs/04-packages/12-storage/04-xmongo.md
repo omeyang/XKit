@@ -1,6 +1,6 @@
 ---
 package: pkg/storage/xmongo
-stability: Beta
+stability: Stable
 coverage: 96.0%
 tags: [storage, mongo]
 ---

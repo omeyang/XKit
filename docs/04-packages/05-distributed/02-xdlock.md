@@ -1,6 +1,6 @@
 ---
 package: pkg/distributed/xdlock
-stability: Beta
+stability: Stable
 coverage: 94.6%
 tags: [distributed, lock, redis, etcd]
 related:

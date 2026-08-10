@@ -1,6 +1,6 @@
 ---
 package: pkg/resilience/xbreaker
-stability: Beta
+stability: Stable
 coverage: 99.4%
 tags: [resilience, circuit-breaker]
 related:

@@ -1,6 +1,6 @@
 ---
 package: pkg/resilience/xretry
-stability: Beta
+stability: Stable
 coverage: 96.3%
 tags: [resilience, retry]
 ---

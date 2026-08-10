@@ -1,6 +1,6 @@
 ---
 package: pkg/distributed/xelection
-stability: Beta
+stability: Stable
 coverage: 95.4%
 tags: [distributed, election, etcd, leader]
 related:

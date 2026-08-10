@@ -11,7 +11,7 @@ tags: [moc, packages, security]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xtls](01-xtls.md) | TLS 配置（文件或 inline 字节）+ mTLS + gRPC 凭据 | Beta | 90.5% |
+| [xtls](01-xtls.md) | TLS 配置（文件或 inline 字节）+ mTLS + gRPC 凭据 | Stable | 90.5% |
 
 ## 相关
 

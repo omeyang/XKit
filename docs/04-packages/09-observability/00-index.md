@@ -15,7 +15,7 @@ tags: [moc, packages, observability]
 | [xtrace](05-xtrace.md) | 链路追踪中间件（W3C Trace Context） | Stable | 92.6% |
 | [xmetrics](02-xmetrics.md) | 统一可观测性接口（OTel 抽象） | Stable | 100.0% |
 | [xrotate](03-xrotate.md) | 日志轮转（基于 lumberjack） | Stable | 96.9% |
-| [xsampling](04-xsampling.md) | 采样策略（Alpha，可能调整） | Alpha | 97.9% |
+| [xsampling](04-xsampling.md) | 采样策略（比例 / 错误偏置 / 组合） | Stable | 97.9% |
 
 ## 设计原则
 

@@ -11,8 +11,8 @@ tags: [moc, packages, mq]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xkafka](01-xkafka.md) | Kafka 客户端（confluent-kafka-go，DLQ + OTel） | Beta | 88.5% |
-| [xpulsar](02-xpulsar.md) | Pulsar 客户端（pulsar-client-go，DLQ + OTel） | Beta | 99.5% |
+| [xkafka](01-xkafka.md) | Kafka 客户端（confluent-kafka-go，DLQ + OTel） | Stable | 88.5% |
+| [xpulsar](02-xpulsar.md) | Pulsar 客户端（pulsar-client-go，DLQ + OTel） | Stable | 99.5% |
 
 ## 共享底层
 

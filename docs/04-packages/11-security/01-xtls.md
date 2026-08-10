@@ -1,6 +1,6 @@
 ---
 package: pkg/security/xtls
-stability: Beta
+stability: Stable
 coverage: 90.5%
 tags: [security, tls, mtls, grpc]
 ---

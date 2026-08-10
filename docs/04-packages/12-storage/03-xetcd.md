@@ -1,6 +1,6 @@
 ---
 package: pkg/storage/xetcd
-stability: Beta
+stability: Stable
 coverage: 94.3%
 tags: [storage, etcd, watch, informer]
 ---

@@ -12,7 +12,7 @@ tags: [moc, packages, lifecycle]
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
 | [xrun](02-xrun.md) | 进程生命周期管理（errgroup + 信号处理） | Stable | 98.2% |
-| [xhealth](01-xhealth.md) | Kubernetes 健康探针（liveness/readiness/startup） | Beta | 92.4% |
+| [xhealth](01-xhealth.md) | Kubernetes 健康探针（liveness/readiness/startup） | Stable | 92.4% |
 
 ## 选型指南
 

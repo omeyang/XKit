@@ -1,6 +1,6 @@
 ---
 package: pkg/distributed/xsemaphore
-stability: Beta
+stability: Stable
 coverage: 94.1%
 tags: [distributed, semaphore, redis, rate-limit]
 related:

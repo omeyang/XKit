@@ -11,10 +11,10 @@ tags: [moc, packages, distributed]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xdlock](02-xdlock.md) | 分布式锁（Redis/etcd 双实现） | Beta | 94.6% |
-| [xcron](01-xcron.md) | 分布式定时任务（cron + 锁防重复执行） | Beta | 94.1% |
-| [xelection](03-xelection.md) | 基于 etcd 的分布式选主 | Beta | 95.4% |
-| [xsemaphore](04-xsemaphore.md) | Redis 分布式信号量（Lua + Fallback，多轮对抗审查稳定） | Beta | 94.1% |
+| [xdlock](02-xdlock.md) | 分布式锁（Redis/etcd 双实现） | Stable | 94.6% |
+| [xcron](01-xcron.md) | 分布式定时任务（cron + 锁防重复执行） | Stable | 94.1% |
+| [xelection](03-xelection.md) | 基于 etcd 的分布式选主 | Stable | 95.4% |
+| [xsemaphore](04-xsemaphore.md) | Redis 分布式信号量（Lua + Fallback，多轮对抗审查稳定） | Stable | 94.1% |
 
 ## 选型指南
 

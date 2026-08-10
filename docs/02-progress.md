@@ -4,7 +4,13 @@
 
 ## 包稳定性矩阵
 
+> 本表是包稳定性分级的**单一事实源**。`README.md`、`docs/03-conventions/01-api.md`、
+> `docs/04-packages/00-index.md` 三处副本须与之逐字一致。
+> 分级定义、Stable 判据与晋升/降级流程见
+> [贡献指南 · 包稳定性分级](03-conventions/02-contributing.md#包稳定性分级)。
+>
 > 覆盖率数据来源：`task test-cover`（语句级加权）。整体 94.0%；核心包均 ≥ 90%。
+> 覆盖率不参与分级判定。
 
 ### Context（上下文与身份管理）
 
@@ -23,68 +29,68 @@
 | `pkg/observability/xtrace` | Stable | 92.6% | W3C Trace Context |
 | `pkg/observability/xmetrics` | Stable | 100.0% | OTel 抽象 |
 | `pkg/observability/xrotate` | Stable | 96.9% | 基于 lumberjack |
-| `pkg/observability/xsampling` | Alpha | 97.9% | 采样策略可能调整 |
+| `pkg/observability/xsampling` | Stable | 97.9% | 采样策略可能调整 |
 
 ### Resilience（弹性与容错）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
-| `pkg/resilience/xbreaker` | Beta | 99.4% | |
-| `pkg/resilience/xretry` | Beta | 96.3% | |
-| `pkg/resilience/xlimit` | Beta | 95.3% | 分布式限流 Token Bucket |
+| `pkg/resilience/xbreaker` | Stable | 99.4% | |
+| `pkg/resilience/xretry` | Stable | 96.3% | |
+| `pkg/resilience/xlimit` | Stable | 95.3% | 分布式限流 Token Bucket |
 
 ### Storage（数据存储）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
 | `pkg/storage/xcache` | Stable | 93.8% | |
-| `pkg/storage/xetcd` | Beta | 94.3% | 含 Informer list+watch 缓存 |
-| `pkg/storage/xmongo` | Beta | 96.0% | |
-| `pkg/storage/xclickhouse` | Beta | 96.7% | 批次原子性 + COUNT UInt64 |
+| `pkg/storage/xetcd` | Stable | 94.3% | 含 Informer list+watch 缓存 |
+| `pkg/storage/xmongo` | Stable | 96.0% | |
+| `pkg/storage/xclickhouse` | Stable | 96.7% | 批次原子性 + COUNT UInt64 |
 
 ### Distributed（分布式协调）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
-| `pkg/distributed/xdlock` | Beta | 94.6% | |
-| `pkg/distributed/xcron` | Beta | 94.1% | |
-| `pkg/distributed/xelection` | Beta | 95.4% | 基于 etcd concurrency |
-| `pkg/distributed/xsemaphore` | Beta | 94.1% | Redis Lua + Fallback；多轮对抗审查稳定 |
+| `pkg/distributed/xdlock` | Stable | 94.6% | |
+| `pkg/distributed/xcron` | Stable | 94.1% | |
+| `pkg/distributed/xelection` | Stable | 95.4% | 基于 etcd concurrency |
+| `pkg/distributed/xsemaphore` | Stable | 94.1% | Redis Lua + Fallback；多轮对抗审查稳定 |
 
 ### MQ（消息队列）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
-| `pkg/mq/xkafka` | Beta | 88.5% | DLQ + OTel |
-| `pkg/mq/xpulsar` | Beta | 99.5% | DLQ + OTel |
+| `pkg/mq/xkafka` | Stable | 88.5% | DLQ + OTel |
+| `pkg/mq/xpulsar` | Stable | 99.5% | DLQ + OTel |
 
 ### Config / Business / Debug / Security
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
-| `pkg/config/xconf` | Beta | 92.0% | koanf |
-| `pkg/business/xauth` | Beta | 95.0% | 双层缓存 |
-| `pkg/debug/xdbg` | Beta | 90.5% | Unix Socket |
-| `pkg/security/xtls` | Beta | 90.5% | TLS 配置 + 证书加载 |
+| `pkg/config/xconf` | Stable | 92.0% | koanf |
+| `pkg/business/xauth` | Stable | 95.0% | 双层缓存 |
+| `pkg/debug/xdbg` | Stable | 90.5% | Unix Socket |
+| `pkg/security/xtls` | Stable | 90.5% | TLS 配置 + 证书加载 |
 
 ### Lifecycle（进程生命周期）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
 | `pkg/lifecycle/xrun` | Stable | 98.2% | errgroup + signal |
-| `pkg/lifecycle/xhealth` | Beta | 92.4% | K8s liveness/readiness/startup |
+| `pkg/lifecycle/xhealth` | Stable | 92.4% | K8s liveness/readiness/startup |
 
 ### Util（通用工具）
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
 | `pkg/util/xfile` | Stable | 96.9% | |
-| `pkg/util/xid` | Beta | 99.1% | Sonyflake v2；多轮对抗审查稳定 |
+| `pkg/util/xid` | Stable | 99.1% | Sonyflake v2；多轮对抗审查稳定 |
 | `pkg/util/xjson` | Stable | 100.0% | |
-| `pkg/util/xkeylock` | Beta | 100.0% | |
+| `pkg/util/xkeylock` | Stable | 100.0% | |
 | `pkg/util/xlru` | Stable | 100.0% | |
-| `pkg/util/xmac` | Beta | 98.2% | |
-| `pkg/util/xnet` | Beta | 98.4% | |
+| `pkg/util/xmac` | Stable | 98.2% | |
+| `pkg/util/xnet` | Stable | 98.4% | |
 | `pkg/util/xpool` | Stable | 100.0% | |
 | `pkg/util/xproc` | Stable | 100.0% | |
 | `pkg/util/xsys` | Stable | 96.0% | 跨平台 build tag |
@@ -119,7 +125,7 @@
 
 ## 待补齐
 
-- 部分 Beta 包升级至 Stable 需要：API 冻结窗口 + 真实业务回归
-- `pkg/observability/xsampling` 由 Alpha 升 Beta 需要：采样策略稳定性验证
 - `pkg/mq/xkafka` 覆盖率 88.5% 低于整体 90% 目标线，需补充错误路径用例
 - `pkg/testkit/xetcdtest` 覆盖率 70.5%，集成测试桩本身的测试不完整
+- `docs/03-conventions/01-api.md` 只收录主要 API（受 800 行上限约束），约 1339 个导出标识符
+  未登记；完整导出集合以 godoc 为准

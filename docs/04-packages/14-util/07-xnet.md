@@ -1,6 +1,6 @@
 ---
 package: pkg/util/xnet
-stability: Beta
+stability: Stable
 coverage: 98.4%
 tags: [util, net, ip, netip]
 related:

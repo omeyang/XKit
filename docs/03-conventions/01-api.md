@@ -27,84 +27,84 @@ XKit 遵循 Go 语言的可见性规则：
 | `pkg/observability/xlog` | 结构化日志 | Stable |
 | `pkg/observability/xtrace` | 链路追踪中间件 | Stable |
 | `pkg/observability/xmetrics` | 统一可观测性接口 | Stable |
-| `pkg/observability/xsampling` | 采样策略 | Alpha |
+| `pkg/observability/xsampling` | 采样策略 | Stable |
 | `pkg/observability/xrotate` | 日志轮转 | Stable |
 
 ### Resilience（弹性与容错）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/resilience/xbreaker` | 熔断器 | Beta |
-| `pkg/resilience/xretry` | 重试策略 | Beta |
-| `pkg/resilience/xlimit` | 分布式限流器（Token Bucket） | Beta |
+| `pkg/resilience/xbreaker` | 熔断器 | Stable |
+| `pkg/resilience/xretry` | 重试策略 | Stable |
+| `pkg/resilience/xlimit` | 分布式限流器（Token Bucket） | Stable |
 
 ### Storage（数据存储）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/storage/xcache` | 缓存抽象层（Redis/Memory） | Stable |
-| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Beta |
-| `pkg/storage/xmongo` | MongoDB 客户端封装 | Beta |
-| `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Beta |
+| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Stable |
+| `pkg/storage/xmongo` | MongoDB 客户端封装 | Stable |
+| `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Stable |
 
 ### Distributed（分布式协调）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/distributed/xdlock` | 分布式锁 | Beta |
-| `pkg/distributed/xcron` | 分布式定时任务 | Beta |
-| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Beta |
-| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Beta |
+| `pkg/distributed/xdlock` | 分布式锁 | Stable |
+| `pkg/distributed/xcron` | 分布式定时任务 | Stable |
+| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Stable |
+| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Stable |
 
 ### MQ（消息队列）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/mq/xkafka` | Kafka 客户端封装 | Beta |
-| `pkg/mq/xpulsar` | Pulsar 客户端封装 | Beta |
+| `pkg/mq/xkafka` | Kafka 客户端封装 | Stable |
+| `pkg/mq/xpulsar` | Pulsar 客户端封装 | Stable |
 
 ### Config（配置管理）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/config/xconf` | 配置管理 | Beta |
+| `pkg/config/xconf` | 配置管理 | Stable |
 
 ### Business（业务公共能力）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/business/xauth` | 认证服务客户端（Token/平台信息/双层缓存） | Beta |
+| `pkg/business/xauth` | 认证服务客户端（Token/平台信息/双层缓存） | Stable |
 
 ### Debug（调试）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/debug/xdbg` | 运行时调试服务（Unix Socket） | Beta |
+| `pkg/debug/xdbg` | 运行时调试服务（Unix Socket） | Stable |
 
 ### Lifecycle（进程生命周期）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/lifecycle/xrun` | 进程生命周期管理（errgroup + 信号处理） | Stable |
-| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Beta |
+| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Stable |
 
 ### Security（安全）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
-| `pkg/security/xtls` | TLS 配置与证书加载工具 | Beta |
+| `pkg/security/xtls` | TLS 配置与证书加载工具 | Stable |
 
 ### Util（通用工具）
 
 | 包名 | 用途 | 稳定性 |
 |------|------|--------|
 | `pkg/util/xfile` | 文件操作工具（路径安全） | Stable |
-| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Beta |
+| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Stable |
 | `pkg/util/xjson` | JSON 格式化工具 | Stable |
-| `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Beta |
+| `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Stable |
 | `pkg/util/xlru` | LRU 缓存（泛型 + TTL） | Stable |
-| `pkg/util/xmac` | MAC 地址工具库（多格式解析、验证、序列化） | Beta |
-| `pkg/util/xnet` | IP 地址工具库（net/netip） | Beta |
+| `pkg/util/xmac` | MAC 地址工具库（多格式解析、验证、序列化） | Stable |
+| `pkg/util/xnet` | IP 地址工具库（net/netip） | Stable |
 | `pkg/util/xpool` | 泛型 Worker Pool | Stable |
 | `pkg/util/xproc` | 进程信息查询 | Stable |
 | `pkg/util/xsys` | 系统资源限制管理 | Stable |
@@ -230,15 +230,16 @@ XKit 遵循 Go 语言的可见性规则：
 - `Always() Sampler` - 全量采样
 - `Never() Sampler` - 不采样
 - `NewRateSampler(rate float64) (*RateSampler, error)` - 固定比率采样
-- `NewCountSampler(n int) *CountSampler` - 计数采样（每 N 次采样一次）
+- `NewCountSampler(n int) (*CountSampler, error)` - 计数采样（每 N 次采样一次）
 
 **组合采样器**：
-- `All(samplers ...Sampler) *CompositeSampler` - AND 组合（全部通过）
-- `Any(samplers ...Sampler) *CompositeSampler` - OR 组合（任一通过）
-- `NewCompositeSampler(mode CompositeMode, samplers ...Sampler) *CompositeSampler`
+- `All(samplers ...Sampler) (*CompositeSampler, error)` - AND 组合（全部通过）
+- `Any(samplers ...Sampler) (*CompositeSampler, error)` - OR 组合（任一通过）
+- `NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSampler, error)`
 
 **基于 Key 的一致性采样**：
-- `NewKeyBasedSampler(rate float64, keyFunc KeyFunc) (*KeyBasedSampler, error)`
+- `NewKeyBasedSampler(rate float64, keyFunc KeyFunc, opts ...KeyBasedOption) (*KeyBasedSampler, error)`
+- `WithOnEmptyKey(fn func()) KeyBasedOption` - 空 key 回调
 - `KeyFunc = func(ctx context.Context) string` - Key 提取函数
 
 **错误变量**：
@@ -311,7 +312,7 @@ XKit 遵循 Go 语言的可见性规则：
 - `Memory` - 内存缓存接口
 
 **工厂函数**：
-- `NewLoader(cache Redis, opts ...LoaderOption) Loader`
+- `NewLoader(cache Redis, opts ...LoaderOption) (Loader, error)`
 - `NewRedis(client redis.UniversalClient, opts ...RedisOption) (Redis, error)`
 - `NewMemory(opts ...MemoryOption) (Memory, error)`
 
@@ -423,7 +424,7 @@ XKit 遵循 Go 语言的可见性规则：
 **工厂函数**：
 - `New(opts ...SchedulerOption) Scheduler` - 创建调度器
 - `NoopLocker() Locker` - 单副本空锁
-- `NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) *RedisLocker`
+- `NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) (*RedisLocker, error)`
 
 **调度器选项**：
 - `WithLocker(locker Locker)` - 设置默认锁
@@ -608,8 +609,8 @@ XKit 遵循 Go 语言的可见性规则：
 
 **工厂函数**：
 - `NewClient(opts ...ClientOption) (Client, error)`
-- `WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) *TracingProducer`
-- `WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) *TracingConsumer`
+- `WrapProducer(producer pulsar.Producer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error)`
+- `WrapConsumer(consumer pulsar.Consumer, topic string, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error)`
 - `NewTracingProducer(client Client, options pulsar.ProducerOptions, tracer Tracer, observer xmetrics.Observer) (*TracingProducer, error)`
 - `NewTracingConsumer(client Client, options pulsar.ConsumerOptions, tracer Tracer, observer xmetrics.Observer) (*TracingConsumer, error)`
 
@@ -768,6 +769,13 @@ XKit 遵循 Go 语言的可见性规则：
 
 ## 稳定性承诺
 
-- **Stable** 包：遵循语义版本控制，不做破坏性变更
-- **Beta** 包：API 可能调整，会提前在 CHANGELOG 中说明
-- **Alpha** 包：实验性，API 可能随时变化
+全部 `pkg/` 公开包为 **Stable**：公开 API 已冻结，遵循语义化版本，不做破坏性变更。
+破坏性变更需 MAJOR 版本 + 迁移指南 + ADR，并同步降级该包的分级标记。
+
+`pkg/testkit/*`、`<pkg>mock/`、`internal/` 为 **Internal**，不对生产使用，不承诺兼容性。
+
+四档定义、Stable 判据与晋升/降级流程见
+[贡献指南 · 包稳定性分级](02-contributing.md#包稳定性分级)。
+
+本清单受单文件 800 行上限约束，收录各包的接口、构造函数、选项类型与错误变量；
+完整导出集合以 godoc（`go doc -all <pkg>`）为准。

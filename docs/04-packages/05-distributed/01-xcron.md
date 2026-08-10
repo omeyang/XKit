@@ -1,6 +1,6 @@
 ---
 package: pkg/distributed/xcron
-stability: Beta
+stability: Stable
 coverage: 94.1%
 tags: [distributed, cron, scheduler]
 ---

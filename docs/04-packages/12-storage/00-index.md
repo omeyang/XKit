@@ -12,9 +12,9 @@ tags: [moc, packages, storage]
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
 | [xcache](01-xcache.md) | 缓存抽象层（Redis / Memory 双后端） | Stable | 93.8% |
-| [xetcd](03-xetcd.md) | etcd 客户端 + Informer（list+watch 缓存） | Beta | 94.3% |
-| [xmongo](04-xmongo.md) | MongoDB 客户端（mongo-driver v2） | Beta | 96.0% |
-| [xclickhouse](02-xclickhouse.md) | ClickHouse 客户端（批次原子性 + COUNT UInt64） | Beta | 96.7% |
+| [xetcd](03-xetcd.md) | etcd 客户端 + Informer（list+watch 缓存） | Stable | 94.3% |
+| [xmongo](04-xmongo.md) | MongoDB 客户端（mongo-driver v2） | Stable | 96.0% |
+| [xclickhouse](02-xclickhouse.md) | ClickHouse 客户端（批次原子性 + COUNT UInt64） | Stable | 96.7% |
 
 ## 选型指南
 

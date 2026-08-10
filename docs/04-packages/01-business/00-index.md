@@ -11,7 +11,7 @@ tags: [moc, packages, business]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xauth](01-xauth.md) | 认证服务客户端（Token + 平台信息 + 双层缓存） | Beta | 95.0% |
+| [xauth](01-xauth.md) | 认证服务客户端（Token + 平台信息 + 双层缓存） | Stable | 95.0% |
 
 ## 相关
 

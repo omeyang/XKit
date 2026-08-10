@@ -1,6 +1,6 @@
 ---
 package: pkg/lifecycle/xhealth
-stability: Beta
+stability: Stable
 coverage: 92.4%
 tags: [lifecycle, health, kubernetes]
 related:

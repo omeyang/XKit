@@ -1,6 +1,6 @@
 ---
 package: pkg/util/xmac
-stability: Beta
+stability: Stable
 coverage: 98.2%
 tags: [util, mac, iter]
 ---

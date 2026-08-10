@@ -1,6 +1,6 @@
 ---
 package: pkg/mq/xkafka
-stability: Beta
+stability: Stable
 coverage: 88.5%
 tags: [mq, kafka, dlq, otel]
 related:

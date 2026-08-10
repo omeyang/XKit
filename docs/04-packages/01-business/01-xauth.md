@@ -1,6 +1,6 @@
 ---
 package: pkg/business/xauth
-stability: Beta
+stability: Stable
 coverage: 95.0%
 tags: [business, auth, token, cache]
 ---

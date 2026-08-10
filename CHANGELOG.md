@@ -59,6 +59,20 @@
   `gobreaker.TwoStepCircuitBreaker[T]` 并 `import "github.com/sony/gobreaker/v2"`；
   `NewCircuitBreaker` / `NewTwoStepCircuitBreaker` 的调用方式不变，返回值可直接用。
 
+### 稳定性分级
+
+- 全部 39 个 `pkg/` 公开包定为 **Stable**，公开 API 随 v0.1.0 冻结。
+  `pkg/testkit/*`、`<pkg>mock/`、`internal/` 为 Internal，不对生产使用。
+- 四档定义、Stable 判据（主要 API 已登记且签名准确 / 双分支 API 一致 / 签名评审通过 /
+  一个发布周期内无破坏性变更）与晋升、降级流程写入
+  `docs/03-conventions/02-contributing.md`。
+- 修正 `docs/03-conventions/01-api.md` 中 8 处漏写 `error` 返回值的签名：
+  `xsampling.NewCountSampler` / `All` / `Any` / `NewCompositeSampler`、
+  `xcache.NewLoader`、`xdlock.NewRedisLocker`、`xpulsar.WrapProducer` / `WrapConsumer`；
+  补齐 `xsampling.NewKeyBasedSampler` 的 `opts ...KeyBasedOption` 参数。
+- 修正 `docs/04-packages/09-observability/04-xsampling.md` 示例中引用的不存在标识符
+  （`NewRatioSampler` / `ErrorBiased` / `RatioSampler`）。
+
 ### 关键设计决策
 
 详见 `docs/01-decisions/`：

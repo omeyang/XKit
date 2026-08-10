@@ -1,6 +1,6 @@
 ---
 package: pkg/config/xconf
-stability: Beta
+stability: Stable
 coverage: 92.0%
 tags: [config, koanf]
 ---

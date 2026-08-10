@@ -1,6 +1,6 @@
 ---
 package: pkg/storage/xclickhouse
-stability: Beta
+stability: Stable
 coverage: 96.7%
 tags: [storage, clickhouse, olap]
 ---

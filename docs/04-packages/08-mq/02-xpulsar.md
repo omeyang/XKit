@@ -1,6 +1,6 @@
 ---
 package: pkg/mq/xpulsar
-stability: Beta
+stability: Stable
 coverage: 99.5%
 tags: [mq, pulsar, dlq, otel]
 ---

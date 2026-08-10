@@ -1,6 +1,6 @@
 ---
 package: pkg/resilience/xlimit
-stability: Beta
+stability: Stable
 coverage: 95.3%
 tags: [resilience, rate-limit, token-bucket, redis]
 ---

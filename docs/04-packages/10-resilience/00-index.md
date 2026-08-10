@@ -11,9 +11,9 @@ tags: [moc, packages, resilience]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xbreaker](01-xbreaker.md) | 熔断器（基于 sony/gobreaker） | Beta | 99.4% |
-| [xretry](03-xretry.md) | 重试策略（指数退避，可中断） | Beta | 96.3% |
-| [xlimit](02-xlimit.md) | 分布式限流器（Token Bucket，Redis 后端） | Beta | 95.3% |
+| [xbreaker](01-xbreaker.md) | 熔断器（基于 sony/gobreaker） | Stable | 99.4% |
+| [xretry](03-xretry.md) | 重试策略（指数退避，可中断） | Stable | 96.3% |
+| [xlimit](02-xlimit.md) | 分布式限流器（Token Bucket，Redis 后端） | Stable | 95.3% |
 
 ## 组合使用
 

@@ -1,6 +1,6 @@
 ---
 package: pkg/debug/xdbg
-stability: Beta
+stability: Stable
 coverage: 90.5%
 tags: [debug, unix-socket]
 ---

@@ -28,10 +28,10 @@ XKit 的包按域分组，点击进入子域索引或直达包详情。包数与
 
 ## 按稳定性分组
 
-- **Stable**（API 冻结，向前兼容）：xctx, xtenant, xplatform, xenv, xlog, xtrace, xmetrics, xrotate, xcache, xrun, xfile, xjson, xlru, xpool, xproc, xsys, xutil
-- **Beta**（功能稳定，API 待冻结）：xauth, xconf, xdbg, xtls, xetcd, xmongo, xclickhouse, xdlock, xcron, xelection, xsemaphore, xkafka, xpulsar, xbreaker, xretry, xlimit, xhealth, xid, xkeylock, xmac, xnet
-- **Alpha**（设计可能调整）：xsampling
+- **Stable**（API 冻结，向前兼容）：全部 39 个 `pkg/` 公开包——xctx, xtenant, xplatform, xenv, xlog, xtrace, xmetrics, xrotate, xsampling, xbreaker, xretry, xlimit, xcache, xetcd, xmongo, xclickhouse, xdlock, xcron, xelection, xsemaphore, xkafka, xpulsar, xconf, xauth, xdbg, xtls, xrun, xhealth, xfile, xid, xjson, xkeylock, xlru, xmac, xnet, xpool, xproc, xsys, xutil
 - **Internal**（不对外，测试或共享逻辑）：xetcdtest, xredismock, xsemaphoremock, deploy, mqcore, rediscompat, storageopt
+
+分级定义、判据与晋升/降级流程见 [贡献指南 · 包稳定性分级](../03-conventions/02-contributing.md#包稳定性分级)。
 
 ## 按覆盖率（实测）
 

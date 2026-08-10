@@ -11,7 +11,7 @@ tags: [moc, packages, debug]
 
 | 包 | 用途 | 稳定性 | 覆盖率 |
 |---|---|---|---|
-| [xdbg](01-xdbg.md) | Unix Socket 调试服务（goroutine/heap/stack 等） | Beta | 90.5% |
+| [xdbg](01-xdbg.md) | Unix Socket 调试服务（goroutine/heap/stack 等） | Stable | 90.5% |
 
 ## 配套 CLI
 

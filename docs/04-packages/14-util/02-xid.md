@@ -1,6 +1,6 @@
 ---
 package: pkg/util/xid
-stability: Beta
+stability: Stable
 coverage: 99.1%
 tags: [util, id-generation, sonyflake, distributed]
 related:

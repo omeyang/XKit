@@ -1,6 +1,6 @@
 ---
 package: pkg/util/xkeylock
-stability: Beta
+stability: Stable
 coverage: 100.0%
 tags: [util, lock, concurrency]
 related:

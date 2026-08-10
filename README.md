@@ -36,84 +36,84 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 | `pkg/observability/xlog` | 结构化日志 | Stable |
 | `pkg/observability/xtrace` | 链路追踪中间件 | Stable |
 | `pkg/observability/xmetrics` | 统一可观测性接口 | Stable |
-| `pkg/observability/xsampling` | 采样策略 | Alpha |
+| `pkg/observability/xsampling` | 采样策略 | Stable |
 | `pkg/observability/xrotate` | 日志轮转 | Stable |
 
 ### Resilience（弹性与容错）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/resilience/xbreaker` | 熔断器 | Beta |
-| `pkg/resilience/xretry` | 重试策略 | Beta |
-| `pkg/resilience/xlimit` | 分布式限流器（Token Bucket） | Beta |
+| `pkg/resilience/xbreaker` | 熔断器 | Stable |
+| `pkg/resilience/xretry` | 重试策略 | Stable |
+| `pkg/resilience/xlimit` | 分布式限流器（Token Bucket） | Stable |
 
 ### Storage（数据存储）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/storage/xcache` | 缓存抽象层（Redis/Memory） | Stable |
-| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Beta |
-| `pkg/storage/xmongo` | MongoDB 客户端封装 | Beta |
-| `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Beta |
+| `pkg/storage/xetcd` | etcd 客户端封装（含 Informer list+watch 缓存） | Stable |
+| `pkg/storage/xmongo` | MongoDB 客户端封装 | Stable |
+| `pkg/storage/xclickhouse` | ClickHouse 客户端封装 | Stable |
 
 ### Distributed（分布式协调）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/distributed/xdlock` | 分布式锁 | Beta |
-| `pkg/distributed/xcron` | 分布式定时任务 | Beta |
-| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Beta |
-| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Beta |
+| `pkg/distributed/xdlock` | 分布式锁 | Stable |
+| `pkg/distributed/xcron` | 分布式定时任务 | Stable |
+| `pkg/distributed/xelection` | 基于 etcd 的分布式选主 | Stable |
+| `pkg/distributed/xsemaphore` | Redis 分布式信号量（Lua + Fallback） | Stable |
 
 ### MQ（消息队列）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/mq/xkafka` | Kafka 客户端封装 | Beta |
-| `pkg/mq/xpulsar` | Pulsar 客户端封装 | Beta |
+| `pkg/mq/xkafka` | Kafka 客户端封装 | Stable |
+| `pkg/mq/xpulsar` | Pulsar 客户端封装 | Stable |
 
 ### Config（配置管理）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/config/xconf` | 配置管理 | Beta |
+| `pkg/config/xconf` | 配置管理 | Stable |
 
 ### Business（业务公共能力）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/business/xauth` | 认证服务客户端（Token/平台信息/双层缓存） | Beta |
+| `pkg/business/xauth` | 认证服务客户端（Token/平台信息/双层缓存） | Stable |
 
 ### Debug（调试）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/debug/xdbg` | 运行时调试服务（Unix Socket） | Beta |
+| `pkg/debug/xdbg` | 运行时调试服务（Unix Socket） | Stable |
 
 ### Lifecycle（进程生命周期）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/lifecycle/xrun` | 进程生命周期管理（errgroup + 信号处理） | Stable |
-| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Beta |
+| `pkg/lifecycle/xhealth` | Kubernetes 健康探针（liveness/readiness/startup） | Stable |
 
 ### Security（安全）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
-| `pkg/security/xtls` | TLS 配置与证书加载工具 | Beta |
+| `pkg/security/xtls` | TLS 配置与证书加载工具 | Stable |
 
 ### Util（通用工具）
 
 | 包 | 用途 | 稳定性 |
 | --- | --- | --- |
 | `pkg/util/xfile` | 文件操作工具（路径安全） | Stable |
-| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Beta |
+| `pkg/util/xid` | Sonyflake v2 分布式 ID 生成 | Stable |
 | `pkg/util/xjson` | JSON 格式化工具 | Stable |
-| `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Beta |
+| `pkg/util/xkeylock` | 基于 key 的进程内互斥锁 | Stable |
 | `pkg/util/xlru` | LRU 缓存（泛型 + TTL） | Stable |
-| `pkg/util/xmac` | MAC 地址工具库（多格式解析、验证、序列化） | Beta |
-| `pkg/util/xnet` | IP 地址工具库（net/netip） | Beta |
+| `pkg/util/xmac` | MAC 地址工具库（多格式解析、验证、序列化） | Stable |
+| `pkg/util/xnet` | IP 地址工具库（net/netip） | Stable |
 | `pkg/util/xpool` | 泛型 Worker Pool | Stable |
 | `pkg/util/xproc` | 进程信息查询 | Stable |
 | `pkg/util/xsys` | 系统资源限制管理 | Stable |

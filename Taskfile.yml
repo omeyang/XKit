@@ -1,0 +1,901 @@
+# Taskfile for XKit
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  # 流水线锁定的工具链版本（内网构建底座）。verify 任务据此做精确门禁。
+  REQUIRED_GO_VERSION: go1.24.6
+
+  # 以下工具全部经 `go run`/`go install` 从源码构建，因此它们 go.mod 的 go directive
+  # 必须 <= REQUIRED_GO_VERSION——内网 GOTOOLCHAIN=local 且取不到工具链模块，
+  # 更高的 directive 不会自动降级，只会直接构建失败。**升级前先查 go.mod 的 go 行。**
+  #
+  # 与 .github/workflows/ci.yml 的同名变量保持一致。
+  # 升级 CI 版本时必须同步更新此处，否则本地和 CI 的规则集会错开。
+  GOLANGCI_LINT_VERSION: v2.8.0   # v2.9.0+ 要求 go 1.25.0
+  GOCYCLO_VERSION: v0.6.0
+  # 与 ci.yml 的 golangci-lint-action `args: --timeout=...` 保持一致。
+  GOLANGCI_LINT_TIMEOUT: 5m
+
+  ARTIFACTS_DIR: .artifacts
+  COVERAGE_FILE: .artifacts/coverage.out
+  COVERAGE_HTML: .artifacts/coverage.html
+  INTEGRATION_COVERAGE_FILE: .artifacts/integration_coverage.out
+  INTEGRATION_COVERAGE_HTML: .artifacts/integration_coverage.html
+  MIN_COVERAGE: 90
+  CORE_MIN_COVERAGE: 95
+  FUZZ_TIME: '{{default "30s" .FUZZ_TIME}}'
+
+tasks:
+  default:
+    desc: 显示所有可用任务
+    cmds:
+      - task --list
+
+  # ==================== 单元测试任务 ====================
+
+  test:
+    desc: 运行所有单元测试
+    cmds:
+      - go test -v ./...
+
+  test-cover:
+    desc: 运行测试并生成覆盖率报告
+    cmds:
+      - mkdir -p {{.ARTIFACTS_DIR}}
+      - go test -v -coverprofile={{.COVERAGE_FILE}} -covermode=atomic ./...
+      - go tool cover -html={{.COVERAGE_FILE}} -o {{.COVERAGE_HTML}}
+      - 'echo "覆盖率报告已生成: {{.COVERAGE_HTML}}"'
+      - 'echo "最低要求: 整体 ≥{{.MIN_COVERAGE}}%, 核心业务 ≥{{.CORE_MIN_COVERAGE}}%"'
+
+  test-race:
+    desc: 运行并发竞争检测
+    cmds:
+      - go test -race -v ./...
+
+  test-short:
+    desc: 运行快速测试（跳过长时间运行的测试）
+    cmds:
+      - go test -short -v ./...
+
+  test-verbose:
+    desc: 运行详细测试（包含所有日志）
+    cmds:
+      - go test -v -count=1 ./...
+
+  # --- 按模块运行测试 ---
+
+  test-config:
+    desc: 测试 config 模块（xconf）
+    cmds:
+      - go test -v ./pkg/config/...
+
+  test-context:
+    desc: 测试 context 模块（xctx, xenv, xplatform, xtenant）
+    cmds:
+      - go test -v ./pkg/context/...
+
+  test-distributed:
+    desc: 测试 distributed 模块（xcron, xdlock）
+    cmds:
+      - go test -v ./pkg/distributed/...
+
+  test-mq:
+    desc: 测试 mq 模块（xkafka, xpulsar）
+    cmds:
+      - go test -v ./pkg/mq/...
+
+  test-observability:
+    desc: 测试 observability 模块（xlog, xmetrics, xrotate, xsampling, xtrace）
+    cmds:
+      - go test -v ./pkg/observability/...
+
+  test-resilience:
+    desc: 测试 resilience 模块（xbreaker, xretry）
+    cmds:
+      - go test -v ./pkg/resilience/...
+
+  test-storage:
+    desc: 测试 storage 模块（xcache, xclickhouse, xmongo）
+    cmds:
+      - go test -v ./pkg/storage/...
+
+  test-util:
+    desc: 测试 util 模块（xfile）
+    cmds:
+      - go test -v ./pkg/util/...
+
+  test-internal:
+    desc: 测试 internal 模块（mqcore, e2e）
+    cmds:
+      - go test -v ./internal/...
+
+  # ==================== 性能测试任务 ====================
+
+  bench:
+    desc: 运行所有性能测试
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  bench-compare:
+    desc: 对比基准测试结果（需要安装 benchstat）
+    vars:
+      OLD: '{{default "old.txt" .OLD}}'
+      NEW: '{{default "new.txt" .NEW}}'
+    cmds:
+      - benchstat {{.OLD}} {{.NEW}}
+
+  # --- 按模块运行性能测试 ---
+
+  bench-config:
+    desc: 运行 config 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/config/...
+
+  bench-context:
+    desc: 运行 context 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/context/...
+
+  bench-distributed:
+    desc: 运行 distributed 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/distributed/...
+
+  bench-mq:
+    desc: 运行 mq 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/mq/...
+
+  bench-observability:
+    desc: 运行 observability 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/observability/...
+
+  bench-resilience:
+    desc: 运行 resilience 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/resilience/...
+
+  bench-storage:
+    desc: 运行 storage 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/storage/...
+
+  bench-util:
+    desc: 运行 util 模块性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/util/...
+
+  # --- 按包运行性能测试（细粒度） ---
+
+  bench-xctx:
+    desc: 运行 xctx 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/context/xctx/...
+
+  bench-xlog:
+    desc: 运行 xlog 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/observability/xlog/...
+
+  bench-xcron:
+    desc: 运行 xcron 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/distributed/xcron/...
+
+  bench-xretry:
+    desc: 运行 xretry 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/resilience/xretry/...
+
+  bench-xbreaker:
+    desc: 运行 xbreaker 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/resilience/xbreaker/...
+
+  bench-xcache:
+    desc: 运行 xcache 包性能测试
+    cmds:
+      - go test -bench=. -benchmem ./pkg/storage/xcache/...
+
+  # ==================== 模糊测试任务 ====================
+
+  # --- 按模块运行模糊测试 ---
+
+  fuzz-config:
+    desc: 运行 config 模块模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/config/xconf/...
+
+  fuzz-context:
+    desc: 运行 context/xctx 模糊测试
+    cmds:
+      - echo "运行 xctx 模糊测试（Deploy）..."
+      - go test -fuzz=FuzzParseDeploymentType -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+      - echo "运行 xctx 模糊测试（Trace）..."
+      - go test -fuzz=FuzzWithTraceID -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+      - echo "运行 xctx 模糊测试（Platform）..."
+      - go test -fuzz=FuzzWithPlatformID -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+
+  fuzz-distributed:
+    desc: 运行 distributed/xcron 模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/distributed/xcron/...
+
+  fuzz-observability:
+    desc: 运行 observability 模块模糊测试
+    cmds:
+      - echo "运行 xlog 模糊测试..."
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xlog/...
+      - echo "运行 xmetrics 模糊测试..."
+      - go test -fuzz=FuzzStringAttr -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xmetrics/...
+      - echo "运行 xrotate 模糊测试..."
+      - go test -fuzz=FuzzWrite -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xrotate/...
+      - echo "运行 xsampling 模糊测试..."
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xsampling/...
+      - echo "运行 xtrace 模糊测试..."
+      - go test -fuzz=FuzzTraceInfo_IsEmpty -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xtrace/...
+
+  fuzz-resilience:
+    desc: 运行 resilience 模块模糊测试
+    cmds:
+      - echo "运行 xbreaker 模糊测试..."
+      - go test -fuzz=FuzzConsecutiveFailures -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xbreaker/...
+      - echo "运行 xretry 模糊测试..."
+      - go test -fuzz=FuzzExponentialBackoff_NextDelay -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xretry/...
+
+  fuzz-storage:
+    desc: 运行 storage/xcache 模糊测试
+    cmds:
+      - go test -fuzz=FuzzMemory_SetGet -fuzztime={{.FUZZ_TIME}} ./pkg/storage/xcache/...
+
+  fuzz-util:
+    desc: 运行 util/xfile 模糊测试
+    cmds:
+      - go test -fuzz=FuzzSanitizePath -fuzztime={{.FUZZ_TIME}} ./pkg/util/xfile/...
+
+  # --- 按包运行模糊测试（细粒度） ---
+
+  fuzz-xconf:
+    desc: 运行 xconf 模糊测试
+    cmds:
+      - go test -fuzz=FuzzNewFromBytes -fuzztime={{.FUZZ_TIME}} ./pkg/config/xconf/...
+
+  fuzz-xctx:
+    desc: 运行 xctx 模糊测试
+    cmds:
+      - echo "运行 FuzzParseDeploymentType..."
+      - go test -fuzz=FuzzParseDeploymentType -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+      - echo "运行 FuzzWithTraceID..."
+      - go test -fuzz=FuzzWithTraceID -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+      - echo "运行 FuzzWithPlatformID..."
+      - go test -fuzz=FuzzWithPlatformID -fuzztime={{.FUZZ_TIME}} ./pkg/context/xctx/...
+
+  fuzz-xtenant:
+    desc: 运行 xtenant 模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/context/xtenant/...
+
+  fuzz-xcron:
+    desc: 运行 xcron 模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/distributed/xcron/...
+
+  fuzz-xlog:
+    desc: 运行 xlog 模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xlog/...
+
+  fuzz-xmetrics:
+    desc: 运行 xmetrics 模糊测试
+    cmds:
+      - go test -fuzz=FuzzStringAttr -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xmetrics/...
+
+  fuzz-xrotate:
+    desc: 运行 xrotate 模糊测试
+    cmds:
+      - go test -fuzz=FuzzWrite -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xrotate/...
+
+  fuzz-xsampling:
+    desc: 运行 xsampling 模糊测试
+    cmds:
+      - go test -fuzz=. -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xsampling/...
+
+  fuzz-xtrace:
+    desc: 运行 xtrace 模糊测试
+    cmds:
+      - go test -fuzz=FuzzTraceInfo_IsEmpty -fuzztime={{.FUZZ_TIME}} ./pkg/observability/xtrace/...
+
+  fuzz-xbreaker:
+    desc: 运行 xbreaker 模糊测试
+    cmds:
+      - go test -fuzz=FuzzConsecutiveFailures -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xbreaker/...
+
+  fuzz-xretry:
+    desc: 运行 xretry 模糊测试
+    cmds:
+      - go test -fuzz=FuzzExponentialBackoff_NextDelay -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xretry/...
+      - go test -fuzz=FuzzLinearBackoff_NextDelay -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xretry/...
+      - go test -fuzz=FuzzFixedBackoff_NextDelay -fuzztime={{.FUZZ_TIME}} ./pkg/resilience/xretry/...
+
+  fuzz-xcache:
+    desc: 运行 xcache 模糊测试
+    cmds:
+      - go test -fuzz=FuzzMemory_SetGet -fuzztime={{.FUZZ_TIME}} ./pkg/storage/xcache/...
+
+  fuzz-xfile:
+    desc: 运行 xfile 模糊测试
+    cmds:
+      - go test -fuzz=FuzzSanitizePath -fuzztime={{.FUZZ_TIME}} ./pkg/util/xfile/...
+
+  # ==================== 代码质量任务 ====================
+
+  lint:
+    desc: 运行 golangci-lint 检查（使用本地 PATH 版本）
+    cmds:
+      - golangci-lint run ./...
+
+  lint-ci:
+    desc: 使用与 CI 相同版本与超时的 golangci-lint（{{.GOLANGCI_LINT_VERSION}}）
+    cmds:
+      # --timeout 必须与 ci.yml 的 golangci-lint-action args 显式对齐：不传时冷缓存
+      # （首次 go run 编译 linter + 空分析缓存）会超时退出 4，pre-push 出现与代码
+      # 无关的伪失败。超时口径以此处与 ci.yml 为准，勿再在 .golangci.yml 里另设。
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run --timeout={{.GOLANGCI_LINT_TIMEOUT}} ./...
+
+  lint-fix:
+    desc: 运行 golangci-lint 并自动修复
+    cmds:
+      - golangci-lint run --fix ./...
+
+  fmt:
+    desc: 格式化代码
+    cmds:
+      - golangci-lint fmt
+
+  fmt-check:
+    desc: 检查代码格式（不修改文件）
+    cmds:
+      # 与 cross-check 同因：go-task 默认 shell 不带 -e，且原写法只看 stdout。
+      # gofmt 遇到语法错误时把诊断写 stderr、stdout 为空、退出码 2 被命令替换丢弃，
+      # `test -z ""` 恒过——语法坏到无法解析的文件反而被格式门禁放行；gofmt 不在
+      # PATH 时同样静默退化为 no-op。故须 set -euo pipefail + 合并 stderr + 双重判定。
+      # 自证：造一个含语法错误的 .go 文件，本任务由通过变为 exit 1。
+      - |
+        set -euo pipefail
+        out=$(gofmt -l . 2>&1 | grep -v '^vendor/' || true)
+        if [ -n "$out" ]; then
+          echo "$out" >&2
+          echo "错误: gofmt 报告了未格式化或无法解析的文件（见上）" >&2
+          exit 1
+        fi
+
+  build:
+    desc: 编译全部包（与 CI 的 Build 步骤同源）
+    cmds:
+      - go build ./...
+
+  mod-check:
+    desc: 校验 go.mod/go.sum（与 CI 的 "Check go mod tidy" + "Verify dependencies" 同源）
+    cmds:
+      - |
+        set -euo pipefail
+        if ! go mod tidy -diff; then
+          echo "错误: go mod tidy 检查失败，请运行 go mod tidy 并提交更改" >&2
+          exit 1
+        fi
+      - go mod verify
+
+  vet:
+    desc: 运行 go vet 检查
+    cmds:
+      - go vet ./...
+
+  cross-check:
+    desc: 跨平台编译验证（Windows + BSD 系）与 tag 变体类型检查
+    cmds:
+      # 确保 windows/!unix build tag 分支持续可编译。覆盖全部包而非只覆盖 xsys——
+      # 只盯单个包的门禁曾漏掉真实缺陷：xdbg 的 command_builtin.go /
+      # command_registry_test.go 缺 !windows 约束，引用了 windows stub Server 上
+      # 不存在的字段，GOOS=windows 编译长期失败而 CI 全绿。
+      #
+      # 用 go vet 而非 go build：vet 连测试文件一起类型检查，能抓到只在测试里
+      # 出现的平台约束缺失。排除 pkg/mq/xkafka：依赖 confluent-kafka-go 的
+      # cgo/librdkafka，本就不支持 windows。
+      #
+      # 与 .github/workflows/ci.yml 的 Cross-compile check 步骤保持一致。
+      # 必须显式 set -euo pipefail：go-task 默认 shell 不带 -e，`go list` 失败时
+      # pkgs 会变成空串，`go vet` 退化为扫当前目录并静默通过——门禁自己无声失效
+      # 比原缺陷更危险。空集校验同理。
+      - |
+        set -euo pipefail
+        pkgs=$(go list ./... | grep -vE '/pkg/mq/xkafka($|/)')
+        [ -n "$pkgs" ] || { echo "错误: go list 未返回任何包，交叉编译门禁无法生效" >&2; exit 1; }
+        GOOS=windows GOARCH=amd64 go vet $pkgs
+        echo "✅ Windows 交叉编译检查通过"
+      # BSD 系：仅 xdbg 与 xsys 含 darwin/freebsd/dragonfly 专属文件，故只 vet 这两个包，
+      # 不做全仓矩阵（全仓 GOOS=darwin 冷缓存要十分钟量级，收益为零）。
+      # 只取 darwin + freebsd 已覆盖全部平台专属文件：
+      #   transport_unix_bsd.go = darwin || freebsd、rlim_int64.go = freebsd || dragonfly、
+      #   rlim_uint64.go = unix && !freebsd && !dragonfly（由 darwin 命中）。
+      # dragonfly 不额外覆盖任何文件，却要多花约 2 分钟，故不纳入。
+      # 本门禁的由来：transport_unix_darwin.go 的 _darwin 文件名后缀会施加隐式 GOOS 约束，
+      # 与 //go:build darwin || freebsd 取交集后在 freebsd 上被排除，getPeerIdentity
+      # 无定义、GOOS=freebsd 编译长期失败而所有门禁全绿（已改名 transport_unix_bsd.go）。
+      - |
+        set -euo pipefail
+        for os in darwin freebsd; do
+          GOOS=$os GOARCH=amd64 go vet ./pkg/debug/xdbg/... ./pkg/util/xsys/...
+          echo "✅ GOOS=$os 平台专属文件类型检查通过"
+        done
+      # tag 变体：integration / e2e 的文件不参与默认构建，也不被 test-short 覆盖，
+      # 可长期编译不过而门禁全绿（xdbg 的 !windows 缺失即为此类）。vet 只做类型检查，
+      # 不需要 Kafka/Pulsar/etcd 等中间件在位。
+      - |
+        set -euo pipefail
+        for tag in integration e2e; do
+          go vet -tags="$tag" ./...
+          echo "✅ -tags=$tag 类型检查通过"
+        done
+
+  gocyclo:
+    desc: 运行圈复杂度检查
+    cmds:
+      - go run github.com/fzipp/gocyclo/cmd/gocyclo@{{.GOCYCLO_VERSION}} -over 10 internal/ pkg/
+
+  # 说明：不提供 vulncheck 任务。工具链锁定 go1.24.6 后 govulncheck 恒为红——
+  # Go 1.24 已停止安全维护，报出的 stdlib 条目在本工具链上永远无法修复，
+  # 恒红的门禁既拦不住问题也淹没新增信号。详见 CHANGELOG「工程基础设施」。
+  # 需要人工排查时直接跑：
+  #   go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  # ==================== 综合检查任务 ====================
+
+  # 说明：以下综合任务一律用 lint-ci（版本固定）而非 lint（走 PATH，版本不定），
+  # 否则本机 golangci-lint 版本与 CI 固定版规则集不等价，会出现本地绿/CI 红或反之。
+  # 同理不挂 `gocyclo` 任务：裸 gocyclo 不应用 .golangci.yml 的 _test.go 豁免，
+  # 口径比 CI 严，表驱动测试会让本地红而 CI 绿。`task lint` / `task gocyclo`
+  # 保留供本地快速迭代单独调用。
+  check:
+    desc: 运行所有检查（lint-ci + test + test-race）
+    cmds:
+      - task: lint-ci
+      - task: test
+      - task: test-race
+
+  # 与 git 钩子 .githooks/pre-commit 同名但职责不同，故须互为覆盖而非交叉：
+  # 钩子跑 docs-ledger + 增量对抗审查，本任务跑 Go 侧快速检查 + 同一个 docs-ledger，
+  # 使手动执行本任务不会漏掉钩子会拦的文档问题（对抗审查耗时长，仍只在钩子里跑）。
+  #
+  # 不挂 worktree-check：它要求工作区无任何未暂存变更，而「暂存一部分、其余继续改」
+  # 是正常提交流程，挂在这里会把常规用法判失败。该任务保留供发布前单独调用。
+  pre-commit:
+    desc: 提交前快速检查（Go 侧 + 文档记账；对抗审查见 .githooks/pre-commit）
+    cmds:
+      - task: fmt-check
+      - task: lint-ci
+      - task: test-short
+      - task: docs-ledger-check
+
+  docs-ledger-check:
+    desc: 检查文档是否含记账式表述（"以前/后来/原本/改为"）
+    cmds:
+      - bash .githooks/docs-ledger-check.sh
+
+  docs-llms:
+    desc: 重新生成 llms-full.txt（README + docs/*.md 拼接，供 LLM 一次性吞入）
+    cmds:
+      - bash scripts/gen-llms-full.sh
+
+  pre-push:
+    desc: 推送前检查（覆盖 CI 的全部静态检查：工具链门禁 + fmt + lint-ci + mod + build + 跨平台 + test-short + 文档记账）
+    cmds:
+      - task: check-toolchain
+      - task: fmt-check
+      - task: lint-ci
+      - task: mod-check
+      - task: build
+      - task: cross-check
+      - task: test-short
+      - task: docs-ledger-check
+    # 说明：不单独跑 `gocyclo` 任务。golangci-lint 自带 gocyclo 规则并应用 .golangci.yml
+    # 的 excludes（跳过 _test.go），而裸 gocyclo 会把所有测试文件都算进去。CI 侧只用
+    # golangci-lint，保持对齐。
+
+  # core.hooksPath 只能指一处，所以 .githooks/ 必须是唯一的 hook 集合：
+  # 对抗审查曾单独装在 .git/hooks/pre-commit，两套互斥，装了那套本目录就整体失效
+  # （docs-ledger 增量检查因此从未执行）。现已并入 .githooks/pre-commit。
+  install-hooks:
+    desc: 安装全部 git hooks（指向 .githooks/，含对抗审查）
+    cmds:
+      - git config core.hooksPath .githooks
+      - |
+        echo "已启用 .githooks/（core.hooksPath），生效的钩子："
+        echo "  pre-commit — docs-ledger 增量检查 + 增量对抗审查"
+        echo "  commit-msg — 拒绝 AI 署名"
+        echo "  pre-push   — 运行 task pre-push"
+        # 必须用 git-common-dir 而非字面量 .git：worktree 里 .git 是一个写着
+        # "gitdir: ..." 的文本文件而非目录，`.git/hooks/...` 恒不存在，遗留钩子会漏报。
+        hooks_dir="$(git rev-parse --git-common-dir)/hooks"
+        if [ -e "$hooks_dir/pre-commit" ]; then
+          echo ""
+          echo "提示：检测到 $hooks_dir/pre-commit 仍存在但已不再生效（core.hooksPath 已改指 .githooks/）。" >&2
+          echo "      如它是旧版对抗审查钩子，可删除以免混淆。" >&2
+        fi
+
+  # 对标 ci.yml 的 Go 侧作业：lint（golangci-lint + go mod tidy）、build（go mod verify +
+  # go build + 跨平台 vet）、test（-race + 覆盖率）。actionlint 与覆盖率上报仅 CI 跑。
+  # 不挂 `gocyclo` 任务，理由同 check（裸 gocyclo 不应用 _test.go 豁免，口径比 CI 严）。
+  ci:
+    desc: CI 流水线检查（完整版本，对标 ci.yml 的 Go 侧作业）
+    cmds:
+      - task: check-toolchain
+      - task: fmt-check
+      - task: lint-ci
+      - task: mod-check
+      - task: build
+      - task: cross-check
+      - task: test-cover
+      - task: test-race
+
+  # ==================== 依赖管理任务 ====================
+
+  deps:
+    desc: 下载并整理依赖
+    cmds:
+      - go mod download
+      - go mod tidy
+      - go mod verify
+
+  deps-update:
+    desc: 更新所有依赖到最新版本
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  deps-graph:
+    desc: 查看依赖关系图
+    cmds:
+      - go mod graph
+
+  # ==================== 清理任务 ====================
+
+  clean:
+    desc: 清理构建产物和临时文件
+    cmds:
+      - rm -rf {{.ARTIFACTS_DIR}}
+      - go clean -cache -testcache -modcache
+
+  clean-test:
+    desc: 清理测试缓存
+    cmds:
+      - go clean -testcache
+
+  # ==================== 开发辅助任务 ====================
+
+  version:
+    desc: 显示 Go 版本信息
+    cmds:
+      - go version
+      - go env GOVERSION
+
+  check-toolchain:
+    desc: 工具链版本门禁（校验 {{.REQUIRED_GO_VERSION}}）
+    cmds:
+      # go.mod 的 go 指令只是最低版本声明，不会拒绝更高版本；而实际构建走的是 PATH
+      # 中的 go。故须在此单独校验，覆盖两个方向：
+      #   - 高版本静默越锁编译：本地用更新的 Go 写出该版本专有的 API（如 1.25 的
+      #     sync.WaitGroup.Go），流水线底座只有 {{.REQUIRED_GO_VERSION}}，到那里才炸
+      #   - 低版本触发 GOTOOLCHAIN 自动下载：内网 GOSUMDB=off 取不到工具链模块，必失败
+      #
+      # 匹配语义由 REQUIRED_GO_VERSION 的粒度决定，两个分支共用这一份实现：
+      #   go1.24.6（给到 patch）→ 只接受 go1.24.6，锁死单一构建底座
+      #   go1.23  （给到 minor）→ 接受 go1.23 与 go1.23.x 全系
+      - |
+        cur=$(go env GOVERSION)
+        case "$cur" in
+          "{{.REQUIRED_GO_VERSION}}"|"{{.REQUIRED_GO_VERSION}}".*) ;;
+          *)
+            echo "错误: go 工具链版本不符——当前 $cur，要求 {{.REQUIRED_GO_VERSION}}[.x]" >&2
+            echo "      本项目工具链锁定为 {{.REQUIRED_GO_VERSION}}（流水线构建底座）。" >&2
+            exit 1
+            ;;
+        esac
+        echo "✅ Go 工具链 $cur"
+
+  verify:
+    desc: 验证项目配置
+    cmds:
+      - task: check-toolchain
+      - echo "验证 golangci-lint 配置..."
+      - golangci-lint config verify
+      - echo "验证 Go 模块..."
+      - go mod verify
+      - echo "✅ 所有验证通过"
+
+  init-hooks:
+    desc: 初始化 Git hooks
+    cmds:
+      - echo "配置 Git hooks..."
+      - git config core.hooksPath .githooks
+      - mkdir -p .githooks
+      - echo "✅ Git hooks 已配置"
+
+  # ==================== E2E 测试任务 ====================
+
+  e2e-test:
+    desc: 运行 E2E 测试（xctx+xtrace+xlog+xtenant）
+    cmds:
+      - go test -tags=e2e -v ./internal/e2e/...
+
+  # ==================== 集成测试任务（testcontainers 方式）====================
+
+  integration-test:
+    desc: 运行集成测试（需要 Redis/Mongo/ClickHouse）
+    cmds:
+      - go test -tags=integration -v ./pkg/...
+
+  integration-test-storage:
+    desc: 运行 storage 模块集成测试
+    cmds:
+      - go test -tags=integration -v ./pkg/storage/...
+
+  integration-test-distributed:
+    desc: 运行 distributed 模块集成测试
+    cmds:
+      - go test -tags=integration -v ./pkg/distributed/...
+
+  integration-kafka-start:
+    desc: 启动 Kafka 容器（用于集成测试）
+    vars:
+      KAFKA_CONTAINER: xkit-kafka-test
+    cmds:
+      - |
+        if podman ps -a --format '{{`{{.Names}}`}}' | grep -q {{.KAFKA_CONTAINER}}; then
+          echo "容器 {{.KAFKA_CONTAINER}} 已存在，正在启动..."
+          podman start {{.KAFKA_CONTAINER}}
+        else
+          echo "创建 Kafka 容器..."
+          podman run -d --name {{.KAFKA_CONTAINER}} \
+            -p 9092:9092 \
+            -e KAFKA_CFG_NODE_ID=0 \
+            -e KAFKA_CFG_PROCESS_ROLES=controller,broker \
+            -e KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            -e KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            -e KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@localhost:9093 \
+            -e KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            docker.io/bitnami/kafka:latest
+        fi
+      - echo "等待 Kafka 启动..."
+      - sleep 10
+      - 'echo "✅ Kafka 已启动在 localhost:9092"'
+
+  integration-kafka-stop:
+    desc: 停止 Kafka 容器
+    vars:
+      KAFKA_CONTAINER: xkit-kafka-test
+    cmds:
+      - podman stop {{.KAFKA_CONTAINER}} || true
+      - echo "✅ Kafka 容器已停止"
+
+  integration-kafka-rm:
+    desc: 删除 Kafka 容器
+    vars:
+      KAFKA_CONTAINER: xkit-kafka-test
+    cmds:
+      - podman rm -f {{.KAFKA_CONTAINER}} || true
+      - echo "✅ Kafka 容器已删除"
+
+  integration-pulsar-start:
+    desc: 启动 Pulsar 容器（用于集成测试）
+    vars:
+      PULSAR_CONTAINER: xkit-pulsar-test
+    cmds:
+      - |
+        if podman ps -a --format '{{`{{.Names}}`}}' | grep -q {{.PULSAR_CONTAINER}}; then
+          echo "容器 {{.PULSAR_CONTAINER}} 已存在，正在启动..."
+          podman start {{.PULSAR_CONTAINER}}
+        else
+          echo "创建 Pulsar 容器..."
+          podman run -d --name {{.PULSAR_CONTAINER}} \
+            -p 6650:6650 \
+            -p 8080:8080 \
+            docker.io/apachepulsar/pulsar:latest \
+            bin/pulsar standalone
+        fi
+      - echo "等待 Pulsar 启动..."
+      - sleep 15
+      - 'echo "✅ Pulsar 已启动在 localhost:6650"'
+
+  integration-pulsar-stop:
+    desc: 停止 Pulsar 容器
+    vars:
+      PULSAR_CONTAINER: xkit-pulsar-test
+    cmds:
+      - podman stop {{.PULSAR_CONTAINER}} || true
+      - echo "✅ Pulsar 容器已停止"
+
+  integration-pulsar-rm:
+    desc: 删除 Pulsar 容器
+    vars:
+      PULSAR_CONTAINER: xkit-pulsar-test
+    cmds:
+      - podman rm -f {{.PULSAR_CONTAINER}} || true
+      - echo "✅ Pulsar 容器已删除"
+
+  integration-start:
+    desc: 启动所有集成测试容器
+    cmds:
+      - task: integration-kafka-start
+      - task: integration-pulsar-start
+      - echo "✅ 所有集成测试容器已启动"
+
+  integration-stop:
+    desc: 停止所有集成测试容器
+    cmds:
+      - task: integration-kafka-stop
+      - task: integration-pulsar-stop
+      - echo "✅ 所有集成测试容器已停止"
+
+  integration-clean:
+    desc: 清理所有集成测试容器
+    cmds:
+      - task: integration-kafka-rm
+      - task: integration-pulsar-rm
+      - echo "✅ 所有集成测试容器已清理"
+
+  integration-run:
+    desc: 启动容器并运行集成测试
+    cmds:
+      - task: integration-start
+      - task: integration-test
+      - task: integration-stop
+
+  integration-cover:
+    desc: 运行集成测试并生成覆盖率报告
+    cmds:
+      - task: integration-start
+      - mkdir -p {{.ARTIFACTS_DIR}}
+      - go test -tags=integration -v -coverprofile={{.INTEGRATION_COVERAGE_FILE}} ./pkg/mq/... ./pkg/storage/... ./pkg/distributed/...
+      - go tool cover -html={{.INTEGRATION_COVERAGE_FILE}} -o {{.INTEGRATION_COVERAGE_HTML}}
+      - task: integration-stop
+      - 'echo "覆盖率报告已生成: {{.INTEGRATION_COVERAGE_HTML}}"'
+
+  # ==================== Kube-Play 集成测试环境（推荐用于本地开发）====================
+
+  kube-up:
+    desc: 启动所有集成测试服务（Redis/Mongo/ClickHouse/Kafka/Pulsar/etcd）
+    vars:
+      KUBE_FILE: deploy/integration/xkit-integration.yaml
+    cmds:
+      - echo "🚀 启动 XKit 集成测试环境..."
+      - podman kube play {{.KUBE_FILE}}
+      - echo ""
+      - echo "⏳ 等待服务就绪..."
+      - sleep 15
+      - task: kube-status
+      - echo ""
+      - echo "✅ 集成测试环境已就绪！"
+      - echo ""
+      - echo "💡 设置环境变量后运行测试:"
+      - echo "   source deploy/integration/env.sh && task integration-test"
+
+  kube-down:
+    desc: 停止并清理所有集成测试服务
+    vars:
+      KUBE_FILE: deploy/integration/xkit-integration.yaml
+    cmds:
+      - echo "🛑 停止 XKit 集成测试环境..."
+      - podman kube play --down {{.KUBE_FILE}} || true
+      - echo "✅ 集成测试环境已停止"
+
+  kube-status:
+    desc: 查看集成测试服务状态
+    cmds:
+      - echo "📊 XKit 集成测试服务状态:"
+      - echo ""
+      - podman pod ps --filter label=app=xkit-integration --format "table {{`{{.Name}}`}}\t{{`{{.Status}}`}}\t{{`{{.Created}}`}}"
+      - echo ""
+      - echo "📦 容器状态:"
+      - podman ps --filter label=app=xkit-integration --format "table {{`{{.Names}}`}}\t{{`{{.Status}}`}}\t{{`{{.Ports}}`}}"
+
+  kube-logs:
+    desc: 查看指定服务的日志（SERVICE=redis|mongo|clickhouse|kafka|pulsar|etcd）
+    vars:
+      SERVICE: '{{default "redis" .SERVICE}}'
+    cmds:
+      - podman logs xkit-{{.SERVICE}}-{{.SERVICE}} --tail 100
+
+  kube-restart:
+    desc: 重启集成测试环境
+    cmds:
+      - task: kube-down
+      - sleep 2
+      - task: kube-up
+
+  kube-test:
+    desc: 使用 kube-play 环境运行集成测试（服务常驻，测试更快）
+    env:
+      XKIT_REDIS_ADDR: localhost:6379
+      XKIT_MONGO_URI: mongodb://localhost:27017
+      XKIT_CLICKHOUSE_ADDR: localhost:9000
+      XKIT_KAFKA_BROKERS: localhost:9092
+      XKIT_PULSAR_URL: pulsar://localhost:6650
+      XKIT_ETCD_ENDPOINTS: localhost:2379
+    cmds:
+      - echo "🧪 运行集成测试（使用预启动的服务）..."
+      - go test -tags=integration -v ./pkg/...
+
+  kube-run:
+    desc: 一键启动环境并运行集成测试
+    cmds:
+      - task: kube-up
+      - task: kube-test
+      - 'echo ""'
+      - 'echo "💡 服务仍在运行，可反复执行: task kube-test"'
+      - 'echo "   停止服务: task kube-down"'
+
+  # ==================== 工作区检查 ====================
+
+  worktree-check:
+    desc: 检查工作区无未暂存变更或未跟踪文件
+    cmds:
+      - 'test -z "$(git diff --name-only)" || (echo "错误: 工作区存在未暂存变更" && git diff --name-only && exit 1)'
+      - 'test -z "$(git ls-files --others --exclude-standard)" || (echo "错误: 存在未跟踪文件" && git ls-files --others --exclude-standard && exit 1)'
+
+  # ==================== 帮助信息 ====================
+
+  help:
+    desc: 显示帮助信息
+    cmds:
+      - echo "XKit 开发任务"
+      - echo ""
+      - 'echo "📦 模块结构:"'
+      - echo "  pkg/config/       - 配置管理（xconf）"
+      - echo "  pkg/context/      - 上下文管理（xctx, xenv, xplatform, xtenant）"
+      - echo "  pkg/distributed/  - 分布式（xcron, xdlock）"
+      - echo "  pkg/mq/           - 消息队列（xkafka, xpulsar）"
+      - echo "  pkg/observability/- 可观测性（xlog, xmetrics, xrotate, xsampling, xtrace）"
+      - echo "  pkg/resilience/   - 弹性能力（xbreaker, xretry）"
+      - echo "  pkg/storage/      - 存储（xcache, xclickhouse, xmongo）"
+      - echo "  pkg/util/         - 工具（xfile）"
+      - echo ""
+      - 'echo "🧪 常用测试任务:"'
+      - echo "  task test              - 运行所有单元测试"
+      - echo "  task test-race         - 并发竞争检测"
+      - echo "  task test-<module>     - 按模块测试（如 test-context）"
+      - echo ""
+      - 'echo "📊 性能测试:"'
+      - echo "  task bench             - 运行所有性能测试"
+      - echo "  task bench-<module>    - 按模块测试（如 bench-observability）"
+      - echo "  task bench-<pkg>       - 按包测试（如 bench-xctx）"
+      - echo ""
+      - 'echo "🔬 模糊测试:"'
+      - echo "  task fuzz-<module>     - 按模块测试（如 fuzz-resilience）"
+      - echo "  task fuzz-<pkg>        - 按包测试（如 fuzz-xretry）"
+      - echo "  FUZZ_TIME=60s task fuzz-xctx  - 自定义时长"
+      - echo ""
+      - 'echo "🔍 代码质量:"'
+      - echo "  task lint              - 代码检查"
+      - echo "  task lint-fix          - 自动修复"
+      - echo "  task check             - 完整检查"
+      - echo "  task pre-commit        - 提交前检查"
+      - echo ""
+      - 'echo "🐳 集成测试（testcontainers）:"'
+      - echo "  task integration-start - 启动 Kafka/Pulsar 容器"
+      - echo "  task integration-test  - 运行集成测试"
+      - echo "  task integration-stop  - 停止容器"
+      - echo "  task integration-run   - 一键运行集成测试"
+      - echo ""
+      - 'echo "☸️  集成测试（kube-play，推荐本地开发）:"'
+      - echo "  task kube-up           - 启动所有服务（6个）"
+      - echo "  task kube-test         - 运行集成测试（秒级）"
+      - echo "  task kube-down         - 停止所有服务"
+      - echo "  task kube-run          - 一键启动并测试"
+      - echo "  task kube-status       - 查看服务状态"
+      - echo "  task kube-logs SERVICE=kafka - 查看日志"
+      - echo ""
+      - 'echo "📝 详细任务列表: task --list"'

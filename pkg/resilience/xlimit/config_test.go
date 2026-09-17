@@ -1,0 +1,304 @@
+package xlimit
+
+import (
+	"testing"
+	"time"
+)
+
+func TestConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			config: Config{
+				KeyPrefix: "ratelimit:",
+				Rules: []Rule{
+					TenantRule("tenant-limit", 1000, time.Minute),
+				},
+				Fallback:      FallbackLocal,
+				LocalPodCount: 3,
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty rules is valid",
+			config: Config{
+				KeyPrefix: "ratelimit:",
+				Rules:     []Rule{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "default fallback is valid",
+			config: Config{
+				KeyPrefix: "ratelimit:",
+				Fallback:  "",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid rule",
+			config: Config{
+				Rules: []Rule{
+					{Name: ""},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid fallback strategy",
+			config: Config{
+				Fallback: FallbackStrategy("invalid"),
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative pod count",
+			config: Config{
+				Fallback:      FallbackLocal,
+				LocalPodCount: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "duplicate rule names",
+			config: Config{
+				Rules: []Rule{
+					TenantRule("same-name", 100, time.Minute),
+					TenantRule("same-name", 200, time.Minute),
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+
+	if config.KeyPrefix != "ratelimit:" {
+		t.Errorf("KeyPrefix = %q, want %q", config.KeyPrefix, "ratelimit:")
+	}
+
+	if config.Fallback != FallbackLocal {
+		t.Errorf("Fallback = %q, want %q", config.Fallback, FallbackLocal)
+	}
+
+	if config.LocalPodCount != 1 {
+		t.Errorf("LocalPodCount = %d, want %d", config.LocalPodCount, 1)
+	}
+
+	if !config.EnableMetrics {
+		t.Error("EnableMetrics should be true by default")
+	}
+
+	if !config.EnableHeaders {
+		t.Error("EnableHeaders should be true by default")
+	}
+}
+
+func TestFallbackStrategy_IsValid(t *testing.T) {
+	tests := []struct {
+		strategy FallbackStrategy
+		want     bool
+	}{
+		{FallbackLocal, true},
+		{FallbackOpen, true},
+		{FallbackClose, true},
+		{FallbackStrategy(""), true}, // 空表示禁用降级
+		{FallbackStrategy("invalid"), false},
+		{FallbackStrategy("LOCAL"), false}, // 区分大小写
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.strategy), func(t *testing.T) {
+			if got := tt.strategy.IsValid(); got != tt.want {
+				t.Errorf("FallbackStrategy(%q).IsValid() = %v, want %v", tt.strategy, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_EffectivePodCount(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int
+		want  int
+	}{
+		{
+			name:  "explicit count",
+			count: 3,
+			want:  3,
+		},
+		{
+			name:  "zero defaults to 1",
+			count: 0,
+			want:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := Config{LocalPodCount: tt.count}
+			if got := config.EffectivePodCount(); got != tt.want {
+				t.Errorf("Config.EffectivePodCount() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_Clone(t *testing.T) {
+	original := Config{
+		KeyPrefix: "ratelimit:",
+		Rules: []Rule{
+			TenantRule("tenant-limit", 1000, time.Minute),
+		},
+		Fallback:      FallbackLocal,
+		LocalPodCount: 3,
+		EnableMetrics: true,
+		EnableHeaders: true,
+	}
+
+	clone := original.Clone()
+
+	// 验证值相等
+	if clone.KeyPrefix != original.KeyPrefix {
+		t.Errorf("KeyPrefix mismatch")
+	}
+	if clone.Fallback != original.Fallback {
+		t.Errorf("Fallback mismatch")
+	}
+	if clone.LocalPodCount != original.LocalPodCount {
+		t.Errorf("LocalPodCount mismatch")
+	}
+
+	// 验证规则列表是深拷贝
+	if len(clone.Rules) != len(original.Rules) {
+		t.Errorf("Rules length mismatch")
+	}
+
+	// 修改克隆不影响原始
+	clone.KeyPrefix = "modified:"
+	clone.Rules = nil
+	if original.KeyPrefix == "modified:" {
+		t.Error("Clone should not affect original KeyPrefix")
+	}
+	if len(original.Rules) == 0 {
+		t.Error("Clone should not affect original Rules")
+	}
+}
+
+func TestOverride_Validate(t *testing.T) {
+	tests := []struct {
+		name     string
+		override Override
+		wantErr  bool
+	}{
+		{
+			name:     "valid override",
+			override: Override{Match: "tenant:vip", Limit: 1000},
+			wantErr:  false,
+		},
+		{
+			name:     "valid with window and burst",
+			override: Override{Match: "tenant:vip", Limit: 1000, Window: time.Minute, Burst: 200},
+			wantErr:  false,
+		},
+		{
+			name:     "zero window is valid (use rule default)",
+			override: Override{Match: "tenant:vip", Limit: 1000, Window: 0},
+			wantErr:  false,
+		},
+		{
+			name:     "zero burst is valid (use limit as burst)",
+			override: Override{Match: "tenant:vip", Limit: 1000, Burst: 0},
+			wantErr:  false,
+		},
+		{
+			name:     "empty match",
+			override: Override{Limit: 100},
+			wantErr:  true,
+		},
+		{
+			name:     "zero limit",
+			override: Override{Match: "tenant:vip", Limit: 0},
+			wantErr:  true,
+		},
+		{
+			name:     "negative limit",
+			override: Override{Match: "tenant:vip", Limit: -1},
+			wantErr:  true,
+		},
+		{
+			name:     "negative window",
+			override: Override{Match: "tenant:vip", Limit: 100, Window: -time.Second},
+			wantErr:  true,
+		},
+		{
+			name:     "negative burst",
+			override: Override{Match: "tenant:vip", Limit: 100, Burst: -1},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.override.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Override.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfig_Validate_OverrideNegativeWindow(t *testing.T) {
+	config := Config{
+		Rules: []Rule{
+			{
+				Name:        "test",
+				KeyTemplate: "tenant:${tenant_id}",
+				Limit:       100,
+				Window:      time.Minute,
+				Overrides: []Override{
+					{Match: "tenant:vip", Limit: 200, Window: -time.Second},
+				},
+			},
+		},
+	}
+	err := config.Validate()
+	if err == nil {
+		t.Error("Config.Validate() should reject override with negative window")
+	}
+}
+
+func TestConfig_Validate_OverrideNegativeBurst(t *testing.T) {
+	config := Config{
+		Rules: []Rule{
+			{
+				Name:        "test",
+				KeyTemplate: "tenant:${tenant_id}",
+				Limit:       100,
+				Window:      time.Minute,
+				Overrides: []Override{
+					{Match: "tenant:vip", Limit: 200, Burst: -1},
+				},
+			},
+		},
+	}
+	err := config.Validate()
+	if err == nil {
+		t.Error("Config.Validate() should reject override with negative burst")
+	}
+}

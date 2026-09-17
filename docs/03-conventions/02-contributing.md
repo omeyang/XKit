@@ -1,0 +1,515 @@
+# 贡献指南
+
+欢迎为 XKit 项目做贡献！本文档提供贡献流程和规范说明。
+
+---
+
+## 开发环境准备
+
+### 必需工具
+
+- **Go 1.24.6**（固定版本，内网流水线构建底座要求）
+- **golangci-lint v2**（代码质量检查）
+- **go-task**（任务运行器，替代 Makefile）
+- **Git**（版本控制）
+
+### 验证环境
+
+```bash
+# 检查 Go 版本
+go version  # 应显示 go1.24.6
+
+# 检查 golangci-lint
+golangci-lint version
+
+# 克隆项目
+git clone git@github.com:omeyang/XKit.git
+cd XKit
+
+# 安装依赖
+go mod download
+```
+
+---
+
+## 开发工作流
+
+### 规范驱动开发流程
+
+本项目遵循规范驱动开发工作流，所有新功能按以下流程开发：
+
+```
+项目原则 → 需求规格 → 技术计划（含 ADR） → 任务拆解 → 执行实现
+```
+
+### 创建新功能
+
+**步骤 1: 创建分支**
+
+```bash
+git checkout -b feature/001-feature-name
+```
+
+**步骤 2: 创建需求规格**
+
+在 `.specify/specs/{feature-name}/spec.md` 创建需求规格，包含：
+- SMART 验收标准（可量化、可测试）
+- 人工审核签字（架构师、安全专家、测试经理）
+
+**步骤 3: 技术计划、任务拆解、执行实现**
+
+依次完成：
+- Plan 包含 ADR 记录技术决策
+- Tasks 拆解为可执行任务
+- 实现符合项目原则
+
+---
+
+## 代码规范
+
+### 目录组织
+
+```text
+xkit/
+├── internal/       # 内部包（不导出，仅项目内使用）
+├── pkg/            # 公开包（可导出，供外部使用）
+└── .specify/       # 规格与标准文档
+```
+
+### 命名规范
+
+**设计原则**
+
+1. 简洁准确——短而清晰
+2. 一致性——同类事物同一模式
+3. 禁止泛化词——避免 `manager/service/handler/util/helper/common/base/data`
+4. 遵循 Go 社区事实标准
+
+**目录与包**
+
+| 维度 | 规则 | 示例 |
+|---|---|---|
+| 领域目录 | 小写单词 | `context`, `observability`, `storage` |
+| 包目录 | `x` 前缀 + 小写 | `xctx`, `xlog`, `xcache` |
+| 包名（`package` 行） | 与目录同名，无下划线/短横线 | `package xctx` |
+
+目录到包名映射示例：
+
+```
+pkg/context/xctx       -> package xctx
+pkg/observability/xlog -> package xlog
+pkg/storage/xcache     -> package xcache
+```
+
+**文件**
+
+| 用途 | 命名 |
+|---|---|
+| 源码 | `snake_case.go`（如 `loader_impl.go`） |
+| 单元测试 | `<file>_test.go` |
+| 基准测试 | `<file>_bench_test.go` |
+| 模糊测试 | `<file>_fuzz_test.go` |
+| 示例测试 | `example_test.go` |
+| 平台特定 | `file_linux.go`（依赖 build tag） |
+
+**类型与接口**
+
+- 导出类型 PascalCase，不加包名前缀（包名已是上下文，用 `Tokenizer` 而非 `XstrTokenizer`）。
+- 单方法接口用 `-er` 后缀（`Loader`, `Closer`, `Reader`）。
+- 多方法接口用名词（`Logger`, `Redis`）。
+- 不用 `I` 前缀（`Logger` 而非 `ILogger`）。
+- 错误变量用 `Err` 前缀（`ErrNotFound`, `ErrLockFailed`）。
+
+**函数与 Context 操作**
+
+| 模式 | 示例 |
+|---|---|
+| 构造函数 | `NewLoader()`, `NewRedis()` |
+| 注入到 context | `WithTraceID()`, `WithTenantID()` |
+| 从 context 读 | `TraceID(ctx)`, `TenantID(ctx)` |
+| 不存在则生成 | `EnsureTraceID(ctx)` |
+| 失败返 error | `RequireTraceID(ctx)` |
+
+**函数选项（ADR 0003）**
+
+```go
+type LoaderOption func(*LoaderOptions)
+func WithSingleflight(b bool) LoaderOption
+func WithLoadTimeout(d time.Duration) LoaderOption
+```
+
+配置结构体后缀 `Options`（内部）/ `Config`（外部输入）。
+
+**日志字段（snake_case，与 JSON 输出一致）**
+
+```go
+slog.Warn("operation failed",
+    "trace_id", traceID,
+    "tenant_id", tenantID,
+    "error", err,
+)
+```
+
+常用字段：`trace_id` · `span_id` · `request_id` · `tenant_id` · `error` · `duration` · `component` · `operation`。
+
+### 注释规范
+
+**公开 API 必须有中文注释**：
+
+```go
+// GetUser 根据用户 ID 获取用户信息
+// 返回用户对象和错误信息
+func GetUser(id int) (*User, error) {
+    // 实现...
+}
+```
+
+**每个包必须有 package doc**（doc.go）：
+
+```go
+// Package http 提供 HTTP 客户端和服务端功能
+//
+// 主要功能：
+// - HTTP 客户端封装
+// - HTTP 服务端中间件
+// - 请求/响应处理工具
+package http
+```
+
+### Lint 规则与排除
+
+- `.golangci.yml` 中的排除项应保持最小化，优先在代码处使用 `//nolint:<linter>` 并说明原因
+- 新增全局排除必须在 PR 中说明原因，并同步更新此文档
+
+---
+
+## 测试规范
+
+### TDD 开发模式
+
+本项目遵循 **Test-Driven Development**（测试驱动开发）模式：
+
+**三阶段循环**：
+1. **红（Red）**：先写测试，运行测试确保失败（功能未实现）
+2. **绿（Green）**：编写最小化代码使测试通过
+3. **重构（Refactor）**：在测试保护下优化代码结构
+
+### 测试覆盖率
+
+**要求**：
+- **核心业务逻辑**：≥ 95%
+- **整体代码**：≥ 90%
+
+**运行测试**：
+
+```bash
+# 运行所有测试
+task test
+
+# 测试覆盖率（生成 HTML 报告）
+task test-cover
+
+# 数据竞争检测
+task test-race
+
+# 快速测试
+task test-short
+```
+
+覆盖率报告输出到 `.artifacts/coverage.html`，目录已在 `.gitignore` 中忽略。
+
+### 测试类型
+
+**单元测试**：
+
+```go
+func TestGetUser(t *testing.T) {
+    tests := []struct {
+        name    string
+        userID  int
+        want    *User
+        wantErr bool
+    }{
+        {name: "valid user", userID: 1, want: &User{ID: 1}, wantErr: false},
+        {name: "invalid user", userID: -1, want: nil, wantErr: true},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := GetUser(tt.userID)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("GetUser() error = %v, wantErr %v", err, tt.wantErr)
+            }
+            // 更多断言...
+        })
+    }
+}
+```
+
+**基准测试**（性能关键路径）：
+
+```go
+func BenchmarkGetUser(b *testing.B) {
+    b.ReportAllocs()
+    for b.Loop() {
+        GetUser(1)
+    }
+}
+```
+
+**示例测试**（公开 API）：
+
+```go
+func ExampleGetUser() {
+    user, err := GetUser(1)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(user.Name)
+    // Output: John Doe
+}
+```
+
+---
+
+## 代码质量检查
+
+### 提交前检查
+
+**本地检查**（必须通过）：
+
+```bash
+# 完整检查
+task check
+
+# 提交前快速检查
+task pre-commit
+
+# 或分步检查
+task fmt        # 格式化代码
+task lint       # Lint 检查
+task test       # 运行测试
+```
+
+### golangci-lint 配置
+
+项目使用 golangci-lint v2，配置文件：`.golangci.yml`
+
+**运行 Lint**：
+
+```bash
+# 检查
+task lint
+
+# 自动修复
+task lint-fix
+```
+
+---
+
+## 包稳定性分级
+
+### 分级定义
+
+| 档位 | 对使用方的承诺 | 变更方式 |
+|---|---|---|
+| **Stable** | 公开 API 冻结，遵循语义化版本，不做破坏性变更 | 破坏性变更需 MAJOR 版本 + 迁移指南 + ADR |
+| **Beta** | 功能可用，公开 API 可能调整 | 变更提前一个 MINOR 版本在 `CHANGELOG.md` 公告 |
+| **Alpha** | 实验性，公开 API 随时可变 | 变更直接记入 `CHANGELOG.md`，无需提前公告 |
+| **Internal** | 不对生产使用，不承诺任何兼容性 | 标记用途而非成熟度，不参与晋升 |
+
+`pkg/testkit/*`、`<pkg>mock/` 子包、`internal/` 下所有包恒为 Internal。
+
+分级的单一事实源是 [`../02-progress.md`](../02-progress.md) 的稳定性矩阵。以下四处副本必须与之逐字一致，
+在同一个 MR 内同步：
+
+1. `docs/02-progress.md`（事实源）
+2. `README.md` 包概览表
+3. [`01-api.md`](01-api.md) 包清单表
+4. [`../04-packages/00-index.md`](../04-packages/00-index.md) 「按稳定性分组」，以及各包文档 frontmatter 的 `stability:` 字段
+
+### 判据
+
+分级衡量的是**公开 API 的变更自由度**，不是代码质量。覆盖率、lint 通过率、对抗审查轮次不构成晋升理由——
+它们是所有档位的共同底线（覆盖率要求见「测试规范」）。提交数量同样不构成晋升理由。
+
+Stable 的四项判据，缺一不可：
+
+1. **主要 API 已登记且签名准确**：该包的接口、构造函数、选项类型、错误变量在 [`01-api.md`](01-api.md)
+   有条目，且签名与源码逐字一致（含返回值中的 `error`）。完整导出集合以 godoc 为准——`01-api.md`
+   受单文件 800 行上限约束，只收录主要 API，不是全量账本
+2. **双分支 API 一致**：`main` 与 `develop-1.23-release` 的导出标识符集合逐字相同
+3. **签名评审通过**：架构师逐个确认该包公开签名，结论写入 ADR 或包文档
+4. **一个发布周期内无破坏性变更**：自上一个 tag 起，该包未删改任何导出标识符
+
+判据 2 是硬约束。1.23 兼容分支要求两条分支公开 API 严格一致，因此只能在 `main` 表达的构造
+（泛型类型别名、Go 1.24+ 专有 API）不得出现在公开签名中。两分支 API 一旦分叉，涉及的包必须降级。
+
+### 晋升流程（Alpha/Beta → Stable）
+
+1. 逐条核对上述四项判据，结论写入 MR 描述
+2. 同步「分级定义」列出的四处标记
+3. 在 `CHANGELOG.md` 待发布段落记录晋升
+4. 架构师签字后合入
+
+### 降级流程（Stable → Beta）
+
+Stable 包出现下列任一情况即降级，降级与破坏性变更在同一个 MR 内完成：
+
+- 删除或改动任一导出标识符的签名
+- 两分支公开 API 出现分叉
+- 依赖的上游库发生破坏性变更且无法在包内吸收
+
+降级同样需同步四处标记，并在 `CHANGELOG.md` 说明原因。
+
+### 新增包
+
+新增包默认 Alpha，按上述流程晋升。分级不随时间或提交次数自动变化，只随 MR 显式变更。
+
+---
+
+## Git 提交规范
+
+### Commit 消息格式
+
+遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+
+```
+<type>(<scope>): 简要描述
+
+详细说明：
+- 变更 1
+- 变更 2
+```
+
+**type 类型**：`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
+
+**scope 示例**：`xlog`, `xretry`, `xbreaker`, `util` 等包名
+
+### 提交步骤
+
+```bash
+# 1. 暂存变更
+git add .
+
+# 2. 提交
+git commit -m "feat(xlog): 新增动态日志级别支持"
+
+# 3. 推送到远程
+git push origin feature/001-feature-name
+```
+
+---
+
+## Merge Request 流程
+
+### 创建 MR
+
+**填写 MR 信息**：
+
+- **关联文档**：Spec、Plan、Tasks 链接
+- **验收确认**：功能性验收、非功能性验收
+- **测试证据**：单元测试、集成测试、性能测试、安全扫描
+
+**检查清单**：
+
+- [ ] 测试覆盖率达标（核心业务 ≥ 95%，整体 ≥ 90%）
+- [ ] golangci-lint 检查通过
+- [ ] Plan 包含 ADR 记录技术决策
+- [ ] 若触及 Stable 包的导出标识符：已按「包稳定性分级」走 MAJOR + 迁移指南，或已同步降级
+
+### Code Review 要求
+
+**检查要点**：
+
+- [ ] 代码符合项目原则（constitution.md）
+- [ ] 测试覆盖率达标（核心业务 ≥ 95%，整体 ≥ 90%）
+- [ ] golangci-lint 检查通过
+- [ ] 文档完整（代码注释 + 技术文档）
+- [ ] 无明显性能问题
+- [ ] 错误处理完善
+- [ ] 并发安全（如适用）
+- [ ] 公开 API 变更已同步 [`01-api.md`](01-api.md) 与稳定性分级四处标记
+
+**审核人**：
+
+- **架构师**：技术选型、API 设计
+- **安全专家**：安全漏洞、敏感数据处理
+- **测试经理**：测试覆盖率、测试用例质量
+
+---
+
+## 文档规范
+
+### 文档金标准
+
+所有技术文档必须遵循**文档金标准**（12 个核心原则）：
+
+1. **单一职责**：每个文档只负责一个主题
+2. **图表优先**：代码块 ≤ 5 行，超过改用 Mermaid
+3. **专业术语**：删除口语化和自问自答
+4. **数据驱动**：所有结论有数据支撑
+5. **真实可靠**：基于实际代码和数据，不猜测
+6. **实质内容**：删除形式主义和表演性内容
+7. **时效准确**：只记录最新状态
+8. **关联准确**：所有引用和链接有效
+9. **体系组织**：符合阅读心智，有清晰编号
+10. **代码溯源**：标注仓库、分支、提交
+11. **决策留痕**：记录已拒绝方案（ADR）
+12. **控制篇幅**：单文件 ≤ 800 行
+
+**API 文档**（代码注释）：
+- 公开 API 必须有中文注释
+- 包注释在 doc.go 中
+- 示例测试生成文档
+
+---
+
+## 常见问题
+
+### Q1: 如何验证 Go 版本？
+
+```bash
+task check-toolchain  # 精确校验，应输出 "✅ Go 工具链 go1.24.6"
+
+# 如版本不对，需安装或切换到正确版本
+```
+
+### Q2: 如何运行完整检查？
+
+```bash
+task check  # Lint + 测试 + 数据竞争检测
+```
+
+### Q3: 测试覆盖率不足怎么办？
+
+**要求**：核心业务 ≥ 95%，整体 ≥ 90%
+
+- 查看覆盖率报告：`task test-cover`，打开 `.artifacts/coverage.html`
+- 补充测试用例，覆盖未测试的代码路径
+- 确保所有公开 API 都有测试
+- 核心业务逻辑必须达到 95% 以上
+
+### Q4: golangci-lint 检查失败怎么办？
+
+- 查看错误信息：`task lint`
+- 尝试自动修复：`task lint-fix`
+- 手动修复剩余问题
+
+### Q5: 如何处理 Breaking Changes？
+
+- 提升 MAJOR 版本号（如 1.x.x → 2.0.0）
+- 在 CHANGELOG.md 中明确标注
+- 提供迁移指南
+- 通过 ADR 记录决策
+
+---
+
+## 参考文档
+
+- **golangci-lint 配置**：`.golangci.yml`
+- **API 文档**：[`api.md`](01-api.md)
+- **ADR 决策记录**：[`../01-decisions/`](../01-decisions/00-index.md)
+- **文档索引**：[`../00-index.md`](../00-index.md)
+
+---

@@ -1,0 +1,224 @@
+package xlimit
+
+import (
+	"context"
+	"maps"
+	"strings"
+
+	"github.com/omeyang/xkit/pkg/context/xtenant"
+)
+
+// 模板变量名常量
+const (
+	varTenantID = "${tenant_id}"
+	varCallerID = "${caller_id}"
+	varMethod   = "${method}"
+	varPath     = "${path}"
+	varResource = "${resource}"
+)
+
+// Key 限流键，包含用于构建 Redis 键的各个维度
+type Key struct {
+	// Tenant 租户 ID，用于多租户限流
+	Tenant string
+
+	// Caller 上游调用方 ID，用于调用方限流
+	Caller string
+
+	// Method HTTP/gRPC 方法，如 GET、POST
+	Method string
+
+	// Path HTTP/gRPC 路径，如 /v1/users
+	Path string
+
+	// Resource 业务自定义资源名，如 createOrder
+	Resource string
+
+	// Extra 额外的自定义维度
+	Extra map[string]string
+}
+
+// KeyFromContext 从 context 自动提取租户信息构建 Key
+//
+// 自动提取以下信息：
+//   - Tenant: 从 xtenant.TenantID(ctx) 获取
+//
+// 返回的 Key 可以通过链式调用添加其他字段：
+//
+//	key := xlimit.KeyFromContext(ctx).
+//	    WithMethod(r.Method).
+//	    WithPath(r.URL.Path)
+func KeyFromContext(ctx context.Context) Key {
+	return Key{
+		Tenant: xtenant.TenantID(ctx),
+	}
+}
+
+// Render 使用 Key 中的值渲染模板字符串
+// 支持的变量：
+//   - ${tenant_id}: Tenant 字段
+//   - ${caller_id}: Caller 字段
+//   - ${method}: Method 字段
+//   - ${path}: Path 字段
+//   - ${resource}: Resource 字段
+//   - ${xxx}: Extra 中的自定义字段
+//
+// 使用 strings.Builder 优化性能，避免多次字符串分配
+func (k Key) Render(template string) string {
+	// 快速路径：如果没有变量占位符，直接返回
+	if !strings.Contains(template, "${") {
+		return template
+	}
+
+	var b strings.Builder
+	b.Grow(len(template) + 32) // 预分配空间
+
+	i := 0
+	for i < len(template) {
+		// 查找变量开始位置
+		start := strings.Index(template[i:], "${")
+		if start == -1 {
+			b.WriteString(template[i:])
+			break
+		}
+		start += i
+
+		// 写入变量前的文本
+		b.WriteString(template[i:start])
+
+		// 查找变量结束位置
+		end := strings.Index(template[start:], "}")
+		if end == -1 {
+			b.WriteString(template[start:])
+			break
+		}
+		end += start + 1
+
+		// 提取变量名并替换
+		varName := template[start:end]
+		value := k.resolveVar(varName)
+		b.WriteString(value)
+
+		i = end
+	}
+
+	return b.String()
+}
+
+// resolveVar 解析变量值
+//
+// 设计决策: 所有缺失的变量统一返回空字符串，包括内置字段和 Extra 自定义字段。
+// 空字符串使该维度不参与限流键区分，所有缺少该维度的请求共享同一个桶。
+// 这确保了内置字段（如空 Tenant → ""）和 Extra 字段（如缺失 key → ""）
+// 的行为一致。如需强制要求所有维度必须存在，
+// 应在 KeyExtractor 层做前置校验，而非在模板渲染层。
+func (k Key) resolveVar(varName string) string {
+	switch varName {
+	case varTenantID:
+		return k.Tenant
+	case varCallerID:
+		return k.Caller
+	case varMethod:
+		return k.Method
+	case varPath:
+		return k.Path
+	case varResource:
+		return k.Resource
+	default:
+		// 检查 Extra 中的自定义字段
+		if k.Extra != nil {
+			// 提取变量名（去掉 ${ 和 }）
+			name := varName[2 : len(varName)-1]
+			if value, ok := k.Extra[name]; ok {
+				return value
+			}
+		}
+		// 设计决策: 未找到的 Extra 变量返回空字符串，与内置字段缺失时的行为一致。
+		return ""
+	}
+}
+
+// String 返回 Key 的字符串表示，用于日志和调试
+func (k Key) String() string {
+	var b strings.Builder
+	b.Grow(64)
+
+	first := true
+	appendField := func(name, value string) {
+		if value == "" {
+			return
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(value)
+	}
+
+	appendField("tenant", k.Tenant)
+	appendField("caller", k.Caller)
+	appendField("method", k.Method)
+	appendField("path", k.Path)
+	appendField("resource", k.Resource)
+
+	for name, value := range k.Extra {
+		appendField(name, value)
+	}
+
+	return b.String()
+}
+
+// IsEmpty 检查 Key 是否为空（所有字段都未设置）
+func (k Key) IsEmpty() bool {
+	return k.Tenant == "" &&
+		k.Caller == "" &&
+		k.Method == "" &&
+		k.Path == "" &&
+		k.Resource == "" &&
+		len(k.Extra) == 0
+}
+
+// WithTenant 返回设置了 Tenant 的新 Key
+func (k Key) WithTenant(tenant string) Key {
+	k.Tenant = tenant
+	return k
+}
+
+// WithCaller 返回设置了 Caller 的新 Key
+func (k Key) WithCaller(caller string) Key {
+	k.Caller = caller
+	return k
+}
+
+// WithMethod 返回设置了 Method 的新 Key
+func (k Key) WithMethod(method string) Key {
+	k.Method = method
+	return k
+}
+
+// WithPath 返回设置了 Path 的新 Key
+func (k Key) WithPath(path string) Key {
+	k.Path = path
+	return k
+}
+
+// WithResource 返回设置了 Resource 的新 Key
+func (k Key) WithResource(resource string) Key {
+	k.Resource = resource
+	return k
+}
+
+// WithExtra 返回添加了自定义维度的新 Key
+//
+// 设计决策: 始终深拷贝 Extra map，确保返回的 Key 与原 Key 完全独立。
+// Key 是值类型但 map 是引用类型，浅拷贝会导致多个 Key 共享同一 map，
+// 并发修改时触发 concurrent map write panic。
+func (k Key) WithExtra(key, value string) Key {
+	newExtra := make(map[string]string, len(k.Extra)+1)
+	maps.Copy(newExtra, k.Extra)
+	newExtra[key] = value
+	k.Extra = newExtra
+	return k
+}

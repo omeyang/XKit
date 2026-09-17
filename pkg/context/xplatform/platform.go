@@ -1,0 +1,321 @@
+package xplatform
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"unicode"
+)
+
+// =============================================================================
+// 错误定义
+// =============================================================================
+
+var (
+	// ErrNotInitialized xplatform 未初始化
+	ErrNotInitialized = errors.New("xplatform: not initialized, call Init() first")
+
+	// ErrMissingPlatformID 缺少 PlatformID
+	ErrMissingPlatformID = errors.New("xplatform: missing platform_id")
+
+	// ErrInvalidPlatformID PlatformID 格式非法（包含空白字符、控制字符或超过最大长度）
+	ErrInvalidPlatformID = errors.New("xplatform: invalid platform_id format")
+
+	// ErrInvalidUnclassRegionID UnclassRegionID 格式非法（包含空白字符、控制字符或超过最大长度）
+	ErrInvalidUnclassRegionID = errors.New("xplatform: invalid unclass_region_id format")
+
+	// ErrAlreadyInitialized 重复初始化
+	ErrAlreadyInitialized = errors.New("xplatform: already initialized")
+)
+
+// =============================================================================
+// 配置结构
+// =============================================================================
+
+const (
+	// maxPlatformIDLen PlatformID 的最大长度（字节）
+	maxPlatformIDLen = 128
+
+	// maxUnclassRegionIDLen UnclassRegionID 的最大长度（字节）
+	maxUnclassRegionIDLen = 128
+)
+
+// Config 平台初始化配置
+//
+// 注意：此结构体与 xctx.Platform 有部分字段重叠（HasParent, UnclassRegionID），
+// 但用途不同：
+//   - Config: 进程级全局配置，包含 PlatformID
+//   - xctx.Platform: 请求级 context，用于批量获取平台信息
+//
+// 设计决策: 所有字段必须为值类型（string, bool, int 等），不得包含 slice/map/pointer，
+// 以确保 GetConfig() 通过 return *cfg 返回的副本与全局状态完全隔离。
+// 未提供 json/yaml 标签，因为平台信息来源多样（AUTH 服务、配置文件），
+// 调用方应自行反序列化后构造 Config 并调用 Init，确保经过 Validate 校验。
+type Config struct {
+	// PlatformID 平台 ID（必填，来自 AUTH 服务）
+	//
+	// 校验规则：
+	//   - 不能为空或纯空白字符
+	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
+	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
+	PlatformID string
+
+	// HasParent 是否有上级平台（可选，默认 false）
+	HasParent bool
+
+	// UnclassRegionID 未分类区域 ID（可选）
+	//
+	// 校验规则（仅非空时校验）：
+	//   - 纯空白字符串归一化为空字符串（视为未设置，跳过校验）
+	//   - 不能包含空白字符（空格、制表符等）
+	//   - 不能包含控制字符（NUL、BEL、ESC 等）
+	//   - 仅允许 ASCII 可打印字节（0x21..0x7e，不含空格 0x20 与非 ASCII）
+	//   - 最大长度 128 字节（len 计算，非 UTF-8 字符数）
+	UnclassRegionID string
+}
+
+// Validate 验证配置有效性
+//
+// 校验规则：
+//   - PlatformID 不能为空或纯空白字符 → ErrMissingPlatformID
+//   - PlatformID 不能包含空白字符 → ErrInvalidPlatformID
+//   - PlatformID 不能包含控制字符 → ErrInvalidPlatformID
+//   - PlatformID 长度不超过 128 字节 → ErrInvalidPlatformID
+//   - UnclassRegionID 纯空白字符串视为空（跳过校验）
+//   - UnclassRegionID（非空时）不能包含空白字符 → ErrInvalidUnclassRegionID
+//   - UnclassRegionID（非空时）不能包含控制字符 → ErrInvalidUnclassRegionID
+//   - UnclassRegionID（非空时）长度不超过 128 字节 → ErrInvalidUnclassRegionID
+func (c Config) Validate() error {
+	if err := validatePlatformID(c.PlatformID); err != nil {
+		return err
+	}
+	return validateUnclassRegionID(c.UnclassRegionID)
+}
+
+// validatePlatformID 校验 PlatformID 非空、无空白/控制字符/非可打印 ASCII、长度合规。
+func validatePlatformID(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return ErrMissingPlatformID
+	}
+	if strings.ContainsFunc(id, unicode.IsSpace) {
+		return fmt.Errorf("%w: contains whitespace", ErrInvalidPlatformID)
+	}
+	// 设计决策: 校验控制字符（NUL、BEL、ESC 等），因为 PlatformID 会被注入到
+	// HTTP Header（xtenant/http.go）和 gRPC Metadata（xtenant/grpc.go），
+	// 控制字符可能导致协议层错误或隐性污染。
+	if strings.ContainsFunc(id, unicode.IsControl) {
+		return fmt.Errorf("%w: contains control characters", ErrInvalidPlatformID)
+	}
+	// 设计决策: 限制为 ASCII 可打印字节（0x21..0x7e）。gRPC 出站 metadata 要求普通
+	// value 为 %x20-%x7e 可打印 ASCII（imetadata.ValidatePair），非 ASCII 值会导致
+	// RPC 发送阶段 codes.Internal 错误。在 Init 时 fail-fast，优于运行时隐性失败。
+	if containsNonPrintableASCII(id) {
+		return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidPlatformID)
+	}
+	if len(id) > maxPlatformIDLen {
+		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidPlatformID, maxPlatformIDLen)
+	}
+	return nil
+}
+
+// validateUnclassRegionID 校验 UnclassRegionID（非空时）无空白/控制字符/非可打印 ASCII、长度合规。
+// 设计决策: UnclassRegionID 用于 HTTP Header / gRPC Metadata 传播（xtenant 包），
+// 必须校验空白字符和长度，防止 header 注入和溢出。允许空值（可选字段）。
+// TrimSpace 归一化使纯空白输入等同于空字符串（未设置），与 PlatformID 的处理对称。
+func validateUnclassRegionID(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	if strings.ContainsFunc(id, unicode.IsSpace) {
+		return fmt.Errorf("%w: contains whitespace", ErrInvalidUnclassRegionID)
+	}
+	if strings.ContainsFunc(id, unicode.IsControl) {
+		return fmt.Errorf("%w: contains control characters", ErrInvalidUnclassRegionID)
+	}
+	if containsNonPrintableASCII(id) {
+		return fmt.Errorf("%w: contains non-printable ASCII bytes", ErrInvalidUnclassRegionID)
+	}
+	if len(id) > maxUnclassRegionIDLen {
+		return fmt.Errorf("%w: exceeds max length %d", ErrInvalidUnclassRegionID, maxUnclassRegionIDLen)
+	}
+	return nil
+}
+
+// containsNonPrintableASCII 判断字符串是否包含非可打印 ASCII 字节（0x80+ 或 0x00..0x20/0x7f）。
+//
+// 设计决策: 按字节逐一检查（string index 操作），避免 rune 解码开销。
+// 与 unicode.IsSpace/IsControl 的校验存在重叠（0x00..0x20 和 0x7f），但三者组合
+// 可明确拆分错误语义（空白/控制/非ASCII），便于调用方排障。
+func containsNonPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x21 || b > 0x7e {
+			return true
+		}
+	}
+	return false
+}
+
+// =============================================================================
+// 全局状态
+// =============================================================================
+
+var (
+	// 设计决策: globalConfig 使用 atomic.Pointer 实现无锁读取。
+	// 初始化后指针不变（Reset 仅测试可用），读路径无需 sync.RWMutex，
+	// 消除了高并发下 RWMutex 的缓存行竞争。
+	globalConfig atomic.Pointer[Config]
+
+	// globalMu 仅保护写路径（Init/Reset）的并发序列化
+	globalMu sync.Mutex
+)
+
+// =============================================================================
+// 初始化函数
+// =============================================================================
+
+// Init 初始化平台信息
+//
+// 使用从 AUTH 服务或配置获取的平台信息初始化。
+// PlatformID 是必填字段，不能包含空白字符，最大长度 128 字节。
+// 此函数应在 main() 中服务启动时调用一次。
+//
+// 错误优先级：ErrAlreadyInitialized > 配置校验错误。
+//
+// 设计决策: Init 接受 Config 结构体（直接传值），而非从环境变量读取。
+// 这与 xenv.Init()（从环境变量读取）的设计不同，原因是平台信息通常
+// 来自 AUTH 服务或配置文件，而非单一环境变量。
+func Init(cfg Config) error {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	// 设计决策: 先检查初始化状态，再校验配置。
+	// 确保"已初始化 + 非法配置"场景始终返回 ErrAlreadyInitialized，
+	// 避免调用方将状态错误误判为参数错误。
+	if globalConfig.Load() != nil {
+		return ErrAlreadyInitialized
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	// 设计决策: TrimSpace 归一化使 Validate 的"纯空白视为未设置"语义在存储层真正生效。
+	// 否则调用方传入 "   " 时，Validate 通过（视为空），但存储了原始空白字符串，
+	// 下游 xtenant 的 regionID != "" 判断会将空白字符串注入 HTTP Header / gRPC Metadata。
+	cfg.UnclassRegionID = strings.TrimSpace(cfg.UnclassRegionID)
+
+	globalConfig.Store(&cfg)
+
+	return nil
+}
+
+// MustInit 初始化平台信息，失败时 panic
+//
+// 适用于初始化失败应该终止程序的场景。
+func MustInit(cfg Config) {
+	if err := Init(cfg); err != nil {
+		panic(err)
+	}
+}
+
+// =============================================================================
+// 全局访问函数
+// =============================================================================
+
+// PlatformID 返回当前平台 ID
+//
+// 需要先调用 Init/MustInit 初始化。
+//
+// 设计决策: 未初始化时返回空字符串（而非 panic 或 error），与 Go 零值语义一致。
+// 需要区分"未初始化"和"初始化为空"的场景应使用 RequirePlatformID()。
+func PlatformID() string {
+	cfg := globalConfig.Load()
+	if cfg == nil {
+		return ""
+	}
+	return cfg.PlatformID
+}
+
+// HasParent 返回是否有上级平台
+//
+// 需要先调用 Init/MustInit 初始化。
+//
+// 设计决策: 未初始化时返回 false，与 Go 零值语义一致。
+// 需要明确判断初始化状态的场景应使用 GetConfig()。
+func HasParent() bool {
+	cfg := globalConfig.Load()
+	if cfg == nil {
+		return false
+	}
+	return cfg.HasParent
+}
+
+// UnclassRegionID 返回未分类区域 ID
+//
+// 需要先调用 Init/MustInit 初始化。
+//
+// 设计决策: 未初始化时返回空字符串，与 Go 零值语义一致。
+// 需要明确判断初始化状态的场景应使用 GetConfig()。
+func UnclassRegionID() string {
+	cfg := globalConfig.Load()
+	if cfg == nil {
+		return ""
+	}
+	return cfg.UnclassRegionID
+}
+
+// IsInitialized 返回是否已初始化
+func IsInitialized() bool {
+	return globalConfig.Load() != nil
+}
+
+// =============================================================================
+// 带错误检查的访问函数
+// =============================================================================
+
+// RequirePlatformID 返回平台 ID，未初始化时返回错误
+//
+// 与 PlatformID() 的区别在于未初始化时返回 ErrNotInitialized 而非空字符串。
+// 适用于必须明确知道平台 ID 的业务场景。
+func RequirePlatformID() (string, error) {
+	cfg := globalConfig.Load()
+	if cfg == nil {
+		return "", ErrNotInitialized
+	}
+	return cfg.PlatformID, nil
+}
+
+// GetConfig 返回当前配置的副本
+//
+// 适用于需要批量获取所有平台信息的场景。
+// 如果未初始化，返回空配置和错误。
+func GetConfig() (Config, error) {
+	cfg := globalConfig.Load()
+	if cfg == nil {
+		return Config{}, ErrNotInitialized
+	}
+	return *cfg, nil
+}
+
+// =============================================================================
+// 测试辅助
+// =============================================================================
+
+// Reset 重置全局状态（仅用于测试）
+//
+// 设计决策: Reset 保留为公开 API 而非限制在 export_test.go，
+// 因为 xtenant 等外部包的测试代码也需要重置 xplatform 全局状态。
+// 生产代码不应调用此函数，Init 后全局配置应保持不变。
+//
+// 线程安全，可在并发读取时调用。重置后所有读函数返回零值，
+// IsInitialized() 返回 false。
+func Reset() {
+	globalMu.Lock()
+	globalConfig.Store(nil)
+	globalMu.Unlock()
+}

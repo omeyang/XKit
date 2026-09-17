@@ -1,0 +1,757 @@
+package xconf
+
+import (
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/knadh/koanf/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// AppConfig 测试用配置结构体
+type AppConfig struct {
+	App    App    `koanf:"app"`
+	Server Server `koanf:"server"`
+}
+
+type App struct {
+	Name    string `koanf:"name"`
+	Version string `koanf:"version"`
+	Debug   bool   `koanf:"debug"`
+}
+
+type Server struct {
+	Host string `koanf:"host"`
+	Port int    `koanf:"port"`
+}
+
+// =============================================================================
+// 测试数据
+// =============================================================================
+
+const testYAMLContent = `
+app:
+  name: test-app
+  version: "1.0.0"
+  debug: true
+server:
+  host: localhost
+  port: 8080
+`
+
+const testJSONContent = `{
+  "app": {
+    "name": "test-app",
+    "version": "1.0.0",
+    "debug": true
+  },
+  "server": {
+    "host": "localhost",
+    "port": 8080
+  }
+}`
+
+// =============================================================================
+// 辅助函数
+// =============================================================================
+
+func createTempFile(t *testing.T, name, content string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, name)
+	err := os.WriteFile(path, []byte(content), 0600)
+	require.NoError(t, err)
+	return path
+}
+
+// =============================================================================
+// New 函数测试
+// =============================================================================
+
+func TestNew_YAML(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, path, cfg.Path())
+	assert.Equal(t, FormatYAML, cfg.Format())
+
+	// 验证可以读取配置值
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+	assert.Equal(t, "1.0.0", cfg.Client().String("app.version"))
+	assert.True(t, cfg.Client().Bool("app.debug"))
+	assert.Equal(t, "localhost", cfg.Client().String("server.host"))
+	assert.Equal(t, 8080, cfg.Client().Int("server.port"))
+}
+
+func TestNew_YML(t *testing.T) {
+	path := createTempFile(t, "config.yml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, FormatYAML, cfg.Format())
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+}
+
+func TestNew_JSON(t *testing.T) {
+	path := createTempFile(t, "config.json", testJSONContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, path, cfg.Path())
+	assert.Equal(t, FormatJSON, cfg.Format())
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+	assert.Equal(t, 8080, cfg.Client().Int("server.port"))
+}
+
+func TestNew_EmptyPath(t *testing.T) {
+	cfg, err := New("")
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrEmptyPath)
+}
+
+func TestNew_FileNotExist(t *testing.T) {
+	cfg, err := New("/nonexistent/path/config.yaml")
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrLoadFailed)
+}
+
+func TestNew_UnsupportedFormat(t *testing.T) {
+	path := createTempFile(t, "config.toml", "key = \"value\"")
+
+	cfg, err := New(path)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrUnsupportedFormat)
+}
+
+func TestNew_InvalidYAML(t *testing.T) {
+	path := createTempFile(t, "config.yaml", "invalid: yaml: content: ::::")
+
+	cfg, err := New(path)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrParseFailed)
+}
+
+func TestNew_InvalidJSON(t *testing.T) {
+	path := createTempFile(t, "config.json", "{invalid json}")
+
+	cfg, err := New(path)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrParseFailed)
+}
+
+func TestNew_EmptyDelim(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNew_EmptyTag(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
+func TestNewFromBytes_EmptyDelim(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithDelim(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidDelim)
+}
+
+func TestNewFromBytes_EmptyTag(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, WithTag(""))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrInvalidTag)
+}
+
+func TestNew_NilOption(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNewFromBytes_NilOption(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML, nil)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrNilOption)
+}
+
+func TestNew_RelativePathAbsolutized(t *testing.T) {
+	// 验证相对路径被转换为绝对路径
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(testYAMLContent), 0600)
+	require.NoError(t, err)
+
+	// 使用相对路径创建配置（构造一个相对于 tmpDir 的路径）
+	relPath := filepath.Join(tmpDir, ".", "config.yaml")
+	cfg, err := New(relPath)
+	require.NoError(t, err)
+
+	// Path() 应返回绝对路径
+	assert.True(t, filepath.IsAbs(cfg.Path()), "Path() should return absolute path, got: %s", cfg.Path())
+}
+
+func TestNew_WithOptions(t *testing.T) {
+	content := `
+app:
+  name: test-app
+`
+	path := createTempFile(t, "config.yaml", content)
+
+	cfg, err := New(path, WithDelim("_"), WithTag("json"))
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// 使用自定义分隔符
+	assert.Equal(t, "test-app", cfg.Client().String("app_name"))
+}
+
+// =============================================================================
+// NewFromBytes 函数测试
+// =============================================================================
+
+func TestNewFromBytes_YAML(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Path())
+	assert.Equal(t, FormatYAML, cfg.Format())
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+	assert.Equal(t, 8080, cfg.Client().Int("server.port"))
+}
+
+func TestNewFromBytes_JSON(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testJSONContent), FormatJSON)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Path())
+	assert.Equal(t, FormatJSON, cfg.Format())
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+}
+
+func TestNewFromBytes_EmptyData(t *testing.T) {
+	// 空数据应该可以创建空配置（与 New 行为一致）
+	cfg, err := NewFromBytes([]byte{}, FormatYAML)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Empty(t, cfg.Path())
+	assert.Equal(t, FormatYAML, cfg.Format())
+
+	// nil 也应该可以创建空配置
+	cfg, err = NewFromBytes(nil, FormatJSON)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestNewFromBytes_EmptyDataConsistentWithNew(t *testing.T) {
+	// 验证 NewFromBytes 和 New 对空数据的行为一致
+	// 1. New 允许空文件
+	emptyPath := createTempFile(t, "empty.yaml", "")
+	cfgFromFile, err := New(emptyPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfgFromFile)
+
+	// 2. NewFromBytes 也允许空数据
+	cfgFromBytes, err := NewFromBytes([]byte{}, FormatYAML)
+	require.NoError(t, err)
+	require.NotNil(t, cfgFromBytes)
+
+	// 3. 两者都返回空配置
+	assert.Empty(t, cfgFromFile.Client().String("any.key"))
+	assert.Empty(t, cfgFromBytes.Client().String("any.key"))
+
+	// 4. 空配置也可以正常 Unmarshal（返回零值）
+	type TestConfig struct {
+		Name string `koanf:"name"`
+		Port int    `koanf:"port"`
+	}
+
+	var cfgA, cfgB TestConfig
+	err = cfgFromFile.Unmarshal("", &cfgA)
+	require.NoError(t, err)
+	err = cfgFromBytes.Unmarshal("", &cfgB)
+	require.NoError(t, err)
+
+	// 零值
+	assert.Empty(t, cfgA.Name)
+	assert.Zero(t, cfgA.Port)
+	assert.Empty(t, cfgB.Name)
+	assert.Zero(t, cfgB.Port)
+}
+
+func TestNewFromBytes_UnsupportedFormat(t *testing.T) {
+	cfg, err := NewFromBytes([]byte("data"), Format("toml"))
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrUnsupportedFormat)
+}
+
+func TestNewFromBytes_InvalidData(t *testing.T) {
+	// 非空但格式错误的数据应返回 ErrParseFailed
+	cfg, err := NewFromBytes([]byte("{invalid json}"), FormatJSON)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrParseFailed)
+}
+
+// =============================================================================
+// Unmarshal 测试
+// =============================================================================
+
+func TestUnmarshal_Full(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	var appCfg AppConfig
+	err = cfg.Unmarshal("", &appCfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-app", appCfg.App.Name)
+	assert.Equal(t, "1.0.0", appCfg.App.Version)
+	assert.True(t, appCfg.App.Debug)
+	assert.Equal(t, "localhost", appCfg.Server.Host)
+	assert.Equal(t, 8080, appCfg.Server.Port)
+}
+
+func TestUnmarshal_Partial(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	var app App
+	err = cfg.Unmarshal("app", &app)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-app", app.Name)
+	assert.Equal(t, "1.0.0", app.Version)
+	assert.True(t, app.Debug)
+}
+
+func TestUnmarshal_TypeMismatch(t *testing.T) {
+	// 将标量值反序列化到结构体指针会触发底层 mapstructure 错误
+	cfg, err := NewFromBytes([]byte(`key: just_a_string`), FormatYAML)
+	require.NoError(t, err)
+
+	type S struct {
+		Name string `koanf:"name"`
+	}
+	var s S
+	err = cfg.Unmarshal("key", &s)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+}
+
+func TestUnmarshal_NonexistentPath(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	var app App
+	// 不存在的路径不会报错，只是值为零值
+	err = cfg.Unmarshal("nonexistent", &app)
+	require.NoError(t, err)
+	assert.Empty(t, app.Name)
+}
+
+func TestMustUnmarshal_Success(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	var appCfg AppConfig
+	assert.NotPanics(t, func() {
+		MustUnmarshal(cfg, "", &appCfg)
+	})
+
+	assert.Equal(t, "test-app", appCfg.App.Name)
+}
+
+func TestMustUnmarshal_Panic(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	// 传入非指针会导致反序列化失败
+	var appCfg AppConfig
+	assert.Panics(t, func() {
+		MustUnmarshal(cfg, "", appCfg) // 注意：没有 &
+	})
+}
+
+func TestMustUnmarshal_NilConfig(t *testing.T) {
+	var target AppConfig
+	assert.PanicsWithValue(t, "xconf: MustUnmarshal called with nil Config", func() {
+		MustUnmarshal(nil, "", &target)
+	})
+}
+
+// TestMustUnmarshal_TypedNilConfig 验证 typed-nil Config 给出清晰错误（A5 修复）。
+// var kc *koanfConfig; var cfg Config = kc 满足 cfg != nil，
+// 修复前 cfg.Unmarshal 在 c.k.Load() 触发 nil pointer 解引用，错误不清晰。
+func TestMustUnmarshal_TypedNilConfig(t *testing.T) {
+	var target AppConfig
+	var kc *koanfConfig
+	var cfg Config = kc
+	assert.PanicsWithValue(t, "xconf: MustUnmarshal called with typed-nil Config", func() {
+		MustUnmarshal(cfg, "", &target)
+	})
+}
+
+func TestUnmarshal_NilTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	err = cfg.Unmarshal("", nil)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NonPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// 非指针 target 应被 xconf 自身拦截（而非下层 mapstructure 报错）
+	var appCfg AppConfig
+	err = cfg.Unmarshal("", appCfg) // 注意：没有 &
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+func TestUnmarshal_NilPointerTarget(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	// nil 指针 target 应被拦截
+	var appCfg *AppConfig
+	err = cfg.Unmarshal("", appCfg)
+	assert.ErrorIs(t, err, ErrUnmarshalFailed)
+	assert.Contains(t, err.Error(), "target must be a non-nil pointer")
+}
+
+// =============================================================================
+// Reload 测试
+// =============================================================================
+
+func TestReload_Success(t *testing.T) {
+	// 初始配置
+	initialContent := `
+app:
+  name: initial-name
+  version: "1.0.0"
+`
+	path := createTempFile(t, "config.yaml", initialContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "initial-name", cfg.Client().String("app.name"))
+
+	// 修改配置文件
+	updatedContent := `
+app:
+  name: updated-name
+  version: "2.0.0"
+`
+	err = os.WriteFile(path, []byte(updatedContent), 0600)
+	require.NoError(t, err)
+
+	// 重载配置
+	err = cfg.Reload()
+	require.NoError(t, err)
+
+	// 验证新值
+	assert.Equal(t, "updated-name", cfg.Client().String("app.name"))
+	assert.Equal(t, "2.0.0", cfg.Client().String("app.version"))
+}
+
+func TestReload_FromBytes_Error(t *testing.T) {
+	cfg, err := NewFromBytes([]byte(testYAMLContent), FormatYAML)
+	require.NoError(t, err)
+
+	err = cfg.Reload()
+	assert.ErrorIs(t, err, ErrNotFromFile)
+}
+
+func TestReload_InvalidContent(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	// 写入无效内容
+	err = os.WriteFile(path, []byte("invalid: yaml: content: ::::"), 0600)
+	require.NoError(t, err)
+
+	// 重载应失败但保留旧配置
+	err = cfg.Reload()
+	assert.ErrorIs(t, err, ErrParseFailed)
+
+	// 旧配置仍可访问
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+}
+
+func TestReload_EmptyFile(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-app", cfg.Client().String("app.name"))
+
+	// 文件被清空（模拟截断场景）
+	err = os.WriteFile(path, []byte{}, 0600)
+	require.NoError(t, err)
+
+	// Reload 应成功，配置变为空（与 New 对空文件的行为一致）
+	err = cfg.Reload()
+	require.NoError(t, err)
+
+	// 配置现在为空
+	assert.Empty(t, cfg.Client().String("app.name"))
+}
+
+func TestReload_FileDeleted(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	// 删除配置文件
+	err = os.Remove(path)
+	require.NoError(t, err)
+
+	// 重载应该失败
+	err = cfg.Reload()
+	assert.ErrorIs(t, err, ErrLoadFailed)
+}
+
+func TestReload_Concurrent(t *testing.T) {
+	path := createTempFile(t, "config.yaml", testYAMLContent)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	const goroutines = 10
+
+	// 并发读取和重载
+	for range goroutines {
+		// 读取 goroutine
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = cfg.Client().String("app.name")
+			}
+		}()
+
+		// 重载 goroutine
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 10 {
+				// 忽略重载错误，仅测试并发安全性
+				_ = cfg.Reload() //nolint:errcheck
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// =============================================================================
+// 内部函数测试
+// =============================================================================
+
+func TestDetectFormat(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected Format
+		hasError bool
+	}{
+		{"/path/to/config.yaml", FormatYAML, false},
+		{"/path/to/config.yml", FormatYAML, false},
+		{"/path/to/config.YAML", FormatYAML, false},
+		{"/path/to/config.YML", FormatYAML, false},
+		{"/path/to/config.json", FormatJSON, false},
+		{"/path/to/config.JSON", FormatJSON, false},
+		{"/path/to/config.toml", "", true},
+		{"/path/to/config.xml", "", true},
+		{"/path/to/config", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			format, err := detectFormat(tt.path)
+			if tt.hasError {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, ErrUnsupportedFormat)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, format)
+			}
+		})
+	}
+}
+
+func TestLoadData_InvalidFormat_Panics(t *testing.T) {
+	k := koanf.New(".")
+	assert.Panics(t, func() {
+		err := loadData(k, []byte("key: value"), Format("toml"))
+		t.Errorf("expected panic, got: %v", err)
+	})
+}
+
+func TestIsValidFormat(t *testing.T) {
+	assert.True(t, isValidFormat(FormatYAML))
+	assert.True(t, isValidFormat(FormatJSON))
+	assert.False(t, isValidFormat(Format("toml")))
+	assert.False(t, isValidFormat(Format("")))
+}
+
+// =============================================================================
+// 边界情况测试
+// =============================================================================
+
+func TestEmptyConfigFile(t *testing.T) {
+	path := createTempFile(t, "config.yaml", "")
+
+	// 空文件应该可以加载（但没有任何配置值）
+	cfg, err := New(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyConfigFile_JSON(t *testing.T) {
+	// 空 JSON 文件也应该可以加载（与 NewFromBytes 行为一致）
+	path := createTempFile(t, "config.json", "")
+
+	cfg, err := New(path)
+	require.NoError(t, err, "New(empty.json) should succeed like NewFromBytes(empty, JSON)")
+	require.NotNil(t, cfg)
+
+	assert.Empty(t, cfg.Client().String("any.key"))
+}
+
+func TestEmptyData_ConsistentBehavior(t *testing.T) {
+	// 契约测试：New 和 NewFromBytes 对空数据的行为必须一致（包括 JSON 格式）
+	for _, format := range []struct {
+		name string
+		ext  string
+		fmt  Format
+	}{
+		{"YAML", "yaml", FormatYAML},
+		{"JSON", "json", FormatJSON},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			// New: 空文件
+			path := createTempFile(t, "empty."+format.ext, "")
+			cfgFile, err := New(path)
+			require.NoError(t, err, "New(empty.%s) should succeed", format.ext)
+
+			// NewFromBytes: 空数据
+			cfgBytes, err := NewFromBytes([]byte{}, format.fmt)
+			require.NoError(t, err, "NewFromBytes(empty, %s) should succeed", format.name)
+
+			// 两者都返回空配置
+			assert.Empty(t, cfgFile.Client().String("any.key"))
+			assert.Empty(t, cfgBytes.Client().String("any.key"))
+		})
+	}
+}
+
+func TestNestedConfig(t *testing.T) {
+	content := `
+level1:
+  level2:
+    level3:
+      value: deep-value
+`
+	path := createTempFile(t, "config.yaml", content)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "deep-value", cfg.Client().String("level1.level2.level3.value"))
+}
+
+func TestArrayConfig(t *testing.T) {
+	content := `
+servers:
+  - host: server1
+    port: 8080
+  - host: server2
+    port: 8081
+`
+	path := createTempFile(t, "config.yaml", content)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	type ServerList struct {
+		Servers []Server `koanf:"servers"`
+	}
+
+	var servers ServerList
+	err = cfg.Unmarshal("", &servers)
+	require.NoError(t, err)
+
+	assert.Len(t, servers.Servers, 2)
+	assert.Equal(t, "server1", servers.Servers[0].Host)
+	assert.Equal(t, 8080, servers.Servers[0].Port)
+	assert.Equal(t, "server2", servers.Servers[1].Host)
+	assert.Equal(t, 8081, servers.Servers[1].Port)
+}
+
+func TestMapConfig(t *testing.T) {
+	content := `
+features:
+  feature1: true
+  feature2: false
+  feature3: true
+`
+	path := createTempFile(t, "config.yaml", content)
+
+	cfg, err := New(path)
+	require.NoError(t, err)
+
+	type Features struct {
+		Features map[string]bool `koanf:"features"`
+	}
+
+	var features Features
+	err = cfg.Unmarshal("", &features)
+	require.NoError(t, err)
+
+	assert.Len(t, features.Features, 3)
+	assert.True(t, features.Features["feature1"])
+	assert.False(t, features.Features["feature2"])
+	assert.True(t, features.Features["feature3"])
+}

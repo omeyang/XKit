@@ -1,0 +1,294 @@
+package xcron
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/omeyang/xkit/internal/rediscompat"
+)
+
+// 包级预编译的 Lua 脚本，避免每次调用时重复编译
+var (
+	// unlockScript: 只有持有者才能删除锁
+	unlockScript = redis.NewScript(`
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		else
+			return 0
+		end
+	`)
+
+	// renewScript: 只有持有者才能续期
+	renewScript = redis.NewScript(`
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+		else
+			return 0
+		end
+	`)
+)
+
+// RedisLocker 基于 Redis 的分布式锁。
+//
+// 使用 Redis SETNX 命令实现互斥，支持 TTL 自动过期防止死锁。
+// Unlock 和 Renew 使用 Lua 脚本确保只操作自己持有的锁。
+// 在 Redis 代理环境中（ScriptModeCompat），使用 GET + DEL/PEXPIRE 基础命令替代。
+//
+// 适用于：
+//   - 多副本部署
+//   - 网络在线环境（可访问 Redis）
+//
+// 用法：
+//
+//	// 方式 1：直接创建
+//	locker, err := xcron.NewRedisLocker(redisClient)
+//
+//	// 方式 2：复用 xcache 的客户端
+//	cache := xcache.NewRedis(cfg)
+//	locker, err := xcron.NewRedisLocker(cache.Client())
+//
+//	scheduler := xcron.New(xcron.WithLocker(locker))
+type RedisLocker struct {
+	client     redis.UniversalClient
+	prefix     string                 // 锁 key 前缀
+	identity   string                 // 当前实例标识（仅用于日志）
+	scriptMode rediscompat.ScriptMode // 已解析的脚本模式（不会是 Auto）
+}
+
+// redisLockHandle 表示一次成功的 Redis 锁获取
+type redisLockHandle struct {
+	locker *RedisLocker
+	key    string // 完整的 Redis key
+	token  string // 唯一 token（每次获取独立生成）
+}
+
+// RedisLockerOption RedisLocker 配置选项
+type RedisLockerOption func(*RedisLocker)
+
+// WithRedisKeyPrefix 设置锁 key 前缀。
+//
+// 默认 "xcron:lock:"。用于区分不同应用的锁。
+func WithRedisKeyPrefix(prefix string) RedisLockerOption {
+	return func(l *RedisLocker) {
+		l.prefix = prefix
+	}
+}
+
+// WithRedisIdentity 设置实例标识。
+//
+// 默认使用 hostname:pid。用于日志记录和调试。
+// 注意：实际锁值使用每次获取生成的唯一 token，而非此标识。
+func WithRedisIdentity(identity string) RedisLockerOption {
+	return func(l *RedisLocker) {
+		l.identity = identity
+	}
+}
+
+// WithRedisScriptMode 设置 Redis 脚本执行模式。
+//
+// 默认为 ScriptModeAuto，NewRedisLocker() 会在构造时探测一次。
+// 显式指定 ScriptModeLua 或 ScriptModeCompat 跳过探测（零开销）。
+func WithRedisScriptMode(mode rediscompat.ScriptMode) RedisLockerOption {
+	return func(l *RedisLocker) {
+		l.scriptMode = mode
+	}
+}
+
+// ErrNilRedisClient 表示 Redis 客户端为 nil。
+var ErrNilRedisClient = errors.New("xcron: redis client cannot be nil")
+
+// ErrInvalidTTL 表示 TTL 无效（必须为正值）。
+// ttl<=0 会导致锁永不过期，形成实质性"死锁"。
+var ErrInvalidTTL = errors.New("xcron: lock TTL must be positive")
+
+// NewRedisLocker 创建基于 Redis 的分布式锁。
+//
+// client 可以是 *redis.Client、*redis.ClusterClient 或 xcache.Client() 返回值。
+// 如果 client 为 nil，返回 [ErrNilRedisClient]。
+//
+// 默认自动探测 Redis 是否支持 Lua 脚本（ScriptModeAuto）。
+// 可通过 WithRedisScriptMode 显式指定以跳过探测。
+func NewRedisLocker(client redis.UniversalClient, opts ...RedisLockerOption) (*RedisLocker, error) {
+	if client == nil {
+		return nil, ErrNilRedisClient
+	}
+
+	l := &RedisLocker{
+		client:   client,
+		prefix:   "xcron:lock:",
+		identity: defaultIdentity(),
+	}
+
+	for _, opt := range opts {
+		opt(l)
+	}
+
+	// 解析脚本模式
+	l.scriptMode = resolveRedisScriptMode(l.scriptMode, client)
+
+	return l, nil
+}
+
+// resolveRedisScriptMode 解析脚本模式：Auto 时探测，否则直接使用。
+// 探测走 [rediscompat.DetectScriptModeBounded]，有 5s 内部超时防止 Redis 黑洞地址
+// 卡死构造函数；超时/网络错误时降级为 Lua（安全默认值）。
+func resolveRedisScriptMode(mode rediscompat.ScriptMode, client redis.UniversalClient) rediscompat.ScriptMode {
+	if mode != rediscompat.ScriptModeAuto {
+		return mode
+	}
+	detected, err := rediscompat.DetectScriptModeBounded(client)
+	if err != nil {
+		return rediscompat.ScriptModeLua
+	}
+	return detected
+}
+
+// TryLock 尝试获取锁（非阻塞）。
+//
+// 每次调用生成唯一 token，确保不同获取之间不会互相干扰。
+// 使用 Redis SET key value NX PX ttl 命令原子性地获取锁。
+//
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
+// ttl<=0 会导致 Redis 键永不过期，形成实质性"死锁"。
+func (l *RedisLocker) TryLock(ctx context.Context, key string, ttl time.Duration) (LockHandle, error) {
+	if ttl <= 0 {
+		return nil, ErrInvalidTTL
+	}
+	fullKey := l.prefix + key
+	// 每次获取生成唯一 token，包含实例标识便于调试
+	token := fmt.Sprintf("%s:%s", l.identity, uuid.New().String())
+
+	ok, err := l.client.SetNX(ctx, fullKey, token, ttl).Result()
+	if err != nil {
+		return nil, fmt.Errorf("xcron: redis setnx failed: %w", err)
+	}
+	if !ok {
+		return nil, nil // 未获取到锁
+	}
+
+	return &redisLockHandle{
+		locker: l,
+		key:    fullKey,
+		token:  token,
+	}, nil
+}
+
+// Unlock 释放锁。
+//
+// Lua 模式：使用脚本确保只释放自己持有的锁。
+// Compat 模式：使用 GET + DEL 基础命令替代。
+func (h *redisLockHandle) Unlock(ctx context.Context) error {
+	if h.locker.scriptMode == rediscompat.ScriptModeCompat {
+		return h.unlockCompat(ctx)
+	}
+
+	result, err := unlockScript.Run(ctx, h.locker.client, []string{h.key}, h.token).Int()
+	if err != nil {
+		return fmt.Errorf("xcron: redis unlock failed: %w", err)
+	}
+	if result == 0 {
+		return ErrLockNotHeld
+	}
+	return nil
+}
+
+// unlockCompat 使用 GET + DEL 释放锁（兼容模式）
+//
+// 竞态分析：GET-DEL 之间锁可能过期被重获取，DEL 删了新持有者的锁。
+// 窗口微秒级，cron 任务应幂等，TTL 是安全网。可接受。
+func (h *redisLockHandle) unlockCompat(ctx context.Context) error {
+	val, err := h.locker.client.Get(ctx, h.key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return ErrLockNotHeld
+		}
+		return fmt.Errorf("xcron: redis get failed: %w", err)
+	}
+	if val != h.token {
+		return ErrLockNotHeld
+	}
+
+	deleted, err := h.locker.client.Del(ctx, h.key).Result()
+	if err != nil {
+		return fmt.Errorf("xcron: redis del failed: %w", err)
+	}
+	if deleted == 0 {
+		return ErrLockNotHeld
+	}
+	return nil
+}
+
+// Renew 续期锁。
+//
+// Lua 模式：使用脚本确保只续期自己持有的锁。
+// Compat 模式：使用 GET + PEXPIRE 基础命令替代。
+// ttl 必须为正值，否则返回 [ErrInvalidTTL]。
+func (h *redisLockHandle) Renew(ctx context.Context, ttl time.Duration) error {
+	if ttl <= 0 {
+		return ErrInvalidTTL
+	}
+
+	if h.locker.scriptMode == rediscompat.ScriptModeCompat {
+		return h.renewCompat(ctx, ttl)
+	}
+
+	result, err := renewScript.Run(ctx, h.locker.client, []string{h.key}, h.token, ttl.Milliseconds()).Int()
+	if err != nil {
+		return fmt.Errorf("xcron: redis renew failed: %w", err)
+	}
+	if result == 0 {
+		return ErrLockNotHeld
+	}
+	return nil
+}
+
+// renewCompat 使用 GET + PEXPIRE 续期锁（兼容模式）
+//
+// 竞态分析：与 unlockCompat 类似，GET-PEXPIRE 之间有微秒级窗口。可接受。
+func (h *redisLockHandle) renewCompat(ctx context.Context, ttl time.Duration) error {
+	val, err := h.locker.client.Get(ctx, h.key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return ErrLockNotHeld
+		}
+		return fmt.Errorf("xcron: redis get failed: %w", err)
+	}
+	if val != h.token {
+		return ErrLockNotHeld
+	}
+
+	ok, err := h.locker.client.PExpire(ctx, h.key, ttl).Result()
+	if err != nil {
+		return fmt.Errorf("xcron: redis pexpire failed: %w", err)
+	}
+	if !ok {
+		return ErrLockNotHeld
+	}
+	return nil
+}
+
+// Key 返回锁的完整 key（含前缀）。
+func (h *redisLockHandle) Key() string {
+	return h.key
+}
+
+// Identity 返回当前实例标识。
+func (l *RedisLocker) Identity() string {
+	return l.identity
+}
+
+// Client 返回底层 Redis 客户端。
+func (l *RedisLocker) Client() redis.UniversalClient {
+	return l.client
+}
+
+// 确保 RedisLocker 实现了 Locker 接口
+var _ Locker = (*RedisLocker)(nil)
+
+// 确保 redisLockHandle 实现了 LockHandle 接口
+var _ LockHandle = (*redisLockHandle)(nil)

@@ -1,0 +1,129 @@
+package xbreaker
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestIsOpen(t *testing.T) {
+	t.Run("ErrOpenState", func(t *testing.T) {
+		assert.True(t, IsOpen(ErrOpenState))
+	})
+
+	t.Run("wrapped ErrOpenState", func(t *testing.T) {
+		wrapped := fmt.Errorf("operation failed: %w", ErrOpenState)
+		assert.True(t, IsOpen(wrapped))
+	})
+
+	t.Run("other error", func(t *testing.T) {
+		assert.False(t, IsOpen(errors.New("some error")))
+	})
+
+	t.Run("nil error", func(t *testing.T) {
+		assert.False(t, IsOpen(nil))
+	})
+}
+
+func TestIsTooManyRequests(t *testing.T) {
+	t.Run("ErrTooManyRequests", func(t *testing.T) {
+		assert.True(t, IsTooManyRequests(ErrTooManyRequests))
+	})
+
+	t.Run("wrapped ErrTooManyRequests", func(t *testing.T) {
+		wrapped := fmt.Errorf("rate limited: %w", ErrTooManyRequests)
+		assert.True(t, IsTooManyRequests(wrapped))
+	})
+
+	t.Run("other error", func(t *testing.T) {
+		assert.False(t, IsTooManyRequests(errors.New("some error")))
+	})
+
+	t.Run("nil error", func(t *testing.T) {
+		assert.False(t, IsTooManyRequests(nil))
+	})
+}
+
+func TestIsBreakerError(t *testing.T) {
+	t.Run("ErrOpenState", func(t *testing.T) {
+		assert.True(t, IsBreakerError(ErrOpenState))
+	})
+
+	t.Run("ErrTooManyRequests", func(t *testing.T) {
+		assert.True(t, IsBreakerError(ErrTooManyRequests))
+	})
+
+	t.Run("wrapped ErrOpenState", func(t *testing.T) {
+		wrapped := fmt.Errorf("operation failed: %w", ErrOpenState)
+		assert.True(t, IsBreakerError(wrapped))
+	})
+
+	t.Run("wrapped ErrTooManyRequests", func(t *testing.T) {
+		wrapped := fmt.Errorf("rate limited: %w", ErrTooManyRequests)
+		assert.True(t, IsBreakerError(wrapped))
+	})
+
+	t.Run("other error", func(t *testing.T) {
+		assert.False(t, IsBreakerError(errors.New("some error")))
+	})
+
+	t.Run("nil error", func(t *testing.T) {
+		assert.False(t, IsBreakerError(nil))
+	})
+}
+
+func TestBreakerError_Error(t *testing.T) {
+	t.Run("with name", func(t *testing.T) {
+		be := &BreakerError{Err: ErrOpenState, Name: "my-svc", State: StateOpen}
+		assert.Equal(t, "breaker my-svc: circuit breaker is open", be.Error())
+	})
+
+	t.Run("without name", func(t *testing.T) {
+		be := &BreakerError{Err: ErrOpenState, State: StateOpen}
+		assert.Equal(t, "circuit breaker is open", be.Error())
+	})
+}
+
+func TestBreakerError_Error_NilErr(t *testing.T) {
+	t.Run("nil Err with name", func(t *testing.T) {
+		be := &BreakerError{Name: "my-svc", State: StateOpen}
+		assert.Equal(t, "breaker my-svc: <nil>", be.Error())
+	})
+
+	t.Run("nil Err without name", func(t *testing.T) {
+		be := &BreakerError{State: StateOpen}
+		assert.Equal(t, "xbreaker: unknown error", be.Error())
+	})
+
+	t.Run("zero value BreakerError", func(t *testing.T) {
+		be := &BreakerError{}
+		assert.Equal(t, "xbreaker: unknown error", be.Error())
+	})
+}
+
+func TestWrapBreakerError_AlreadyWrapped(t *testing.T) {
+	original := &BreakerError{Err: ErrOpenState, Name: "inner", State: StateOpen}
+	wrapped := wrapBreakerError(original, "outer")
+	// 应保留原始 BreakerError，不重复包装
+	var be *BreakerError
+	assert.True(t, errors.As(wrapped, &be))
+	assert.Equal(t, "inner", be.Name)
+}
+
+func TestWrapBreakerError(t *testing.T) {
+	t.Run("nil error returns nil", func(t *testing.T) {
+		assert.NoError(t, wrapBreakerError(nil, "test"))
+	})
+
+	t.Run("non-sentinel error passes through", func(t *testing.T) {
+		original := errors.New("business error")
+		result := wrapBreakerError(original, "test")
+		assert.Equal(t, original, result)
+	})
+}
+
+func TestErrFailedByPolicy(t *testing.T) {
+	assert.EqualError(t, errFailedByPolicy, "xbreaker: operation marked as failed by success policy")
+}

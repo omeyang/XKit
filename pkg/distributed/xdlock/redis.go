@@ -1,0 +1,382 @@
+package xdlock
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"sync/atomic"
+
+	"github.com/go-redsync/redsync/v4"
+	rsredis "github.com/go-redsync/redsync/v4/redis"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"github.com/omeyang/xkit/internal/rediscompat"
+	"github.com/redis/go-redis/v9"
+)
+
+// =============================================================================
+// Redis 工厂实现
+// =============================================================================
+
+// redisFactory 实现 RedisFactory 接口。
+type redisFactory struct {
+	clients []redis.UniversalClient
+	rs      *redsync.Redsync
+	closed  atomic.Bool
+}
+
+// NewRedisFactory 创建 Redis 锁工厂。
+// 单节点为标准 Redis 锁；多节点使用 Redlock 算法（需过半成功）。
+//
+// Redlock 多节点注意事项：
+//   - 推荐使用奇数个独立节点（至少 3 个），以确保多数派仲裁的可靠性
+//   - 2 个节点无法容忍任何节点故障（需过半 = 2 个都成功），不建议用于生产
+//   - 各节点应部署在不同的故障域，避免使用同一 Redis 实例的不同地址
+//   - 传入重复的客户端（指向同一实例）会降低 Redlock 的故障隔离能力
+func NewRedisFactory(clients ...redis.UniversalClient) (RedisFactory, error) {
+	return NewRedisFactoryWithOpts(clients)
+}
+
+// NewRedisFactoryWithOpts 创建 Redis 锁工厂（带选项）。
+// 功能与 NewRedisFactory 相同，额外支持 Redis 代理兼容模式等配置。
+//
+// 在代理环境中（ScriptModeCompat），redsync 的 Lua 脚本会被翻译为基础命令，
+// 保留 Redlock 算法的全部功能（重试、漂移补偿、多节点）。
+func NewRedisFactoryWithOpts(clients []redis.UniversalClient, opts ...RedisFactoryOption) (RedisFactory, error) {
+	if len(clients) == 0 {
+		return nil, ErrNilClient
+	}
+
+	for i, client := range clients {
+		if client == nil {
+			return nil, errors.Join(ErrNilClient, fmt.Errorf("client at index %d is nil", i))
+		}
+		if rv := reflect.ValueOf(client); rv.Kind() == reflect.Pointer && rv.IsNil() {
+			return nil, errors.Join(ErrNilClient, fmt.Errorf("client at index %d is typed-nil", i))
+		}
+	}
+
+	cfg := &redisFactoryConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(cfg)
+		}
+	}
+
+	// 解析脚本模式：Auto 时探测所有 clients（len > 0 已由上方校验保证）
+	scriptMode := resolveRedisScriptMode(cfg.ScriptMode, clients...)
+
+	// 创建 redsync Pool 列表
+	pools := make([]rsredis.Pool, len(clients))
+	for i, client := range clients {
+		if scriptMode == rediscompat.ScriptModeCompat {
+			pools[i] = newCompatPool(client, scriptMode)
+		} else {
+			pools[i] = goredis.NewPool(client)
+		}
+	}
+
+	// 创建 Redsync 实例
+	rs := redsync.New(pools...)
+
+	return &redisFactory{
+		clients: append([]redis.UniversalClient(nil), clients...),
+		rs:      rs,
+	}, nil
+}
+
+// resolveRedisScriptMode 解析脚本模式：Auto 时探测所有 clients，否则直接使用。
+// 任一 client 返回 ScriptModeCompat 则全部使用 Compat，确保 Redlock 多节点一致。
+//
+// 探测走 [rediscompat.DetectScriptModeBounded]，每个 client 有 5s 内部超时；
+// N 个 Redlock 节点全部黑洞时构造函数最长阻塞 N * 5s（仍有界，远好于原来的无限阻塞）。
+func resolveRedisScriptMode(mode rediscompat.ScriptMode, clients ...redis.UniversalClient) rediscompat.ScriptMode {
+	if mode != rediscompat.ScriptModeAuto {
+		return mode
+	}
+	for _, client := range clients {
+		detected, err := rediscompat.DetectScriptModeBounded(client)
+		if err != nil {
+			continue
+		}
+		if detected == rediscompat.ScriptModeCompat {
+			return rediscompat.ScriptModeCompat
+		}
+	}
+	return rediscompat.ScriptModeLua
+}
+
+// TryLock 非阻塞式获取锁，返回 LockHandle。
+func (f *redisFactory) TryLock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
+	if f.closed.Load() {
+		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+
+	mutex, fullKey := f.createMutex(key, opts...)
+
+	if err := mutex.TryLockContext(ctx); err != nil {
+		err = wrapRedisError(err)
+		if errors.Is(err, ErrLockHeld) {
+			return nil, nil // 锁被占用，返回 (nil, nil)
+		}
+		return nil, err
+	}
+
+	return &redisLockHandle{
+		factory: f,
+		mutex:   mutex,
+		key:     fullKey,
+	}, nil
+}
+
+// Lock 阻塞式获取锁，返回 LockHandle。
+func (f *redisFactory) Lock(ctx context.Context, key string, opts ...MutexOption) (LockHandle, error) {
+	if ctx == nil {
+		return nil, ErrNilContext
+	}
+	if f.closed.Load() {
+		return nil, ErrFactoryClosed
+	}
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+
+	mutex, fullKey := f.createMutex(key, opts...)
+
+	if err := mutex.LockContext(ctx); err != nil {
+		// 设计决策: redsync 内部会将 context 错误包装在自定义类型中（如 ErrFailed），
+		// 导致 errors.Is(err, context.Canceled) 无法匹配。因此需要通过 ctx.Err()
+		// 独立检查 context 状态。若 context 已取消/超时，优先返回 context 错误，
+		// 因为这是调用方的主动控制信号，比底层 Redis 错误更具决策价值。
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, wrapRedisError(err)
+	}
+
+	return &redisLockHandle{
+		factory: f,
+		mutex:   mutex,
+		key:     fullKey,
+	}, nil
+}
+
+// createMutex 创建 redsync.Mutex（内部方法）。
+// 返回 mutex 和完整的 key（包含前缀）。
+func (f *redisFactory) createMutex(key string, opts ...MutexOption) (*redsync.Mutex, string) {
+	options := defaultMutexOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(options)
+		}
+	}
+
+	fullKey := options.KeyPrefix + key
+
+	// 构建 redsync 选项
+	rsOpts := make([]redsync.Option, 0, 10)
+	rsOpts = append(rsOpts, redsync.WithExpiry(options.Expiry))
+	rsOpts = append(rsOpts, redsync.WithTries(options.Tries))
+	rsOpts = append(rsOpts, redsync.WithRetryDelay(options.RetryDelay))
+
+	if options.RetryDelayFunc != nil {
+		rsOpts = append(rsOpts, redsync.WithRetryDelayFunc(
+			redsync.DelayFunc(options.RetryDelayFunc),
+		))
+	}
+	rsOpts = append(rsOpts, redsync.WithDriftFactor(options.DriftFactor))
+	rsOpts = append(rsOpts, redsync.WithTimeoutFactor(options.TimeoutFactor))
+	if options.GenValueFunc != nil {
+		rsOpts = append(rsOpts, redsync.WithGenValueFunc(options.GenValueFunc))
+	}
+	rsOpts = append(rsOpts, redsync.WithFailFast(options.FailFast))
+	rsOpts = append(rsOpts, redsync.WithShufflePools(options.ShufflePools))
+	if options.SetNXOnExtend {
+		rsOpts = append(rsOpts, redsync.WithSetNXOnExtend())
+	}
+
+	return f.rs.NewMutex(fullKey, rsOpts...), fullKey
+}
+
+// Close 关闭工厂。
+// 注意：此方法不会关闭传入的 Redis 客户端，客户端的生命周期由调用者管理。
+func (f *redisFactory) Close(_ context.Context) error {
+	if f.closed.Swap(true) {
+		return nil // 已关闭
+	}
+	// redsync 没有需要关闭的资源
+	// Redis 客户端由调用者管理
+	return nil
+}
+
+// Health 健康检查。
+// 对所有 Redis 节点执行 PING 命令。
+// 传入 nil ctx 返回 [ErrNilContext]。
+func (f *redisFactory) Health(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if f.closed.Load() {
+		return ErrFactoryClosed
+	}
+
+	// 检查所有节点
+	for _, client := range f.clients {
+		if err := client.Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("xdlock: health check: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Redsync 返回底层 redsync.Redsync 实例。
+func (f *redisFactory) Redsync() Redsync {
+	return f.rs
+}
+
+// =============================================================================
+// Redis LockHandle 实现
+// =============================================================================
+
+// redisLockHandle 实现 LockHandle 接口。
+// 每次成功获取锁时创建，封装了唯一的锁标识。
+type redisLockHandle struct {
+	factory  *redisFactory
+	mutex    *redsync.Mutex
+	key      string
+	unlocked atomic.Bool // 标记锁是否已被显式释放，与 etcd 后端对称
+}
+
+// Unlock 释放锁。
+//
+// 设计决策: 允许在 factory 关闭后解锁，避免锁悬挂等待 TTL 过期。
+// factory.Close() 仅设置逻辑标志，Redis 连接仍由调用者管理，解锁操作可正常执行。
+//
+// 设计决策: 当调用方 ctx 已取消/超时时，使用独立清理上下文确保解锁尽力完成，
+// 避免锁残留到 TTL 到期（默认 8s）。
+func (h *redisLockHandle) Unlock(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+
+	// 设计决策: 已解锁的 handle 直接返回 ErrNotLocked，避免向 Redis 发送无效请求。
+	// 与 etcd 后端和 Extend 的 unlocked 检查保持对称。
+	if h.unlocked.Load() {
+		return ErrNotLocked
+	}
+
+	// 当业务 ctx 已取消/超时时，使用独立清理上下文确保解锁能完成
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), unlockTimeout)
+		defer cancel()
+	}
+
+	ok, err := h.mutex.UnlockContext(ctx)
+	if err != nil {
+		wrappedErr := wrapRedisError(err)
+		// 设计决策: errLockExpired 和 ErrLockHeld 统一转为 ErrNotLocked，
+		// 对 handle 而言两者含义相同——"你已不再持有该锁"。保持与接口契约和
+		// etcd 后端行为一致，调用方只需检查 ErrNotLocked 即可处理所有权丢失。
+		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+			// 设计决策: Redis 返回的 expired/taken 是确定性结论（Lua 脚本执行成功），
+			// 与网络错误不同，此时 handle 确实已不持有锁，设置 unlocked 标记
+			// 防止后续 Extend 发送无意义的 Redis 请求。
+			h.unlocked.Store(true)
+			return ErrNotLocked
+		}
+		return wrappedErr
+	}
+	if !ok {
+		// 设计决策: UnlockContext 返回 (false, nil) 意味着 Lua 脚本执行成功但
+		// 解锁未命中（锁已被其他持有者抢走或过期）。这是确定性结论，handle 已
+		// 不持有锁，设置 unlocked 标记与 errLockExpired/ErrLockHeld 路径保持对称。
+		h.unlocked.Store(true)
+		return ErrNotLocked
+	}
+	// 设计决策: unlocked 标记放在成功解锁之后，与 etcd 后端保持一致。
+	// 网络抖动时 Unlock 可能失败但锁仍由 TTL 保护，
+	// 此时 Extend 应继续报告锁状态正常，而非错误返回 ErrNotLocked。
+	h.unlocked.Store(true)
+	return nil
+}
+
+// Extend 续期锁。
+//
+// 设计决策: 允许在 factory 关闭后续期，与 Unlock 保持一致。
+// factory.Close() 不影响已持有锁的操作，仅阻止创建新锁。
+//
+// 设计决策: errLockExpired/ErrLockHeld 转为 ErrNotLocked（所有权已丢失），
+// ErrExtendFailed 保持原语义（续期操作失败，锁可能仍在），使调用方可区分两种情况。
+func (h *redisLockHandle) Extend(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	// 设计决策: 已解锁的 handle 直接返回 ErrNotLocked，与 etcd 后端对称。
+	if h.unlocked.Load() {
+		return ErrNotLocked
+	}
+	ok, err := h.mutex.ExtendContext(ctx)
+	if err != nil {
+		wrappedErr := wrapRedisError(err)
+		// 锁已过期/被抢走 → 所有权已丢失，设置 unlocked 标记防止后续 Extend
+		// 发送无意义的 Redis 请求（与 Unlock 的 L284/L293 路径对称）
+		if errors.Is(wrappedErr, errLockExpired) || errors.Is(wrappedErr, ErrLockHeld) {
+			h.unlocked.Store(true)
+			return ErrNotLocked
+		}
+		return wrappedErr
+	}
+	if !ok {
+		h.unlocked.Store(true)
+		return ErrNotLocked
+	}
+	return nil
+}
+
+// Key 返回锁的 key。
+func (h *redisLockHandle) Key() string {
+	return h.key
+}
+
+// =============================================================================
+// 错误转换
+// =============================================================================
+
+// wrapRedisError 将 redsync 错误转换为 xdlock 错误，保留原始错误链。
+func wrapRedisError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// context 错误优先保持原样（用于取消和超时场景）
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	// ErrTaken 是一个结构体类型，需要使用 errors.As 检查
+	var errTaken *redsync.ErrTaken
+	if errors.As(err, &errTaken) {
+		return fmt.Errorf("%w: %w", ErrLockHeld, err)
+	}
+
+	// redsync 错误，使用双 %w 保留原始错误链
+	if errors.Is(err, redsync.ErrFailed) {
+		return fmt.Errorf("%w: %w", ErrLockFailed, err)
+	}
+	if errors.Is(err, redsync.ErrExtendFailed) {
+		return fmt.Errorf("%w: %w", ErrExtendFailed, err)
+	}
+	if errors.Is(err, redsync.ErrLockAlreadyExpired) {
+		return fmt.Errorf("%w: %w", errLockExpired, err)
+	}
+
+	return err
+}

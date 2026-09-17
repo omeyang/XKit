@@ -1,0 +1,238 @@
+package xmongo
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/omeyang/xkit/pkg/observability/xmetrics"
+)
+
+// =============================================================================
+// Options Fuzz 测试
+// =============================================================================
+
+// FuzzWithHealthTimeout 模糊测试 WithHealthTimeout 选项函数。
+func FuzzWithHealthTimeout(f *testing.F) {
+	// 种子语料
+	f.Add(int64(0))
+	f.Add(int64(1))
+	f.Add(int64(-1))
+	f.Add(int64(5000000000))  // 5 seconds in nanoseconds
+	f.Add(int64(-5000000000)) // -5 seconds
+
+	f.Fuzz(func(t *testing.T, ns int64) {
+		timeout := time.Duration(ns)
+		opts := defaultOptions()
+		original := opts.HealthTimeout
+
+		// 不应 panic
+		WithHealthTimeout(timeout)(opts)
+
+		// 非正值应被忽略，保持原值
+		if timeout <= 0 {
+			if opts.HealthTimeout != original {
+				t.Errorf("WithHealthTimeout(%v) should keep default, got %v", timeout, opts.HealthTimeout)
+			}
+		} else {
+			if opts.HealthTimeout != timeout {
+				t.Errorf("WithHealthTimeout(%v) set HealthTimeout to %v", timeout, opts.HealthTimeout)
+			}
+		}
+	})
+}
+
+// FuzzWithSlowQueryThreshold 模糊测试 WithSlowQueryThreshold 选项函数。
+func FuzzWithSlowQueryThreshold(f *testing.F) {
+	f.Add(int64(0))
+	f.Add(int64(1))
+	f.Add(int64(-1))
+	f.Add(int64(100000000)) // 100ms in nanoseconds
+
+	f.Fuzz(func(t *testing.T, ns int64) {
+		threshold := time.Duration(ns)
+		opts := defaultOptions()
+		original := opts.SlowQueryThreshold
+
+		// 不应 panic
+		WithSlowQueryThreshold(threshold)(opts)
+
+		// 负值被忽略，保持原值；非负值被正确设置
+		if threshold < 0 {
+			if opts.SlowQueryThreshold != original {
+				t.Errorf("WithSlowQueryThreshold(%v) should keep default, got %v", threshold, opts.SlowQueryThreshold)
+			}
+		} else {
+			if opts.SlowQueryThreshold != threshold {
+				t.Errorf("WithSlowQueryThreshold(%v) set SlowQueryThreshold to %v", threshold, opts.SlowQueryThreshold)
+			}
+		}
+	})
+}
+
+// FuzzWithSlowQueryHook 模糊测试 WithSlowQueryHook 选项函数。
+func FuzzWithSlowQueryHook(f *testing.F) {
+	f.Add(true)
+	f.Add(false)
+
+	f.Fuzz(func(t *testing.T, setHook bool) {
+		opts := defaultOptions()
+		var hookCalled bool
+
+		var hook SlowQueryHook
+		if setHook {
+			hook = func(_ context.Context, _ SlowQueryInfo) {
+				hookCalled = true
+			}
+		}
+
+		// 不应 panic
+		WithSlowQueryHook(hook)(opts)
+
+		// 验证 hook 设置正确
+		if setHook && opts.SlowQueryHook == nil {
+			t.Error("WithSlowQueryHook should set the hook")
+		}
+
+		// 调用 hook 验证不 panic（如果设置了）
+		if opts.SlowQueryHook != nil {
+			opts.SlowQueryHook(context.Background(), SlowQueryInfo{
+				Database:   "testdb",
+				Collection: "testcoll",
+				Operation:  "find",
+				Duration:   time.Second,
+			})
+			if !hookCalled {
+				t.Error("Hook should have been called")
+			}
+		}
+	})
+}
+
+// FuzzWithObserver 模糊测试 WithObserver 选项函数。
+func FuzzWithObserver(f *testing.F) {
+	f.Add(true)
+	f.Add(false)
+
+	f.Fuzz(func(t *testing.T, useNoop bool) {
+		opts := defaultOptions()
+		originalObserver := opts.Observer
+
+		var observer xmetrics.Observer
+		if useNoop {
+			observer = xmetrics.NoopObserver{}
+		}
+
+		// 不应 panic
+		WithObserver(observer)(opts)
+
+		// 验证行为：nil observer 不应改变原值
+		if observer == nil {
+			if opts.Observer != originalObserver {
+				t.Error("WithObserver(nil) should not change observer")
+			}
+		} else {
+			// 非 nil observer 应该被设置
+			if _, ok := opts.Observer.(xmetrics.NoopObserver); !ok {
+				t.Error("WithObserver should set the observer")
+			}
+		}
+	})
+}
+
+// FuzzDefaultOptions 模糊测试 defaultOptions 函数。
+func FuzzDefaultOptions(f *testing.F) {
+	f.Add(0)
+
+	f.Fuzz(func(t *testing.T, _ int) {
+		opts := defaultOptions()
+
+		// 验证默认值
+		if opts.HealthTimeout != 5*time.Second {
+			t.Errorf("defaultOptions().HealthTimeout = %v, want 5s", opts.HealthTimeout)
+		}
+		if opts.SlowQueryThreshold != 0 {
+			t.Errorf("defaultOptions().SlowQueryThreshold = %v, want 0", opts.SlowQueryThreshold)
+		}
+		if opts.SlowQueryHook != nil {
+			t.Error("defaultOptions().SlowQueryHook should be nil")
+		}
+		if _, ok := opts.Observer.(xmetrics.NoopObserver); !ok {
+			t.Error("defaultOptions().Observer should be NoopObserver")
+		}
+	})
+}
+
+// =============================================================================
+// New Factory Fuzz 测试
+// =============================================================================
+
+// FuzzNew_NilClient 模糊测试 New 工厂函数（nil 客户端）。
+func FuzzNew_NilClient(f *testing.F) {
+	f.Add(int64(5000000000), int64(100000000)) // 5s, 100ms
+
+	f.Fuzz(func(t *testing.T, healthTimeoutNs, slowThresholdNs int64) {
+		healthTimeout := time.Duration(healthTimeoutNs)
+		slowThreshold := time.Duration(slowThresholdNs)
+
+		// 使用 nil 客户端应返回错误
+		mongo, err := New(nil,
+			WithHealthTimeout(healthTimeout),
+			WithSlowQueryThreshold(slowThreshold),
+		)
+
+		if err != ErrNilClient {
+			t.Errorf("New(nil) error = %v, want %v", err, ErrNilClient)
+		}
+		if mongo != nil {
+			t.Error("New(nil) should return nil Mongo")
+		}
+	})
+}
+
+// =============================================================================
+// 错误类型 Fuzz 测试
+// =============================================================================
+
+// FuzzIsErrNilClient 模糊测试 ErrNilClient 错误匹配。
+func FuzzIsErrNilClient(f *testing.F) {
+	f.Add("")
+	f.Add("some error")
+	f.Add("xmongo: nil client")
+
+	f.Fuzz(func(t *testing.T, errMsg string) {
+		var err error
+		if errMsg != "" {
+			err = &testError{msg: errMsg}
+		}
+
+		// 验证 errors.Is 对于非匹配错误不会 panic
+		_ = (err == ErrNilClient)
+	})
+}
+
+// FuzzIsErrClosed 模糊测试 ErrClosed 错误匹配。
+func FuzzIsErrClosed(f *testing.F) {
+	f.Add("")
+	f.Add("some error")
+	f.Add("xmongo: client closed")
+
+	f.Fuzz(func(t *testing.T, errMsg string) {
+		var err error
+		if errMsg != "" {
+			err = &testError{msg: errMsg}
+		}
+
+		// 验证 errors.Is 对于非匹配错误不会 panic
+		_ = (err == ErrClosed)
+	})
+}
+
+// testError 用于模糊测试的简单错误类型。
+type testError struct {
+	msg string
+}
+
+func (e *testError) Error() string {
+	return e.msg
+}

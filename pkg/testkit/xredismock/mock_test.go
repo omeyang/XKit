@@ -1,0 +1,157 @@
+package xredismock
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestNew_PingOK(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	if got, err := m.Client().Ping(context.Background()).Result(); err != nil || got != "PONG" {
+		t.Fatalf("ping = %q err=%v", got, err)
+	}
+}
+
+func TestNew_AddrNonEmpty(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	addr := m.Addr()
+	if !strings.Contains(addr, ":") {
+		t.Errorf("Addr %q should be host:port", addr)
+	}
+}
+
+func TestNew_ServerAccessible(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer m.Close()
+
+	if m.Server() == nil {
+		t.Fatal("Server should be non-nil")
+	}
+	// 借由底层 miniredis 设置键，再通过 client 读回，验证是同一个实例。
+	if err := m.Server().Set("k", "v"); err != nil {
+		t.Fatalf("miniredis set: %v", err)
+	}
+	got, err := m.Client().Get(context.Background(), "k").Result()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got != "v" {
+		t.Errorf("want v, got %q", got)
+	}
+}
+
+func TestNewClient_CleanupCloses(t *testing.T) {
+	t.Parallel()
+	cli, cleanup, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if cli == nil {
+		t.Fatal("client nil")
+	}
+	if cleanup == nil {
+		t.Fatal("cleanup nil")
+	}
+	cleanup()
+
+	// cleanup 后 ping 应失败。
+	if _, err := cli.Ping(context.Background()).Result(); err == nil {
+		t.Error("ping after cleanup should fail")
+	}
+}
+
+func TestNewClient_ErrorCleanupNoPanic(t *testing.T) {
+	t.Parallel()
+	// 即使 NewClient 内部 New 失败，返回的 cleanup 也必须是 noop 而非 nil。
+	// 这里直接验证成功路径返回的 cleanup 非 nil，以及错误路径的 cleanup 非 nil 契约。
+	_, cleanup, err := NewClient()
+	if err != nil {
+		// 正常环境不应失败，但无论如何 cleanup 不能是 nil。
+		if cleanup == nil {
+			t.Fatal("cleanup should be non-nil even on error")
+		}
+		cleanup() // 不应 panic
+		return
+	}
+	defer cleanup()
+	if cleanup == nil {
+		t.Fatal("cleanup should be non-nil on success")
+	}
+}
+
+func TestClose_IsIdempotent(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.Close()
+	m.Close() // 第二次 Close 不应 panic
+}
+
+func TestAddr_AfterCloseNoPanic(t *testing.T) {
+	t.Parallel()
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := m.Addr()
+	m.Close()
+	// miniredis.Close 会将内部 srv 置 nil；Addr 必须使用缓存，不能 panic。
+	if got := m.Addr(); got != want {
+		t.Errorf("Addr after Close = %q, want %q", got, want)
+	}
+}
+
+func BenchmarkNew(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		m, err := New()
+		if err != nil {
+			b.Fatal(err)
+		}
+		m.Close()
+	}
+}
+
+func FuzzClientSetGet(f *testing.F) {
+	for _, seed := range []string{"", "k", "中文", "\x00\xff", strings.Repeat("x", 128)} {
+		f.Add(seed, "v")
+	}
+	m, err := New()
+	if err != nil {
+		f.Skipf("miniredis init: %v", err)
+	}
+	defer m.Close()
+
+	ctx := context.Background()
+	f.Fuzz(func(t *testing.T, key, val string) {
+		if err := m.Client().Set(ctx, key, val, 0).Err(); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+		got, err := m.Client().Get(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got != val {
+			t.Errorf("key=%q got=%q want=%q", key, got, val)
+		}
+	})
+}

@@ -21,6 +21,7 @@ import (
 // PlatformManager 负责平台信息的获取和缓存。
 type PlatformManager struct {
 	http     *HTTPClient
+	paths    Paths
 	cache    CacheStore
 	tokenMgr *TokenManager
 	logger   *slog.Logger
@@ -36,7 +37,9 @@ type PlatformManager struct {
 
 // PlatformManagerConfig PlatformManager 配置。
 type PlatformManagerConfig struct {
-	HTTP     *HTTPClient
+	HTTP *HTTPClient
+	// Paths 认证服务接口路径；零值字段使用 DefaultPaths() 的示例路径。
+	Paths    Paths
 	Cache    CacheStore
 	TokenMgr *TokenManager
 	Logger   *slog.Logger
@@ -60,6 +63,7 @@ type PlatformManagerConfig struct {
 
 // applyDefaults 填充 PlatformManagerConfig 中未设置的字段。
 func (c *PlatformManagerConfig) applyDefaults() {
+	c.Paths.applyDefaults()
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
@@ -94,6 +98,7 @@ func NewPlatformManager(cfg PlatformManagerConfig) (*PlatformManager, error) {
 
 	pm := &PlatformManager{
 		http:     cfg.HTTP,
+		paths:    cfg.Paths,
 		cache:    cfg.Cache,
 		tokenMgr: cfg.TokenMgr,
 		logger:   cfg.Logger,
@@ -295,7 +300,7 @@ func (m *PlatformManager) fetchIDField(
 
 // fetchPlatformID 从 API 获取平台 ID。
 func (m *PlatformManager) fetchPlatformID(ctx context.Context, tenantID string) (string, error) {
-	return m.fetchIDField(ctx, tenantID, PathPlatformSelf, ErrPlatformIDNotFound, "platform_id",
+	return m.fetchIDField(ctx, tenantID, m.paths.PlatformSelf, ErrPlatformIDNotFound, "platform_id",
 		func() idResponse { return &PlatformSelfResponse{} })
 }
 
@@ -307,7 +312,7 @@ func (m *PlatformManager) fetchHasParent(ctx context.Context, tenantID string) (
 		return "", fmt.Errorf("get token: %w", err)
 	}
 
-	path := fmt.Sprintf("%s?projectId=%s", PathHasParent, url.QueryEscape(tenantID))
+	path := fmt.Sprintf("%s?projectId=%s", m.paths.HasParent, url.QueryEscape(tenantID))
 
 	var resp HasParentResponse
 	if err := m.http.RequestWithAuth(ctx, "GET", path, token, nil, nil, &resp); err != nil {
@@ -326,7 +331,7 @@ func (m *PlatformManager) fetchHasParent(ctx context.Context, tenantID string) (
 
 // fetchUnclassRegionID 从 API 获取未归类组 Region ID。
 func (m *PlatformManager) fetchUnclassRegionID(ctx context.Context, tenantID string) (string, error) {
-	return m.fetchIDField(ctx, tenantID, PathUnclassRegion, ErrUnclassRegionIDNotFound, "unclass_region_id",
+	return m.fetchIDField(ctx, tenantID, m.paths.UnclassRegion, ErrUnclassRegionIDNotFound, "unclass_region_id",
 		func() idResponse { return &UnclassRegionResponse{} })
 }
 

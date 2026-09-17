@@ -19,6 +19,7 @@ import (
 // TokenManager 负责 Token 的获取、刷新和验证。
 type TokenManager struct {
 	config   *Config
+	paths    Paths
 	http     *HTTPClient
 	cache    *TokenCache
 	logger   *slog.Logger
@@ -81,8 +82,12 @@ func NewTokenManager(cfg TokenManagerConfig) (*TokenManager, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	paths := cfg.Config.Paths
+	paths.applyDefaults()
+
 	return &TokenManager{
 		config:                  cfg.Config,
+		paths:                   paths,
 		http:                    cfg.HTTP,
 		cache:                   cfg.Cache,
 		logger:                  cfg.Logger,
@@ -164,7 +169,7 @@ func (m *TokenManager) obtainClientToken(ctx context.Context, tenantID string) (
 	}
 
 	var token TokenInfo
-	if err := m.http.Post(ctx, PathTokenObtain, headers, form.Encode(), &token); err != nil {
+	if err := m.http.Post(ctx, m.paths.TokenObtain, headers, form.Encode(), &token); err != nil {
 		return nil, fmt.Errorf("obtain client token: %w", err)
 	}
 
@@ -195,7 +200,7 @@ func (m *TokenManager) obtainAPIKeyToken(ctx context.Context, tenantID string) (
 	body := map[string]string{"apiKey": m.config.APIKey}
 
 	var resp APIAccessTokenResponse
-	if err := m.http.Post(ctx, PathAPIAccessToken, nil, body, &resp); err != nil {
+	if err := m.http.Post(ctx, m.paths.APIAccessToken, nil, body, &resp); err != nil {
 		return nil, fmt.Errorf("obtain api key token: %w", err)
 	}
 
@@ -261,7 +266,7 @@ func (m *TokenManager) refreshWithRefreshToken(ctx context.Context, tenantID str
 	}
 
 	var token TokenInfo
-	if err := m.http.Post(ctx, PathTokenObtain, headers, form.Encode(), &token); err != nil {
+	if err := m.http.Post(ctx, m.paths.TokenObtain, headers, form.Encode(), &token); err != nil {
 		return nil, fmt.Errorf("refresh token: %w", err)
 	}
 
@@ -312,7 +317,7 @@ func (m *TokenManager) VerifyToken(ctx context.Context, token string) (*TokenInf
 	}
 
 	var resp VerifyResponse
-	if err := m.http.Post(ctx, PathTokenVerify, headers, form.Encode(), &resp); err != nil {
+	if err := m.http.Post(ctx, m.paths.TokenVerify, headers, form.Encode(), &resp); err != nil {
 		verifyErr = fmt.Errorf("verify token: %w", err)
 		return nil, verifyErr
 	}

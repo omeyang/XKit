@@ -34,6 +34,9 @@ var (
 	// Host 必须包含协议和主机名，例如 "https://auth.example.com"。
 	ErrInvalidHost = errors.New("xauth: invalid host: must include scheme and host (e.g., https://auth.example.com)")
 
+	// ErrInvalidPath 表示 Config.Paths 中的路径格式无效。
+	ErrInvalidPath = errors.New("xauth: invalid path: must start with /")
+
 	// ErrNilRedisClient 表示 Redis 客户端为 nil。
 	ErrNilRedisClient = errors.New("xauth: nil redis client")
 

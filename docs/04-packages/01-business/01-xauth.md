@@ -44,6 +44,18 @@ if err != nil { /* 失败或过期 */ }
 
 ## 设计要点
 
+- **路径与配置分离**：`Path*` 常量与 `DefaultPaths()` 只是开源版本的示例路由；实际部署通过 `Config.Paths` 覆盖认证服务的真实路径，代码库中不保留任何环境专属的值。未设置的字段自动回填示例值，已设置的值必须以 `/` 开头（否则 `Validate` 返回 `ErrInvalidPath`）。
+
+  ```go
+  cfg := &xauth.Config{
+      Host: "https://auth.example.com",
+      Paths: xauth.Paths{
+          TokenObtain: "/your/oauth/token",
+          TokenVerify: "/your/oauth/token/verify",
+      },
+  }
+  ```
+
 - **双层缓存**：Memory（xlru）→ Redis（xcache）→ auth 服务
 - **`Request()` 浅拷贝 AuthRequest** 避免修改调用方 Body（FG-M fix）
 - **nil ctx 防御**：HTTPClient.Do/request 入口（FG-H fix）

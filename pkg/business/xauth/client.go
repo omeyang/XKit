@@ -189,6 +189,7 @@ func buildClient(cfg *Config, options *Options, httpClient *HTTPClient) (*client
 	enableLocal := options.EnableLocalCache
 	platformMgr, err := NewPlatformManager(PlatformManagerConfig{
 		HTTP:           httpClient,
+		Paths:          cfg.Paths,
 		Cache:          d.cache,
 		TokenMgr:       tokenMgr,
 		Logger:         d.logger,

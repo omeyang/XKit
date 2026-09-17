@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -375,5 +376,29 @@ func TestTLSConfig_BuildTLSConfig_MinVersion(t *testing.T) {
 	}
 	if tlsCfg.MinVersion != 0x0303 { // tls.VersionTLS12
 		t.Errorf("MinVersion = %x, expected TLS 1.2 (0x0303)", tlsCfg.MinVersion)
+	}
+}
+
+func TestConfig_PathsDefaults(t *testing.T) {
+	cfg := &Config{Host: "https://auth.example.com"}
+	cfg.ApplyDefaults()
+	if cfg.Paths != DefaultPaths() {
+		t.Errorf("Paths = %+v, want DefaultPaths()", cfg.Paths)
+	}
+
+	custom := &Config{Host: "https://auth.example.com", Paths: Paths{TokenObtain: "/custom/token"}}
+	custom.ApplyDefaults()
+	if custom.Paths.TokenObtain != "/custom/token" {
+		t.Errorf("TokenObtain = %q, want custom value kept", custom.Paths.TokenObtain)
+	}
+	if custom.Paths.TokenVerify != PathTokenVerify {
+		t.Errorf("TokenVerify = %q, want default filled", custom.Paths.TokenVerify)
+	}
+}
+
+func TestConfig_PathsValidate(t *testing.T) {
+	cfg := &Config{Host: "https://auth.example.com", Paths: Paths{HasParent: "no-leading-slash"}}
+	if err := cfg.Validate(); !errors.Is(err, ErrInvalidPath) {
+		t.Errorf("Validate() = %v, want ErrInvalidPath", err)
 	}
 }

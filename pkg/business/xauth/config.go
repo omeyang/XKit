@@ -55,8 +55,11 @@ const (
 )
 
 // =============================================================================
-// API 路由
+// API 路由（示例默认值）
 // =============================================================================
+
+// 设计决策: 路径与配置分离——下列常量只是开源版本的示例路由，用于 DefaultPaths()。
+// 实际部署的认证服务路由通过 Config.Paths 覆盖，代码中不保留任何环境专属的值。
 
 //nolint:gosec // G101: 这些是 API 路径常量，不是凭据
 const (
@@ -78,6 +81,68 @@ const (
 	// PathHasParent 判断是否有父平台路径。
 	PathHasParent = "/auth/api/v1/platforms/hasSuper"
 )
+
+// Paths 认证服务各接口的路径。
+// 零值字段在 ApplyDefaults 时填充为 DefaultPaths() 返回的示例路径。
+type Paths struct {
+	// TokenVerify Token 验证路径。
+	TokenVerify string
+	// TokenObtain Token 获取路径（client_credentials）。
+	TokenObtain string
+	// APIAccessToken API Key 获取 Token 路径。
+	APIAccessToken string
+	// PlatformSelf 获取当前平台信息路径。
+	PlatformSelf string
+	// UnclassRegion 获取未归类组 Region 路径。
+	UnclassRegion string
+	// HasParent 判断是否有父平台路径。
+	HasParent string
+}
+
+// DefaultPaths 返回示例路径集合。
+func DefaultPaths() Paths {
+	return Paths{
+		TokenVerify:    PathTokenVerify,
+		TokenObtain:    PathTokenObtain,
+		APIAccessToken: PathAPIAccessToken,
+		PlatformSelf:   PathPlatformSelf,
+		UnclassRegion:  PathUnclassRegion,
+		HasParent:      PathHasParent,
+	}
+}
+
+// applyDefaults 为空字段填充示例路径。
+func (p *Paths) applyDefaults() {
+	d := DefaultPaths()
+	if p.TokenVerify == "" {
+		p.TokenVerify = d.TokenVerify
+	}
+	if p.TokenObtain == "" {
+		p.TokenObtain = d.TokenObtain
+	}
+	if p.APIAccessToken == "" {
+		p.APIAccessToken = d.APIAccessToken
+	}
+	if p.PlatformSelf == "" {
+		p.PlatformSelf = d.PlatformSelf
+	}
+	if p.UnclassRegion == "" {
+		p.UnclassRegion = d.UnclassRegion
+	}
+	if p.HasParent == "" {
+		p.HasParent = d.HasParent
+	}
+}
+
+// validate 校验已设置的路径必须以 "/" 开头（空值由 applyDefaults 填充，不在此校验）。
+func (p *Paths) validate() error {
+	for _, v := range []string{p.TokenVerify, p.TokenObtain, p.APIAccessToken, p.PlatformSelf, p.UnclassRegion, p.HasParent} {
+		if v != "" && !strings.HasPrefix(v, "/") {
+			return fmt.Errorf("%w: %q", ErrInvalidPath, v)
+		}
+	}
+	return nil
+}
 
 // =============================================================================
 // 缓存字段
@@ -109,6 +174,11 @@ type Config struct {
 	// 设计决策: 默认强制 HTTPS——认证服务传输 Bearer Token 和客户端凭据，
 	// 明文 HTTP 会暴露这些敏感信息。仅在开发/测试环境中启用此选项。
 	AllowInsecure bool
+
+	// Paths 认证服务各接口的路径。
+	// 零值字段在 ApplyDefaults 时填充为 DefaultPaths() 的示例路径；
+	// 示例值仅用于开源版本，实际部署请按认证服务的真实路由覆盖。
+	Paths Paths
 
 	// ClientID 客户端 ID。
 	// 为空时根据 DEPLOYMENT_TYPE 自动选择：
@@ -177,7 +247,7 @@ func (c *Config) Validate() error {
 		return ErrInvalidRefreshThreshold
 	}
 
-	return nil
+	return c.Paths.validate()
 }
 
 // validateHost 校验 Host 格式和协议安全性。
@@ -222,6 +292,8 @@ func (c *Config) ApplyDefaults() {
 	if c.ClientID == "" {
 		c.ClientID = getDefaultClientID()
 	}
+
+	c.Paths.applyDefaults()
 
 	// 设计决策: ClientSecret 默认与 ClientID 相同，这是认证服务的约定——
 	// 内部 client_credentials 模式下 secret 与 id 一致，简化配置。

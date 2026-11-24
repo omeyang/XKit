@@ -10,6 +10,9 @@ import (
 // 使用 errors.Is(err, ErrSignal) 判断是否为信号错误。
 var ErrSignal = errors.New("xrun: received signal")
 
+// ErrDraining 表示资源已停止接纳新的在途操作。
+var ErrDraining = errors.New("xrun: resource is draining")
+
 // ErrInvalidInterval 表示 Ticker 的间隔参数无效（必须为正数）。
 var ErrInvalidInterval = errors.New("xrun: interval must be positive")
 

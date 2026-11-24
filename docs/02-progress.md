@@ -77,7 +77,7 @@
 
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
-| `pkg/lifecycle/xrun` | Stable | 98.2% | errgroup + signal |
+| `pkg/lifecycle/xrun` | Stable | 98.5% | errgroup + signal + keyed drain |
 | `pkg/lifecycle/xhealth` | Stable | 92.4% | K8s liveness/readiness/startup |
 
 ### Util（通用工具）

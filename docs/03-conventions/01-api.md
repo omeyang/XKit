@@ -582,6 +582,7 @@ XKit 遵循 Go 语言的可见性规则：
 - `HTTPServerInterface` - HTTP 服务接口
 
 **工厂函数**：
+- `NewDrainer() *Drainer` - 按资源 key 协调在途操作与排水
 - `NewGroup(ctx context.Context, opts ...Option) (*Group, context.Context)`
 - `Run(ctx context.Context, services ...func(ctx context.Context) error) error`
 - `RunServices(ctx context.Context, services ...Service) error`

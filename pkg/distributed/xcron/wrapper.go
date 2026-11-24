@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
@@ -453,8 +454,8 @@ func (w *jobWrapper) runAfterHooks(ctx context.Context, duration time.Duration, 
 	}
 
 	// 逆序执行，类似 defer 的行为
-	for i := len(w.opts.hooks) - 1; i >= 0; i-- {
-		w.safeAfterHook(ctx, w.opts.hooks[i], duration, err)
+	for _, v := range slices.Backward(w.opts.hooks) {
+		w.safeAfterHook(ctx, v, duration, err)
 	}
 }
 

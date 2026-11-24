@@ -22,12 +22,12 @@ import "github.com/omeyang/xkit/pkg/resilience/xretry"
 err := xretry.Do(ctx, func() error {
     return callAPI(ctx)
 },
-    xretry.WithMaxAttempts(5),
-    xretry.WithInitialDelay(100*time.Millisecond),
-    xretry.WithMaxDelay(5*time.Second),
-    xretry.WithBackoff(xretry.ExponentialBackoff),
-    xretry.WithRetryIf(func(err error) bool {
-        return xretry.IsTransient(err)
+    xretry.Attempts(5),
+    xretry.Delay(100*time.Millisecond),
+    xretry.MaxDelay(5*time.Second),
+    xretry.DelayType(xretry.BackOffDelay),
+    xretry.RetryIf(func(err error) bool {
+        return xretry.IsRetryable(err)
     }),
 )
 ```
@@ -37,15 +37,15 @@ err := xretry.Do(ctx, func() error {
 | 名称 | 说明 |
 |---|---|
 | `Do(ctx, fn, opts...) error` | 入口 |
-| `WithMaxAttempts / WithInitialDelay / WithMaxDelay` | 节奏 |
-| `WithBackoff(strategy)` | `ExponentialBackoff / LinearBackoff` |
-| `WithRetryIf(pred)` | 自定义判断 |
-| `IsTransient(err)` | 内置网络瞬时错判断 |
+| `Attempts / Delay / MaxDelay` | 节奏 |
+| `DelayType(strategy)` | `BackOffDelay / FixedDelay / FullJitterBackoffDelay` |
+| `RetryIf(pred)` | 自定义判断 |
+| `IsRetryable / IsPermanent` | 重试错误分类 |
 
 ## 设计要点
 
 - **ctx 取消立即停**：在 sleep 期间也响应 ctx.Done()
-- **分类重试**：默认非瞬时错不重试
+- **分类重试**：默认永久性错误不重试
 
 ## 相关
 

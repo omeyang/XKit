@@ -408,10 +408,7 @@ func sanitizeK8sName(name string, prefixLen int) string {
 	const separator = "-"
 
 	// 本函数输出的最大长度（为 prefix 预留空间）
-	maxLen := k8sMaxLen - prefixLen
-	if maxLen < 1 {
-		maxLen = 1
-	}
+	maxLen := max(k8sMaxLen-prefixLen, 1)
 
 	// 当清理步骤改变了名称或长度超限时，添加 hash 后缀确保唯一性
 	if sanitized != lowered || len(sanitized) > maxLen {

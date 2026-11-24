@@ -61,7 +61,7 @@ case <-ctx.Done():
 - **`observe`** 在 watch 中断 / session 过期 / 被抢占时调用 `releaseSession` 释放 lease
 - **`etcdElection.Close`** 通过 `closeCtx` 打断 in-flight Campaign + 成功 Campaign 后的 closed 竞态防御
 - **Campaign 抽取** `acquireSession/runCampaign/handleCampaignErr` 降圈复杂度
-- **Resign nil ctx 防御**：与 Campaign 入口对齐（FG-M fix）
+- **Resign nil ctx 防御**：与 Campaign 入口对齐
 - **`Resign` 错误链**：用 `errors.Join` 保留 `session.Close` 错误
 
 ## 相关

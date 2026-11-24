@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -373,8 +374,8 @@ func evalSymlinksPartial(path string) (string, error) {
 		resolved, err = filepath.EvalSymlinks(dir)
 		if err == nil {
 			// 找到可解析的祖先，逆序追加不存在的段
-			for j := len(trail) - 1; j >= 0; j-- {
-				resolved = filepath.Join(resolved, trail[j])
+			for _, t := range slices.Backward(trail) {
+				resolved = filepath.Join(resolved, t)
 			}
 			return resolved, nil
 		}
@@ -394,7 +395,7 @@ func evalSymlinksPartial(path string) (string, error) {
 func rejectDanglingSymlink(path string) error {
 	clean := filepath.Clean(path)
 	current := clean
-	for i := 0; i < maxSymlinkDepth; i++ {
+	for range maxSymlinkDepth {
 		info, lerr := os.Lstat(current)
 		if lerr == nil {
 			if info.Mode()&os.ModeSymlink != 0 {

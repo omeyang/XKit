@@ -7,44 +7,13 @@ tags: [storage, etcd, watch, informer]
 
 # pkg/storage/xetcd
 
-etcd 客户端封装。**含 Informer**（list + watch 缓存）：参照 K8s client-go 模式，提供 `Store / Indexer` 抽象。
+通过 `NewClient` 获取 etcd 客户端。业务可读写键值、监听变更，也可使用 Informer 维护本地缓存。
 
-## 用途
+## 使用入口
 
-- 配置中心 / 服务发现 / 协调
-- 大量小键的本地缓存（Informer + Watch 增量同步）
+示例文件中的 `ExampleNewClient`、`ExampleClient_WatchWithRetry` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/storage/xetcd` 查看。
 
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/storage/xetcd"
-
-// 基础 KV
-c, _ := xetcd.New(xetcd.Config{
-    Endpoints: []string{"localhost:2379"},
-})
-v, _ := c.Get(ctx, "/config/foo")
-
-// Informer
-informer, _ := xetcd.NewInformer(c, "/configs/",
-    xetcd.WithKeyFunc(func(kv *clientv3.KeyValue) string {
-        return string(kv.Key)
-    }),
-)
-informer.Start(ctx)
-defer informer.Stop()
-
-obj, _ := informer.Store().GetByKey("/configs/foo")
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Client` / `New(cfg)` | KV 封装 |
-| `Informer` / `NewInformer(c, prefix, opts...)` | list+watch 缓存 |
-| `Store / Indexer` interface | 缓存抽象 |
-| `SetForTest / RemoveForTest / ReplaceForTest` | 测试辅助（不要在生产用）|
+[包说明](../../../pkg/storage/xetcd/doc.go) · [使用示例](../../../tests/unit/pkg/storage/xetcd/example_test.go)
 
 ## 设计要点
 

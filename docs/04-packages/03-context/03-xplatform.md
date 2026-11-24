@@ -7,38 +7,13 @@ tags: [context, platform]
 
 # pkg/context/xplatform
 
-平台信息管理。封装 platformID 与 deploymentType（如 dev/test/prod），以及对应的注入与提取。
+服务启动时通过 `Init(Config)` 设置平台信息。请求处理代码可读取当前平台 ID、上级平台标记和未分类区域 ID。
 
-## 用途
+## 使用入口
 
-- 根据部署环境做条件逻辑（如 prod 不开 verbose 日志）
-- 多平台 SaaS 中区分平台
+示例文件中的 `Example_quickStart`、`ExampleConfig_Validate` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/context/xplatform` 查看。
 
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/context/xplatform"
-
-ctx = xplatform.WithPlatformID(ctx, "platform-A")
-ctx = xplatform.WithDeploymentType(ctx, xplatform.Prod)
-
-if xplatform.DeploymentTypeOf(ctx) == xplatform.Prod {
-    // ...
-}
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `WithPlatformID / PlatformIDOf` | 平台 ID 注入/提取 |
-| `WithDeploymentType / DeploymentTypeOf` | 部署类型注入/提取 |
-| `DeploymentType` 枚举 | `Dev / Test / Prod / Stage` 等 |
-
-## 设计要点
-
-- **typed key**：避免冲突
-- **枚举类型**：编译时检查部署类型，避免字符串拼写错
+[包说明](../../../pkg/context/xplatform/doc.go) · [使用示例](../../../tests/unit/pkg/context/xplatform/example_test.go)
 
 ## 相关
 

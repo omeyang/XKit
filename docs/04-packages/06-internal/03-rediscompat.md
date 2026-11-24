@@ -40,7 +40,7 @@ sem, _ := xsemaphore.New(redisClient, "r",
 ## 设计要点
 
 - **goroutine 泄漏**：`DetectScriptModeBounded` 在超时后 goroutine 仍可能阻塞（文档化设计决策，doc.go:92-98）
-- **NOPERM ACL 排除 OOM**：FG 修复识别精度
+- **NOPERM ACL 排除 OOM**：NOPERM 表示命令权限被拒绝；OOM 属于瞬态错误。
 
 ## 相关
 

@@ -41,10 +41,7 @@
   上永无补丁。恒红的门禁拦不住问题，只会淹没真正新增的信号，故移除而非豁免。
   具体条目以实跑为准（数字随依赖与漏洞库变动，此处不记）：
   `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...`。
-- `develop-1.23-release` 分支：Go 1.23 功能等价版本（仅依赖版本上限不同）
-- CI 触发覆盖两个长期分支：`on.push` / `on.pull_request` 的 `branches` 均为
-  `[main, develop-1.23-release]`，两分支逐字一致。此前只写 `[main]`，
-  `develop-1.23-release` 的 push 永远不匹配，该分支自建仓起从未跑过远端 CI
+- 仅维护 `main` 分支，工具链与 `go.mod` 均固定为 Go 1.24.6；移除 Go 1.23 兼容分支及同步脚本
 - CI 流水线本地化（`task pre-push` 覆盖 CI 的 Go 侧静态检查；
   actionlint、`-race` 全量测试、覆盖率上报、llms 生成仅 CI 跑）
 - 多轮 CA/CB/Codex A/Codex B 对抗审查（覆盖 30+ 包）
@@ -52,8 +49,7 @@
 ### 破坏性变更（相对改造前）
 
 - `pkg/resilience/xbreaker` 不再导出 `CircuitBreaker[T]` 与 `TwoStepCircuitBreaker[T]`
-  两个泛型类型别名。泛型类型别名是 Go 1.24 语言特性，`develop-1.23-release` 分支
-  无法表达；为使两分支公开 API 严格一致，两边统一移除。
+  两个泛型类型别名，避免为同一类型提供重复入口并控制公开 API 面积。
   别名与被别名类型本就是同一类型，运行时行为、方法集、可比较性均无变化。
   **迁移**：显式书写类型名的地方改用 `gobreaker.CircuitBreaker[T]` /
   `gobreaker.TwoStepCircuitBreaker[T]` 并 `import "github.com/sony/gobreaker/v2"`；
@@ -63,7 +59,7 @@
 
 - 全部 39 个 `pkg/` 公开包定为 **Stable**，公开 API 随 v0.1.0 冻结。
   `pkg/testkit/*`、`<pkg>mock/`、`internal/` 为 Internal，不对生产使用。
-- 四档定义、Stable 判据（主要 API 已登记且签名准确 / 双分支 API 一致 / 签名评审通过 /
+- 四档定义、Stable 判据（主要 API 已登记且签名准确 / 签名评审通过 /
   一个发布周期内无破坏性变更）与晋升、降级流程写入
   `docs/03-conventions/02-contributing.md`。
 - 修正 `docs/03-conventions/01-api.md` 中 8 处漏写 `error` 返回值的签名：

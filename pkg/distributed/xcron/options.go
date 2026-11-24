@@ -234,7 +234,7 @@ func WithLockTimeout(timeout time.Duration) JobOption {
 // WithRetry 设置重试策略。
 //
 // 任务执行失败时按此策略重试。需要配合 [WithBackoff] 设置重试间隔。
-// 接口兼容 xretry.RetryPolicy。
+// 接口语义对应 xretry.RetryPolicy，但接口签名不同。
 //
 // 用法：
 //

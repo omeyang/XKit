@@ -21,34 +21,11 @@ related:
 - 跨进程：用 [xdlock](../05-distributed/02-xdlock.md)
 - 可重入需求：本包刻意不支持（设计决策）
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/util/xkeylock"
+示例文件中的 `ExampleNew`、`ExampleLocker_TryAcquire` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/util/xkeylock` 查看。
 
-kl, err := xkeylock.New(xkeylock.WithShards(64))
-if err != nil { /* ... */ }
-defer kl.Close()
-
-h, err := kl.Lock(ctx, "user:123")
-if err != nil { /* ctx 取消或已关闭 */ }
-defer h.Unlock()
-
-// 此时同 key "user:123" 的并发会阻塞,不同 key 并发
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Locker` interface | 主接口（按 ADR-0002 由使用方角度命名）|
-| `New(opts...) (Locker, error)` | 构造 |
-| `WithShards(n int)` | 分片数（默认 16，最大 `1<<16`）|
-| `Lock(ctx, key) (handle, error)` | 获取，handle.Unlock() 释放 |
-| `TryLock(ctx, key) (handle, ok, error)` | 非阻塞尝试 |
-| `Close() error` | 关闭（之后 Lock 返回 `ErrClosed`）|
-| `Keys() []string` | 当前活跃 key（非原子，文档化）|
-| `ErrNilContext / ErrClosed` | 错误变量 |
+[包说明](../../../pkg/util/xkeylock/doc.go) · [使用示例](../../../tests/unit/pkg/util/xkeylock/example_test.go)
 
 ## 设计要点
 

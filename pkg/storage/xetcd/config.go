@@ -165,8 +165,8 @@ func validateEndpoint(ep string) error {
 	// etcd 客户端内部支持 http/https/unix 等 scheme，且未来可能扩展，
 	// xetcd 作为封装层不应假设合法 scheme 集合。非法 scheme 会在
 	// etcd 客户端连接阶段暴露，Validate 仅校验 host:port 格式。
-	if idx := strings.Index(ep, "://"); idx != -1 {
-		endpoint = ep[idx+3:]
+	if _, after, ok := strings.Cut(ep, "://"); ok {
+		endpoint = after
 	}
 
 	// 2. 处理 IPv6 格式 [host]:port

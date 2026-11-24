@@ -206,11 +206,9 @@ func (tb *tokenBucket) takeWithParams(limit, burst int, window time.Duration, n 
 	defer tb.mu.Unlock()
 
 	now := time.Now()
-	elapsed := now.Sub(tb.lastUpdate)
-	if elapsed < 0 {
+	elapsed := max(now.Sub(tb.lastUpdate),
 		// 时钟回拨防御：不补令牌，仅推进 lastUpdate
-		elapsed = 0
-	}
+		0)
 	// 先按旧参数补令牌
 	if tb.window > 0 {
 		oldRate := float64(tb.limit) / tb.window.Seconds()
@@ -250,10 +248,7 @@ func (tb *tokenBucket) currentTokens(limit, burst int, window time.Duration) int
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
-	elapsed := time.Since(tb.lastUpdate)
-	if elapsed < 0 {
-		elapsed = 0
-	}
+	elapsed := max(time.Since(tb.lastUpdate), 0)
 	if window <= 0 {
 		return int(tb.tokens)
 	}

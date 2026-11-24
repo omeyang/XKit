@@ -21,7 +21,7 @@ import "golang.org/x/sync/singleflight"
 var group singleflight.Group
 
 func GetUser(ctx context.Context, id string) (*User, error) {
-    val, err, _ := group.Do(id, func() (interface{}, error) {
+    val, err, _ := group.Do(id, func() (any, error) {
         return loadFromDB(ctx, id)
     })
     if err != nil { return nil, err }
@@ -31,13 +31,7 @@ func GetUser(ctx context.Context, id string) (*User, error) {
 
 ## 配合 Cache-Aside
 
-```go
-val, err, _ := group.Do(key, func() (interface{}, error) {
-    return xcache.GetOrLoad(ctx, c, key, ttl, loader)
-})
-```
-
-热点 key 失效瞬间也只有一次回源。
+`xcache.Loader.Load` 已在加载器内合并同一 key 的并发回源。复用同一个 Loader 实例即可共享在途请求。[加载器示例](../../tests/unit/pkg/storage/xcache/example_test.go)
 
 ## 关键陷阱
 

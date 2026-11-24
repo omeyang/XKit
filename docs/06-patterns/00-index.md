@@ -11,7 +11,7 @@ XKit 中反复出现的模式。区别于 [概念](../05-concepts/00-index.md)�
 
 | 模式 | 摘要 |
 |---|---|
-| [Cache-Aside](02-cache-aside.md) | 业务读缓存 → miss 回源 → 写缓存。XKit 提供 `GetOrLoad` 助手 |
+| [Cache-Aside](02-cache-aside.md) | 业务读缓存 → miss 回源 → 写缓存。XKit 提供 `Loader.Load` |
 | [Singleflight](07-singleflight.md) | 同 key 并发回源去重。配合 Cache-Aside 防缓存击穿 |
 
 ## 互斥与协调
@@ -28,12 +28,6 @@ XKit 中反复出现的模式。区别于 [概念](../05-concepts/00-index.md)�
 | [Worker Pool](08-worker-pool.md) | 固定 worker + 有界队列；非阻塞提交 |
 | [Circuit Breaker](03-circuit-breaker.md) | 三态机：快速失败防级联故障 |
 | [Fail-Fast 消费循环](05-fail-fast-consume-loop.md) | MQ 消费 handler panic 不补 recover；与包内 goroutine recover 形成对照 |
-
-## 工程流程
-
-| 模式 | 摘要 |
-|---|---|
-| [对抗审查](01-adversarial-review.md) | 多路 AI 互审：Claude (CA/CB) + Codex (A/B) + 交叉裁决 (CC) |
 
 ## 相关
 

@@ -2,6 +2,7 @@ package xsemaphore
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,9 +53,7 @@ func initPermitBase(base *permitBase, id, resource, tenantID string, expiresAt t
 	// 复制 metadata，防止外部修改影响内部状态
 	if len(metadata) > 0 {
 		base.metadata = make(map[string]string, len(metadata))
-		for k, v := range metadata {
-			base.metadata[k] = v
-		}
+		maps.Copy(base.metadata, metadata)
 	}
 }
 
@@ -88,9 +87,7 @@ func (b *permitBase) Metadata() map[string]string {
 	}
 	// 返回副本，防止外部修改
 	result := make(map[string]string, len(b.metadata))
-	for k, v := range b.metadata {
-		result[k] = v
-	}
+	maps.Copy(result, b.metadata)
 	return result
 }
 

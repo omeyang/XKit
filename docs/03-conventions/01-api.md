@@ -187,10 +187,9 @@ XKit 遵循 Go 语言的可见性规则：
 ### pkg/observability/xtrace
 
 **中间件**：
-- `HTTPMiddleware()` - HTTP 中间件
-- `HTTPMiddlewareWithOptions(opts ...MiddlewareOption)` - 带配置的 HTTP 中间件
-- `GRPCUnaryServerInterceptor()` - gRPC 一元服务端拦截器
-- `GRPCStreamServerInterceptor()` - gRPC 流式服务端拦截器
+- `HTTPMiddleware(opts ...Option)` - HTTP 中间件
+- `GRPCUnaryServerInterceptor(opts ...Option)` - gRPC 一元服务端拦截器
+- `GRPCStreamServerInterceptor(opts ...Option)` - gRPC 流式服务端拦截器
 - `GRPCUnaryClientInterceptor()` - gRPC 一元客户端拦截器
 - `GRPCStreamClientInterceptor()` - gRPC 流式客户端拦截器
 
@@ -682,7 +681,6 @@ XKit 遵循 Go 语言的可见性规则：
 
 **聚合**：
 - `CollectN(seq, maxCount) []Addr` / `Count(seq) int` / `RangeCount(from, to) uint64`
-- `AddrToUint64 / Uint64ToAddr` - 与 uint64 互转
 
 ### pkg/util/xjson
 
@@ -696,11 +694,11 @@ XKit 遵循 Go 语言的可见性规则：
 ### pkg/util/xkeylock
 
 **接口**：
-- `KeyLock` - 基于 key 的进程内互斥锁（Acquire/TryAcquire/Close）
+- `Locker` - 基于 key 的进程内互斥锁（Acquire/TryAcquire/Close）
 - `Handle` - 锁句柄（Unlock/Key）
 
 **工厂函数**：
-- `New(opts ...Option) KeyLock`
+- `New(opts ...Option) (Locker, error)`
 
 ### pkg/util/xlru
 

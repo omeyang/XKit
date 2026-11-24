@@ -15,32 +15,11 @@ tags: [business, auth, token, cache]
 - 获取用户/租户/平台信息
 - 高频查询场景下避免重复打 auth 服务
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/business/xauth"
+示例文件中的 `ExampleNewClient`、`ExampleClient_GetToken` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/business/xauth` 查看。
 
-c, _ := xauth.New(xauth.Config{
-    BaseURL: "https://auth.internal/v1",
-    Cache: xauth.CacheConfig{
-        MemoryTTL: 30*time.Second,
-        RedisTTL:  5*time.Minute,
-        RedisClient: redisClient,
-    },
-})
-
-info, err := c.ValidateToken(ctx, token)
-if err != nil { /* 失败或过期 */ }
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Client / New(cfg)` | 入口 |
-| `Config / CacheConfig` | 配置 |
-| `ValidateToken(ctx, token) (Info, error)` | 校验 + 拉信息 |
-| `HTTPClient.Do / request` | nil ctx 返 `ErrNilContext`（原 panic，FG-H fix）|
+[包说明](../../../pkg/business/xauth/doc.go) · [使用示例](../../../tests/unit/pkg/business/xauth/example_test.go)
 
 ## 设计要点
 
@@ -57,8 +36,8 @@ if err != nil { /* 失败或过期 */ }
   ```
 
 - **双层缓存**：Memory（xlru）→ Redis（xcache）→ auth 服务
-- **`Request()` 浅拷贝 AuthRequest** 避免修改调用方 Body（FG-M fix）
-- **nil ctx 防御**：HTTPClient.Do/request 入口（FG-H fix）
+- **`Request()` 浅拷贝 AuthRequest** 避免修改调用方 Body
+- **nil ctx 防御**：HTTPClient.Do/request 入口
 
 ## 相关
 

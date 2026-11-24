@@ -13,8 +13,8 @@ tags: [moc, packages, context]
 |---|---|---|---|
 | [xctx](01-xctx.md) | Context 增强（追踪/租户/平台融合入口） | Stable | 97.7% |
 | [xtenant](04-xtenant.md) | 租户信息 HTTP+gRPC 双协议中间件 | Stable | 96.8% |
-| [xplatform](03-xplatform.md) | 平台信息（部署类型/平台 ID）管理 | Stable | 100.0% |
-| [xenv](02-xenv.md) | 环境变量读取与解析 | Stable | 95.6% |
+| [xplatform](03-xplatform.md) | 平台 ID、上级平台与区域信息 | Stable | 100.0% |
+| [xenv](02-xenv.md) | 进程级部署类型 | Stable | 95.6% |
 
 ## 选型指南
 
@@ -22,8 +22,8 @@ tags: [moc, packages, context]
 |---|---|
 | 在请求处理链上传递 traceID/tenantID | [xctx](01-xctx.md) |
 | HTTP/gRPC 服务端自动提取租户 | [xtenant](04-xtenant.md) |
-| 知道当前部署环境是 dev/test/prod | [xplatform](03-xplatform.md) |
-| 读取 ENV 变量（含类型转换、默认值） | [xenv](02-xenv.md) |
+| 获取当前平台 ID 或判断是否有上级平台 | [xplatform](03-xplatform.md) |
+| 区分本地部署与 SaaS 部署 | [xenv](02-xenv.md) |
 
 ## 相关概念
 

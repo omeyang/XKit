@@ -17,7 +17,7 @@ tags: [concept, panic, recover, concurrency]
 
 ### Recover 的：
 - [xpool.safeHandle](../04-packages/14-util/08-xpool.md)：worker 包装 handler，外层 recover 防止 worker 死亡
-- [xhealth.statusListener](../04-packages/07-lifecycle/01-xhealth.md)：状态回调（FG-M fix 添加 recover）
+- [xhealth.statusListener](../04-packages/07-lifecycle/01-xhealth.md)：状态回调包含 panic 恢复处理
 - [xconf.safeCallback](../04-packages/02-config/01-xconf.md)：配置变更回调
 - [xelection.observe](../04-packages/05-distributed/03-xelection.md)：watch 中断/session 过期回调
 - [xjson.PrettyE](../04-packages/14-util/03-xjson.md)：拦截 MarshalJSON panic 转 ErrMarshal

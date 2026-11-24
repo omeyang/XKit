@@ -15,34 +15,11 @@ tags: [context, tenant, http, grpc, middleware]
 - 跨服务调用保留租户上下文
 - 业务方读 `xctx.TenantID(ctx)` 无需关心传输层
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/context/xtenant"
+示例文件中的 `ExampleHTTPMiddleware`、`ExampleInjectToRequest` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/context/xtenant` 查看。
 
-// HTTP 服务端
-mux.Use(xtenant.HTTPMiddleware())
-
-// gRPC 服务端
-server := grpc.NewServer(
-    grpc.UnaryInterceptor(xtenant.UnaryServerInterceptor()),
-    grpc.StreamInterceptor(xtenant.StreamServerInterceptor()),
-)
-
-// gRPC 客户端
-conn, _ := grpc.Dial(addr,
-    grpc.WithUnaryInterceptor(xtenant.UnaryClientInterceptor()),
-)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `HTTPMiddleware() func(http.Handler) http.Handler` | HTTP 自动提取 |
-| `UnaryServerInterceptor / StreamServerInterceptor` | gRPC 服务端 |
-| `UnaryClientInterceptor / StreamClientInterceptor` | gRPC 客户端 |
-| `InjectToRequest(ctx, req)` / `InjectToOutgoingContext(ctx)` | 显式注入（跨服务调用）|
+[包说明](../../../pkg/context/xtenant/doc.go) · [使用示例](../../../tests/unit/pkg/context/xtenant/example_test.go)
 
 ## 设计要点
 

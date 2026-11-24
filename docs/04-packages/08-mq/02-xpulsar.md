@@ -15,39 +15,14 @@ Pulsar 客户端。基于 `pulsar-client-go`，加 DLQ + OTel 链路追踪。
 - 延迟消息 / 定时消息
 - 多订阅模式（Exclusive/Shared/Failover/KeyShared）
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/mq/xpulsar"
+示例文件中的 `ExampleNewClient`、`ExampleConsumerOptionsBuilder` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/mq/xpulsar` 查看。
 
-c, _ := xpulsar.NewClient(xpulsar.Config{
-    URL: "pulsar://localhost:6650",
-})
-defer c.Close()
-
-p, _ := c.NewProducer("topic-1")
-_ = p.Send(ctx, []byte(payload))
-
-con, _ := c.NewConsumer(xpulsar.ConsumerConfig{
-    Topic: "topic-1",
-    Subscription: "my-sub",
-    Type: xpulsar.SubscriptionShared,
-})
-_ = con.ConsumeLoop(ctx, handler)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Client / Producer / Consumer` | 三大类型 |
-| `ConsumerConfig.Type` | Exclusive / Shared / Failover / KeyShared |
-| `DLQConfig` | 死信队列 |
-| `TracingClient` | OTel 装饰器 |
+[包说明](../../../pkg/mq/xpulsar/doc.go) · [使用示例](../../../tests/unit/pkg/mq/xpulsar/example_test.go)
 
 ## 设计要点
 
-- **覆盖率最高（99.5%）**：测试用例完整
 - **OTel propagator nil 守卫**：与 xkafka 同样（OTelTracer 零值）
 
 ## 相关

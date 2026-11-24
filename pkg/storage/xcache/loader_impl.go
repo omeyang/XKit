@@ -2,11 +2,9 @@ package xcache
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"log/slog"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -29,28 +27,7 @@ const (
 	// 设计决策: 与 DistributedLockTTL 解耦，确保即使加载耗时接近 TTL，
 	// 解锁仍有充足时间执行。
 	unlockTimeout = 5 * time.Second
-
-	// IEEE 754 双精度浮点数尾数位数及对应缩放系数，用于 randomFloat64。
-	float64MantissaBits  = 53
-	float64MantissaScale = 1.0 / (1 << float64MantissaBits)
 )
-
-// randomFloat64 返回 [0.0, 1.0) 范围内的随机浮点数。
-// 使用 crypto/rand 确保高质量随机数。
-//
-// 设计决策: 此函数是包级工具函数，无法访问 Loader 的 options.Logger，
-// 因此 crypto/rand 失败时使用全局 slog.Warn 而非 Loader 配置的 Logger。
-// 这符合 Go 惯例（包级工具函数使用全局 slog），且 crypto/rand 失败极为罕见。
-func randomFloat64() float64 {
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败表示系统随机数源不可用，返回 0.5（中间值）
-		// 确保 backoffWithJitter 中 (randomFloat64() - 0.5) 为 0，不产生偏移抖动
-		slog.Warn("xcache: crypto/rand failed, using fallback jitter", "error", err)
-		return 0.5
-	}
-	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * float64MantissaScale
-}
 
 // safeLoadFn 安全地执行回源函数，将 panic 转为 error 返回。
 //
@@ -67,22 +44,10 @@ func safeLoadFn(ctx context.Context, loadFn LoadFunc) (value []byte, err error) 
 	return loadFn(ctx)
 }
 
-// detachedCtx 是一个脱离原始 context 取消链的 context。
-// 它保留原始 context 的 Value，但不继承其 Done/Err/Deadline。
-// 这用于 singleflight 和 unlock 场景，避免首个调用者取消影响其他等待者。
-type detachedCtx struct {
-	context.Context
-}
-
-func (c detachedCtx) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c detachedCtx) Done() <-chan struct{}       { return nil }
-func (c detachedCtx) Err() error                  { return nil }
-
-// contextDetached 创建一个脱离原始取消链的 context。
-// 返回的 context 保留原始 context 的 Value，但不继承其取消信号。
+// contextDetached 保留原始 context 的 Value，但不继承其取消信号。
 // 调用方必须保证 ctx 不为 nil。
 func contextDetached(ctx context.Context) context.Context {
-	return detachedCtx{Context: ctx}
+	return context.WithoutCancel(ctx)
 }
 
 // contextWithIndependentTimeout 创建一个脱离原始取消链但有独立超时的 context。
@@ -400,7 +365,7 @@ func (l *loader) applyTTLJitter(ttl time.Duration) time.Duration {
 	if l.options.TTLJitter <= 0 || ttl <= 0 {
 		return ttl
 	}
-	jittered := float64(ttl) * (1 + l.options.TTLJitter*(randomFloat64()-0.5))
+	jittered := float64(ttl) * (1 + l.options.TTLJitter*(rand.Float64()-0.5)) // #nosec G404 -- TTL 抖动不涉及安全用途
 	// 设计决策: 防御性分支。当前 TTLJitter ∈ [0,1] 且 ttl > 0 保证 jittered > 0
 	// （最小值 = ttl * (1 + 1*(0-0.5)) = 0.5*ttl > 0），保留以应对未来约束变更。
 	if jittered <= 0 {
@@ -746,8 +711,8 @@ func backoffWithJitter(attempt int) time.Duration {
 	}
 
 	// 添加抖动: backoff * jitterFraction * (rand - 0.5)
-	// 使用 crypto/rand 确保高质量随机数
-	jitter := time.Duration(float64(backoff) * jitterFraction * (randomFloat64() - 0.5))
+	// 使用 math/rand/v2 生成非安全场景所需的随机抖动
+	jitter := time.Duration(float64(backoff) * jitterFraction * (rand.Float64() - 0.5)) // #nosec G404 -- 重试抖动不涉及安全用途
 	wait := backoff + jitter
 
 	return wait

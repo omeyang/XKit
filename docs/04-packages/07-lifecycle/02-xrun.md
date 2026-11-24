@@ -15,38 +15,16 @@ tags: [lifecycle, errgroup, signal]
 - SIGTERM / SIGINT 触发优雅 shutdown
 - 任一服务失败带动整体退出
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/lifecycle/xrun"
+示例文件中的 `ExampleRun`、`ExampleGroup` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/lifecycle/xrun` 查看。
 
-if err := xrun.Run(ctx,
-    xrun.WithShutdownTimeout(10*time.Second),
-    xrun.Job("http", func(ctx context.Context) error {
-        return httpServer.Serve(ctx)
-    }),
-    xrun.Job("grpc", func(ctx context.Context) error {
-        return grpcServer.Serve(ctx)
-    }),
-); err != nil {
-    log.Fatal(err)
-}
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Run(ctx, opts...) error` | 入口 |
-| `Job(name, fn) Option` | 注册一个长任务 |
-| `WithShutdownTimeout(d)` | 优雅停超时 |
-| `WithSignals(...)` | 自定义触发信号集 |
+[包说明](../../../pkg/lifecycle/xrun/doc.go) · [使用示例](../../../tests/unit/pkg/lifecycle/xrun/example_test.go)
 
 ## 设计要点
 
 - **errgroup 语义**：任一返错触发 ctx cancel
 - **信号 → ctx cancel**：统一信号处理
-- **shutdownTimeout**：到点强制返回，避免卡死
 
 ## 相关
 

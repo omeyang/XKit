@@ -18,33 +18,15 @@ tags: [resilience, rate-limit, token-bucket, redis]
 
 - 单副本：用 `golang.org/x/time/rate` 更轻量
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/resilience/xlimit"
+示例文件中的 `Example_tenantRateLimit`、`Example_localLimiter` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/resilience/xlimit` 查看。
 
-l := xlimit.NewTokenBucket(redisClient, "api:foo",
-    xlimit.WithRate(100),               // 100 tokens/sec
-    xlimit.WithCapacity(200),
-)
-
-if !l.Allow(ctx) {
-    return errors.New("rate limit exceeded")
-}
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Limiter` interface | `Allow(ctx) bool` / `Wait(ctx) error` |
-| `NewTokenBucket(client, key, opts...)` | Redis 后端 |
-| `WithRate / WithCapacity` | 配置 |
+[包说明](../../../pkg/resilience/xlimit/doc.go) · [使用示例](../../../tests/unit/pkg/resilience/xlimit/example_test.go)
 
 ## 设计要点
 
 - **Lua 原子**：避免 race
-- **告警与文档**：对抗审查加强了 Burst/Rate 边界的告警与文档
 
 ## 相关
 

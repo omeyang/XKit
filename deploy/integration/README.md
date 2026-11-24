@@ -62,7 +62,7 @@ podman kube play --down deploy/integration/xkit-integration.yaml
 
 ```bash
 source deploy/integration/env.sh
-go test -tags=integration -v ./pkg/storage/xcache/...
+tests/run go test -tags=integration -v ./pkg/storage/xcache/...
 ```
 
 或者直接设置：

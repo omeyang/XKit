@@ -66,10 +66,7 @@ func NewTokenCache(cfg TokenCacheConfig) *TokenCache {
 	if cfg.LocalCacheTTL <= 0 {
 		// 默认使用刷新阈值的 2 倍作为本地缓存 TTL
 		// 这确保本地缓存不会在 Token 需要刷新前自动过期
-		cfg.LocalCacheTTL = cfg.RefreshThreshold * 2
-		if cfg.LocalCacheTTL < time.Minute {
-			cfg.LocalCacheTTL = time.Minute
-		}
+		cfg.LocalCacheTTL = max(cfg.RefreshThreshold*2, time.Minute)
 	}
 
 	remote := cfg.Remote

@@ -26,7 +26,7 @@ tags: [moc, packages, observability]
 ## 相关概念
 
 - [可观测性栈](../../05-concepts/07-observability-stack.md)
-- [Typed-nil 陷阱](../../05-concepts/10-typed-nil-trap.md) - xmetrics 历史 Bug
+- [Typed-nil 陷阱](../../05-concepts/10-typed-nil-trap.md) - 识别接口中的空指针
 
 ## 相关 ADR
 

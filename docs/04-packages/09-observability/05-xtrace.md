@@ -15,38 +15,17 @@ tags: [observability, trace, w3c, otel]
 - 与 OTel Collector 对接
 - 标准化跨语言/平台
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/observability/xtrace"
+示例文件中的 `ExampleHTTPMiddleware`、`ExampleInjectToOutgoingContext` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/observability/xtrace` 查看。
 
-// HTTP 服务端
-mux.Use(xtrace.HTTPMiddleware(tracerProvider))
-
-// gRPC 服务端
-server := grpc.NewServer(
-    grpc.UnaryInterceptor(xtrace.UnaryServerInterceptor(tracerProvider)),
-)
-
-// 跨服务调用注入
-req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-xtrace.InjectToRequest(ctx, req)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `OTelTracer` | OTel SDK 封装（零值有 propagator nil 守卫）|
-| `HTTPMiddleware / UnaryServerInterceptor` | 服务端 |
-| `InjectToRequest / InjectToOutgoingContext` | 客户端注入 |
-| `ExtractFromHTTPHeader / ExtractFromMetadata` | 显式提取 |
+[包说明](../../../pkg/observability/xtrace/doc.go) · [使用示例](../../../tests/unit/pkg/observability/xtrace/example_test.go)
 
 ## 设计要点
 
 - **W3C 严格**：`traceparent` 校验 version/采样位/格式；非法格式跳过不报错
-- **`tracestate` 孤立时丢弃**（FG-M fix）：W3C 规范要求 traceparent 缺失时不能保留 tracestate
-- **`OTelTracer` 零值守卫**：`propagator==nil` 时 Inject/Extract 降级为 no-op（FG-H fix）
+- **`tracestate` 孤立时丢弃**：W3C 规范要求 traceparent 缺失时不能保留 tracestate
+- **`OTelTracer` 零值守卫**：`propagator==nil` 时 Inject/Extract 降级为 no-op
 
 ## 相关
 

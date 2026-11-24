@@ -38,23 +38,9 @@ livenessProbe:
 
 进程崩 → K8s 重启 → 业务重连 MQ → 重投未 ack 消息。
 
-## handler 内部允许局部 recover
+## 消息处理错误
 
-如果业务方想容忍单条消息的非致命错误（如解析失败），可以在 handler **内部** recover：
-
-```go
-func handler(ctx context.Context, msg *xkafka.Message) error {
-    defer func() {
-        if r := recover(); r != nil {
-            slog.Error("handler panic", "panic", r, "msg", msg.Key)
-            // 决策：返 nil 则 ack（丢消息）；返错则 DLQ
-        }
-    }()
-    return doWork(ctx, msg)
-}
-```
-
-这是**业务侧选择**，库层不强制。
+对于格式错误等可预期的失败，handler 应显式返回错误，并按所选消费者的重试或死信策略处理。
 
 ## 相关
 

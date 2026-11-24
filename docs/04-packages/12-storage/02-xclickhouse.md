@@ -7,43 +7,24 @@ tags: [storage, clickhouse, olap]
 
 # pkg/storage/xclickhouse
 
-ClickHouse 客户端封装。基于 `ClickHouse/clickhouse-go/v2`，加批次原子性 + 类型安全。
+基于 `ClickHouse/clickhouse-go/v2` 的客户端封装，提供分页查询和分批写入。
 
 ## 用途
 
 - OLAP 分析、报表
-- 批量插入大量行（异步 + 原子）
+- 按批次写入多行数据
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/storage/xclickhouse"
+示例文件中的 `ExampleNew`、`ExampleClickHouse_BatchInsert` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/storage/xclickhouse` 查看。
 
-c, _ := xclickhouse.Connect(ctx, xclickhouse.Config{
-    Addr: []string{"localhost:9000"},
-})
-defer c.Close()
-
-batch, _ := c.PrepareBatch(ctx, "INSERT INTO events")
-for _, ev := range events {
-    _ = batch.Append(ev.Time, ev.Type, ev.Payload)
-}
-_ = batch.Send()
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Client` / `Connect(ctx, cfg)` | 入口 |
-| `PrepareBatch` | 批量插入 |
-| `QueryRow / Query` | 查询 |
+[包说明](../../../pkg/storage/xclickhouse/doc.go) · [使用示例](../../../tests/unit/pkg/storage/xclickhouse/example_test.go)
 
 ## 设计要点
 
-- **批次原子性**（FG-M fix）：批次失败回滚，避免半写
+- 追加行失败或发送前发现上下文取消时会中止当前批次。先前发送成功的批次会保留。
 - **LIMIT 变体**：完整支持 `LIMIT m, n` / `LIMIT n OFFSET m`
-- **`COUNT(*)` UInt64 溢出修复**：扫描到 int 容器时 ClickHouse 默认 UInt64 → int 在 64 位无问题但 32 位会溢出
+- 分页总数先按 `uint64` 读取，转为 `int64` 前检查是否溢出。
 
 ## 相关
 

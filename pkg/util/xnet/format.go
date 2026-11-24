@@ -35,7 +35,7 @@ func FormatFullIPAddr(addr netip.Addr) string {
 		b := addr.Unmap().As4()
 		// 手写格式化避免 fmt.Sprintf 的反射开销和额外分配。
 		var buf [15]byte // "xxx.xxx.xxx.xxx"
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			off := i * 4
 			if i > 0 {
 				buf[off-1] = '.'

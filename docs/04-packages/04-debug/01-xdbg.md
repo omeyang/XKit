@@ -15,31 +15,11 @@ tags: [debug, unix-socket]
 - 安全：Unix Socket 仅本机可访问，不外露
 - 配套 CLI：`cmd/xdbgctl`
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/debug/xdbg"
+示例文件中的 `Example`、`Example_withCustomOptions` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/debug/xdbg` 查看。
 
-srv, _ := xdbg.New(xdbg.Config{
-    SocketPath: "/var/run/myapp/debug.sock",
-})
-go srv.Serve()
-defer srv.Close()
-```
-
-CLI：
-```bash
-xdbgctl --socket /var/run/myapp/debug.sock goroutines
-xdbgctl --socket /var/run/myapp/debug.sock heap
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Server / New(cfg)` | 入口 |
-| `Config` | SocketPath / 权限 / 处理器注册 |
-| `Handler` interface | 自定义内省命令 |
+[包说明](../../../pkg/debug/xdbg/doc.go) · [使用示例](../../../tests/unit/pkg/debug/xdbg/example_test.go)
 
 ## 设计要点
 

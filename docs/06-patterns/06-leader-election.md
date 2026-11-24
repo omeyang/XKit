@@ -63,7 +63,7 @@ A 持 leader，网络分区导致 A 失联，B 成为新 leader。但 A 自己**
 
 ### 3. Resign nil ctx
 
-Resign 入口应防 nil ctx（FG-M fix，与 Campaign 对齐）。
+Resign 入口应防 nil ctx，与 Campaign 对齐。
 
 ## 相关
 

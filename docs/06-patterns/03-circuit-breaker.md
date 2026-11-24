@@ -29,25 +29,11 @@ Half-Open ←─────────────────┘
 
 [xbreaker](../04-packages/10-resilience/01-xbreaker.md) 基于 `sony/gobreaker`。
 
-## 模板
+## 使用熔断器
 
-```go
-cb := xbreaker.New("downstream-api",
-    xbreaker.WithMaxRequests(3),        // Half-Open 阶段允许的请求数
-    xbreaker.WithInterval(30*time.Second),  // 计数窗口
-    xbreaker.WithTimeout(10*time.Second),   // Open → Half-Open 等待
-    xbreaker.WithReadyToTrip(func(c gobreaker.Counts) bool {
-        return c.ConsecutiveFailures > 5
-    }),
-)
+通过 `xbreaker.NewBreaker` 创建并复用熔断器。只返回错误的调用使用 `breaker.Do`，需要业务结果的调用使用包函数 `xbreaker.Execute`。连续失败阈值可用 `WithTripPolicy(NewConsecutiveFailures(n))` 配置。
 
-result, err := cb.Execute(ctx, func() (any, error) {
-    return callDownstream(ctx)
-})
-if errors.Is(err, gobreaker.ErrOpenState) {
-    // 熔断中,走降级
-}
-```
+[初始化、状态变化和带返回值的示例](../../tests/unit/pkg/resilience/xbreaker/example_test.go)
 
 ## 组合栈
 
@@ -79,19 +65,9 @@ Rate Limit (限流)
 
 `WithMaxRequests` 控制 Half-Open 阶段试探请求数。试探失败应立即回 Open（不是再等次数）。
 
-### 3. 不要在 Execute 内吞错
+### 3. 保留业务错误
 
-```go
-// bad
-result, err := cb.Execute(ctx, func() (any, error) {
-    err := call()
-    if err != nil {
-        log.Error(err)
-        return nil, nil  // ← 错误被吞 → 熔断器不计数
-    }
-    return result, nil
-})
-```
+回调应返回下游调用的错误，以便熔断器按配置的策略统计调用结果。
 
 ## 相关
 

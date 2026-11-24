@@ -7,39 +7,13 @@ tags: [util, file, path]
 
 # pkg/util/xfile
 
-文件操作工具。重点是**路径安全**：防 directory traversal、符号链接逃逸等。
+处理来自调用方的路径时，使用 `SanitizePath` 做路径校验，使用 `SafeJoin` 在指定目录下拼接路径。需要创建目录时可调用 `EnsureDir`。
 
-## 用途
+## 使用入口
 
-- 安全读写文件（拒绝越权路径）
-- 原子写入（temp file + rename 模式）
-- 路径标准化与校验
+示例文件中的 `ExampleSanitizePath`、`ExampleSafeJoin` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/util/xfile` 查看。
 
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/util/xfile"
-
-data, err := xfile.SafeReadFile("/data/configs", "user.json")
-// 会拒绝 "../../etc/passwd"
-
-err = xfile.AtomicWriteFile("/data/output.json", data, 0644)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `SafeReadFile(baseDir, name) ([]byte, error)` | 限制在 baseDir 内 |
-| `AtomicWriteFile(path, data, perm) error` | temp + rename |
-| `EnsureDir(path, perm) error` | 幂等创建 |
-| `IsSubPath(parent, child) bool` | 安全断言 |
-
-## 设计要点
-
-- **拒绝 `..` 转义**：先 `filepath.Clean`，再判前缀
-- **原子写**：避免半写状态被读到
-- **跨平台**：处理 Windows 与 Unix 路径分隔符差异
+[包说明](../../../pkg/util/xfile/doc.go) · [使用示例](../../../tests/unit/pkg/util/xfile/example_test.go)
 
 ## 相关
 

@@ -17,40 +17,11 @@ Client → Cache.Get(k)
             └── miss: val := DB.Get(k); Cache.Set(k, val, ttl); return val
 ```
 
-## XKit 助手
+## Redis 缓存回源
 
-[xcache.GetOrLoad](../04-packages/12-storage/01-xcache.md) 封装这个流程：
+用 `xcache.NewLoader` 创建加载器。调用 `loader.Load(ctx, key, loadFn, ttl)` 时，Redis 命中则返回缓存的字节，未命中则调用 `loadFn` 并缓存结果。同一加载器会合并同一 key 的并发回源。批量键的过期时间可通过 `WithTTLJitter` 分散。
 
-```go
-val, err := xcache.GetOrLoad(ctx, c, "user:123", 5*time.Minute,
-    func(ctx context.Context) (*User, error) {
-        return loadFromDB(ctx, "123")
-    },
-)
-```
-
-## 进阶：防缓存击穿（同 key 并发回源）
-
-热点 key 失效瞬间多个 goroutine 同时回源，配合 [Singleflight](07-singleflight.md)：
-
-```go
-import "golang.org/x/sync/singleflight"
-
-var g singleflight.Group
-
-val, _, _ := g.Do(key, func() (interface{}, error) {
-    return xcache.GetOrLoad(ctx, c, key, ttl, loader)
-})
-```
-
-XKit 中 [xauth](../04-packages/01-business/01-xauth.md) 用此模式。
-
-## 防雪崩
-
-大量 key 同时过期会导致全量回源。两种缓解：
-
-1. **随机 TTL**：`ttl := base + rand.Duration(0, jitter)`
-2. **双层缓存**：Memory（短 TTL）+ Redis（长 TTL），见 [xauth](../04-packages/01-business/01-xauth.md)
+[Redis 加载与 TTL 抖动示例](../../tests/unit/pkg/storage/xcache/example_test.go) · [Singleflight](07-singleflight.md)
 
 ## 防穿透
 

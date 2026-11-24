@@ -7,38 +7,13 @@ tags: [context, env]
 
 # pkg/context/xenv
 
-环境变量读取与解析。带类型转换、默认值、必填校验。
+服务启动时通过 `Init()` 读取 `DEPLOYMENT_TYPE`，或用 `InitWith` 显式指定本地部署或 SaaS 部署。调用方可通过 `IsLocal()`、`IsSaaS()` 或 `RequireType()` 查询进程级部署类型。
 
-## 用途
+## 使用入口
 
-- 配置加载阶段读取环境变量
-- 兼容 `os.Getenv` 但更安全（类型转换 / 默认 / 必填）
+示例文件中的 `Example_quickStart`、`ExampleRequireType` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/context/xenv` 查看。
 
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/context/xenv"
-
-addr := xenv.String("LISTEN_ADDR", ":8080")
-timeout := xenv.Duration("TIMEOUT", 30*time.Second)
-debug := xenv.Bool("DEBUG", false)
-
-token, err := xenv.Required("API_TOKEN")
-if err != nil { /* missing */ }
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `String / Int / Bool / Duration / Float64` | 带默认值 |
-| `Required(key) (string, error)` | 必填，缺失返错 |
-| `MustRequired(key) string` | panic 版（启动期可用）|
-
-## 设计要点
-
-- **早失败**：`Required` 在启动期触发，远好过运行时空值
-- **类型安全**：避免手动 `strconv.Atoi(os.Getenv(...))` 模板代码
+[包说明](../../../pkg/context/xenv/doc.go) · [使用示例](../../../tests/unit/pkg/context/xenv/example_test.go)
 
 ## 相关
 

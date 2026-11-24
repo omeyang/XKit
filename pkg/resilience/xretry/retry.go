@@ -40,7 +40,7 @@ type BackoffPolicy interface {
 // 消费方: internal/mqcore 在消费成功后通过类型断言调用 Reset() 重置退避状态。
 //
 // 设计决策: Retryer 当前不自动调用 Reset()，因为内置实现
-// ExponentialBackoff.Reset() 是空操作（crypto/rand 无状态）。
+// ExponentialBackoff.Reset() 是空操作（math/rand/v2 无需调用方重置）。
 // 此接口供有状态的自定义 BackoffPolicy 实现，用于在成功后重置内部状态。
 type ResettableBackoff interface {
 	BackoffPolicy

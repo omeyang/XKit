@@ -20,29 +20,11 @@ related:
 
 - 不引入 zap/zerolog/logrus（见 ADR-0005）
 
-## 快速上手
+## 使用入口
 
-```go
-import (
-    "log/slog"
-    "github.com/omeyang/xkit/pkg/observability/xlog"
-)
+示例文件中的 `Example`、`Example_withAttrs` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/observability/xlog` 查看。
 
-logger := xlog.NewWithHandler(slog.NewJSONHandler(os.Stdout, nil))
-
-// 在 XKit 包内作为选项注入
-sem, _ := xsemaphore.New(redisClient, "r",
-    xsemaphore.WithLogger(logger),
-)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Logger` interface | XKit 内部使用的最小接口（`Info / Error / Debug / Warn`）|
-| `NewWithHandler(slog.Handler) Logger` | 包装 slog handler |
-| `Discard()` | 黑洞 Logger（测试用）|
+[包说明](../../../pkg/observability/xlog/doc.go) · [使用示例](../../../tests/unit/pkg/observability/xlog/example_test.go)
 
 ## 设计要点
 

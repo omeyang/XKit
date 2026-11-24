@@ -97,11 +97,10 @@
 //
 // # 性能
 //
-// 采样决策经过优化，热路径零内存分配。使用 crypto/rand 作为随机数源，
-// 确保安全随机性，单次采样决策耗时约 50-100ns。对于采样场景（通常每请求
-// 调用一次），此性能开销完全可接受。
+// 采样决策经过优化，热路径零内存分配。使用 math/rand/v2 作为随机数源；
+// 采样不属于安全敏感场景，无需密码学安全随机数。
 //
 // 运行基准测试：
 //
-//	go test -bench=. -benchmem ./pkg/observability/xsampling
+//	tests/run go test -bench=. -benchmem ./pkg/observability/xsampling
 package xsampling

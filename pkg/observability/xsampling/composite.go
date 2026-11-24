@@ -3,6 +3,7 @@ package xsampling
 import (
 	"context"
 	"reflect"
+	"slices"
 )
 
 // isNilSampler 判断 Sampler 接口值是否为 nil 或 typed-nil（如 (*RateSampler)(nil)）。
@@ -97,10 +98,8 @@ func NewCompositeSampler(mode CompositeMode, samplers ...Sampler) (*CompositeSam
 		return nil, ErrInvalidMode
 	}
 
-	for _, s := range samplers {
-		if isNilSampler(s) {
-			return nil, ErrNilSampler
-		}
+	if slices.ContainsFunc(samplers, isNilSampler) {
+		return nil, ErrNilSampler
 	}
 
 	// 复制切片以防止外部修改

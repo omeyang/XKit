@@ -2,10 +2,9 @@ package xetcd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"time"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -688,33 +687,13 @@ func nextBackoff(current time.Duration, cfg RetryConfig) time.Duration {
 	return min(next, cfg.MaxBackoff)
 }
 
-// jitter 随机数常量，与 xretry 保持一致。
-// 设计决策: 此处与 pkg/resilience/xretry/backoff.go 中的 randomFloat64 实现相同算法。
-// 有意保持 copy-paste 而非提取到 internal/ 共享包，原因：
-//   - xetcd 与 xretry 属于不同领域模块，避免引入跨域依赖
-//   - 算法稳定（crypto/rand + bit-shift 生成 [0,1) 浮点数），变更概率极低
-//   - 若需修改，两处代码均有注释指向对方，便于同步
-const (
-	jitterFloatBits  = 53
-	jitterFloatScale = 1.0 / (1 << jitterFloatBits)
-)
-
 // addJitter 为退避时间添加 ±20% 的随机抖动。
-// 使用 crypto/rand 确保高质量随机数（与 xretry 保持一致）。
+// 使用 math/rand/v2；防止惊群不要求密码学安全随机数。
 func addJitter(d time.Duration) time.Duration {
 	if d <= 0 {
 		return d
 	}
-	// 生成 [0, 1) 的随机浮点数
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		// 设计决策: crypto/rand 失败时返回无抖动（安全默认值），而非 panic 或降级到 math/rand。
-		// Go 1.22+ 中 crypto/rand.Read 在支持的平台上永不失败（使用 getrandom/getentropy），
-		// 此分支仅为防御极端情况（如 /dev/urandom 不可用的受限环境）。
-		// 与 xretry 包的 randomFloat64 保持一致的 fallback 策略。
-		return d
-	}
-	r := float64(binary.LittleEndian.Uint64(buf[:])>>11) * jitterFloatScale
+	r := rand.Float64() // #nosec G404 -- 重连抖动不涉及安全用途
 	// r ∈ [0, 1)，映射到 [-0.2, +0.2) 得到 ±20% 抖动
 	jitter := time.Duration(float64(d) * (r*0.4 - 0.2))
 	return d + jitter

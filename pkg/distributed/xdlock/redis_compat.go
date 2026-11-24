@@ -81,7 +81,7 @@ func (c *compatConn) ScriptLoad(_ *redsyncredis.Script) error {
 //   - deleteScript: Eval(script, key, value)          → 2 个 keysAndArgs
 //   - touchScript:  Eval(script, key, value, expiry)  → 3 个 keysAndArgs
 //   - touchWithSetNXScript: 同 touchScript，脚本 Src 含 "NX"
-func (c *compatConn) Eval(script *redsyncredis.Script, keysAndArgs ...interface{}) (interface{}, error) {
+func (c *compatConn) Eval(script *redsyncredis.Script, keysAndArgs ...any) (any, error) {
 	if c.mode == rediscompat.ScriptModeCompat {
 		return c.evalCompat(script, keysAndArgs...)
 	}
@@ -89,7 +89,7 @@ func (c *compatConn) Eval(script *redsyncredis.Script, keysAndArgs ...interface{
 }
 
 // evalLua 标准 EvalSha → Eval 回退（同 goredis 适配器逻辑）。
-func (c *compatConn) evalLua(script *redsyncredis.Script, keysAndArgs ...interface{}) (interface{}, error) {
+func (c *compatConn) evalLua(script *redsyncredis.Script, keysAndArgs ...any) (any, error) {
 	keys := make([]string, script.KeyCount)
 	args := keysAndArgs
 
@@ -117,7 +117,7 @@ func (c *compatConn) evalLua(script *redsyncredis.Script, keysAndArgs ...interfa
 //   - keysAndArgs 数量 == 2（key + value）→ deleteScript
 //   - keysAndArgs 数量 == 3（key + value + expiry）→ touchScript 或 touchWithSetNXScript
 //   - 其他 → 回退到 evalLua（防御性）
-func (c *compatConn) evalCompat(script *redsyncredis.Script, keysAndArgs ...interface{}) (interface{}, error) {
+func (c *compatConn) evalCompat(script *redsyncredis.Script, keysAndArgs ...any) (any, error) {
 	args := keysAndArgs[script.KeyCount:]
 	key, ok := keysAndArgs[0].(string)
 	if !ok {
@@ -152,7 +152,7 @@ func (c *compatConn) evalCompat(script *redsyncredis.Script, keysAndArgs ...inte
 //
 // 竞态分析：GET-DEL 之间锁可能过期被重获取，DEL 删了新持有者的锁。
 // 窗口微秒级，redsync 的 Redlock 语义本身允许此级别误差。
-func (c *compatConn) evalDelete(key, value string) (interface{}, error) {
+func (c *compatConn) evalDelete(key, value string) (any, error) {
 	val, err := c.client.Get(c.ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -180,7 +180,7 @@ func (c *compatConn) evalDelete(key, value string) (interface{}, error) {
 // 返回值语义与 redsync touchScript 一致：
 //   - int64(1): 成功续期（或 SetNX 成功）
 //   - int64(0): value 不匹配且 SetNX 未启用/失败
-func (c *compatConn) evalTouch(key, value string, expiryMs int64, setNX bool) (interface{}, error) {
+func (c *compatConn) evalTouch(key, value string, expiryMs int64, setNX bool) (any, error) {
 	expiry := time.Duration(expiryMs) * time.Millisecond
 
 	val, err := c.client.Get(c.ctx, key).Result()
@@ -201,7 +201,7 @@ func (c *compatConn) evalTouch(key, value string, expiryMs int64, setNX bool) (i
 }
 
 // touchPExpire 续期已匹配的锁。
-func (c *compatConn) touchPExpire(key string, expiry time.Duration) (interface{}, error) {
+func (c *compatConn) touchPExpire(key string, expiry time.Duration) (any, error) {
 	ok, err := c.client.PExpire(c.ctx, key, expiry).Result()
 	if err != nil {
 		return nil, err
@@ -213,7 +213,7 @@ func (c *compatConn) touchPExpire(key string, expiry time.Duration) (interface{}
 }
 
 // touchSetNX 尝试重新获取已过期的锁（touchWithSetNXScript）。
-func (c *compatConn) touchSetNX(key, value string, expiry time.Duration) (interface{}, error) {
+func (c *compatConn) touchSetNX(key, value string, expiry time.Duration) (any, error) {
 	ok, err := c.client.SetNX(c.ctx, key, value, expiry).Result()
 	if err != nil {
 		return nil, err
@@ -226,7 +226,7 @@ func (c *compatConn) touchSetNX(key, value string, expiry time.Duration) (interf
 
 // toMilliseconds 将 interface{} 转为毫秒数。
 // redsync 传入的 expiry 是 int（毫秒数）。
-func toMilliseconds(v interface{}) (int64, error) {
+func toMilliseconds(v any) (int64, error) {
 	switch val := v.(type) {
 	case int:
 		return int64(val), nil

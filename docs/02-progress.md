@@ -55,7 +55,7 @@
 | `pkg/distributed/xdlock` | Stable | 94.6% | |
 | `pkg/distributed/xcron` | Stable | 94.1% | |
 | `pkg/distributed/xelection` | Stable | 95.4% | 基于 etcd concurrency |
-| `pkg/distributed/xsemaphore` | Stable | 94.1% | Redis Lua + Fallback；多轮对抗审查稳定 |
+| `pkg/distributed/xsemaphore` | Stable | 94.1% | Redis Lua + Fallback |
 
 ### MQ（消息队列）
 
@@ -85,7 +85,7 @@
 | 包 | 稳定性 | 覆盖率 | 备注 |
 |---|---|---|---|
 | `pkg/util/xfile` | Stable | 96.9% | |
-| `pkg/util/xid` | Stable | 99.1% | Sonyflake v2；多轮对抗审查稳定 |
+| `pkg/util/xid` | Stable | 99.1% | Sonyflake v2 |
 | `pkg/util/xjson` | Stable | 100.0% | |
 | `pkg/util/xkeylock` | Stable | 100.0% | |
 | `pkg/util/xlru` | Stable | 100.0% | |

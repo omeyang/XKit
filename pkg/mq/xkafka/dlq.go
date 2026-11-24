@@ -2,6 +2,7 @@ package xkafka
 
 import (
 	"context"
+	"maps"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -124,9 +125,7 @@ func (s *DLQStats) Clone() DLQStats {
 	clone := *s
 	if s.ByTopic != nil {
 		clone.ByTopic = make(map[string]int64, len(s.ByTopic))
-		for k, v := range s.ByTopic {
-			clone.ByTopic[k] = v
-		}
+		maps.Copy(clone.ByTopic, s.ByTopic)
 	}
 	return clone
 }
@@ -197,9 +196,7 @@ func (c *dlqStatsCollector) incSuccessAfterRetry() {
 func (c *dlqStatsCollector) get() DLQStats {
 	c.mu.RLock()
 	byTopic := make(map[string]int64, len(c.byTopic))
-	for k, v := range c.byTopic {
-		byTopic[k] = v
-	}
+	maps.Copy(byTopic, c.byTopic)
 	lastDLQTime := c.lastDLQTime
 	c.mu.RUnlock()
 

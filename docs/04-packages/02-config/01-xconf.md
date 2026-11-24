@@ -7,48 +7,13 @@ tags: [config, koanf]
 
 # pkg/config/xconf
 
-配置管理。基于 [koanf](https://github.com/knadh/koanf)，支持文件 / 环境变量 / 命令行 / 远程多源合并。
+应用可以从 YAML、JSON 文件或字节数据加载配置，使用 koanf 反序列化，并在配置变更后重新加载。
 
-## 用途
+## 使用入口
 
-- 应用启动加载配置（YAML/TOML/JSON）
-- 多环境覆盖（base + override）
-- 热加载（部分后端）
+示例文件中的 `ExampleNewFromBytes`、`ExampleConfig_Reload` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/config/xconf` 查看。
 
-## 不适用场景
-
-- 不引入 viper（依赖太重）
-
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/config/xconf"
-
-c, err := xconf.New(
-    xconf.WithFile("config.yaml"),
-    xconf.WithEnv("MYAPP_"),
-)
-if err != nil { /* ... */ }
-
-var cfg struct {
-    Listen string
-    DB     struct{ DSN string }
-}
-_ = c.Unmarshal("", &cfg)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Config` interface | `Client() *koanf.Koanf / Unmarshal(path, target)` |
-| `New(opts...) (Config, error)` | 入口 |
-| `WithFile / WithEnv / WithRemote` | 后端注入 |
-
-## 设计要点
-
-- **`Reset` / `Init` / `InitWith` 顺序保证**：先写值再标志，避免读到未初始化状态
-- **`dt==""`** 注释明确允许（doc.go:L231-233）
+[包说明](../../../pkg/config/xconf/doc.go) · [使用示例](../../../tests/unit/pkg/config/xconf/example_test.go)
 
 ## 相关
 

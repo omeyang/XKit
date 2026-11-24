@@ -90,10 +90,7 @@ func (c *Client) PutWithTTL(ctx context.Context, key string, value []byte, ttl t
 
 	// 创建租约
 	// 设计决策: 使用向上取整确保键存活时间不短于调用方要求。
-	ttlSeconds := int64(math.Ceil(ttl.Seconds()))
-	if ttlSeconds < 1 {
-		ttlSeconds = 1
-	}
+	ttlSeconds := max(int64(math.Ceil(ttl.Seconds())), 1)
 
 	lease, err := c.client.Grant(ctx, ttlSeconds)
 	if err != nil {

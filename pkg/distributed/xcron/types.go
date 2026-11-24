@@ -49,7 +49,7 @@ type Logger interface {
 	Error(ctx context.Context, msg string, args ...any)
 }
 
-// RetryPolicy 重试策略接口，兼容 xretry.RetryPolicy。
+// RetryPolicy 重试策略接口，语义对应 xretry.RetryPolicy，但接口签名不同。
 // 用于配置任务失败后的重试行为。
 type RetryPolicy interface {
 	// ShouldRetry 判断是否应该重试
@@ -62,7 +62,7 @@ type RetryPolicy interface {
 // 用于配置重试之间的等待时间。
 //
 // 推荐使用 xretry 包中的实现：
-//   - xretry.NewConstantBackoff(delay)
+//   - xretry.NewFixedBackoff(delay)
 //   - xretry.NewExponentialBackoff(opts...)
 //   - xretry.NewLinearBackoff(opts...)
 type BackoffPolicy = xretry.BackoffPolicy

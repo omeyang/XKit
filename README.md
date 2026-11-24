@@ -1,8 +1,6 @@
 # XKit
 
-XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持。文档只关注当下可用能力与使用方式，不引入历史演变。
-
-> AI/RAG 全文喂入：`llms-full.txt` 由 CI 在 push/tag 时生成（Actions 工作流产物 + 在 tag 上附加到 GitHub Release）；本地可运行 `task docs-llms` 按需生成，文件已加入 `.gitignore`。
+XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持。
 
 ---
 
@@ -138,7 +136,10 @@ XKit 是独立的 Go 基础工具库，为业务开发提供通用功能支持�
 - **固定版本**：Go 1.24.6（内网流水线构建底座要求）
 - **验证方法**：`task check-toolchain`（精确校验 `go env GOVERSION`）
 - **不使用 Go 1.25+ 专有 API**；`go run`/`go install` 构建的工具链版本亦须 ≤ 1.24.6
-- **1.23 兼容分支**：[`develop-1.23-release`](https://github.com/omeyang/XKit/tree/develop-1.23-release) 为 Go 1.23 用户提供功能等价版本（仅依赖版本上限不同）
+
+### 业务代码与测试
+
+业务代码位于 `pkg/`、`internal/` 和 `cmd/`。测试源码统一放在 [tests/](tests/README.md)，按单元测试、基准、模糊测试、集成测试和端到端测试分组。运行全套用例使用 `task test`，按包筛选可用 `tests/run go test ./pkg/storage/xcache`。
 
 ### 代码质量
 
@@ -196,6 +197,8 @@ task bench         # 性能基准测试
 ---
 
 ## 文档
+
+包和 API 入口见 [llms.txt](llms.txt)。离线查阅可用 `task docs-llms` 生成 `llms-full.txt`。
 
 文档分类入口：[`docs/00-index.md`](docs/00-index.md)
 

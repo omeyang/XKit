@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Run Go tools with XKit's test sources attached to their original packages."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+GROUPS = ("unit", "bench", "fuzz", "integration")
+
+
+def package_tests():
+    result = {}
+    for group in GROUPS:
+        base = ROOT / "tests" / group
+        for source in sorted(base.rglob("*_test.go")):
+            target = ROOT / source.relative_to(base)
+            if target.exists() or target in result:
+                raise ValueError(f"同一包中存在同名测试文件：{target}")
+            if not target.parent.is_dir():
+                raise ValueError(f"找不到被测包：{target.parent}")
+            result[target] = source
+    return result
+
+
+def lint_workspace(directory, files):
+    # golangci-lint also opens files directly, outside the Go overlay.
+    # Preserve Go package identities and link to the editable source for --fix.
+    for tree in ("cmd", "pkg", "internal"):
+        for source in (ROOT / tree).rglob("*"):
+            if source.is_file():
+                link = directory / source.relative_to(ROOT)
+                link.parent.mkdir(parents=True, exist_ok=True)
+                if source.suffix == ".go":
+                    link.symlink_to(source)
+                else:
+                    # go:embed requires regular files, including the semaphore Lua scripts.
+                    shutil.copy2(source, link)
+    for target, source in files.items():
+        link = directory / target.relative_to(ROOT)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(source)
+    for name in ("go.mod", "go.sum", ".golangci.yml"):
+        link = directory / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(ROOT / name)
+    # Go does not follow package-directory symlinks when expanding ./...
+    e2e = directory / "tests/e2e"
+    e2e.mkdir(parents=True)
+    for source in (ROOT / "tests/e2e").glob("*.go"):
+        (e2e / source.name).symlink_to(source)
+
+
+def main():
+    args = sys.argv[1:]
+    lint = args[:1] == ["--lint"]
+    if lint:
+        args = args[1:]
+    if not args:
+        sys.exit("用法：tests/run go test ./... 或 tests/run --lint golangci-lint run ./...")
+    files = package_tests()
+    with tempfile.TemporaryDirectory(prefix="xkit-tests-") as temp:
+        directory = Path(temp)
+        if lint:
+            lint_workspace(directory, files)
+            return subprocess.run(args, cwd=directory).returncode
+        replace = {str(target): str(source) for target, source in files.items()}
+        replace.update({str(source): "" for source in files.values()})
+        overlay = directory / "overlay.json"
+        overlay.write_text(json.dumps({"Replace": replace}), encoding="utf-8")
+        env = os.environ.copy()
+        env["GOFLAGS"] = (env.get("GOFLAGS", "") + f' "-overlay={overlay}"').strip()
+        return subprocess.run(args, env=env).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

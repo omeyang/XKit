@@ -11,13 +11,13 @@ related:
 
 # pkg/distributed/xsemaphore
 
-Redis 分布式信号量。支持容量限制、租户配额、Lua 脚本原子操作 + Fallback 降级、多副本协调、自动续期。**经多轮对抗审查稳定。**
+Redis 分布式信号量。支持容量限制、租户配额、Lua 脚本原子操作 + Fallback 降级、多副本协调、自动续期。
 
 ## 用途
 
 - 限制并发数：如"全集群同时只能 N 个 worker 处理某资源"
 - 多租户配额：每个 tenant 独立配额，避免单租户耗尽全局容量
-- 防雪崩：Redis 失联时可选 Fallback 到本地信号量（FailOpen / FailClosed）
+- 防雪崩：Redis 失联时可选 使用本地信号量、放行或拒绝请求
 
 ## 不适用场景
 
@@ -40,14 +40,14 @@ ctx := context.Background()
 _ = xsemaphore.WarmupScripts(ctx, redisClient)
 
 // 2. 创建信号量
-sem, err := xsemaphore.New(redisClient, "my-resource",
+sem, err := xsemaphore.New(redisClient,
     xsemaphore.WithFallback(xsemaphore.FallbackOpen),
     xsemaphore.WithPodCount(3),
 )
 if err != nil { /* ... */ }
 
 // 3. 获取许可（带容量、TTL、租户）
-permit, err := sem.Acquire(ctx,
+permit, err := sem.Acquire(ctx, "my-resource",
     xsemaphore.WithCapacity(10),
     xsemaphore.WithTTL(30*time.Second),
     xsemaphore.WithTenantID("tenant-A"),
@@ -71,7 +71,7 @@ permit.Extend(ctx, 30*time.Second)
 |---|---|
 | `Semaphore` | 信号量接口（`Acquire/Release/Extend/Query`）|
 | `Permit` | 许可句柄（`Release/Extend/ID/Resource/Capacity`）|
-| `FallbackStrategy` | `FallbackOpen` / `FallbackClosed` / 无（默认）|
+| `FallbackStrategy` | `FallbackLocal` / `FallbackOpen` / `FallbackClose` / `FallbackNone`（默认）|
 | `WarmupScripts(ctx, client)` | 启动时预热 Lua 脚本到 Redis SHA |
 | `WithFallback / WithPodCount / WithOnFallback` | 降级策略 |
 | `WithMaxRetries / WithRetryDelay` | 重试控制（上限 `MaxMaxRetries=10000`）|

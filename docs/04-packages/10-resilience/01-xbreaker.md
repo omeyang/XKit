@@ -16,33 +16,11 @@ related:
 - 防止级联故障：下游异常时快速失败，避免堆积
 - 给下游恢复时间
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/resilience/xbreaker"
+示例文件中的 `ExampleNewBreaker`、`ExampleExecute` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/resilience/xbreaker` 查看。
 
-cb := xbreaker.New("downstream-service",
-    xbreaker.WithMaxRequests(3),
-    xbreaker.WithInterval(30*time.Second),
-    xbreaker.WithTimeout(10*time.Second),
-    xbreaker.WithReadyToTrip(func(counts gobreaker.Counts) bool {
-        return counts.ConsecutiveFailures > 5
-    }),
-)
-
-result, err := cb.Execute(ctx, func() (any, error) {
-    return callDownstream(ctx)
-})
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Breaker` | 熔断器实例 |
-| `New(name, opts...) *Breaker` | 构造 |
-| `Execute(ctx, fn) (result, error)` | 包裹调用 |
-| `WithMaxRequests / WithInterval / WithTimeout / WithReadyToTrip` | 选项 |
+[包说明](../../../pkg/resilience/xbreaker/doc.go) · [使用示例](../../../tests/unit/pkg/resilience/xbreaker/example_test.go)
 
 ## 设计要点
 

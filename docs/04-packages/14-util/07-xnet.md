@@ -52,7 +52,7 @@ fmt.Println(set.Contains(netip.MustParseAddr("10.1.1.1"))) // true
 ## 设计要点
 
 - **`unmapAddr`** 在所有 ParseRange 路径里归一化 IPv4-mapped IPv6 → 纯 IPv4
-- **错误链**：跨包用 `%w` 包装 `ParseAddr` 底层错（FG-M fix）
+- **错误链**：跨包用 `%w` 包装 `ParseAddr` 底层错
 - **`FormatFullIPAddr` IPv6 路径**：`hex.Encode` + 栈 `[32]byte` 缓冲，1 alloc vs 上一版的 2
 - **`IsBroadcast`** 优先级在 `IsMulticast` 之前；`255.255.255.255` 是 broadcast 不是 reserved
 - **`IsBenchmark`** 覆盖 IPv4（`198.18.0.0/15`）+ IPv6（`2001:2::/48` RFC 5180）

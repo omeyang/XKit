@@ -7,7 +7,7 @@ tags: [util, mac, iter]
 
 # pkg/util/xmac
 
-MAC 地址工具。多格式解析、Go 1.23+ `iter.Seq` 区间迭代、批量收集。
+MAC 地址工具。多格式解析、Go 1.24.6 `iter.Seq` 区间迭代、批量收集。
 
 ## 用途
 
@@ -23,7 +23,7 @@ import "github.com/omeyang/xkit/pkg/util/xmac"
 m, _ := xmac.Parse("aa:bb:cc:dd:ee:ff")
 fmt.Println(m.String())
 
-// Go 1.23+ iter
+// Go 1.24.6 iter
 for addr := range xmac.RangeN(m, 100) {
     process(addr)
 }
@@ -37,18 +37,16 @@ total := xmac.RangeCount(start, end)
 | 名称 | 说明 |
 |---|---|
 | `Addr` | 6 字节 MAC，值类型 |
-| `Format uint8` | 序列化格式（Canonical/Cisco/Bare 等）|
+| `Format uint8` | 序列化格式（冒号、短横线、点分或无分隔符）|
 | `Parse / MustParse / ParseBytes / FromHardwareAddr` | 解析 |
 | `Zero / Broadcast` | 特殊地址 |
 | `Range / RangeN / RangeWithIndex / RangeReverse / RangeReverseWithIndex` | `iter.Seq` / `iter.Seq2` 迭代 |
 | `CollectN / Count / RangeCount` | 聚合 |
-| `AddrToUint64 / Uint64ToAddr` | uint64 互转 |
 | `AddrFrom6([6]byte)` | 字节数组构造 |
 
 ## 设计要点
 
-- **`iter.Seq` 优先**：Go 1.23+ 标准，可与 `slices` 包组合
-- **`uint64` 转换**：方便排序、做哈希 key
+- **`iter.Seq` 优先**：使用标准迭代器，可与 `slices` 包组合
 - **Format 枚举**：避免字符串魔法值
 
 ## 相关

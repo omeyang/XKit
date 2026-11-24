@@ -28,7 +28,7 @@ ignore:
   - "**/mocks/**"
   - "**/example_*.go"
   - "**/doc.go"
-  - "internal/e2e/**"
+  - "tests/**"
   - "examples/**"
 
 # PR 评论配置

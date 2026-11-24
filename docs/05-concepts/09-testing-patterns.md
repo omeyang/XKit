@@ -53,7 +53,7 @@ package xkafka_test
 ```
 
 ```bash
-go test -tags=integration ./pkg/mq/...
+tests/run go test -tags=integration ./pkg/mq/...
 ```
 
 容器编排见 [deploy/integration/README.md](../../deploy/integration/README.md)。
@@ -73,7 +73,7 @@ func TestMain(m *testing.M) {
 - HTTP：`net/http/httptest`
 - gRPC：`google.golang.org/grpc/test/bufconn`
 
-[xetcdtest](../04-packages/13-testkit/01-xetcdtest.md) 用 bufconn dialer 传播 ctx（FG-M fix）。
+[xetcdtest](../04-packages/13-testkit/01-xetcdtest.md) 用 bufconn dialer 传播 ctx。
 
 ## Mock 子包
 
@@ -102,7 +102,7 @@ if !bytes.Equal(got, want) { t.Fatal(...) }
 
 ## benchmem
 
-性能测试用 `go test -bench=. -benchmem` 跟踪 allocations：
+性能测试用 `tests/run go test -bench=. -benchmem` 跟踪 allocations：
 
 ```bash
 task bench

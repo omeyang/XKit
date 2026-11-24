@@ -5,24 +5,7 @@ tags: [glossary]
 
 # 术语表
 
-XKit 文档与对抗审查中频繁出现的简写与术语。
-
-## 对抗审查相关
-
-| 术语 | 含义 |
-|---|---|
-| **CA** | Claude A：对抗审查中的第一路 Claude 审查 |
-| **CB** | Claude B：第二路 Claude（不同视角/prompt） |
-| **Codex A** | OpenAI Codex 第一组 |
-| **Codex B** | OpenAI Codex 第二组 |
-| **CC** | Claude 交叉裁决（Cross-Check）：判定其他路发现的真伪 |
-| **FG-H** | Finding Grade - High：高严重发现（race / NPE / data loss） |
-| **FG-M** | Finding Grade - Medium：中严重（错误处理瑕疵、文档不准） |
-| **FG-L** | Finding Grade - Low：低严重（命名、格式） |
-| **FG-S** | Finding Grade - Style/Security：样式或安全独立汇总 |
-| **FP** | False Positive：误报（不是真问题） |
-| **slot** | 对抗审查 cron 的轮转位（0-7 / 0-14 等），对应固定包映射 |
-| **a / b / c** | CC 裁决标签：a=真问题 / b=FP / c=不确定 |
+XKit 包文档中的常用术语。
 
 ## Go 语言术语
 
@@ -42,8 +25,8 @@ XKit 文档与对抗审查中频繁出现的简写与术语。
 |---|---|
 | **MOC** | Map of Content：领域索引文档（每个分区有一个 00-index.md） |
 | **ADR** | Architecture Decision Record：架构决策记录（`docs/01-decisions/`） |
-| **Fallback** | 降级策略：xsemaphore 的 `FallbackOpen` / `FallbackClosed` |
-| **Lua + Fallback** | xsemaphore 在 Redis 失联时降级到本地信号量 |
+| **Fallback** | 降级策略：xsemaphore 的 `FallbackOpen` / `FallbackClose` |
+| **Lua + Fallback** | 配置 FallbackLocal 后，xsemaphore 可降级到本地信号量 |
 | **Hash tag** | Redis 集群兼容用：`{resource}:` 前缀保证同槽 |
 | **Informer** | etcd 仿 K8s client-go 的 list+watch 缓存（[xetcd](04-packages/12-storage/03-xetcd.md)） |
 | **DLQ** | Dead Letter Queue：死信队列（[xkafka](04-packages/08-mq/01-xkafka.md) / [xpulsar](04-packages/08-mq/02-xpulsar.md)） |
@@ -75,7 +58,7 @@ XKit 文档与对抗审查中频繁出现的简写与术语。
 
 | 术语 | 含义 |
 |---|---|
-| **benchmem** | `go test -bench=. -benchmem`：基准测试含内存分配 |
+| **benchmem** | `tests/run go test -bench=. -benchmem`：基准测试含内存分配 |
 | **alloc** | allocation：堆分配次数（越少越好） |
 | **escape analysis** | 逃逸分析：变量是否分配到堆 |
 | **sync.Pool** | 对象池：复用临时对象，减少 GC 压力 |

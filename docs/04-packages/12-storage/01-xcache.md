@@ -9,43 +9,13 @@ related:
 
 # pkg/storage/xcache
 
-缓存抽象层。Redis / Memory 双后端 + Cache-Aside 助手。
+`NewRedis` 封装 Redis 客户端，`NewMemory` 创建进程内缓存。需要在 Redis 未命中时回源的调用方，通过 `NewLoader` 创建加载器，使用 `Load` 或 `LoadHash` 加载字节数据。
 
-## 用途
+## 使用入口
 
-- 业务代码不写 Redis client 直接调用
-- 测试时切换 Memory 后端
-- 标准 Cache-Aside 流程
+示例文件中的 `ExampleNewRedis`、`ExampleNewLoader` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/storage/xcache` 查看。
 
-## 快速上手
-
-```go
-import "github.com/omeyang/xkit/pkg/storage/xcache"
-
-c := xcache.NewRedis(redisClient, "myapp")
-
-// Cache-Aside
-val, err := xcache.GetOrLoad(ctx, c, "user:123",
-    5*time.Minute,
-    func(ctx context.Context) (*User, error) {
-        return loadFromDB(ctx, "123")
-    },
-)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Cache` interface | `Get / Set / Del / GetMulti / SetMulti` |
-| `NewRedis(client, namespace) Cache` | Redis 后端 |
-| `NewMemory(maxEntries, ttl) Cache` | 内存后端（基于 xlru）|
-| `GetOrLoad[T](ctx, c, key, ttl, loader)` | Cache-Aside 助手 |
-
-## 设计要点
-
-- **接口由使用方定义**：业务方可写自家 mock
-- **namespace 前缀**：避免多服务同 Redis 撞 key
+[包说明](../../../pkg/storage/xcache/doc.go) · [使用示例](../../../tests/unit/pkg/storage/xcache/example_test.go)
 
 ## 相关
 

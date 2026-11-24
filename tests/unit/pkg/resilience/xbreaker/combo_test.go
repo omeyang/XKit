@@ -1,0 +1,552 @@
+package xbreaker
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/omeyang/xkit/pkg/resilience/xretry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBreakerRetryer(t *testing.T) {
+	t.Run("success on first try", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = combo.DoWithRetry(ctx, func(_ context.Context) error {
+			callCount++
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1, callCount)
+	})
+
+	t.Run("success after retry", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = combo.DoWithRetry(ctx, func(_ context.Context) error {
+			callCount++
+			if callCount < 3 {
+				return errTest
+			}
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 3, callCount)
+	})
+
+	t.Run("all retries fail", func(t *testing.T) {
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(5)), // 需要5次连续失败才熔断
+		)
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = combo.DoWithRetry(ctx, func(_ context.Context) error {
+			callCount++
+			return errTest
+		})
+
+		assert.ErrorIs(t, err, errTest)
+		assert.Equal(t, 3, callCount)
+	})
+
+	t.Run("breaker open", func(t *testing.T) {
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(1)),
+			WithTimeout(time.Hour),
+		)
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 触发熔断
+		_ = combo.DoWithRetry(ctx, func(_ context.Context) error {
+			return errTest
+		})
+
+		// 下一次调用应该直接失败
+		var callCount int
+		err = combo.DoWithRetry(ctx, func(_ context.Context) error {
+			callCount++
+			return nil
+		})
+
+		assert.True(t, IsOpen(err))
+		assert.Equal(t, 0, callCount) // 函数不应该被调用
+	})
+
+	t.Run("getters", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer()
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+
+		assert.Equal(t, breaker, combo.Breaker())
+		assert.Equal(t, retryer, combo.Retryer())
+	})
+}
+
+func TestBreakerRetryer_DoWithRetrySimple(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer()
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		err = combo.DoWithRetrySimple(ctx, func() error {
+			return nil
+		})
+
+		assert.NoError(t, err)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(2)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = combo.DoWithRetrySimple(ctx, func() error {
+			callCount++
+			return errTest
+		})
+
+		assert.ErrorIs(t, err, errTest)
+		assert.Equal(t, 2, callCount)
+	})
+}
+
+func TestExecuteWithRetry(t *testing.T) {
+	t.Run("success with value", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer()
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		result, err := ExecuteWithRetry(ctx, combo, func() (string, error) {
+			return "hello", nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "hello", result)
+	})
+
+	t.Run("success after retry", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int32
+		result, err := ExecuteWithRetry(ctx, combo, func() (int, error) {
+			count := atomic.AddInt32(&callCount, 1)
+			if count < 3 {
+				return 0, errTest
+			}
+			return 42, nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 42, result)
+		assert.Equal(t, int32(3), callCount)
+	})
+
+	t.Run("breaker open", func(t *testing.T) {
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(1)),
+			WithTimeout(time.Hour),
+		)
+		retryer := xretry.NewRetryer()
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 触发熔断
+		_, _ = ExecuteWithRetry(ctx, combo, func() (string, error) {
+			return "", errTest
+		})
+
+		// 下一次调用应该直接失败
+		result, err := ExecuteWithRetry(ctx, combo, func() (string, error) {
+			return "hello", nil
+		})
+
+		assert.True(t, IsOpen(err))
+		assert.Empty(t, result)
+	})
+}
+
+func TestRetryThenBreak(t *testing.T) {
+	t.Run("success on first try", func(t *testing.T) {
+		retryer := xretry.NewRetryer()
+		breaker := NewBreaker("test")
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = rtb.Do(ctx, func(_ context.Context) error {
+			callCount++
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 1, callCount)
+		// 成功被记录到 rtb 内部的熔断器
+		counts := rtb.Counts()
+		assert.Equal(t, uint32(1), counts.TotalSuccesses)
+	})
+
+	t.Run("success after retry", func(t *testing.T) {
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		breaker := NewBreaker("test")
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		var callCount int
+		err = rtb.Do(ctx, func(_ context.Context) error {
+			callCount++
+			if callCount < 3 {
+				return errTest
+			}
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, 3, callCount)
+		// 只有最终的成功被记录到 rtb 内部的熔断器
+		counts := rtb.Counts()
+		assert.Equal(t, uint32(1), counts.TotalSuccesses)
+		assert.Equal(t, uint32(0), counts.TotalFailures)
+	})
+
+	t.Run("all retries fail", func(t *testing.T) {
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(3)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)),
+		)
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 第一次调用：3次重试都失败 → 记录1次失败
+		err = rtb.Do(ctx, func(_ context.Context) error {
+			return errTest
+		})
+		assert.ErrorIs(t, err, errTest)
+		assert.Equal(t, StateClosed, rtb.State()) // 只有1次失败
+
+		// 第二次调用：3次重试都失败 → 记录第2次失败 → 触发熔断
+		err = rtb.Do(ctx, func(_ context.Context) error {
+			return errTest
+		})
+		assert.ErrorIs(t, err, errTest)
+		assert.Equal(t, StateOpen, rtb.State())
+	})
+
+	t.Run("getters", func(t *testing.T) {
+		retryer := xretry.NewRetryer()
+		breaker := NewBreaker("test")
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+
+		assert.Equal(t, breaker, rtb.Breaker())
+		assert.Equal(t, retryer, rtb.Retryer())
+	})
+}
+
+func TestExecuteRetryThenBreak(t *testing.T) {
+	t.Run("success with value", func(t *testing.T) {
+		retryer := xretry.NewRetryer()
+		breaker := NewBreaker("test")
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		result, err := ExecuteRetryThenBreak(ctx, rtb, func() (string, error) {
+			return "hello", nil
+		})
+
+		assert.NoError(t, err)
+		assert.Equal(t, "hello", result)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(2)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		breaker := NewBreaker("test")
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		result, err := ExecuteRetryThenBreak(ctx, rtb, func() (int, error) {
+			return 0, errTest
+		})
+
+		assert.ErrorIs(t, err, errTest)
+		assert.Equal(t, 0, result)
+	})
+}
+
+func TestBreakerRetryer_Integration(t *testing.T) {
+	t.Run("realistic scenario", func(t *testing.T) {
+		// 模拟一个服务：前几次调用都失败，触发熔断
+		breaker := NewBreaker("test-service",
+			WithTripPolicy(NewConsecutiveFailures(3)),
+			WithTimeout(50*time.Millisecond),
+			WithMaxRequests(1),
+		)
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(2)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		combo, err := NewBreakerRetryer(breaker, retryer)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 3次调用都失败（每次重试2次也失败），触发熔断
+		for range 3 {
+			_, _ = ExecuteWithRetry(ctx, combo, func() (string, error) {
+				return "", errors.New("service unavailable")
+			})
+		}
+
+		// 检查熔断器是否打开
+		assert.Equal(t, StateOpen, breaker.State())
+
+		// 等待超时，进入半开状态
+		time.Sleep(60 * time.Millisecond)
+		assert.Equal(t, StateHalfOpen, breaker.State())
+
+		// 服务已恢复，成功的调用会关闭熔断器
+		result, err := ExecuteWithRetry(ctx, combo, func() (string, error) {
+			return "recovered", nil
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, "recovered", result)
+		assert.Equal(t, StateClosed, breaker.State())
+	})
+}
+
+func TestNewBreakerRetryer_NilArgs(t *testing.T) {
+	t.Run("nil breaker", func(t *testing.T) {
+		retryer := xretry.NewRetryer()
+		_, err := NewBreakerRetryer(nil, retryer)
+		assert.ErrorIs(t, err, ErrNilBreaker)
+	})
+
+	t.Run("nil retryer", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		_, err := NewBreakerRetryer(breaker, nil)
+		assert.ErrorIs(t, err, ErrNilRetryer)
+	})
+}
+
+func TestNewRetryThenBreak_NilArgs(t *testing.T) {
+	t.Run("nil retryer", func(t *testing.T) {
+		breaker := NewBreaker("test")
+		_, err := NewRetryThenBreak(nil, breaker)
+		assert.ErrorIs(t, err, ErrNilRetryer)
+	})
+
+	t.Run("nil breaker", func(t *testing.T) {
+		retryer := xretry.NewRetryer()
+		_, err := NewRetryThenBreak(retryer, nil)
+		assert.ErrorIs(t, err, ErrNilBreaker)
+	})
+}
+
+func TestNewRetryThenBreakWithConfig_NilRetryer(t *testing.T) {
+	_, err := NewRetryThenBreakWithConfig("test", nil)
+	assert.ErrorIs(t, err, ErrNilRetryer)
+}
+
+func TestRetryThenBreak_Do_ContextCancelled(t *testing.T) {
+	retryer := xretry.NewRetryer()
+	breaker := NewBreaker("test")
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = rtb.Do(ctx, func(_ context.Context) error {
+		return nil
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestExecuteRetryThenBreak_ContextCancelled(t *testing.T) {
+	retryer := xretry.NewRetryer()
+	breaker := NewBreaker("test")
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = ExecuteRetryThenBreak(ctx, rtb, func() (string, error) {
+		return "hello", nil
+	})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRetryThenBreak_OpenState(t *testing.T) {
+	retryer := xretry.NewRetryer(
+		xretry.WithRetryPolicy(xretry.NewFixedRetry(1)),
+		xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+	)
+	breaker := NewBreaker("test",
+		WithTripPolicy(NewConsecutiveFailures(1)),
+		WithTimeout(time.Hour),
+	)
+	rtb, err := NewRetryThenBreak(retryer, breaker)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// 触发熔断
+	_ = rtb.Do(ctx, func(_ context.Context) error { return errTest })
+	assert.Equal(t, StateOpen, rtb.State())
+
+	// 熔断器打开时 Do 应返回 BreakerError
+	err = rtb.Do(ctx, func(_ context.Context) error { return nil })
+	assert.True(t, IsOpen(err))
+
+	// 泛型版本也应返回 BreakerError
+	_, err = ExecuteRetryThenBreak(ctx, rtb, func() (string, error) {
+		return "hello", nil
+	})
+	assert.True(t, IsOpen(err))
+}
+
+// === 修复验证测试 ===
+
+// TestRetryThenBreak_WithSuccessPolicy 验证问题1的修复：
+// RetryThenBreak 应该使用 SuccessPolicy 判断成功，而不是简单的 err == nil
+func TestRetryThenBreak_WithSuccessPolicy(t *testing.T) {
+	// 定义一个特殊错误，该错误应被视为"成功"
+	errExpected := errors.New("expected error - should be treated as success")
+
+	// 自定义成功判定策略：errExpected 被视为成功
+	customPolicy := &testSuccessPolicy{
+		successErrors: []error{errExpected},
+	}
+
+	t.Run("Do with SuccessPolicy", func(t *testing.T) {
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(1)), // 只尝试1次
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)), // 2次连续失败触发熔断
+			WithSuccessPolicy(customPolicy),
+		)
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 返回 errExpected，应被视为成功（不增加失败计数）
+		err = rtb.Do(ctx, func(_ context.Context) error {
+			return errExpected
+		})
+
+		// 函数仍然返回原始错误
+		assert.ErrorIs(t, err, errExpected)
+
+		// 但熔断器应该记录为成功
+		counts := rtb.Counts()
+		assert.Equal(t, uint32(1), counts.TotalSuccesses, "should count as success")
+		assert.Equal(t, uint32(0), counts.TotalFailures, "should not count as failure")
+
+		// 再次调用，仍然返回 errExpected
+		_ = rtb.Do(ctx, func(_ context.Context) error {
+			return errExpected
+		})
+
+		// 熔断器应该保持 Closed 状态（因为没有失败）
+		assert.Equal(t, StateClosed, rtb.State())
+	})
+
+	t.Run("ExecuteRetryThenBreak with SuccessPolicy", func(t *testing.T) {
+		retryer := xretry.NewRetryer(
+			xretry.WithRetryPolicy(xretry.NewFixedRetry(1)),
+			xretry.WithBackoffPolicy(xretry.NewNoBackoff()),
+		)
+		breaker := NewBreaker("test",
+			WithTripPolicy(NewConsecutiveFailures(2)),
+			WithSuccessPolicy(customPolicy),
+		)
+		rtb, err := NewRetryThenBreak(retryer, breaker)
+		require.NoError(t, err)
+		ctx := context.Background()
+
+		// 返回 errExpected，应被视为成功
+		// 注意：retry-go 在返回错误时不保留结果值，这是其正常行为
+		_, err = ExecuteRetryThenBreak(ctx, rtb, func() (string, error) {
+			return "result", errExpected
+		})
+
+		assert.ErrorIs(t, err, errExpected)
+		// 注：不断言 result，因为 retry-go 在有错误时会丢弃结果
+
+		// 熔断器应该记录为成功（这是测试的核心验证点）
+		counts := rtb.Counts()
+		assert.Equal(t, uint32(1), counts.TotalSuccesses)
+		assert.Equal(t, uint32(0), counts.TotalFailures)
+	})
+}
+
+// testSuccessPolicy 是 customSuccessPolicy 的别名，避免重复定义
+// 实际类型定义在 breaker_test.go 中
+type testSuccessPolicy = customSuccessPolicy

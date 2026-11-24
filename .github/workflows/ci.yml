@@ -1,15 +1,11 @@
 name: CI
 
-# 两个长期分支共用这一份触发条件，`on:` 块在两分支间保持逐字一致——
-# ci.yml 的分支差异只允许出现在下面 env 的 GO_VERSION 与工具版本上。
-# push 事件读取被推送分支自身的这份定义，因此每个分支的门禁由它自己的
-# 这个文件生效；列表里的另一个分支名是 no-op，只为消除两分支的无谓 diff。
 on:
   push:
-    branches: [main, develop-1.23-release]
+    branches: [main]
     tags: ['v*']
   pull_request:
-    branches: [main, develop-1.23-release]
+    branches: [main]
 
 permissions:
   contents: read
@@ -41,18 +37,18 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false  # 由 golangci-lint-action 管理缓存
+          cache: true
 
       - name: Install librdkafka (for confluent-kafka-go)
         run: |
           sudo apt-get update
           sudo apt-get install -y librdkafka-dev
 
+      - name: Check Go source layout and size
+        run: go run tests/check-go-size.go
+
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: ${{ env.GOLANGCI_LINT_VERSION }}
-          args: --timeout=5m
+        run: tests/run --lint go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }} run --timeout=5m ./...
 
       - name: Check go mod tidy
         run: |
@@ -92,7 +88,7 @@ jobs:
         run: go clean -testcache
 
       - name: Run tests with coverage
-        run: go test -v -race -p 2 -coverprofile=coverage.out -covermode=atomic ./...
+        run: tests/run go test -v -race -p 2 -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6.0.0
@@ -147,10 +143,10 @@ jobs:
           # 打印其余包，管道退出码取自 grep（0），pkgs 非空 → 空集校验放行 →
           # go vet 只扫到子集，跨平台门禁静默降级为部分覆盖。Taskfile 侧已有此行。
           set -euo pipefail
-          pkgs=$(go list ./... | grep -vE '/pkg/mq/xkafka($|/)')
+          pkgs=$(tests/run go list ./... | grep -vE '/pkg/mq/xkafka($|/)')
           [ -n "$pkgs" ] || { echo "::error::go list 未返回任何包，交叉编译门禁无法生效"; exit 1; }
           # shellcheck disable=SC2086  # pkgs 为换行分隔的包列表，此处依赖分词展开为多参数
-          GOOS=windows GOARCH=amd64 go vet $pkgs
+          GOOS=windows GOARCH=amd64 tests/run go vet $pkgs
 
       # BSD 系与 tag 变体：与 Taskfile.yml 的 cross-check 后两条命令保持一致。
       # 只 vet xdbg 与 xsys（仅这两个包含平台专属文件），只取 darwin + freebsd
@@ -159,10 +155,10 @@ jobs:
         run: |
           set -euo pipefail
           for os in darwin freebsd; do
-            GOOS=$os GOARCH=amd64 go vet ./pkg/debug/xdbg/... ./pkg/util/xsys/...
+            GOOS=$os GOARCH=amd64 tests/run go vet ./pkg/debug/xdbg/... ./pkg/util/xsys/...
           done
           for tag in integration e2e; do
-            go vet -tags="$tag" ./...
+            tests/run go vet -tags="$tag" ./...
           done
 
   # 说明：不设 govulncheck 作业。工具链锁定 go1.24.6 而 Go 1.24 已停止安全维护，
@@ -188,7 +184,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Generate llms-full.txt
-        run: bash scripts/gen-llms-full.sh
+        run: bash docs/build-llms.sh
 
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v4

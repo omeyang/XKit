@@ -18,26 +18,11 @@ tags: [pattern, distributed, lock]
 | Redis NX + Lua | 已有 Redis；高频短期锁 |
 | etcd concurrency.Mutex | 强一致；带 lease |
 
-## 使用模板
+## 使用 Redis 锁
 
-```go
-import "github.com/omeyang/xkit/pkg/distributed/xdlock"
+从 `xdlock.NewRedisFactory` 创建工厂，再按资源名获取锁句柄。临界区结束时用该句柄释放锁。多节点 Redlock 可向工厂传入多个 Redis 客户端。
 
-l, err := xdlock.NewRedis(redisClient, "lock:my-op",
-    xdlock.WithTTL(30*time.Second),
-    xdlock.WithTries(10),
-)
-if err != nil { return err }
-defer l.Close()
-
-held, err := l.Lock(ctx)
-if err != nil { return err }
-if !held { return ErrBusy }
-defer l.Unlock(ctx)
-
-// 临界区
-return doWork(ctx)
-```
+[加锁、释放和多节点示例](../../tests/unit/pkg/distributed/xdlock/example_test.go)
 
 ## 关键陷阱
 
@@ -59,11 +44,7 @@ return 0
 - 太短：临界区还没结束就过期
 - 太长：进程崩了之后久不释放
 
-**Renew 模式**：临界区内主动续期（XKit 不内置心跳，由调用方决定）。
-
-### 3. 时钟漂移
-
-Redlock 算法依赖多 Redis 实例时钟一致。XKit 不实现 Redlock（单 Redis 已够大多数业务）。
+对需要延长持有时间的操作，调用锁句柄的 `Extend(ctx)` 并检查返回的错误。
 
 ## 何时选 xdlock vs 其他
 

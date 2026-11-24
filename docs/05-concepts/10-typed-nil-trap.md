@@ -23,43 +23,6 @@ if err := mayFail(); err != nil {
 
 `err != nil` 居然为 true！因为 `error` 接口由 `(type=*MyError, value=nil)` 组成，**类型非 nil**，所以接口非 nil。
 
-## XKit 历史 Bug
-
-### xsemaphore `doFallback` typed-nil 接口陷阱
-
-```go
-// 修复前
-func doFallback(...) (Permit, error) {
-    p := newNoopPermit(...)  // 可能返回 (*noopPermit)(nil), err
-    return p, nil            // ← bug: p 是 typed-nil,但 Permit 接口非 nil
-}
-
-// 调用方
-permit, _ := sem.Acquire(ctx)
-if permit != nil {           // ← 误判为 true
-    permit.Release(ctx)      // panic
-}
-```
-
-修复（[xsemaphore](../04-packages/05-distributed/04-xsemaphore.md)）：
-```go
-p, err := newNoopPermit(...)
-if err != nil {
-    return nil, err          // ← 显式 nil 接口
-}
-return p, nil
-```
-
-### xtrace `OTelTracer` 零值满足接口
-
-```go
-var t OTelTracer       // 零值
-var tracer Tracer = t  // ← 编译通过(L132 类型断言)
-tracer.Inject(ctx, h)  // panic: propagator 是 nil
-```
-
-修复：Inject/Extract 添加 `t.propagator == nil` 守卫，降级为 no-op。
-
 ## 防御模式
 
 ### 1. 显式构造
@@ -87,7 +50,7 @@ func (t OTelTracer) Inject(ctx, h) {
 ### 3. 测试用 Go 原生 `== nil` 不用 `testify`
 
 ```go
-// 测试 typed-nil 修复时:
+// 验证接口是否为 nil：
 got, err := doFallback(...)
 if got != nil { t.Fatal("want nil") }  // ✓ Go 原生
 

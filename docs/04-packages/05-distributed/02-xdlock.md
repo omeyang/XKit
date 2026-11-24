@@ -21,36 +21,17 @@ related:
 - 选主（长期持有）：用 [xelection](03-xelection.md)
 - 限流/限并发：用 [xsemaphore](04-xsemaphore.md)
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/distributed/xdlock"
+示例文件中的 `Example_redisBasic`、`Example_redlock` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/distributed/xdlock` 查看。
 
-l, err := xdlock.NewRedis(redisClient, "lock:my-resource",
-    xdlock.WithTTL(30*time.Second),
-)
-defer l.Close()
-
-held, err := l.Lock(ctx)
-if err != nil { /* ... */ }
-if !held { return nil }
-defer l.Unlock(ctx)
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Locker` interface | `Lock / TryLock / Unlock / Renew / Close` |
-| `NewRedis(client, key, opts...) Locker` | Redis 实现 |
-| `NewEtcd(client, key, opts...) Locker` | etcd 实现 |
-| `WithTTL / WithTries / WithRetryDelay / WithFailFast` | 选项 |
+[包说明](../../../pkg/distributed/xdlock/doc.go) · [使用示例](../../../tests/unit/pkg/distributed/xdlock/example_test.go)
 
 ## 设计要点
 
 - **Redis NX + Lua 释放**：避免误释放他人持有的锁
-- **etcd v3.6 移除了 `ErrLockReleased`**：1.23 兼容分支需移除该分支
-- **`Renew`** 由调用方主动续期，库内不内置心跳 goroutine
+- **etcd v3.6 移除了 `ErrLockReleased`**：实现不得依赖该错误
+- 调用方通过 `LockHandle.Extend` 主动续期。
 
 ## 相关
 

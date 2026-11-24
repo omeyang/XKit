@@ -1,9 +1,8 @@
 package xretry
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"math"
+	"math/rand/v2"
 	"time"
 )
 
@@ -118,7 +117,7 @@ func (b *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 
 	// 添加抖动
 	if b.jitter > 0 {
-		jitterFactor := 1.0 + (randomFloat64()*2-1)*b.jitter
+		jitterFactor := 1.0 + (rand.Float64()*2-1)*b.jitter // #nosec G404 -- 重试抖动不涉及安全用途
 		delay *= jitterFactor
 	}
 
@@ -136,7 +135,7 @@ func (b *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 }
 
 func (b *ExponentialBackoff) Reset() {
-	// crypto/rand 不需要重置
+	// math/rand/v2 的顶层函数不需要重置
 }
 
 // LinearBackoff 线性退避策略
@@ -191,10 +190,7 @@ func (b *LinearBackoff) NextDelay(attempt int) time.Duration {
 
 	// 此时可以安全计算，不会溢出
 	incrementPart := b.increment * time.Duration(attempt-1)
-	delay := b.initialDelay + incrementPart
-	if delay > b.maxDelay {
-		delay = b.maxDelay
-	}
+	delay := min(b.initialDelay+incrementPart, b.maxDelay)
 	return delay
 }
 
@@ -217,17 +213,3 @@ var (
 	_ BackoffPolicy = (*LinearBackoff)(nil)
 	_ BackoffPolicy = (*NoBackoff)(nil)
 )
-
-const (
-	floatBits  = 53
-	floatScale = 1.0 / (1 << floatBits)
-)
-
-func randomFloat64() float64 {
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 失败时返回 0（安全默认值），抖动公式中将产生最小抖动系数 1-jitter
-		return 0
-	}
-	return float64(binary.LittleEndian.Uint64(buf[:])>>11) * floatScale
-}

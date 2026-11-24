@@ -145,8 +145,7 @@ func (e *etcdElection) acquireSession() (sessionProvider, *concurrency.Session, 
 	return session, concSession, nil
 }
 
-// runCampaign 运行 elec.Campaign；派生 campaignCtx 使 e.Close 能打断已阻塞的候选者
-// （修复 FG-M：原实现 Close 只置标志，无法中断底层 elec.Campaign）。
+// runCampaign 运行 elec.Campaign；派生 campaignCtx 使 e.Close 能打断已阻塞的候选者。
 func (e *etcdElection) runCampaign(ctx context.Context, elec *concurrency.Election, candidateID string) error {
 	campaignCtx, campaignCancel := context.WithCancel(ctx)
 	defer campaignCancel()
@@ -231,7 +230,7 @@ func (l *etcdLeader) startObserve() {
 
 // observe 监听 election 与 session 事件；任一退出条件触发 lost 并返回。
 //
-// 修复 FG-H：watch 中断（observe channel closed）或 session 过期时，
+// watch 中断（observe channel closed）或 session 过期时，
 // 必须主动释放 lease（关闭 session），否则调用方按 Lost() 重新 Campaign
 // 会被同进程旧 leader key 长时间阻塞直到 TTL 到期。
 // ctx 被主动取消的分支（由 Resign 触发）不在此处释放，让 Resign 在

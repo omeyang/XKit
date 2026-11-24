@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -131,13 +132,7 @@ func (c *setlogCommand) Execute(_ context.Context, args []string) (string, error
 	level := strings.ToLower(args[0])
 	validLevels := []string{"trace", "debug", "info", "warn", "error"}
 
-	valid := false
-	for _, v := range validLevels {
-		if level == v {
-			valid = true
-			break
-		}
-	}
+	valid := slices.Contains(validLevels, level)
 
 	if !valid {
 		return "", fmt.Errorf("无效的日志级别: %s，支持: %s", level, strings.Join(validLevels, "/"))

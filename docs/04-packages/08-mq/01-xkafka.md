@@ -17,46 +17,17 @@ Kafka 客户端。基于 `confluent-kafka-go`，加 DLQ + OTel 链路追踪。
 - DLQ 自动投递无法处理的消息
 - 链路追踪自动传播
 
-## 快速上手
+## 使用入口
 
-```go
-import "github.com/omeyang/xkit/pkg/mq/xkafka"
+示例文件中的 `ExampleDLQPolicy_Validate`、`ExampleConsumerStats` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/mq/xkafka` 查看。
 
-// 生产
-p, _ := xkafka.NewProducer(xkafka.ProducerConfig{
-    Brokers: []string{"localhost:9092"},
-})
-defer p.Close()
-_ = p.Produce(ctx, "topic-1", []byte(payload))
-
-// 消费（fail-fast：handler panic 不补 recover）
-c, _ := xkafka.NewConsumer(xkafka.ConsumerConfig{
-    Brokers: []string{"localhost:9092"},
-    Topic:   "topic-1",
-    Group:   "my-group",
-    DLQ:     xkafka.DLQConfig{Topic: "topic-1-dlq", MaxRetries: 3},
-})
-_ = c.ConsumeLoop(ctx, func(ctx context.Context, msg *xkafka.Message) error {
-    return process(msg)
-})
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Producer / NewProducer(cfg)` | 生产 |
-| `Consumer / NewConsumer(cfg)` | 消费 |
-| `ConsumeLoop(ctx, handler) error` | 阻塞消费（fail-fast，**handler panic 暴露不补 recover**）|
-| `Message` | 消息封装 |
-| `TracingProducer / TracingConsumer` | OTel 装饰器 |
-| `DLQConfig` | DLQ topic + MaxRetries |
+[包说明](../../../pkg/mq/xkafka/doc.go) · [使用示例](../../../tests/unit/pkg/mq/xkafka/example_test.go)
 
 ## 设计要点
 
-- **`ctx` 取消前置检查**（FG-M fix）：`sendToDLQInternal/redeliverMessage` 在 Produce 前检查 `ctx.Err()`，防止 ctx 已取消时仍入队但不提交 offset
-- **`setHeader` 重复 Header 修复**（FG-M fix）：删除所有同名 header 后追加新值，避免重复 traceparent
-- **`TracingProducer/Consumer` 生命周期竞态**（对抗审查 fix）：避免 close 后还在 publish
+- **`ctx` 取消前置检查**：`sendToDLQInternal/redeliverMessage` 在 Produce 前检查 `ctx.Err()`，防止 ctx 已取消时仍入队但不提交 offset
+- **`setHeader` 重复 Header 修复**：删除所有同名 header 后追加新值，避免重复 traceparent
+- **`TracingProducer/Consumer` 生命周期竞态**：避免 close 后还在 publish
 - **Fail-Fast**：`ConsumeLoop` handler panic 不补 recover（共享设计 `internal/mqcore`）
 
 ## 相关

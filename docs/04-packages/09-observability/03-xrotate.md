@@ -7,37 +7,13 @@ tags: [observability, log, rotation]
 
 # pkg/observability/xrotate
 
-日志文件轮转。基于 `natefinch/lumberjack`，按大小 + 时间轮转，自动压缩。
+使用 `NewLumberjack` 创建可写入日志的轮转器。日志按大小轮转，保留策略可限制备份数量和保存时间。
 
-## 用途
+## 使用入口
 
-- 日志写入文件而非 stdout 时的滚动管理
-- 长期运行服务避免日志撑满磁盘
+示例文件中的 `ExampleNewLumberjack`、`ExampleNewLumberjack_withOnError` 展示实际调用方式。完整签名可在仓库根目录用 `go doc ./pkg/observability/xrotate` 查看。
 
-## 快速上手
-
-```go
-import (
-    "github.com/omeyang/xkit/pkg/observability/xrotate"
-    "log/slog"
-)
-
-w := xrotate.New(xrotate.Config{
-    Filename:   "/var/log/app.log",
-    MaxSize:    100, // MB
-    MaxBackups: 10,
-    MaxAge:     30, // days
-    Compress:   true,
-})
-logger := slog.New(slog.NewJSONHandler(w, nil))
-```
-
-## 关键类型与函数
-
-| 名称 | 说明 |
-|---|---|
-| `Config` | 配置（Filename / MaxSize / MaxBackups / MaxAge / Compress）|
-| `New(cfg) io.Writer` | 构造（实现 io.Writer，可注入任意 logger）|
+[包说明](../../../pkg/observability/xrotate/doc.go) · [使用示例](../../../tests/unit/pkg/observability/xrotate/example_test.go)
 
 ## 设计要点
 

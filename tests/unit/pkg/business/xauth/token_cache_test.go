@@ -265,7 +265,7 @@ func TestTokenCache_Set_ShortTermToken(t *testing.T) {
 
 		// Token with 5 second expiry (too short to cache)
 		token := &TokenInfo{
-			AccessToken: "very-short-token",
+			AccessToken: "test",
 			ExpiresIn:   5, // 5 seconds
 		}
 
